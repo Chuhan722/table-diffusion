@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# 原始数据（铁律 6：生成过程不访问，只用于离线生成 DP 查询目标）
+data/
+
 # 实验输出（保留目录占位）
 outputs/*
 !outputs/.gitkeep

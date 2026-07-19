@@ -13,6 +13,12 @@
 - 项目专用 Python 3.11 环境已创建（prefix 环境，位于 ./.conda，Python 3.11.15；.conda/ 已加入 .gitignore）
 - 最小依赖已安装：正式依赖 numpy(2.4.6)，开发依赖 pytest(9.1.1)；项目以 editable 方式安装（pip install -e ".[dev]"）
 - Python 包可以正常导入：import table_diffevo 与 import numpy 均成功
+- 测试框架已可正常运行：tests/test_environment.py 冒烟测试通过
+  （conda run -p ./.conda python -m pytest -q → 1 passed）
+- 测试数据已到位（data/ 目录，已加入 .gitignore，符合铁律 6）：
+  - test_300x10.csv（300 条记录 × 10 属性，19KB）
+  - attribute_value_meanings.csv（属性值含义说明，1.5KB）
+  - 数据属性：age, education, employment, income, marital, children, housing, vehicle, health, region
 
 ## 文档要点（供后续参考，暂不实现）
 - 六条铁律：主线只做扩散演化生成器；每条记录每轮只产生一个下一状态；一轮内所有记录用同一份旧残差；先用 NumPy + 小玩具验证；每个随机实验固定种子；运行期不读真实私有答案。
