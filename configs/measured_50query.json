@@ -1,0 +1,819 @@
+{
+  "dataset": "test_300x10.csv",
+  "record_count": 300,
+  "query_count": 50,
+  "result_unit": "records",
+  "description": "50 个真实数据计数查询及其在 test_300x10.csv 上的查询结果",
+  "queries": [
+    {
+      "id": "S01",
+      "type": "single",
+      "expression": "18 <= age <= 24",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 18,
+          "upper": 24
+        }
+      ],
+      "result": 24
+    },
+    {
+      "id": "S02",
+      "type": "single",
+      "expression": "25 <= age <= 34",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 25,
+          "upper": 34
+        }
+      ],
+      "result": 57
+    },
+    {
+      "id": "S03",
+      "type": "single",
+      "expression": "50 <= age <= 64",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 50,
+          "upper": 64
+        }
+      ],
+      "result": 81
+    },
+    {
+      "id": "S04",
+      "type": "single",
+      "expression": "age >= 65",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": ">=",
+          "value": 65
+        }
+      ],
+      "result": 39
+    },
+    {
+      "id": "S05",
+      "type": "single",
+      "expression": "education == high_school",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "high_school"
+        }
+      ],
+      "result": 73
+    },
+    {
+      "id": "S06",
+      "type": "single",
+      "expression": "education == vocational",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "vocational"
+        }
+      ],
+      "result": 81
+    },
+    {
+      "id": "S07",
+      "type": "single",
+      "expression": "education == postgraduate",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "postgraduate"
+        }
+      ],
+      "result": 46
+    },
+    {
+      "id": "S08",
+      "type": "single",
+      "expression": "employment == unemployed",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "unemployed"
+        }
+      ],
+      "result": 22
+    },
+    {
+      "id": "S09",
+      "type": "single",
+      "expression": "employment == student",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "student"
+        }
+      ],
+      "result": 17
+    },
+    {
+      "id": "S10",
+      "type": "single",
+      "expression": "employment == self_employed",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "self_employed"
+        }
+      ],
+      "result": 30
+    },
+    {
+      "id": "S11",
+      "type": "single",
+      "expression": "employment == retired",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "retired"
+        }
+      ],
+      "result": 43
+    },
+    {
+      "id": "S12",
+      "type": "single",
+      "expression": "income == low",
+      "conditions": [
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        }
+      ],
+      "result": 96
+    },
+    {
+      "id": "S13",
+      "type": "single",
+      "expression": "income == high",
+      "conditions": [
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "high"
+        }
+      ],
+      "result": 45
+    },
+    {
+      "id": "S14",
+      "type": "single",
+      "expression": "marital == single",
+      "conditions": [
+        {
+          "attribute": "marital",
+          "operator": "==",
+          "value": "single"
+        }
+      ],
+      "result": 98
+    },
+    {
+      "id": "S15",
+      "type": "single",
+      "expression": "marital == separated",
+      "conditions": [
+        {
+          "attribute": "marital",
+          "operator": "==",
+          "value": "separated"
+        }
+      ],
+      "result": 42
+    },
+    {
+      "id": "S16",
+      "type": "single",
+      "expression": "children == 0",
+      "conditions": [
+        {
+          "attribute": "children",
+          "operator": "==",
+          "value": "0"
+        }
+      ],
+      "result": 104
+    },
+    {
+      "id": "S17",
+      "type": "single",
+      "expression": "children == 1",
+      "conditions": [
+        {
+          "attribute": "children",
+          "operator": "==",
+          "value": "1"
+        }
+      ],
+      "result": 62
+    },
+    {
+      "id": "S18",
+      "type": "single",
+      "expression": "housing == rent",
+      "conditions": [
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "rent"
+        }
+      ],
+      "result": 100
+    },
+    {
+      "id": "S19",
+      "type": "single",
+      "expression": "housing == mortgage",
+      "conditions": [
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "mortgage"
+        }
+      ],
+      "result": 87
+    },
+    {
+      "id": "S20",
+      "type": "single",
+      "expression": "vehicle == 0",
+      "conditions": [
+        {
+          "attribute": "vehicle",
+          "operator": "==",
+          "value": "0"
+        }
+      ],
+      "result": 109
+    },
+    {
+      "id": "S21",
+      "type": "single",
+      "expression": "vehicle == 2_plus",
+      "conditions": [
+        {
+          "attribute": "vehicle",
+          "operator": "==",
+          "value": "2_plus"
+        }
+      ],
+      "result": 51
+    },
+    {
+      "id": "S22",
+      "type": "single",
+      "expression": "health == poor",
+      "conditions": [
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "poor"
+        }
+      ],
+      "result": 39
+    },
+    {
+      "id": "S23",
+      "type": "single",
+      "expression": "health == fair",
+      "conditions": [
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "fair"
+        }
+      ],
+      "result": 93
+    },
+    {
+      "id": "S24",
+      "type": "single",
+      "expression": "region == rural",
+      "conditions": [
+        {
+          "attribute": "region",
+          "operator": "==",
+          "value": "rural"
+        }
+      ],
+      "result": 67
+    },
+    {
+      "id": "S25",
+      "type": "single",
+      "expression": "region == suburban",
+      "conditions": [
+        {
+          "attribute": "region",
+          "operator": "==",
+          "value": "suburban"
+        }
+      ],
+      "result": 96
+    },
+    {
+      "id": "D01",
+      "type": "double",
+      "expression": "25 <= age <= 34 AND employment == employed",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 25,
+          "upper": 34
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        }
+      ],
+      "result": 42
+    },
+    {
+      "id": "D02",
+      "type": "double",
+      "expression": "35 <= age <= 49 AND employment == employed",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 35,
+          "upper": 49
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        }
+      ],
+      "result": 75
+    },
+    {
+      "id": "D03",
+      "type": "double",
+      "expression": "50 <= age <= 64 AND employment == employed",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 50,
+          "upper": 64
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        }
+      ],
+      "result": 54
+    },
+    {
+      "id": "D04",
+      "type": "double",
+      "expression": "age >= 65 AND employment == retired",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": ">=",
+          "value": 65
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "retired"
+        }
+      ],
+      "result": 30
+    },
+    {
+      "id": "D05",
+      "type": "double",
+      "expression": "18 <= age <= 34 AND health == good",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 18,
+          "upper": 34
+        },
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "good"
+        }
+      ],
+      "result": 57
+    },
+    {
+      "id": "D06",
+      "type": "double",
+      "expression": "50 <= age <= 64 AND health == fair",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 50,
+          "upper": 64
+        },
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "fair"
+        }
+      ],
+      "result": 30
+    },
+    {
+      "id": "D07",
+      "type": "double",
+      "expression": "age >= 65 AND health == poor",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": ">=",
+          "value": 65
+        },
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "poor"
+        }
+      ],
+      "result": 18
+    },
+    {
+      "id": "D08",
+      "type": "double",
+      "expression": "education == high_school AND income == low",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "high_school"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        }
+      ],
+      "result": 32
+    },
+    {
+      "id": "D09",
+      "type": "double",
+      "expression": "education == vocational AND income == middle",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "vocational"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "middle"
+        }
+      ],
+      "result": 46
+    },
+    {
+      "id": "D10",
+      "type": "double",
+      "expression": "education == bachelor AND income == high",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "bachelor"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "high"
+        }
+      ],
+      "result": 26
+    },
+    {
+      "id": "D11",
+      "type": "double",
+      "expression": "employment == unemployed AND income == low",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "unemployed"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        }
+      ],
+      "result": 18
+    },
+    {
+      "id": "D12",
+      "type": "double",
+      "expression": "employment == employed AND income == high",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "high"
+        }
+      ],
+      "result": 38
+    },
+    {
+      "id": "D13",
+      "type": "double",
+      "expression": "employment == retired AND income == middle",
+      "conditions": [
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "retired"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "middle"
+        }
+      ],
+      "result": 23
+    },
+    {
+      "id": "D14",
+      "type": "double",
+      "expression": "marital == single AND children == 0",
+      "conditions": [
+        {
+          "attribute": "marital",
+          "operator": "==",
+          "value": "single"
+        },
+        {
+          "attribute": "children",
+          "operator": "==",
+          "value": "0"
+        }
+      ],
+      "result": 66
+    },
+    {
+      "id": "D15",
+      "type": "double",
+      "expression": "marital == married AND children == 2_plus",
+      "conditions": [
+        {
+          "attribute": "marital",
+          "operator": "==",
+          "value": "married"
+        },
+        {
+          "attribute": "children",
+          "operator": "==",
+          "value": "2_plus"
+        }
+      ],
+      "result": 88
+    },
+    {
+      "id": "D16",
+      "type": "double",
+      "expression": "income == low AND housing == rent",
+      "conditions": [
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        },
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "rent"
+        }
+      ],
+      "result": 44
+    },
+    {
+      "id": "D17",
+      "type": "double",
+      "expression": "income == high AND housing == owned",
+      "conditions": [
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "high"
+        },
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "owned"
+        }
+      ],
+      "result": 25
+    },
+    {
+      "id": "D18",
+      "type": "double",
+      "expression": "income == low AND vehicle == 0",
+      "conditions": [
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        },
+        {
+          "attribute": "vehicle",
+          "operator": "==",
+          "value": "0"
+        }
+      ],
+      "result": 60
+    },
+    {
+      "id": "D19",
+      "type": "double",
+      "expression": "region == urban AND housing == rent",
+      "conditions": [
+        {
+          "attribute": "region",
+          "operator": "==",
+          "value": "urban"
+        },
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "rent"
+        }
+      ],
+      "result": 51
+    },
+    {
+      "id": "D20",
+      "type": "double",
+      "expression": "region == rural AND vehicle == 2_plus",
+      "conditions": [
+        {
+          "attribute": "region",
+          "operator": "==",
+          "value": "rural"
+        },
+        {
+          "attribute": "vehicle",
+          "operator": "==",
+          "value": "2_plus"
+        }
+      ],
+      "result": 19
+    },
+    {
+      "id": "T01",
+      "type": "triple",
+      "expression": "25 <= age <= 34 AND employment == employed AND income == middle",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 25,
+          "upper": 34
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "middle"
+        }
+      ],
+      "result": 24
+    },
+    {
+      "id": "T02",
+      "type": "triple",
+      "expression": "education == bachelor AND employment == employed AND income == high",
+      "conditions": [
+        {
+          "attribute": "education",
+          "operator": "==",
+          "value": "bachelor"
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "high"
+        }
+      ],
+      "result": 21
+    },
+    {
+      "id": "T03",
+      "type": "triple",
+      "expression": "marital == married AND children == 2_plus AND housing == mortgage",
+      "conditions": [
+        {
+          "attribute": "marital",
+          "operator": "==",
+          "value": "married"
+        },
+        {
+          "attribute": "children",
+          "operator": "==",
+          "value": "2_plus"
+        },
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "mortgage"
+        }
+      ],
+      "result": 24
+    },
+    {
+      "id": "T04",
+      "type": "triple",
+      "expression": "region == urban AND income == low AND housing == rent",
+      "conditions": [
+        {
+          "attribute": "region",
+          "operator": "==",
+          "value": "urban"
+        },
+        {
+          "attribute": "income",
+          "operator": "==",
+          "value": "low"
+        },
+        {
+          "attribute": "housing",
+          "operator": "==",
+          "value": "rent"
+        }
+      ],
+      "result": 23
+    },
+    {
+      "id": "T05",
+      "type": "triple",
+      "expression": "50 <= age <= 64 AND employment == employed AND health == fair",
+      "conditions": [
+        {
+          "attribute": "age",
+          "operator": "between",
+          "lower": 50,
+          "upper": 64
+        },
+        {
+          "attribute": "employment",
+          "operator": "==",
+          "value": "employed"
+        },
+        {
+          "attribute": "health",
+          "operator": "==",
+          "value": "fair"
+        }
+      ],
+      "result": 20
+    }
+  ]
+}
