@@ -1,0 +1,12 @@
+# 项目专用 Conda 环境（prefix 环境）
+.conda/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 实验输出（保留目录占位）
+outputs/*
+!outputs/.gitkeep

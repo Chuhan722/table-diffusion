@@ -1,7 +1,7 @@
 # 项目进度
 
 ## 当前阶段
-项目初始化
+环境搭建完成，准备进入算法实现前的阶段
 
 ## 已完成
 - 创建 Git 仓库
@@ -10,6 +10,9 @@
   - 表格扩散演化生成器_完整方案.pdf（28 页，方法与公式，作参考）
   - 扩散演化生成器_从零实现与实验计划.pdf（38 页，阶段 0–20 执行手册，作参考）
   - temp.md（适应度设计讨论稿，已定为适应度设计的准绳）
+- 项目专用 Python 3.11 环境已创建（prefix 环境，位于 ./.conda，Python 3.11.15；.conda/ 已加入 .gitignore）
+- 最小依赖已安装：正式依赖 numpy(2.4.6)，开发依赖 pytest(9.1.1)；项目以 editable 方式安装（pip install -e ".[dev]"）
+- Python 包可以正常导入：import table_diffevo 与 import numpy 均成功
 
 ## 文档要点（供后续参考，暂不实现）
 - 六条铁律：主线只做扩散演化生成器；每条记录每轮只产生一个下一状态；一轮内所有记录用同一份旧残差；先用 NumPy + 小玩具验证；每个随机实验固定种子；运行期不读真实私有答案。
@@ -24,9 +27,9 @@
 - 其余实现细节（模块拆分、命名等）到对应阶段再逐步讨论确定。
 
 ## 当前未完成
-- 尚未搭建 Python 环境（依赖：numpy, pandas, scipy, matplotlib, pytest, pyyaml）
 - 尚未实现任何算法
+- 后续如需 pandas/scipy/matplotlib/pyyaml 等依赖，到对应阶段再按需加入（当前仅 numpy + pytest）
 
 ## 下一步
-1. 确认最终目录结构（见“待确认”）。
-2. 阶段 0：跑通官方 diffusion-evolution 示例并写理解笔记（notes/00_understanding.md）。
+1. 阶段 0：跑通官方 diffusion-evolution 示例并写理解笔记，再进入表格代码。
+2. 或按需先实现最基础模块（如查询评价器），到时再讨论。
