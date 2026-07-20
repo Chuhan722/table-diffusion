@@ -125,9 +125,51 @@ def eval_condition(df: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
         raise ValueError(f"不支持的操作符: {op}")
 
 
+def eval_query_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
+    """
+    评价单个查询，返回布尔掩码（不求和）。
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        数据表
+    query : dict
+        查询定义，包含 conditions 列表
+
+    Returns
+    -------
+    np.ndarray (bool), shape (N,)
+        布尔掩码，True 表示该记录满足查询
+
+    Notes
+    -----
+    此函数是查询评价的核心底层函数：
+    - evaluate_table 内部调用它来计算计数向量
+    - fitness.py 调用它来计算适应度（逐查询累加，不存矩阵）
+
+    通过统一的底层函数，确保计数和适应度基于同一套掩码逻辑，永远一致。
+
+    Examples
+    --------
+    >>> mask = eval_query_mask(df, {"conditions": [...]})
+    >>> mask.sum()  # 满足该查询的记录数
+    >>> mask.astype(float)  # 转成 0/1 用于适应度计算
+    """
+    # 初始掩码：全为 True
+    mask = pd.Series([True] * len(df), index=df.index)
+
+    # 逐个条件求交集（AND）
+    for condition in query["conditions"]:
+        mask &= eval_condition(df, condition)
+
+    return mask.to_numpy()
+
+
 def eval_query(df: pd.DataFrame, query: Dict[str, Any]) -> int:
     """
     评价单个查询，返回满足该查询的记录数。
+
+    【内部实现已改为调用 eval_query_mask】
 
     Parameters
     ----------
@@ -145,13 +187,7 @@ def eval_query(df: pd.DataFrame, query: Dict[str, Any]) -> int:
     -----
     多个条件通过逻辑与（AND）合并。
     """
-    # 初始掩码：全为 True
-    mask = pd.Series([True] * len(df), index=df.index)
-
-    # 逐个条件求交集（AND）
-    for condition in query["conditions"]:
-        mask &= eval_condition(df, condition)
-
+    mask = eval_query_mask(df, query)
     return int(mask.sum())
 
 

@@ -15,6 +15,7 @@ from table_diffevo.queries import (
     load_data,
     eval_condition,
     eval_query,
+    eval_query_mask,
     evaluate_table,
     verify_evaluator
 )
@@ -217,3 +218,84 @@ def test_value_type_handling():
 
     count = eval_query(df, queries_raw[0])
     assert count == 2  # 两个 "0"
+
+
+def test_eval_query_mask_basic():
+    """测试 eval_query_mask 返回布尔掩码"""
+    df = pd.DataFrame({
+        "education": ["bachelor", "high_school", "bachelor", "vocational"]
+    })
+
+    query = {
+        "id": "test",
+        "conditions": [
+            {
+                "attribute": "education",
+                "operator": "==",
+                "value": "bachelor"
+            }
+        ]
+    }
+
+    mask = eval_query_mask(df, query)
+
+    # 应该返回布尔数组
+    assert mask.dtype == bool
+    # 形状应该是 (N,)
+    assert mask.shape == (4,)
+    # 应该有 2 个 True（两个 bachelor）
+    assert mask.sum() == 2
+    assert mask.tolist() == [True, False, True, False]
+
+
+def test_eval_query_mask_multiple_conditions():
+    """测试 eval_query_mask 处理多条件（AND）"""
+    df = pd.DataFrame({
+        "education": ["bachelor", "bachelor", "high_school", "bachelor"],
+        "age": [25, 35, 30, 45]
+    })
+
+    query = {
+        "id": "test",
+        "conditions": [
+            {
+                "attribute": "age",
+                "operator": "between",
+                "lower": 30,
+                "upper": 40
+            },
+            {
+                "attribute": "education",
+                "operator": "==",
+                "value": "bachelor"
+            }
+        ]
+    }
+
+    mask = eval_query_mask(df, query)
+
+    # 只有第二条记录（age=35, edu=bachelor）同时满足
+    assert mask.sum() == 1
+    assert mask.tolist() == [False, True, False, False]
+
+
+def test_eval_query_uses_eval_query_mask():
+    """测试 eval_query 内部调用 eval_query_mask（重构验证）"""
+    df = pd.DataFrame({
+        "A": ["0", "1", "0", "1"]
+    })
+
+    query = {
+        "id": "test",
+        "conditions": [{"attribute": "A", "operator": "==", "value": "1"}]
+    }
+
+    # 从掩码算计数
+    mask = eval_query_mask(df, query)
+    count_from_mask = int(mask.sum())
+
+    # 直接调用 eval_query
+    count_direct = eval_query(df, query)
+
+    # 两者应该一致
+    assert count_from_mask == count_direct == 2
