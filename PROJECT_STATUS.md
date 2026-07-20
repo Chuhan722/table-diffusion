@@ -19,6 +19,17 @@
   - test_300x10.csv（300 条记录 × 10 属性，19KB）
   - attribute_value_meanings.csv（属性值含义说明，1.5KB）
   - 数据属性：age, education, employment, income, marital, children, housing, vehicle, health, region
+- 查询定义已完成（configs/measured_50query.json，50 个查询，17KB）：
+  - 包含 single/double/triple 三类查询，涵盖 ==、>=、between 三种算子
+  - 每个查询带有在原数据上的真实计数（当前作为无噪目标）
+- 随机种子工具已实现并通过测试（src/table_diffevo/utils.py + tests/test_utils.py）：
+  - set_seed(seed) 固定全局随机状态，确保实验可复现
+  - 6 个测试全部通过，验证了相同种子 → 相同结果
+- 查询评价器已实现并通过验证（src/table_diffevo/queries.py + tests/test_queries.py）：
+  - evaluate_table(df, queries) 在给定表上评价所有查询，返回计数向量
+  - 支持 ==、>=、between 三种算子，支持单条件和多条件（AND）查询
+  - 在原数据上验证通过：50 个查询的计算结果与预期完全一致（9/9 测试通过）
+  - 符合铁律 6：评价器不绑定原数据，可用于评价合成表
 
 ## 文档要点（供后续参考，暂不实现）
 - 六条铁律：主线只做扩散演化生成器；每条记录每轮只产生一个下一状态；一轮内所有记录用同一份旧残差；先用 NumPy + 小玩具验证；每个随机实验固定种子；运行期不读真实私有答案。
