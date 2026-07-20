@@ -1,0 +1,73 @@
+attributes:
+- name: age
+  type: numeric
+  range:
+  - 18
+  - 100
+  description: 年龄（岁）
+- name: education
+  type: categorical
+  values:
+  - high_school
+  - vocational
+  - bachelor
+  - postgraduate
+  description: 最高教育程度
+- name: employment
+  type: categorical
+  values:
+  - unemployed
+  - student
+  - employed
+  - self_employed
+  - retired
+  description: 当前就业状态
+- name: income
+  type: categorical
+  values:
+  - low
+  - middle
+  - high
+  description: 收入等级
+- name: marital
+  type: categorical
+  values:
+  - single
+  - married
+  - separated
+  description: 婚姻状态
+- name: children
+  type: categorical
+  values:
+  - '0'
+  - '1'
+  - 2_plus
+  description: 子女数量
+- name: housing
+  type: categorical
+  values:
+  - rent
+  - mortgage
+  - owned
+  description: 当前住房状态
+- name: vehicle
+  type: categorical
+  values:
+  - '0'
+  - '1'
+  - 2_plus
+  description: 家庭车辆数量
+- name: health
+  type: categorical
+  values:
+  - poor
+  - fair
+  - good
+  description: 自评健康状况
+- name: region
+  type: categorical
+  values:
+  - urban
+  - suburban
+  - rural
+  description: 居住区域类型

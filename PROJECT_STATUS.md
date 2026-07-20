@@ -41,7 +41,15 @@
   - fitness.py 实现 compute_fitness，采用纯方向适应度公式（temp.md）
   - 逐查询累加策略：内存 O(N) 与查询数无关，支持几万查询的大规模场景
   - 9 个适应度测试通过，含 temp.md 四状态例子验证（00/01/10/11 方向正确）
-  - 当前全套测试：39 passed（新增 12 个测试）
+- 属性 schema 和距离计算已实现（schema.py + distance.py）：
+  - configs/schema.yaml 从 attribute_value_meanings.csv 自动生成（公开 schema 信息）
+  - age 范围用领域常识 18-100（遵守严格 DP）
+  - schema.py 提供 load_schema，支持属性块定义和查询
+  - distance.py 实现归一化 Hamming 距离：age 数值块 + 9 个类别块，等权重
+  - 接口：pairwise_block_distance(rows, donor_rows, schema) → (N, M) 距离矩阵
+  - 支持全对全（玩具）和小池子（大规模）两种场景
+  - 10 个测试通过，含对称性、自距离为0、真实数据集成
+  - 当前全套测试：49 passed（新增 10 个测试）
 
 ## 文档要点（供后续参考，暂不实现）
 - 六条铁律：主线只做扩散演化生成器；每条记录每轮只产生一个下一状态；一轮内所有记录用同一份旧残差；先用 NumPy + 小玩具验证；每个随机实验固定种子；运行期不读真实私有答案。
