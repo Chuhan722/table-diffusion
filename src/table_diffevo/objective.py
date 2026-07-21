@@ -113,3 +113,91 @@ def compute_residual(
     epsilon = np.sign(raw) * magnitude / n_records
 
     return epsilon
+
+
+def compute_loss(
+    target: np.ndarray,
+    current: np.ndarray,
+    sigma: Optional[np.ndarray] = None,
+    kappa: float = 1.0,
+    weights: Optional[np.ndarray] = None,
+) -> float:
+    """
+    计算监控损失 E(S)（完整方案 8.2）。
+
+        E(S) = ½ Σ_j w_j [max(|y_j - q_j| - κσ_j, 0)]²
+
+    衡量合成表的查询答案离目标有多远。越小越好，E=0 表示所有查询达标。
+
+    Parameters
+    ----------
+    target : np.ndarray, shape (m,)
+        目标向量 y（当前无噪声阶段即真实计数）
+    current : np.ndarray, shape (m,)
+        当前答案 q(S)，由 queries.evaluate_table 得到
+    sigma : np.ndarray or None, shape (m,)
+        各查询的噪声标准差。None 表示无噪声（σ=0，容忍区为 0）
+    kappa : float
+        噪声容忍系数。|残差| < κσ 的部分不计入损失
+    weights : np.ndarray or None, shape (m,)
+        查询权重 w_j，默认全 1
+
+    Returns
+    -------
+    float
+        损失值 E(S) ≥ 0
+
+    Raises
+    ------
+    ValueError
+        target 与 current 形状不一致，或 weights 长度不匹配
+
+    Notes
+    -----
+    **口径：使用计数残差** e_j = y_j - q_j（不是比例残差）。
+    与 compute_residual 的比例残差差一个 N 倍数，但用于比较大小时排序一致。
+
+    **无噪声玩具阶段**（σ=None、w=1）简化为：
+
+        E(S) = ½ Σ_j (y_j - q_j)²
+
+    即计数残差平方和的一半。
+
+    Examples
+    --------
+    >>> target = np.array([180, 95, 42])
+    >>> current = np.array([170, 100, 42])
+    >>> compute_loss(target, current)  # ½(10² + 5² + 0²) = ½·125
+    62.5
+    """
+    target = np.asarray(target, dtype=float)
+    current = np.asarray(current, dtype=float)
+
+    if target.shape != current.shape:
+        raise ValueError(
+            f"target 与 current 形状不一致: {target.shape} vs {current.shape}"
+        )
+
+    raw = target - current
+
+    # 噪声容忍区：只保留超出 κσ 的部分
+    if sigma is None:
+        magnitude = np.abs(raw)
+    else:
+        sigma = np.asarray(sigma, dtype=float)
+        if sigma.shape != target.shape:
+            raise ValueError(
+                f"sigma 与 target 形状不一致: {sigma.shape} vs {target.shape}"
+            )
+        magnitude = np.maximum(np.abs(raw) - kappa * sigma, 0.0)
+
+    if weights is None:
+        weights = np.ones_like(target)
+    else:
+        weights = np.asarray(weights, dtype=float)
+        if weights.shape != target.shape:
+            raise ValueError(
+                f"weights 与 target 形状不一致: {weights.shape} vs {target.shape}"
+            )
+
+    return 0.5 * float(np.sum(weights * magnitude**2))

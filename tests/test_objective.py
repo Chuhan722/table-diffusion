@@ -10,7 +10,7 @@
 """
 import numpy as np
 import pytest
-from table_diffevo.objective import compute_residual
+from table_diffevo.objective import compute_residual, compute_loss
 
 
 def test_basic_proportional_residual():
@@ -153,3 +153,76 @@ def test_integration_with_queries():
 
     # 原数据上，当前答案 = 目标，残差应全为零
     np.testing.assert_array_equal(residual, np.zeros(len(queries)))
+
+
+# ---- compute_loss 测试 ----
+
+def test_loss_basic():
+    """无噪声：E = ½·Σ(y-q)²"""
+    target = np.array([180, 95, 42])
+    current = np.array([170, 100, 42])
+    # ½(10² + 5² + 0²) = ½·125 = 62.5
+    assert compute_loss(target, current) == 62.5
+
+
+def test_loss_zero_when_exact():
+    """完全达标 → loss = 0"""
+    target = np.array([10, 20, 30])
+    assert compute_loss(target, target) == 0.0
+
+
+def test_loss_non_negative():
+    """loss 恒非负"""
+    rng = np.random.default_rng(0)
+    target = rng.integers(0, 300, size=50)
+    current = rng.integers(0, 300, size=50)
+    assert compute_loss(target, current) >= 0
+
+
+def test_loss_symmetric_in_sign():
+    """偏高偏低对称：残差 +d 与 -d 的 loss 相同"""
+    target = np.array([100])
+    assert compute_loss(target, np.array([90])) == compute_loss(target, np.array([110]))
+
+
+def test_loss_weights():
+    """权重放大对应查询的贡献"""
+    target = np.array([100, 100])
+    current = np.array([90, 90])  # 各偏 10
+    # 无权重：½(100+100)=100
+    assert compute_loss(target, current) == 100.0
+    # 第一个查询权重 2：½(2·100 + 1·100)=150
+    loss_w = compute_loss(target, current, weights=np.array([2.0, 1.0]))
+    assert loss_w == 150.0
+
+
+def test_loss_noise_tolerance():
+    """噪声容忍区内的残差不计入 loss"""
+    target = np.array([100])
+    current = np.array([95])  # 残差 5
+    sigma = np.array([10.0])
+    # κσ = 1·10 = 10 > |5| → 残差全被容忍 → loss = 0
+    assert compute_loss(target, current, sigma=sigma, kappa=1.0) == 0.0
+
+
+def test_loss_noise_partial():
+    """超出容忍区的部分才计入"""
+    target = np.array([100])
+    current = np.array([80])  # 残差 20
+    sigma = np.array([10.0])
+    # max(20 - 10, 0) = 10 → ½·10² = 50
+    assert compute_loss(target, current, sigma=sigma, kappa=1.0) == 50.0
+
+
+def test_loss_shape_mismatch():
+    """形状不一致报错"""
+    with pytest.raises(ValueError, match="形状不一致"):
+        compute_loss(np.array([1, 2]), np.array([1, 2, 3]))
+
+
+def test_loss_ordering_matches_proportional():
+    """loss 大小排序与比例残差平方和一致（差常数因子 N²）"""
+    target = np.array([100, 200, 50])
+    q1 = np.array([90, 190, 45])   # 偏差较小
+    q2 = np.array([70, 160, 20])   # 偏差较大
+    assert compute_loss(target, q1) < compute_loss(target, q2)
