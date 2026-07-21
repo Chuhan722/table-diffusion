@@ -85,7 +85,7 @@ class Schema:
         return [attr.name for attr in self.attributes]
 
 
-def load_schema(path: str = "configs/schema.yaml") -> Schema:
+def load_schema(path: str) -> Schema:
     """
     从 YAML 配置文件加载 schema
 
@@ -101,7 +101,7 @@ def load_schema(path: str = "configs/schema.yaml") -> Schema:
 
     Examples
     --------
-    >>> schema = load_schema("configs/schema.yaml")
+    >>> schema = load_schema("configs/test_300x10/schema.yaml")
     >>> schema.n_blocks()
     10
     >>> age_block = schema.get_block("age")

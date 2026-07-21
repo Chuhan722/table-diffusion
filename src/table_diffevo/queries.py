@@ -35,22 +35,14 @@ def load_queries(path: str) -> List[Dict[str, Any]]:
 
     Notes
     -----
-    会统一处理 value 字段，确保与数据类型匹配：
-    - 对于 == 算子，将 value 转为字符串（因为数据里 children/vehicle 是字符串）
-    - 对于 between 算子，保持数值类型（用于 age 列）
+    不在此处转换 value 类型。== 算子的 value 在评价时由 eval_condition
+    按数据列的实际类型动态对齐（见 _coerce_to_column_type），
+    从而适配不同数据集（字符串列或整数列）。
     """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
-    queries = data["queries"]
-
-    # 统一 value 类型：== 算子的 value 转字符串
-    for query in queries:
-        for condition in query["conditions"]:
-            if condition["operator"] == "==" and "value" in condition:
-                condition["value"] = str(condition["value"])
-
-    return queries
+    return data["queries"]
 
 
 def load_data(path: str) -> pd.DataFrame:
@@ -74,6 +66,40 @@ def load_data(path: str) -> pd.DataFrame:
     2. 后续生成器运行时不应调用此函数读取原始数据
     """
     return pd.read_csv(path)
+
+
+def _coerce_to_column_type(column: pd.Series, value: Any) -> Any:
+    """
+    把查询的 value 转成 column 的实际类型，用于 == 比较。
+
+    不同数据集的列类型不同：
+    - test_300x10 的类别列是字符串（如 children="2_plus"）
+    - nltcs 的属性列是整数（0/1）
+
+    若强行用固定类型比较（如整数列 == 字符串"1"），pandas 判为不相等，
+    导致查询恒为 0。此函数按列的实际 dtype 对齐 value 类型。
+
+    Parameters
+    ----------
+    column : pd.Series
+        数据表中被比较的列
+    value : Any
+        查询条件里的比较值（可能是 int / str）
+
+    Returns
+    -------
+    Any
+        转换成与列类型匹配的 value；无法转换时原样返回，交由 pandas 比较
+    """
+    if pd.api.types.is_numeric_dtype(column):
+        # 数值列：把 value 转成数值（字符串 "1" → 1）
+        try:
+            return pd.to_numeric(value)
+        except (ValueError, TypeError):
+            return value
+    else:
+        # 非数值列（字符串等）：把 value 转成字符串
+        return str(value)
 
 
 def eval_condition(df: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
@@ -108,8 +134,11 @@ def eval_condition(df: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
     op = condition["operator"]
 
     if op == "==":
-        # 等值查询（用于字符串列）
-        return df[attr] == condition["value"]
+        # 等值查询：把 value 转成该列的实际类型再比较
+        # （不同数据集列类型不同：test_300x10 的类别列是字符串，
+        #  nltcs 的属性列是整数；按数据类型对齐避免"整数==字符串"永不相等）
+        value = _coerce_to_column_type(df[attr], condition["value"])
+        return df[attr] == value
 
     elif op == ">=":
         # 大于等于查询（用于 age 列）
