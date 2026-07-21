@@ -1,0 +1,49 @@
+attributes:
+  attr_1:
+    type: categorical
+    values: [0, 1]
+  attr_2:
+    type: categorical
+    values: [0, 1]
+  attr_3:
+    type: categorical
+    values: [0, 1]
+  attr_4:
+    type: categorical
+    values: [0, 1]
+  attr_5:
+    type: categorical
+    values: [0, 1]
+  attr_6:
+    type: categorical
+    values: [0, 1]
+  attr_7:
+    type: categorical
+    values: [0, 1]
+  attr_8:
+    type: categorical
+    values: [0, 1]
+  attr_9:
+    type: categorical
+    values: [0, 1]
+  attr_10:
+    type: categorical
+    values: [0, 1]
+  attr_11:
+    type: categorical
+    values: [0, 1]
+  attr_12:
+    type: categorical
+    values: [0, 1]
+  attr_13:
+    type: categorical
+    values: [0, 1]
+  attr_14:
+    type: categorical
+    values: [0, 1]
+  attr_15:
+    type: categorical
+    values: [0, 1]
+  attr_16:
+    type: categorical
+    values: [0, 1]

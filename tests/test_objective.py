@@ -142,8 +142,8 @@ def test_integration_with_queries():
     """
     from table_diffevo.queries import load_queries, load_data, evaluate_table
 
-    df = load_data("data/test_300x10.csv")
-    queries = load_queries("configs/measured_50query.json")
+    df = load_data("data/test_300x10/test_300x10.csv")
+    queries = load_queries("configs/test_300x10/measured_50query.json")
 
     # 当前答案 = 在原数据上评价（等于目标，因为目标就是原数据的真实计数）
     current = evaluate_table(df, queries)

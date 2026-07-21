@@ -18,7 +18,7 @@ from table_diffevo.distance import pairwise_block_distance
 
 def test_load_schema():
     """测试 schema 加载"""
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
 
     assert schema.n_blocks() == 10
     assert len(schema.attribute_names()) == 10
@@ -36,7 +36,7 @@ def test_load_schema():
 
 def test_schema_queries():
     """测试 schema 查询功能"""
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
 
     numeric = schema.get_numeric_blocks()
     assert len(numeric) == 1
@@ -61,7 +61,7 @@ def test_distance_self_is_zero():
         "region": ["urban", "rural"]
     })
 
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
     distances = pairwise_block_distance(df, df, schema)
 
     # 对角线应该全为 0
@@ -83,7 +83,7 @@ def test_distance_symmetry():
         "region": ["urban", "rural", "suburban"]
     })
 
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
     distances = pairwise_block_distance(df, df, schema)
 
     # 矩阵应该对称
@@ -118,7 +118,7 @@ def test_numeric_block_distance():
         "region": ["urban"]
     })
 
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
     distances = pairwise_block_distance(df_current, df_donors, schema)
 
     # age 是唯一不同的块，其余 9 个块都相同
@@ -159,7 +159,7 @@ def test_categorical_block_distance():
         "region": ["urban"]
     })
 
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
     distances = pairwise_block_distance(df_current, df_donors, schema)
 
     # 记录0：education 不同（1个块），总距离 = 1/10 = 0.1
@@ -173,8 +173,8 @@ def test_distance_range():
     """测试距离落在 [0, 1] 区间"""
     from table_diffevo.queries import load_data
 
-    df = load_data("data/test_300x10.csv")
-    schema = load_schema("configs/schema.yaml")
+    df = load_data("data/test_300x10/test_300x10.csv")
+    schema = load_schema("configs/test_300x10/schema.yaml")
 
     distances = pairwise_block_distance(df, df, schema)
 
@@ -210,7 +210,7 @@ def test_pairwise_different_sizes():
         "region": ["urban"] * 2
     })
 
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
     distances = pairwise_block_distance(df_current, df_donors, schema)
 
     # 应该返回 (5, 2) 矩阵
@@ -221,8 +221,8 @@ def test_integration_with_real_data():
     """集成测试：在真实数据上计算距离"""
     from table_diffevo.queries import load_data
 
-    df = load_data("data/test_300x10.csv")
-    schema = load_schema("configs/schema.yaml")
+    df = load_data("data/test_300x10/test_300x10.csv")
+    schema = load_schema("configs/test_300x10/schema.yaml")
 
     # 全对全
     distances_full = pairwise_block_distance(df, df, schema)
@@ -236,7 +236,7 @@ def test_integration_with_real_data():
 
 def test_input_validation():
     """测试输入校验"""
-    schema = load_schema("configs/schema.yaml")
+    schema = load_schema("configs/test_300x10/schema.yaml")
 
     # 缺少属性
     df_incomplete = pd.DataFrame({

@@ -220,8 +220,8 @@ class TestIntegration:
         from table_diffevo.distance import pairwise_block_distance
         from table_diffevo.sampling import compute_sampling_probs, sample_donors
 
-        df = load_data("data/test_300x10.csv")
-        schema = load_schema("configs/schema.yaml")
+        df = load_data("data/test_300x10/test_300x10.csv")
+        schema = load_schema("configs/test_300x10/schema.yaml")
 
         # 构造随机适应度和距离，走完整抽样流程
         rng = np.random.default_rng(2024)

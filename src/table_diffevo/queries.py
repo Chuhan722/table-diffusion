@@ -229,7 +229,7 @@ def verify_evaluator(data_path: str, query_path: str, verbose: bool = True) -> b
     Parameters
     ----------
     data_path : str
-        原始数据路径（如 data/test_300x10.csv）
+        原始数据路径（如 data/test_300x10/test_300x10.csv）
     query_path : str
         查询文件路径（如 configs/measured_50query.json）
     verbose : bool

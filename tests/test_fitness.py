@@ -204,8 +204,8 @@ def test_integration_with_real_data():
     from table_diffevo.queries import load_queries, load_data, evaluate_table
     from table_diffevo.objective import compute_residual
 
-    df = load_data("data/test_300x10.csv")
-    queries = load_queries("configs/measured_50query.json")
+    df = load_data("data/test_300x10/test_300x10.csv")
+    queries = load_queries("configs/test_300x10/measured_50query.json")
     target = np.array([q["result"] for q in queries], dtype=int)
 
     current_answer = evaluate_table(df, queries)
@@ -226,8 +226,8 @@ def test_integration_with_perturbed_data():
     from table_diffevo.queries import load_queries, load_data, evaluate_table
     from table_diffevo.objective import compute_residual
 
-    df = load_data("data/test_300x10.csv")
-    queries = load_queries("configs/measured_50query.json")
+    df = load_data("data/test_300x10/test_300x10.csv")
+    queries = load_queries("configs/test_300x10/measured_50query.json")
     target = np.array([q["result"] for q in queries], dtype=int)
 
     # 扰动：把前10条记录的 age 都改成 20（减少 age>=65 的满足数）

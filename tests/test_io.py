@@ -117,8 +117,8 @@ class TestIntegration:
         from table_diffevo.queries import load_queries
         from table_diffevo.evolution import run_evolution
 
-        schema = load_schema("configs/schema.yaml")
-        queries = load_queries("configs/measured_50query.json")
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries("configs/test_300x10/measured_50query.json")
         target = np.array([q["result"] for q in queries])
 
         best_S, diag = run_evolution(

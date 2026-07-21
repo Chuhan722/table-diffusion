@@ -110,8 +110,8 @@ class TestIntegration:
         from table_diffevo.schema import load_schema
         from table_diffevo.queries import load_data
 
-        schema = load_schema("configs/schema.yaml")
-        df = load_data("data/test_300x10.csv")
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        df = load_data("data/test_300x10/test_300x10.csv")
 
         # 与源数据条数、列一致
         s0 = init_synthetic_table(len(df), schema, np.random.default_rng(2024))
@@ -126,8 +126,8 @@ class TestIntegration:
         from table_diffevo.schema import load_schema
         from table_diffevo.queries import load_queries, evaluate_table
 
-        schema = load_schema("configs/schema.yaml")
-        queries = load_queries("configs/measured_50query.json")
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries("configs/test_300x10/measured_50query.json")
 
         s0 = init_synthetic_table(300, schema, np.random.default_rng(7))
         counts = evaluate_table(s0, queries)

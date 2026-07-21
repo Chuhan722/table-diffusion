@@ -23,7 +23,7 @@ from table_diffevo.queries import (
 
 def test_load_queries():
     """测试查询文件加载"""
-    queries = load_queries("configs/measured_50query.json")
+    queries = load_queries("configs/test_300x10/measured_50query.json")
 
     # 应该有 50 个查询
     assert len(queries) == 50
@@ -39,7 +39,7 @@ def test_load_queries():
 
 def test_load_data():
     """测试数据加载"""
-    df = load_data("data/test_300x10.csv")
+    df = load_data("data/test_300x10/test_300x10.csv")
 
     # 应该有 300 行 10 列
     assert df.shape == (300, 10)
@@ -182,8 +182,8 @@ def test_verify_evaluator_on_real_data():
     如果全部匹配，说明查询评价器逻辑正确。
     """
     result = verify_evaluator(
-        data_path="data/test_300x10.csv",
-        query_path="configs/measured_50query.json",
+        data_path="data/test_300x10/test_300x10.csv",
+        query_path="configs/test_300x10/measured_50query.json",
         verbose=True  # 打印详细对比信息
     )
 

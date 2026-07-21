@@ -83,7 +83,7 @@ def pairwise_block_distance(
     >>> from table_diffevo.schema import load_schema
     >>> from table_diffevo.queries import load_data
     >>>
-    >>> df = load_data("data/test_300x10.csv")
+    >>> df = load_data("data/test_300x10/test_300x10.csv")
     >>> schema = load_schema("configs/schema.yaml")
     >>>
     >>> # 全对全
