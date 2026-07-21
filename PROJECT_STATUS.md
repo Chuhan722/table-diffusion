@@ -88,7 +88,15 @@
   - best_S 保底 + 诊断（loss_history/best_loss/rounds_run/stopped_early/accept_history）
   - 12 个测试通过，含复现性、loss 单调不增、真实数据端到端
   - 真实数据实跑：loss 28932 → 6102（降约 79%），接受率 60%，方向正确
-  - 当前全套测试：119 passed（新增 21 个测试）
+- 结果落盘已实现（io.py + scripts/run.py）：
+  - save_run(best_S, diagnostics)：在 outputs/ 下新建 YYYY-MM-DD_HHMM_N 文件夹
+    存 best_synthetic.csv（最优合成表）+ diagnostics.json（全部诊断）
+  - 重名加数字后缀从 0 起递增；numpy 类型可序列化
+  - 主循环保持只算不写，落盘由独立函数负责
+  - scripts/run.py：一键跑演化+落盘入口，参数写死在顶部常量（调参改这里）
+  - outputs/ 已在 .gitignore（结果不进 git，与 data/ 同类）
+  - 9 个测试通过（文件结构、内容一致性、后缀递增、真实运行）
+  - 当前全套测试：128 passed（新增 30 个测试）
 
 ## 文档要点（供后续参考，暂不实现）
 - 六条铁律：主线只做扩散演化生成器；每条记录每轮只产生一个下一状态；一轮内所有记录用同一份旧残差；先用 NumPy + 小玩具验证；每个随机实验固定种子；运行期不读真实私有答案。
