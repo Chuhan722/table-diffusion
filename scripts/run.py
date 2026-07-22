@@ -22,10 +22,10 @@ from table_diffevo.io import save_run
 
 
 # ========== 参数配置（调参改这里） ==========
-SCHEMA_PATH = "configs/schema.yaml"
-QUERY_PATH = "configs/measured_50query.json"
+SCHEMA_PATH = "configs/nltcs/schema.yaml"
+QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
-N_RECORDS = 300        # 合成表记录条数（与源数据一致）
+N_RECORDS = 16181      # 合成表记录条数（与源数据一致，nltcs train 集）
 N_ROUNDS = 100         # 最大轮数 T
 SEED = 0               # 随机种子（复现）
 
