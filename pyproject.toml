@@ -11,6 +11,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pyyaml",
+    "torch>=2.0",
 ]
 
 [project.optional-dependencies]

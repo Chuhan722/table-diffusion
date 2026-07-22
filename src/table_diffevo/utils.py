@@ -63,11 +63,21 @@ def set_seed(seed: int) -> None:
     - 应在实验最开始、任何随机操作之前调用一次
     - 如需对比多个种子的影响，每次实验开头用不同种子重新调用
     - 全局方式的缺点：模块间共享状态，可能互相影响；但足够简单直接
+    - 如果安装了 PyTorch，也会固定 torch 的随机种子（用于 GPU 加速时的确定性计算）
     """
     np.random.seed(seed)
     # 如果后续用到 Python 内置 random 模块，取消下面注释：
     # import random
     # random.seed(seed)
+
+    # 如果安装了 PyTorch，也固定 torch 的随机种子
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except ImportError:
+        pass  # PyTorch 未安装，跳过（不影响 NumPy 功能）
 
 
 def get_rng(seed: int) -> np.random.Generator:

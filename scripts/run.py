@@ -25,9 +25,12 @@ from table_diffevo.io import save_run
 SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
-N_RECORDS = 16181      # 合成表记录条数（与源数据一致，nltcs train 集）
+N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
 N_ROUNDS = 100         # 最大轮数 T
 SEED = 0               # 随机种子（复现）
+
+# 计算设备（新增）
+DEVICE = 'cuda'        # 'cuda'=GPU加速 | 'numpy'=原NumPy | 'cpu'=PyTorch CPU
 
 BETA = 1.0             # 选择强度（固定值）
 H = 0.8                # 邻域尺度（固定值）
@@ -48,6 +51,7 @@ def main():
         n_rounds=N_ROUNDS,
         seed=SEED,
         beta=BETA, h=H, rho=RHO, eta=ETA, mu=MU,
+        device=DEVICE,  # 新增
     )
 
     run_dir = save_run(best_S, diagnostics)
@@ -55,6 +59,7 @@ def main():
     # 结果摘要
     lh = diagnostics["loss_history"]
     print("演化完成")
+    print(f"  计算设备  : {DEVICE}")  # 新增
     print(f"  初始 loss : {lh[0]:.1f}")
     print(f"  最优 loss : {diagnostics['best_loss']:.1f}")
     print(f"  跑了轮数  : {diagnostics['rounds_run']}"
