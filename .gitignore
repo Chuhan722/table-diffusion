@@ -7,17 +7,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# 原始数据（公开供复现，但符合铁律 6：演化算法运行时不读取，只使用离线生成的查询 target）
-# data/ 下只放行以下文件，其余忽略
-data/*
-!data/nltcs/
-!data/test_300x10/
-data/nltcs/*
-!data/nltcs/*.csv
-!data/nltcs/*.data
-data/test_300x10/*
-!data/test_300x10/*.csv
-
 # 实验输出（保留目录占位）
 outputs/*
 !outputs/.gitkeep
