@@ -166,6 +166,9 @@ def run_evolution(
         loss = compute_loss(target, q)
         loss_history.append(loss)
 
+        # 逐轮进度
+        print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}", end="", flush=True)
+
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
         if np.all(residual == 0):
             stopped_early = True
@@ -200,8 +203,11 @@ def run_evolution(
             S = proposal
         # 否则保持原表（第一版不重试）
 
-        # 9. 更新历史最优
-        current_loss = compute_loss(target, evaluate_table(S, queries))
+        # 逐轮进度：显示接受状态
+        print(f" | 接受: {'是' if accepted else '否'}")
+
+        # 9. 更新历史最优（直接用已知 loss，不重复评价）
+        current_loss = proposal_loss if accepted else loss
         if current_loss < best_loss:
             best_loss = current_loss
             best_S = S.copy()
