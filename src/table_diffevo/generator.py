@@ -95,7 +95,7 @@ def init_synthetic_table(
         else:
             # 类别：合法值集合上均匀抽样
             idx = rng.integers(0, len(attr.values), size=n_records)
-            values = np.asarray(attr.values, dtype=object)
+            values = np.asarray(attr.values)  # 让 numpy 自动推断类型
             columns[attr.name] = values[idx]
 
     # 保持列顺序与 schema 一致
