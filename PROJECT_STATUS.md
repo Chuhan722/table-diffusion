@@ -133,6 +133,32 @@ nltcs 大数据（16181 条 × 1000 查询）100 轮实跑：loss 9.23e9 → 7.8
     （9.2290e9→8.6095e9→8.0076e9→7.4143e9→6.8412e9，best_loss 均 6.322e9），
     演化行为不变。注：float32(cuda) vs float64(numpy) 有极小数值差，保证的是
     "cuda 自身同种子可复现"，非"cuda 与 numpy 逐比特相同"（同距离上 GPU 之性质）。
+- diagnostics.json 记录实验参数（2026-07-23）：run_evolution 诊断新增 params 字段
+  （n_records/n_rounds/seed/beta/h/rho/eta/mu/tol/device/eval_method/batch_size），
+  以后看结果直接知道参数设置。另加 mean_relative_error 字段+终端输出（平均相对误差，
+  比原始 loss 更直观：loss 是绝对计数残差平方和，尺度大不代表效果差）。
+- 向量化+分块查询评价已实现（vectorized_eval.py + evolution.py + run.py，2026-07-23）：
+  - **动机**：GPU 采样优化后重测单轮分段，瓶颈已转移——稳态单轮 3.87s 中 pandas
+    查询评价占 93.4%（fitness 31% + 当前表评价 31% + 提案评价 31%），全是逐查询
+    调 pandas（1000 查询 = 1000 次 pandas 调用），距离/采样只剩 6%。
+  - **新增 vectorized_eval.evaluate_vectorized**：表转数值矩阵 X(N×属性)摆脱 pandas，
+    查询编译成定长数组（列/算子/值 padding 到最多 3 条件），一次掩码扫描同时派生
+    计数 q、残差、fitness。**分块**（batch_size，默认 256）按查询切列，一次算
+    (N,batch) 掩码、边算边派生边释放，内存 ∝ N×batch 不随查询数爆。
+  - **fitness 向量化关键**：F = M @ (w·residual) − (w·residual)·p，权重天然融入矩阵乘法
+    （w_j 权重接口保留，默认全 1）；残差经 objective.compute_residual 算（σ/κ 噪声
+    接口保留，默认 σ=0）。计数与旧路径**整数逐元素相同**，fitness numpy 逐位一致。
+  - **算子白名单+回退**：快路径支持 {==,>=,between}；含白名单外算子的查询自动走旧
+    evaluate_table 慢路径（保证正确），并打印提醒。以后加新算子：不改也能跑对（自动
+    回退），想加速再补白名单+向量化实现。
+  - **eval_method 开关**：run.py 新增 EVAL_METHOD（'vectorized'默认/'legacy'）+ BATCH_SIZE=256
+    常量。legacy 走旧 evaluate_table+compute_fitness 原路径，作正确性基准/对拍/应急。
+    旧 queries.py/fitness.py 一字未改。
+  - 新增 tests/test_vectorized_eval.py（19 个：计数逐元素相同、fitness 一致、非全1权重、
+    σ≠0噪声、batch_size 无关性、回退组正确+提醒、端到端 vectorized↔legacy 逐位一致），
+    全套 **176 passed**（157+19）。
+  - **nltcs 实测**：稳态单轮 3.87s → **0.40s（≈9.7×）**；单点评价（计数+fitness）
+    numpy 4.1×、cuda 167×。float32(cuda) vs float64(numpy) 极小差（既有性质）。
 
 ## 实验观察：nltcs 收敛分析（2026-07-22/23）
 
@@ -209,7 +235,9 @@ nltcs 大数据（16181 条 × 1000 查询）100 轮实跑：loss 9.23e9 → 7.8
 1. ~~**首选：采样(softmax + donor抽样)搬 GPU**（占 65%）~~ **✅ 已完成（2026-07-23）**：
    距离留显存、softmax+cumsum 在设备上算、随机数仍用 numpy 抽只回传索引。
    nltcs 单轮 49s→5.2s（≈9.4×），结果与 numpy 逐位一致。详见上文"已完成"。
-2. 次选（待讨论）：向量化查询评价（占 28%，5× 提速，分块控内存）。
+2. ~~次选：向量化查询评价~~ **✅ 已完成（2026-07-23）**：向量化+分块，稳态单轮
+   3.87s→0.40s（≈9.7×），计数逐元素相同、fitness numpy 逐位一致。详见上文"已完成"。
+   注：GPU 采样优化后重测，查询评价实占 93%（非早先估的 28%），是真正大头。
 3. 距离：已在 GPU，不再动。
 
 ## 文档要点（供后续参考，暂不实现）

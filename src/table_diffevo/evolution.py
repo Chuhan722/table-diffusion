@@ -42,6 +42,7 @@ from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.generator import init_synthetic_table
+from table_diffevo.vectorized_eval import evaluate_vectorized
 
 
 def run_evolution(
@@ -58,6 +59,8 @@ def run_evolution(
     mu: float = 0.01,
     tol: float = 1e-9,
     device: str = 'numpy',
+    eval_method: str = 'vectorized',
+    batch_size: int = 256,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -87,6 +90,16 @@ def run_evolution(
         - 'cuda': PyTorch GPU 加速
         - 'cpu': PyTorch CPU
         - 'numpy': 原始 NumPy 实现
+    eval_method : str, default 'vectorized'
+        查询评价方式（性能开关，不改变结果，仅改变算法实现）：
+        - 'vectorized'（默认，快）：向量化+分块评价，计数与 fitness 一次算完
+          （vectorized_eval.evaluate_vectorized）。当前表 S 只评价一次同时得到
+          计数和 fitness，消除了 legacy 路径 evaluate_table+compute_fitness 的重复。
+        - 'legacy'（慢）：原始逐查询 pandas 路径（evaluate_table + compute_fitness），
+          保留作正确性基准、对拍、应急。结果与 vectorized 一致（numpy 逐位相同）。
+    batch_size : int, default 256
+        向量化评价的分块大小（一次算多少个查询），仅 eval_method='vectorized' 生效。
+        内存峰值 ∝ N × batch_size。
 
     Returns
     -------
@@ -144,13 +157,49 @@ def run_evolution(
             f"target 长度 ({len(target)}) 与查询数 ({m}) 不一致"
         )
 
+    if eval_method not in ('vectorized', 'legacy'):
+        raise ValueError(
+            f"eval_method 必须是 'vectorized' 或 'legacy'，得到 {eval_method!r}"
+        )
+
     rng = np.random.default_rng(seed)
+
+    # ---- 查询评价分派：按 eval_method 选择向量化快路径或旧逐查询路径 ----
+    # 两条路径结果一致（numpy 逐位相同），仅实现与速度不同。旧路径保留作对拍/应急。
+    def _eval_counts(df):
+        """只算计数 q（用于 proposal、初始 best_loss）。"""
+        if eval_method == 'vectorized':
+            q_, _, _ = evaluate_vectorized(
+                df, queries, schema, batch_size=batch_size, device=device,
+                want_fitness=False, verbose=False,
+            )
+            return q_
+        return evaluate_table(df, queries)
+
+    def _eval_counts_resid_fitness(df):
+        """
+        一次同时算计数 q、残差、fitness（用于当前表 S，消除重复评价）。
+
+        vectorized：一次掩码扫描三样都出（计数、残差、fitness）。
+        legacy：原路径 evaluate_table → compute_residual → compute_fitness。
+        两条路径结果一致（numpy 逐位相同）。
+        """
+        if eval_method == 'vectorized':
+            return evaluate_vectorized(
+                df, queries, schema, target=target, n_records=n_records,
+                batch_size=batch_size, device=device, want_fitness=True,
+                verbose=False,
+            )
+        q_ = evaluate_table(df, queries)
+        r_ = compute_residual(target, q_, n_records)
+        f_ = compute_fitness(df, queries, r_, q_)
+        return q_, r_, f_
 
     # 初始表 S_0（不读源数据，只用 schema 合法域）
     S = init_synthetic_table(n_records, schema, rng)
 
     best_S = S.copy()
-    best_loss = compute_loss(target, evaluate_table(S, queries))
+    best_loss = compute_loss(target, _eval_counts(S))
 
     loss_history: List[float] = []
     accept_history: List[bool] = []
@@ -160,9 +209,8 @@ def run_evolution(
     for t in range(n_rounds):
         rounds_run = t + 1
 
-        # 1-2. 当前答案与残差
-        q = evaluate_table(S, queries)
-        residual = compute_residual(target, q, n_records)
+        # 1-2-4. 当前答案、残差、适应度（vectorized 一次掩码扫描全出；消除重复评价）
+        q, residual, fitness = _eval_counts_resid_fitness(S)
         loss = compute_loss(target, q)
         loss_history.append(loss)
 
@@ -177,9 +225,6 @@ def run_evolution(
                 best_loss = loss
                 best_S = S.copy()
             break
-
-        # 4. 适应度
-        fitness = compute_fitness(S, queries, residual, q)
 
         # 5-6. 距离 → 抽样概率 → 抽 donor
         # cuda/cpu：距离留在设备上（return_tensor），softmax 和抽样也在设备上接力，
@@ -198,8 +243,8 @@ def run_evolution(
             S, donors, schema, rho=rho, eta=eta, mu=mu, rng=rng
         )
 
-        # 8. 整代安全检查
-        proposal_q = evaluate_table(proposal, queries)
+        # 8. 整代安全检查（提案只需计数算 loss）
+        proposal_q = _eval_counts(proposal)
         proposal_loss = compute_loss(target, proposal_q)
         accepted = proposal_loss <= loss + tol
         accept_history.append(accepted)
@@ -216,12 +261,21 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
+    # 计算最终质量指标：平均相对误差（仅用于报告，不影响训练）
+    best_q = evaluate_table(best_S, queries)
+    abs_errors = np.abs(target - best_q)
+    # 避免除零：只对非零目标计算相对误差
+    mask = target > 0
+    relative_errors = abs_errors[mask] / target[mask]
+    mean_relative_error = float(np.mean(relative_errors))
+
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "accept_history": accept_history,
+        "mean_relative_error": mean_relative_error,
         "params": {
             "n_records": n_records,
             "n_rounds": n_rounds,
@@ -233,6 +287,8 @@ def run_evolution(
             "mu": mu,
             "tol": tol,
             "device": device,
+            "eval_method": eval_method,
+            "batch_size": batch_size,
         },
     }
 
