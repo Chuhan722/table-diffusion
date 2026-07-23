@@ -42,16 +42,17 @@
 候选集 = 全表（K=N=300），允许记录抽到自己（=本轮保持不变）。
 大规模时才用共享参考池（K=512）。
 """
-from typing import Optional
+from typing import Optional, Literal
 import numpy as np
 
 
 def compute_sampling_probs(
-    fitness: np.ndarray,
-    distances: np.ndarray,
+    fitness,
+    distances,
     beta: float = 1.0,
     h: float = 0.8,
-) -> np.ndarray:
+    device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
+):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
 
@@ -70,12 +71,18 @@ def compute_sampling_probs(
         - 越小越偏向近邻
         - 越大距离影响越弱
         - 文档建议：前期 0.8 → 后期 0.15（线性衰减）
+    device : {'cuda', 'cpu', 'numpy'}, default 'numpy'
+        计算设备：
+        - 'numpy'（默认）：原始 NumPy 实现，distances 为 np.ndarray，返回 np.ndarray
+        - 'cuda'/'cpu'：PyTorch 实现，softmax 在设备上算。distances 可为
+          留在设备上的 torch.Tensor（来自 distance 的 return_tensor=True），
+          fitness 为 np.ndarray；返回留在设备上的 torch.Tensor，供 sample_donors 接力。
 
     Returns
     -------
-    np.ndarray, shape (N, K), dtype float
+    np.ndarray 或 torch.Tensor, shape (N, K)
         抽样概率矩阵，probs[i, k] = Pr(J_i = k)
-        每行非负、和为 1
+        每行非负、和为 1。numpy 路径返回 array，torch 路径返回设备上的 tensor。
 
     Raises
     ------
@@ -111,6 +118,13 @@ def compute_sampling_probs(
     if h <= 0:
         raise ValueError(f"h 必须 > 0，得到 {h}")
 
+    # torch 路径：softmax 在设备上算（distances 可为设备上的 tensor）
+    if device in ('cuda', 'cpu'):
+        return _compute_sampling_probs_torch(fitness, distances, beta, h, device)
+    elif device != 'numpy':
+        raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
+
+    # numpy 路径（默认，原逻辑不变）
     fitness = np.asarray(fitness, dtype=float)
     distances = np.asarray(distances, dtype=float)
 
@@ -139,9 +153,71 @@ def compute_sampling_probs(
     return probs
 
 
+def _compute_sampling_probs_torch(fitness, distances, beta, h, device):
+    """
+    PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
+
+    - distances 可为留在设备上的 torch.Tensor（避免 GPU→CPU 搬运），
+      也接受 np.ndarray（会搬到设备）。
+    - fitness 为 np.ndarray（长度 K）。
+    - 返回留在设备上的 torch.Tensor (N, K)，供 sample_donors 接力。
+
+    注：GPU 用 float32，与 numpy 的 float64 会有极小数值差（精度问题，
+    非可复现问题）；同设备同输入下结果确定，torch 路径自身可复现。
+    """
+    try:
+        import torch
+    except ImportError:
+        raise ImportError(
+            "PyTorch not installed. Use device='numpy' or install PyTorch: "
+            "pip install torch"
+        )
+
+    if device == 'cuda' and not torch.cuda.is_available():
+        print("Warning: CUDA not available, falling back to CPU")
+        device = 'cpu'
+    dev = torch.device(device)
+
+    # distances：若已是 tensor 则原地用（可能已在设备上），否则转过去
+    if isinstance(distances, torch.Tensor):
+        dist_t = distances.to(dev).float()
+    else:
+        dist_t = torch.as_tensor(np.asarray(distances), dtype=torch.float32, device=dev)
+    if dist_t.ndim != 2:
+        raise ValueError(f"distances 必须是 2 维，得到 shape {tuple(dist_t.shape)}")
+
+    fitness_t = torch.as_tensor(
+        np.asarray(fitness, dtype=float), dtype=torch.float32, device=dev
+    )
+    if fitness_t.ndim != 1:
+        raise ValueError(f"fitness 必须是 1 维，得到 shape {tuple(fitness_t.shape)}")
+    N, K = dist_t.shape
+    if fitness_t.shape[0] != K:
+        raise ValueError(
+            f"fitness 长度 ({fitness_t.shape[0]}) 与 distances 列数 ({K}) 不一致"
+        )
+
+    # logit：ℓ_ik = β·F(z_k) − d² / (2h²)
+    distance_penalty = dist_t ** 2 / (2 * h ** 2)          # (N, K)
+    logits = fitness_term_broadcast(fitness_t, beta) - distance_penalty  # (N, K)
+
+    # softmax（减去行最大值做数值稳定），沿列（dim=1）
+    logits_shifted = logits - logits.max(dim=1, keepdim=True).values
+    exp_logits = torch.exp(logits_shifted)
+    probs = exp_logits / exp_logits.sum(dim=1, keepdim=True)
+
+    return probs
+
+
+def fitness_term_broadcast(fitness_t, beta):
+    """β·F(z_k) 广播成行向量 (1, K)，供逐行相减。"""
+    return (beta * fitness_t).unsqueeze(0)
+
+
 def sample_donors(
-    probs: np.ndarray,
+    probs,
     rng: Optional[np.random.Generator] = None,
+    device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
 ) -> np.ndarray:
     """
     对每条当前记录，按概率分布抽取一个参考记录索引。
@@ -154,12 +230,20 @@ def sample_donors(
     rng : np.random.Generator or None
         随机数生成器。None 时使用全局随机状态（不推荐，除非已 set_seed）
         推荐显式传入：rng = np.random.default_rng(seed)
+    device : {'cuda', 'cpu', 'numpy'}, default 'numpy'
+        计算设备：
+        - 'numpy'（默认）：原始 NumPy 实现，probs 为 np.ndarray
+        - 'cuda'/'cpu'：PyTorch 实现，cumsum 在设备上算。probs 可为
+          留在设备上的 torch.Tensor（来自 compute_sampling_probs 的 torch 路径）。
+          **随机数仍用 numpy 的 rng.uniform 抽**（保证与 numpy 路径消耗相同的
+          随机状态、同种子可复现），只把 N 个索引搬回 CPU 返回。
 
     Returns
     -------
     np.ndarray, shape (N,), dtype int
         每条记录抽到的候选索引，值在 [0, K)
         donor_indices[i] = J_i，即第 i 条记录抽到的候选编号
+        （torch 路径也返回 CPU 上的 np.ndarray，接口一致）
 
     Raises
     ------
@@ -169,6 +253,8 @@ def sample_donors(
     Notes
     -----
     **复现性（铁律 5）：** 使用固定种子的 rng 保证结果可复现。
+    torch 路径的随机数仍由 numpy rng 提供，GPU 只做确定性的 cumsum+比较，
+    因此同种子下 torch 路径自身可复现。
 
     **允许抽到自己：** 玩具阶段 K=N，记录可能抽到自己（索引相同），
     等价于本轮保持不变，这是合法的演化步骤。
@@ -191,6 +277,13 @@ def sample_donors(
     >>> np.array_equal(idx1, idx2)
     True
     """
+    # torch 路径：cumsum 在设备上算，随机数仍用 numpy rng（保可复现）
+    if device in ('cuda', 'cpu'):
+        return _sample_donors_torch(probs, rng, device)
+    elif device != 'numpy':
+        raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
+
+    # numpy 路径（默认，原逻辑不变）
     probs = np.asarray(probs, dtype=float)
 
     if probs.ndim != 2:
@@ -217,3 +310,60 @@ def sample_donors(
     indices = (u < cumprobs).argmax(axis=1)  # 找第一个 cumprob >= u 的位置
 
     return indices.astype(np.intp)
+
+
+def _sample_donors_torch(probs, rng, device):
+    """
+    PyTorch 实现：cumsum 在设备上算，抽样逻辑与 numpy 版逐行对应。
+
+    **可复现关键：** 随机数仍用 numpy 的 rng.uniform(size=N) 抽——与 numpy
+    路径消耗完全相同的随机状态，同种子 → 同随机数 → 同索引。GPU 只负责
+    确定性的 cumsum 和 (u < cumprobs).argmax 比较，不掺和随机。
+
+    只把最终 N 个索引搬回 CPU 返回（约 N×8 字节，极小），
+    避免把 (N,K) 概率矩阵搬回 CPU。
+    """
+    try:
+        import torch
+    except ImportError:
+        raise ImportError(
+            "PyTorch not installed. Use device='numpy' or install PyTorch: "
+            "pip install torch"
+        )
+
+    if device == 'cuda' and not torch.cuda.is_available():
+        print("Warning: CUDA not available, falling back to CPU")
+        device = 'cpu'
+    dev = torch.device(device)
+
+    if isinstance(probs, torch.Tensor):
+        probs_t = probs.to(dev).float()
+    else:
+        probs_t = torch.as_tensor(np.asarray(probs), dtype=torch.float32, device=dev)
+
+    if probs_t.ndim != 2:
+        raise ValueError(f"probs 必须是 2 维，得到 shape {tuple(probs_t.shape)}")
+
+    N, K = probs_t.shape
+
+    # 验证每行和为 1（容差放宽到 1e-4，float32 精度下 softmax 和会有微小偏差）
+    row_sums = probs_t.sum(dim=1)
+    if not torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-4):
+        raise ValueError(
+            f"probs 某些行和不为 1（容差 1e-4，float32）："
+            f"行和范围 [{row_sums.min().item():.6f}, {row_sums.max().item():.6f}]"
+        )
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # 随机数仍在 CPU 用 numpy 抽（保可复现），再搬到设备做比较
+    u = rng.uniform(size=N)
+    u_t = torch.as_tensor(u, dtype=torch.float32, device=dev).unsqueeze(1)  # (N, 1)
+
+    # 与 numpy 版一致：cumsum → 第一个 (u < cumprob) 的位置
+    cumprobs = probs_t.cumsum(dim=1)                       # (N, K)
+    # (u < cumprobs) 是布尔矩阵；argmax 取第一个 True 的列（int → argmax 取首个最大）
+    indices = (u_t < cumprobs).int().argmax(dim=1)        # (N,)
+
+    return indices.cpu().numpy().astype(np.intp)

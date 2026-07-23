@@ -181,12 +181,16 @@ def run_evolution(
         # 4. 适应度
         fitness = compute_fitness(S, queries, residual, q)
 
-        # 5. 距离矩阵（玩具阶段全对全，可选 GPU 加速）
-        distances = pairwise_block_distance(S, S, schema, device=device)
-
-        # 6. 抽 donor
-        probs = compute_sampling_probs(fitness, distances, beta=beta, h=h)
-        donor_idx = sample_donors(probs, rng)
+        # 5-6. 距离 → 抽样概率 → 抽 donor
+        # cuda/cpu：距离留在设备上（return_tensor），softmax 和抽样也在设备上接力，
+        #   数据不下显存，只回传 N 个 donor 索引；随机数仍用 numpy rng（保可复现）。
+        # numpy：原路径，全程 NumPy。
+        use_torch = device in ('cuda', 'cpu')
+        distances = pairwise_block_distance(
+            S, S, schema, device=device, return_tensor=use_torch
+        )
+        probs = compute_sampling_probs(fitness, distances, beta=beta, h=h, device=device)
+        donor_idx = sample_donors(probs, rng, device=device)
         donors = S.iloc[donor_idx].reset_index(drop=True)
 
         # 7. 靠近一步 → 提案

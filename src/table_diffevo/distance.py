@@ -53,7 +53,8 @@ def pairwise_block_distance(
     schema: Schema,
     weights: Optional[np.ndarray] = None,
     device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
-) -> np.ndarray:
+    return_tensor: bool = False,
+):
     """
     计算记录间的归一化 Hamming 距离（逐块，等权重）。
 
@@ -72,12 +73,19 @@ def pairwise_block_distance(
         - 'cuda': PyTorch GPU 加速（需要 CUDA 可用）
         - 'cpu': PyTorch CPU（用于调试 torch 实现）
         - 'numpy': 原始 NumPy 实现（默认，兼容性最好）
+    return_tensor : bool, default False
+        是否直接返回留在设备上的 torch.Tensor（仅 torch 路径有效）：
+        - False（默认）：返回 NumPy array（保持原行为，numpy 路径始终如此）
+        - True：torch 路径下不做 .cpu().numpy()，直接返回 GPU 上的 tensor，
+          供下游采样在同一设备上接力，避免 GPU→CPU 搬运。
+          numpy 路径忽略此参数（始终返回 array）。
 
     Returns
     -------
-    np.ndarray, shape (N, M), dtype float
+    np.ndarray 或 torch.Tensor, shape (N, M)
         距离矩阵，distances[i, j] = rows第i条和donor_rows第j条的距离
-        所有值在 [0, 1] 区间
+        所有值在 [0, 1] 区间。
+        return_tensor=True 且 torch 路径时返回 GPU tensor，否则返回 NumPy array。
 
     Raises
     ------
@@ -118,9 +126,12 @@ def pairwise_block_distance(
     """
     # 根据 device 选择实现
     if device == 'numpy':
+        # numpy 路径不支持返回 tensor，始终返回 array（保持原行为）
         return _pairwise_distance_numpy(rows, donor_rows, schema, weights)
     elif device in ('cuda', 'cpu'):
-        return _pairwise_distance_torch(rows, donor_rows, schema, weights, device)
+        return _pairwise_distance_torch(
+            rows, donor_rows, schema, weights, device, return_tensor
+        )
     else:
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
 def _pairwise_distance_numpy(
@@ -200,7 +211,8 @@ def _pairwise_distance_torch(
     schema: Schema,
     weights: Optional[np.ndarray] = None,
     device: str = 'cuda',
-) -> np.ndarray:
+    return_tensor: bool = False,
+):
     """
     PyTorch GPU 实现（20-50x 加速）。
 
@@ -208,7 +220,7 @@ def _pairwise_distance_torch(
     1. DataFrame → torch.tensor
     2. 数据移到 GPU
     3. 逐块计算距离（torch 操作，GPU 并行）
-    4. 转回 NumPy array（CPU）
+    4. 转回 NumPy array（CPU）；若 return_tensor=True 则保留在设备上直接返回 tensor
     """
     try:
         import torch
@@ -298,5 +310,9 @@ def _pairwise_distance_torch(
     # 归一化：除以权重总和
     total_distance /= weights_tensor.sum()
 
-    # 转回 NumPy（CPU）
+    # 若要求返回 tensor，保留在设备上（供下游采样接力，避免 GPU→CPU 搬运）
+    if return_tensor:
+        return total_distance
+
+    # 否则转回 NumPy（CPU），保持原行为
     return total_distance.cpu().numpy()
