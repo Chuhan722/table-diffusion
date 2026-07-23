@@ -222,6 +222,18 @@ def run_evolution(
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "accept_history": accept_history,
+        "params": {
+            "n_records": n_records,
+            "n_rounds": n_rounds,
+            "seed": seed,
+            "beta": beta,
+            "h": h,
+            "rho": rho,
+            "eta": eta,
+            "mu": mu,
+            "tol": tol,
+            "device": device,
+        },
     }
 
     return best_S.reset_index(drop=True), diagnostics
