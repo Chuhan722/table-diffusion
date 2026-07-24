@@ -57,6 +57,11 @@ class TestBasics:
         assert "rounds_run" in diag
         assert "stopped_early" in diag
         assert "accept_history" in diag
+        # 计时字段（扫描时估时/对比用）
+        assert "elapsed_sec" in diag
+        assert "sec_per_round" in diag
+        assert diag["elapsed_sec"] > 0
+        assert diag["sec_per_round"] > 0
 
     def test_target_length_mismatch(self):
         """target 长度与查询数不一致报错"""

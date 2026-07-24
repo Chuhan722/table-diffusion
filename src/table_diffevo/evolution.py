@@ -30,6 +30,7 @@
 - 全表同步：一轮内所有记录基于同一份 S_t 和同一份残差生成下一状态
 - 固定种子可复现：seed → np.random.default_rng
 """
+import time
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import pandas as pd
@@ -228,6 +229,10 @@ def run_evolution(
     stopped_early = False
     rounds_run = 0
 
+    # 计时：主循环墙钟时间（不含 init/最终指标），用于扫描时估时与"快且好"对比。
+    # 用 perf_counter（单调、不受系统时钟调整影响）。
+    loop_start = time.perf_counter()
+
     for t in range(n_rounds):
         rounds_run = t + 1
 
@@ -293,6 +298,9 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
+    elapsed_sec = time.perf_counter() - loop_start
+    sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
+
     # 计算最终质量指标：平均归一化 L1 误差（仅用于报告，不影响训练）
     # 对齐 AIM 论文的 workload error（方案 A：每条合取查询作为一个单元，权重取 1）：
     #     Error = (1 / (k·|D|)) · Σ_i |target_i − pred_i|
@@ -319,6 +327,8 @@ def run_evolution(
         "normalized_l1_median": normalized_l1_median,
         "normalized_l1_p90": normalized_l1_p90,
         "normalized_l1_max": normalized_l1_max,
+        "elapsed_sec": elapsed_sec,
+        "sec_per_round": sec_per_round,
         "params": {
             "n_records": n_records,
             "n_rounds": n_rounds,

@@ -126,13 +126,16 @@ def main():
               f" | P90: {diagnostics['normalized_l1_p90']:.4f}"
               f" | 最大: {diagnostics['normalized_l1_max']:.4f}")
         print(f"  跑了轮数  : {diagnostics['rounds_run']}"
-              f"（提前停止={diagnostics['stopped_early']}） | 已存: {run_dir}/")
+              f"（提前停止={diagnostics['stopped_early']}）"
+              f" | 耗时: {diagnostics['elapsed_sec']:.1f}s"
+              f"（{diagnostics['sec_per_round'] * 1000:.0f}ms/轮） | 已存: {run_dir}/")
 
         per_seed.append({
             "seed": seed,
             "run_dir": sub_name,
             "best_loss": diagnostics["best_loss"],
             "normalized_l1_error": diagnostics["normalized_l1_error"],
+            "elapsed_sec": diagnostics["elapsed_sec"],
         })
 
     # 汇总：均值±标准差/min/max，存 summary.json 并打印
@@ -144,6 +147,7 @@ def main():
             "best_loss": _aggregate([s["best_loss"] for s in per_seed]),
             "normalized_l1_error": _aggregate(
                 [s["normalized_l1_error"] for s in per_seed]),
+            "elapsed_sec": _aggregate([s["elapsed_sec"] for s in per_seed]),
         },
     }
     save_summary(parent_dir, summary)
@@ -155,6 +159,9 @@ def main():
           f"  (min {bl['min']:.3e}, max {bl['max']:.3e})")
     print(f"  平均归一化L1 : 均值 {nl['mean']:.4f} ± {nl['std']:.4f}"
           f"  (min {nl['min']:.4f}, max {nl['max']:.4f})")
+    el = summary["aggregate"]["elapsed_sec"]
+    print(f"  单种子耗时   : 均值 {el['mean']:.1f}s"
+          f"  (min {el['min']:.1f}s, max {el['max']:.1f}s)")
     print(f"  结果目录     : {parent_dir}/")
 
 
