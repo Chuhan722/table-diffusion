@@ -63,6 +63,7 @@ def run_evolution(
     batch_size: int = 256,
     init_method: str = 'random',
     marginals: Optional[Dict[str, Any]] = None,
+    log_every: int = 0,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -109,6 +110,10 @@ def run_evolution(
     marginals : Dict or None, default None
         1-way 边缘测量（marginals.load_marginals 的返回值）。
         仅当 init_method='marginal' 时生效；为 None 时忽略。
+    log_every : int, default 0
+        逐轮进度打印频率：
+        - 0（默认）：每轮都打印（向后兼容旧行为）
+        - >0：每 log_every 轮打印一次（首轮与末轮总会打印），长实验更清爽
 
     Returns
     -------
@@ -231,11 +236,19 @@ def run_evolution(
         loss = compute_loss(target, q)
         loss_history.append(loss)
 
-        # 逐轮进度
-        print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}", end="", flush=True)
+        # 是否在本轮打印进度：log_every=0 每轮打印；否则每 log_every 轮，
+        # 且首轮和末轮总打印（长实验也能看到起点和终点）。
+        do_log = (
+            log_every <= 0
+            or t == 0
+            or t == n_rounds - 1
+            or (t + 1) % log_every == 0
+        )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
         if np.all(residual == 0):
+            if do_log:
+                print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
             # 达标的当前表即最优
             if loss < best_loss:
@@ -269,8 +282,10 @@ def run_evolution(
             S = proposal
         # 否则保持原表（第一版不重试）
 
-        # 逐轮进度：显示接受状态
-        print(f" | 接受: {'是' if accepted else '否'}")
+        # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
+        if do_log:
+            print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}"
+                  f" | 接受: {'是' if accepted else '否'}")
 
         # 9. 更新历史最优（直接用已知 loss，不重复评价）
         current_loss = proposal_loss if accepted else loss

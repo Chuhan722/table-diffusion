@@ -29,6 +29,7 @@ QUERY_PATH = "configs/nltcs/measured_1000query.json"
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
 N_ROUNDS = 1000        # 最大轮数 T
 SEED = 0               # 随机种子（复现）
+LOG_EVERY = 50         # 逐轮进度打印频率（0=每轮 | >0=每N轮，长实验建议50）
 
 # 计算设备（新增）
 DEVICE = 'cuda'        # 'cuda'=GPU加速 | 'numpy'=原NumPy | 'cpu'=PyTorch CPU
@@ -74,6 +75,7 @@ def main():
         batch_size=BATCH_SIZE,
         init_method=INIT_METHOD,
         marginals=marginals,
+        log_every=LOG_EVERY,
     )
 
     run_dir = save_run(best_S, diagnostics)
