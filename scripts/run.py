@@ -1,7 +1,7 @@
 """
 扩散演化运行入口
 
-一键跑一次演化并自动落盘：
+一键跑一组多种子演化并自动落盘：
     conda run -p ./.conda python scripts/run.py
 
 调参方式：直接修改下面"参数配置"区的常量，改完再跑。
@@ -9,16 +9,19 @@
 
 流程：
 1. 加载 schema、queries，从 queries 取 target（各查询真实计数）
-2. run_evolution 跑演化 → best_S, diagnostics
-3. save_run 落盘到 outputs/<时间_编号>/
-4. 打印结果摘要
+2. 建日期时间父文件夹 outputs/YYYY-MM-DD_HHMM/
+3. 对 SEEDS 里每个种子跑一遍 run_evolution，各存父/{顺序}-{种子}/
+4. 汇总各种子的 best_loss / 归一化L1（均值±std/min/max），
+   存父/summary.json 并打印
 """
+import os
+
 import numpy as np
 
 from table_diffevo.schema import load_schema
 from table_diffevo.queries import load_queries
 from table_diffevo.evolution import run_evolution
-from table_diffevo.io import save_run
+from table_diffevo.io import save_run, create_parent_dir, save_summary
 from table_diffevo.marginals import load_marginals
 
 
@@ -28,7 +31,7 @@ QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
 N_ROUNDS = 1000        # 最大轮数 T
-SEED = 0               # 随机种子（复现）
+SEEDS = [0, 1, 2]      # 随机种子列表（多种子跑，看结果波动；单种子写 [0] 即可）
 LOG_EVERY = 50         # 逐轮进度打印频率（0=每轮 | >0=每N轮，长实验建议50）
 
 # 计算设备（新增）
@@ -54,6 +57,32 @@ MU = 0.01              # 变异率（固定值）
 # ===========================================
 
 
+def _run_params():
+    """本次运行的参数快照，写入 summary.json 便于回溯。"""
+    return {
+        "schema_path": SCHEMA_PATH,
+        "query_path": QUERY_PATH,
+        "n_records": N_RECORDS,
+        "n_rounds": N_ROUNDS,
+        "device": DEVICE,
+        "eval_method": EVAL_METHOD,
+        "batch_size": BATCH_SIZE,
+        "init_method": INIT_METHOD,
+        "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
+    }
+
+
+def _aggregate(values):
+    """一组标量的均值/标准差/最小/最大。"""
+    arr = np.array(values, dtype=float)
+    return {
+        "mean": float(arr.mean()),
+        "std": float(arr.std()),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+    }
+
+
 def main():
     schema = load_schema(SCHEMA_PATH)
     queries = load_queries(QUERY_PATH)
@@ -64,37 +93,66 @@ def main():
     if INIT_METHOD == 'marginal':
         marginals = load_marginals(MARGINALS_PATH)
 
-    best_S, diagnostics = run_evolution(
-        target, queries, schema,
-        n_records=N_RECORDS,
-        n_rounds=N_ROUNDS,
-        seed=SEED,
-        beta=BETA, h=H, rho=RHO, eta=ETA, mu=MU,
-        device=DEVICE,
-        eval_method=EVAL_METHOD,
-        batch_size=BATCH_SIZE,
-        init_method=INIT_METHOD,
-        marginals=marginals,
-        log_every=LOG_EVERY,
-    )
+    # 多种子：统一套一层日期时间父文件夹，各种子存 父/{顺序}-{种子}/
+    parent_dir = create_parent_dir()
+    per_seed = []
 
-    run_dir = save_run(best_S, diagnostics)
+    for i, seed in enumerate(SEEDS):
+        print(f"\n===== 种子 {seed}（{i + 1}/{len(SEEDS)}）=====")
+        best_S, diagnostics = run_evolution(
+            target, queries, schema,
+            n_records=N_RECORDS,
+            n_rounds=N_ROUNDS,
+            seed=seed,
+            beta=BETA, h=H, rho=RHO, eta=ETA, mu=MU,
+            device=DEVICE,
+            eval_method=EVAL_METHOD,
+            batch_size=BATCH_SIZE,
+            init_method=INIT_METHOD,
+            marginals=marginals,
+            log_every=LOG_EVERY,
+        )
+        sub_name = f"{i}-{seed}"
+        run_dir = save_run(best_S, diagnostics,
+                           run_dir=os.path.join(parent_dir, sub_name))
 
-    # 结果摘要
-    lh = diagnostics["loss_history"]
-    print("演化完成")
-    print(f"  初始化方式: {INIT_METHOD}")
-    print(f"  计算设备  : {DEVICE}")
-    print(f"  评价方式  : {EVAL_METHOD}（batch={BATCH_SIZE}）")
-    print(f"  初始 loss : {lh[0]:.1f}")
-    print(f"  最优 loss : {diagnostics['best_loss']:.1f}")
-    print(f"  平均归一化L1: {diagnostics['normalized_l1_error']:.4f}")
-    print(f"    中位: {diagnostics['normalized_l1_median']:.4f}"
-          f" | P90: {diagnostics['normalized_l1_p90']:.4f}"
-          f" | 最大: {diagnostics['normalized_l1_max']:.4f}")
-    print(f"  跑了轮数  : {diagnostics['rounds_run']}"
-          f"（提前停止={diagnostics['stopped_early']}）")
-    print(f"  结果已保存: {run_dir}/")
+        lh = diagnostics["loss_history"]
+        print(f"  初始 loss : {lh[0]:.1f}  →  最优 loss : {diagnostics['best_loss']:.1f}")
+        print(f"  平均归一化L1: {diagnostics['normalized_l1_error']:.4f}"
+              f" | 中位: {diagnostics['normalized_l1_median']:.4f}"
+              f" | P90: {diagnostics['normalized_l1_p90']:.4f}"
+              f" | 最大: {diagnostics['normalized_l1_max']:.4f}")
+        print(f"  跑了轮数  : {diagnostics['rounds_run']}"
+              f"（提前停止={diagnostics['stopped_early']}） | 已存: {run_dir}/")
+
+        per_seed.append({
+            "seed": seed,
+            "run_dir": sub_name,
+            "best_loss": diagnostics["best_loss"],
+            "normalized_l1_error": diagnostics["normalized_l1_error"],
+        })
+
+    # 汇总：均值±标准差/min/max，存 summary.json 并打印
+    summary = {
+        "params": _run_params(),
+        "seeds": list(SEEDS),
+        "per_seed": per_seed,
+        "aggregate": {
+            "best_loss": _aggregate([s["best_loss"] for s in per_seed]),
+            "normalized_l1_error": _aggregate(
+                [s["normalized_l1_error"] for s in per_seed]),
+        },
+    }
+    save_summary(parent_dir, summary)
+
+    bl = summary["aggregate"]["best_loss"]
+    nl = summary["aggregate"]["normalized_l1_error"]
+    print(f"\n===== 多种子汇总（{len(SEEDS)} 个种子, {N_ROUNDS} 轮, {INIT_METHOD} init）=====")
+    print(f"  最优 loss    : 均值 {bl['mean']:.3e} ± {bl['std']:.2e}"
+          f"  (min {bl['min']:.3e}, max {bl['max']:.3e})")
+    print(f"  平均归一化L1 : 均值 {nl['mean']:.4f} ± {nl['std']:.4f}"
+          f"  (min {nl['min']:.4f}, max {nl['max']:.4f})")
+    print(f"  结果目录     : {parent_dir}/")
 
 
 if __name__ == "__main__":
