@@ -27,7 +27,7 @@ SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
-N_ROUNDS = 10000       # 最大轮数 T
+N_ROUNDS = 1000        # 最大轮数 T
 SEED = 0               # 随机种子（复现）
 
 # 计算设备（新增）
@@ -41,7 +41,7 @@ EVAL_METHOD = 'vectorized'
 BATCH_SIZE = 256
 
 # 初始化方式（新增）
-INIT_METHOD = 'random'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始化
+INIT_METHOD = 'marginal'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始化
 # 边缘测量文件（仅 INIT_METHOD='marginal' 时生效）
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
@@ -86,7 +86,7 @@ def main():
     print(f"  评价方式  : {EVAL_METHOD}（batch={BATCH_SIZE}）")
     print(f"  初始 loss : {lh[0]:.1f}")
     print(f"  最优 loss : {diagnostics['best_loss']:.1f}")
-    print(f"  平均相对误差: {diagnostics['mean_relative_error']:.1%}")
+    print(f"  平均归一化L1: {diagnostics['normalized_l1_error']:.4f}")
     print(f"  跑了轮数  : {diagnostics['rounds_run']}"
           f"（提前停止={diagnostics['stopped_early']}）")
     print(f"  结果已保存: {run_dir}/")

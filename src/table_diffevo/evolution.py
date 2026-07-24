@@ -278,13 +278,15 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
-    # 计算最终质量指标：平均相对误差（仅用于报告，不影响训练）
+    # 计算最终质量指标：平均归一化 L1 误差（仅用于报告，不影响训练）
+    # 对齐 AIM 论文的 workload error（方案 A：每条合取查询作为一个单元，权重取 1）：
+    #     Error = (1 / (k·|D|)) · Σ_i |target_i − pred_i|
+    #           = mean(|target − pred|) / |D|
+    # 分母是记录数 |D|（而非逐查询除以自身的 target），因此不会被小 target 查询
+    # 的极端相对误差拉高，可跨数据规模比较。
     best_q = evaluate_table(best_S, queries)
     abs_errors = np.abs(target - best_q)
-    # 避免除零：只对非零目标计算相对误差
-    mask = target > 0
-    relative_errors = abs_errors[mask] / target[mask]
-    mean_relative_error = float(np.mean(relative_errors))
+    normalized_l1_error = float(np.mean(abs_errors) / n_records)
 
     diagnostics = {
         "loss_history": loss_history,
@@ -292,7 +294,7 @@ def run_evolution(
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "accept_history": accept_history,
-        "mean_relative_error": mean_relative_error,
+        "normalized_l1_error": normalized_l1_error,
         "params": {
             "n_records": n_records,
             "n_rounds": n_rounds,
