@@ -61,6 +61,8 @@ def run_evolution(
     device: str = 'numpy',
     eval_method: str = 'vectorized',
     batch_size: int = 256,
+    init_method: str = 'random',
+    marginals: Optional[Dict[str, Any]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -100,6 +102,13 @@ def run_evolution(
     batch_size : int, default 256
         向量化评价的分块大小（一次算多少个查询），仅 eval_method='vectorized' 生效。
         内存峰值 ∝ N × batch_size。
+    init_method : str, default 'random'
+        初始化方法：
+        - 'random'（默认）：纯随机初始化（每格从 schema 合法域均匀抽样）
+        - 'marginal'：按 1-way 边缘确定性初始化（需同时提供 marginals 参数）
+    marginals : Dict or None, default None
+        1-way 边缘测量（marginals.load_marginals 的返回值）。
+        仅当 init_method='marginal' 时生效；为 None 时忽略。
 
     Returns
     -------
@@ -162,6 +171,11 @@ def run_evolution(
             f"eval_method 必须是 'vectorized' 或 'legacy'，得到 {eval_method!r}"
         )
 
+    if init_method not in ('random', 'marginal'):
+        raise ValueError(
+            f"init_method 必须是 'random' 或 'marginal'，得到 {init_method!r}"
+        )
+
     rng = np.random.default_rng(seed)
 
     # ---- 查询评价分派：按 eval_method 选择向量化快路径或旧逐查询路径 ----
@@ -196,7 +210,10 @@ def run_evolution(
         return q_, r_, f_
 
     # 初始表 S_0（不读源数据，只用 schema 合法域）
-    S = init_synthetic_table(n_records, schema, rng)
+    if init_method == 'marginal':
+        S = init_synthetic_table(n_records, schema, rng, marginals=marginals)
+    else:
+        S = init_synthetic_table(n_records, schema, rng)
 
     best_S = S.copy()
     best_loss = compute_loss(target, _eval_counts(S))
@@ -289,6 +306,7 @@ def run_evolution(
             "device": device,
             "eval_method": eval_method,
             "batch_size": batch_size,
+            "init_method": init_method,
         },
     }
 

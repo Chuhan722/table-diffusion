@@ -1,0 +1,183 @@
+{
+  "dataset": "nltcs",
+  "n_records": 16181,
+  "queries_source": "configs/nltcs/measured_1000query.json",
+  "attributes": {
+    "attr_1": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13816,
+        2365
+      ]
+    },
+    "attr_2": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12756,
+        3425
+      ]
+    },
+    "attr_3": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12424,
+        3757
+      ]
+    },
+    "attr_4": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        8215,
+        7966
+      ]
+    },
+    "attr_5": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        7176,
+        9005
+      ]
+    },
+    "attr_6": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        8321,
+        7860
+      ]
+    },
+    "attr_7": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        11995,
+        4186
+      ]
+    },
+    "attr_8": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        10441,
+        5740
+      ]
+    },
+    "attr_9": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12668,
+        3513
+      ]
+    },
+    "attr_10": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        5191,
+        10990
+      ]
+    },
+    "attr_11": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12162,
+        4019
+      ]
+    },
+    "attr_12": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        9073,
+        7108
+      ]
+    },
+    "attr_13": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12838,
+        3343
+      ]
+    },
+    "attr_14": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        9689,
+        6492
+      ]
+    },
+    "attr_15": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        11758,
+        4423
+      ]
+    },
+    "attr_16": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14487,
+        1694
+      ]
+    }
+  }
+}

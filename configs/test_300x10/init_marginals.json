@@ -1,0 +1,162 @@
+{
+  "dataset": "test_300x10",
+  "n_records": 300,
+  "queries_source": "configs/test_300x10/measured_50query.json",
+  "attributes": {
+    "age": {
+      "type": "numeric",
+      "bins": [
+        [
+          18,
+          24
+        ],
+        [
+          25,
+          34
+        ],
+        [
+          35,
+          49
+        ],
+        [
+          50,
+          64
+        ],
+        [
+          65,
+          100
+        ]
+      ],
+      "counts": [
+        24,
+        57,
+        99,
+        81,
+        39
+      ]
+    },
+    "education": {
+      "type": "categorical",
+      "values": [
+        "high_school",
+        "vocational",
+        "bachelor",
+        "postgraduate"
+      ],
+      "counts": [
+        73,
+        81,
+        100,
+        46
+      ]
+    },
+    "employment": {
+      "type": "categorical",
+      "values": [
+        "unemployed",
+        "student",
+        "employed",
+        "self_employed",
+        "retired"
+      ],
+      "counts": [
+        22,
+        17,
+        188,
+        30,
+        43
+      ]
+    },
+    "income": {
+      "type": "categorical",
+      "values": [
+        "low",
+        "middle",
+        "high"
+      ],
+      "counts": [
+        96,
+        159,
+        45
+      ]
+    },
+    "marital": {
+      "type": "categorical",
+      "values": [
+        "single",
+        "married",
+        "separated"
+      ],
+      "counts": [
+        98,
+        160,
+        42
+      ]
+    },
+    "children": {
+      "type": "categorical",
+      "values": [
+        "0",
+        "1",
+        "2_plus"
+      ],
+      "counts": [
+        104,
+        62,
+        134
+      ]
+    },
+    "housing": {
+      "type": "categorical",
+      "values": [
+        "rent",
+        "mortgage",
+        "owned"
+      ],
+      "counts": [
+        100,
+        87,
+        113
+      ]
+    },
+    "vehicle": {
+      "type": "categorical",
+      "values": [
+        "0",
+        "1",
+        "2_plus"
+      ],
+      "counts": [
+        109,
+        140,
+        51
+      ]
+    },
+    "health": {
+      "type": "categorical",
+      "values": [
+        "poor",
+        "fair",
+        "good"
+      ],
+      "counts": [
+        39,
+        93,
+        168
+      ]
+    },
+    "region": {
+      "type": "categorical",
+      "values": [
+        "urban",
+        "suburban",
+        "rural"
+      ],
+      "counts": [
+        137,
+        96,
+        67
+      ]
+    }
+  }
+}

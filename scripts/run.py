@@ -19,6 +19,7 @@ from table_diffevo.schema import load_schema
 from table_diffevo.queries import load_queries
 from table_diffevo.evolution import run_evolution
 from table_diffevo.io import save_run
+from table_diffevo.marginals import load_marginals
 
 
 # ========== 参数配置（调参改这里） ==========
@@ -26,7 +27,7 @@ SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
-N_ROUNDS = 1000        # 最大轮数 T
+N_ROUNDS = 10000       # 最大轮数 T
 SEED = 0               # 随机种子（复现）
 
 # 计算设备（新增）
@@ -38,6 +39,11 @@ EVAL_METHOD = 'vectorized'
 # 向量化评价的分块大小（一次算多少个查询），仅 EVAL_METHOD='vectorized' 生效
 # 内存峰值 ∝ N × BATCH_SIZE；越大越快但越吃内存
 BATCH_SIZE = 256
+
+# 初始化方式（新增）
+INIT_METHOD = 'random'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始化
+# 边缘测量文件（仅 INIT_METHOD='marginal' 时生效）
+MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
 BETA = 1.0             # 选择强度（固定值）
 H = 0.8                # 邻域尺度（固定值）
@@ -52,6 +58,11 @@ def main():
     queries = load_queries(QUERY_PATH)
     target = np.array([q["result"] for q in queries])
 
+    # 加载边缘测量（仅 init_method='marginal' 时需要）
+    marginals = None
+    if INIT_METHOD == 'marginal':
+        marginals = load_marginals(MARGINALS_PATH)
+
     best_S, diagnostics = run_evolution(
         target, queries, schema,
         n_records=N_RECORDS,
@@ -61,6 +72,8 @@ def main():
         device=DEVICE,
         eval_method=EVAL_METHOD,
         batch_size=BATCH_SIZE,
+        init_method=INIT_METHOD,
+        marginals=marginals,
     )
 
     run_dir = save_run(best_S, diagnostics)
@@ -68,6 +81,7 @@ def main():
     # 结果摘要
     lh = diagnostics["loss_history"]
     print("演化完成")
+    print(f"  初始化方式: {INIT_METHOD}")
     print(f"  计算设备  : {DEVICE}")
     print(f"  评价方式  : {EVAL_METHOD}（batch={BATCH_SIZE}）")
     print(f"  初始 loss : {lh[0]:.1f}")
