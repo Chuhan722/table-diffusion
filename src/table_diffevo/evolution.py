@@ -287,6 +287,12 @@ def run_evolution(
     best_q = evaluate_table(best_S, queries)
     abs_errors = np.abs(target - best_q)
     normalized_l1_error = float(np.mean(abs_errors) / n_records)
+    # 分布统计：逐查询归一化误差 |target−pred|/N 的中位/P90/最大。
+    # 均值易被少数难查询拉高，分布能看清"典型查询"和"最差查询"的差距。
+    per_query_nl1 = abs_errors / n_records
+    normalized_l1_median = float(np.median(per_query_nl1))
+    normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
+    normalized_l1_max = float(np.max(per_query_nl1))
 
     diagnostics = {
         "loss_history": loss_history,
@@ -295,6 +301,9 @@ def run_evolution(
         "stopped_early": stopped_early,
         "accept_history": accept_history,
         "normalized_l1_error": normalized_l1_error,
+        "normalized_l1_median": normalized_l1_median,
+        "normalized_l1_p90": normalized_l1_p90,
+        "normalized_l1_max": normalized_l1_max,
         "params": {
             "n_records": n_records,
             "n_rounds": n_rounds,

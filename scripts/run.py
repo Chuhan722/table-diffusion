@@ -87,6 +87,9 @@ def main():
     print(f"  初始 loss : {lh[0]:.1f}")
     print(f"  最优 loss : {diagnostics['best_loss']:.1f}")
     print(f"  平均归一化L1: {diagnostics['normalized_l1_error']:.4f}")
+    print(f"    中位: {diagnostics['normalized_l1_median']:.4f}"
+          f" | P90: {diagnostics['normalized_l1_p90']:.4f}"
+          f" | 最大: {diagnostics['normalized_l1_max']:.4f}")
     print(f"  跑了轮数  : {diagnostics['rounds_run']}"
           f"（提前停止={diagnostics['stopped_early']}）")
     print(f"  结果已保存: {run_dir}/")
