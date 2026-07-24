@@ -42,15 +42,18 @@ QUERY_PATH = "configs/nltcs/measured_1000query.json"
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
 N_RECORDS = 16181
-N_ROUNDS = 1000        # 固定 1000 轮横比
-SEEDS = [0, 1, 2]
+N_ROUNDS = 1000        # 横比轮数（改这一个数即可，全脚本自动跟随；注意这不是查询条数）
+SEEDS = [0, 1, 2]      # 敏感性扫描建议 ≥3 种子；单种子时 std 恒为 0，波动信息消失，
+                       # 参数间差异可能只是运气，慎用来下结论。单种子只适合快速试流程。
 LOG_EVERY = 100        # 扫描时打印稀疏些
 DEVICE = 'cuda'
 EVAL_METHOD = 'vectorized'
 BATCH_SIZE = 256
 INIT_METHOD = 'marginal'
 
-# baseline（镜像 run.py 当前默认值）
+# baseline：其余参数固定在哪里的锚点。
+# ⚠️ 需与 run.py 的 BETA/H/RHO/ETA/MU 保持一致——改了 run.py 默认值记得同步这里，
+#    否则两个脚本的"基准"对不上。故意分开是为了扫描结果不受 run.py 临时改动影响。
 BASELINE = {
     "beta": 1.0,
     "h": 0.8,
