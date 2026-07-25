@@ -25,6 +25,101 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-07-25）
+
+### 距离项函数形式对比实验（squared / linear / none）
+**结论：LINEAR（拉普拉斯核 exp(-d/h)）在大数据上显著优于 SQUARED（高斯核 exp(-d²/2h²)）和 NONE（无距离）。**
+
+#### 实验设计
+- **实现**：在 `sampling.py` 新增 `distance_mode` 参数（'squared'/'linear'/'none'），
+  修改距离惩罚项计算：squared = d²/(2h²)、linear = d/h、none = 0。
+  `evolution.py` 传递参数并记录到 diagnostics。新增 `scripts/compare_distance_modes.py`
+  自动化对比脚本（3 种模式 × 3 个种子，生成汇总对比）。
+- **固定参数**：init_method=marginal, β=1.0, h=0.8, ρ=0.01, η=0.5, μ=0.01。
+- **数据集**：test_300x10（300 条×100 轮）和 nltcs（16181 条×1000 轮）。
+
+#### 小数据结果（test_300x10, 100 轮）
+| 模式 | 最优 Loss | 归一化 L1 | 相对差异 |
+|------|-----------|-----------|---------|
+| NONE | 1216 ± 117 | 0.0162 ± 0.0008 | baseline |
+| LINEAR | 1324 ± 89 | 0.0170 ± 0.0005 | +8.9% |
+| SQUARED | 1328 ± 161 | 0.0172 ± 0.0013 | +9.2% |
+
+**小数据观察**：NONE 最优，距离项似乎有害（起点 loss 约 2000）。
+
+#### 大数据结果（nltcs, 1000 轮）—— **与小数据相反**
+| 模式 | 最优 Loss | 归一化 L1 | 相对差异 |
+|------|-----------|-----------|---------|
+| **LINEAR** | **1.135e8 ± 1.10e6** | **0.0242 ± 0.00016** | **baseline (最优)** |
+| SQUARED | 1.434e8 ± 3.65e6 | 0.0276 ± 0.00035 | +26.3% ↓ |
+| NONE | 1.835e8 ± 2.34e6 | 0.0315 ± 0.00024 | +61.7% ↓ |
+
+**大数据核心发现**：
+1. **LINEAR 显著最优**：loss 比 SQUARED 低 20.9%，比 NONE 低 38.1%；标准差最小（最稳定）。
+2. **NONE 最差**：与小数据"最优"结论完全矛盾，说明大数据下距离约束确实有用。
+3. **SQUARED 居中**：比 LINEAR 差但比 NONE 好，暗示"平方衰减过快"限制了远距离学习。
+4. **小数据结论不可靠**：300 条数据量太小，距离/适应度的量级关系与大数据不同。
+
+#### 为什么 LINEAR 更好？（初步假设，**后被诊断数据部分推翻，见下**）
+- ~~**高斯核（d²）衰减过快**：远距离记录被过度惩罚，即使它们适应度高也难被选中。~~
+- ~~**拉普拉斯核（d）衰减更缓**：允许从较远的高适应度记录学习。~~
+- **NONE 无约束**：完全随适应度选择，缺乏"就近"平滑，收敛质量差。
+
+#### 验证 1：统计显著性（现有 3 种子）
+对 1000 轮 3 种子结果做 t 检验（scipy.stats.ttest_ind），三组两两差异全部高度显著：
+- LINEAR vs SQUARED：p=0.000377；LINEAR vs NONE：p=0.000003；SQUARED vs NONE：p=0.000198。
+- 即便只有 3 种子，差异也远超随机波动。新增 `scripts/analyze_significance.py`。
+
+#### 验证 2：机制诊断（donor 适应度/距离，种子0，1000 轮）—— **推翻初步假设**
+在 `evolution.py` 记录每轮选中 donor 的平均适应度和平均距离（`donor_fitness_history`/
+`donor_distance_history`），新增 `scripts/analyze_donor_diagnostics.py`。结果与假设**相反**：
+
+| 指标 | SQUARED | LINEAR | |
+|------|---------|--------|---|
+| 平均 donor 适应度 | 2.393 | 2.091 | LINEAR **低 12.6%** |
+| 平均 donor 距离 | 0.383 | 0.363 | LINEAR **更近** |
+| 最终 loss | 1.43e8 | 1.15e8 | LINEAR **好 20%** |
+
+- LINEAR 选的 donor **适应度更低、距离更近**，却收敛更好——"选到更高适应度的远 donor"假设不成立。
+- **接受率几乎相同**（总 54.5% vs 55.9%；末 200 轮 21.5% vs 22.5%）——"LINEAR 提案更易接受"也不成立。
+- **真机制**：接受步的平均 loss 下降 LINEAR 略大（1.035e6 vs 1.011e6）+ 接受次数略多（559 vs 545），
+  累积成 ~5% 总下降差。推测高斯核权重过于"尖锐"（超线性惩罚集中在少数近邻），拉普拉斯核权重更"平缓"、
+  donor 更多样，长程下探索的复利效应胜出。**注：单种子定性观察，非严格结论。**
+
+#### 验证 3：加长到 1500 轮（3 种子）—— **纠正"SQUARED 卡死"判断**
+| 模式 | 最优 Loss（1500轮） | 归一化 L1 | vs SQUARED |
+|------|-----------|-----------|---------|
+| **LINEAR** | **1.034e8 ± 5.16e5** | **0.0230** | baseline（优 20.5%）|
+| SQUARED | 1.301e8 ± 1.20e6 | 0.0262 | — |
+
+- 显著性 p=0.000009；LINEAR 优势 20.5%，与 1000 轮的 20.9% **几乎一致**（两曲线平行下降，非追赶）。
+- **纠正**：此前诊断说"SQUARED 900 轮后卡死"是误判。1500 轮显示 SQUARED 末 500 轮仍降 8.8%、
+  末 100 轮降 2.28%，只是暂时平台期非真收敛。LINEAR 优势来自**每步都略优的累积**，非"避免卡死"。
+- **两组都未收敛**：末 100 轮都还在以 ~2% 速度降，加轮数（2000+）应继续平行下降、LINEAR 维持 ~20% 优势。
+
+#### 代码变更
+- `sampling.py`：`compute_sampling_probs` 和 `_compute_sampling_probs_torch` 新增 `distance_mode` 参数，
+  根据模式计算距离惩罚（修复 bug：none 模式需用 `np.zeros_like(distances)` 而非标量 0.0）。
+- `evolution.py`：`run_evolution` 新增 `distance_mode` 参数，传递给抽样并记录到 `diagnostics["params"]`；
+  新增 `donor_fitness_history`/`donor_distance_history` 诊断字段。
+- 新增 `scripts/compare_distance_modes.py`：自动化实验脚本，支持多数据集/多种子/多模式对比，
+  生成 `outputs/distance_mode_experiment_YYYY-MM-DD_HHMM/{模式}/summary.json` 和总对比 `comparison.json`。
+- 新增 `scripts/analyze_significance.py`（显著性检验）、`scripts/analyze_donor_diagnostics.py`（机制诊断）、
+  `scripts/run_donor_diagnostics.py`（单种子诊断实验）。
+- **默认值改动**（2026-07-25 晚）：基于实验证据，将 `distance_mode` 默认从 'squared' 改为 'linear'。
+  向后兼容（显式传 'squared' 仍可用），不显式指定则自动用 linear。Docstring 已更新说明推荐用法。
+- 测试：210 passed（无回归，新参数默认值向后兼容）。
+
+#### 下一步候选方向
+1. ~~**机制诊断**~~ **✅ 已做（验证 2）**：结果推翻初步假设，真机制是"每步略优的累积"。
+2. ~~**切换到 LINEAR 作为默认**~~ **✅ 已做**：默认改为 'linear'，docstring 已加推荐说明。
+3. **h 扫描（与 distance_mode 交互）**：当前 h=0.8 固定，测试不同 h 值下 linear/squared 的相对表现。
+   LINEAR 和 SQUARED 的 h 量纲不同（一个除 h、一个除 h²），最优 h 很可能不同，值得单独扫。
+4. **β 交互**：β 控制适应度权重，测试 β 与 distance_mode 的交互（当前 β=1.0）。
+5. **更长轮数（2000+）**：两组 1500 轮都未收敛，若要摸到精度天花板需加轮数。
+
+---
+
 ## 最近变更（2026-07-24）
 
 ### 当前里程碑（tag: v0.1-baseline-before-tuning）
