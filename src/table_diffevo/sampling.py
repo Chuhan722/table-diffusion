@@ -180,6 +180,9 @@ def compute_sampling_probs(
         logits_F = fitness_term  # (K,)
         logits_F_shifted = logits_F - logits_F.max()
         exp_F = np.exp(logits_F_shifted)
+        # 归一成概率（和为1）。注：这个 sum 是常数，会被第4步按行归一化精确
+        # 吸收掉，数值上删掉也不变结果；保留是为了让 p_F 名副其实是"适应度概率"，
+        # 与"适应度概率 × 距离权重"的设计叙述一致。减最大值那步则不可删（防 exp 溢出）。
         p_F = exp_F / exp_F.sum()  # (K,) 和为1
 
         # 第2步：距离权重
@@ -260,6 +263,9 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         fitness_term = beta * fitness_t  # (K,)
         logits_F_shifted = fitness_term - fitness_term.max()
         exp_F = torch.exp(logits_F_shifted)
+        # 归一成概率（和为1）。注：这个 sum 是常数，会被第4步按行归一化精确
+        # 吸收掉，数值上删掉也不变结果；保留是为了让 p_F 名副其实是"适应度概率"，
+        # 与"适应度概率 × 距离权重"的设计叙述一致。减最大值那步则不可删（防 exp 溢出）。
         p_F = exp_F / exp_F.sum()  # (K,) 和为1
 
         # 第2步：距离权重
