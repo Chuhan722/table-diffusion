@@ -52,7 +52,8 @@ def compute_sampling_probs(
     beta: float = 1.0,
     h: float = 0.8,
     device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
-    distance_mode: Literal['squared', 'linear', 'none'] = 'linear',
+    distance_mode: Literal['squared', 'linear', 'none', 'multiplicative'] = 'linear',
+    p: float = 1.0,
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -78,12 +79,21 @@ def compute_sampling_probs(
         - 'cuda'/'cpu'：PyTorch 实现，softmax 在设备上算。distances 可为
           留在设备上的 torch.Tensor（来自 distance 的 return_tensor=True），
           fitness 为 np.ndarray；返回留在设备上的 torch.Tensor，供 sample_donors 接力。
-    distance_mode : {'squared', 'linear', 'none'}, default 'linear'
+    distance_mode : {'squared', 'linear', 'none', 'multiplicative'}, default 'linear'
         距离项的处理方式：
         - 'linear'（默认，推荐）：exp(-d/h)，拉普拉斯核。实验表明在大数据上
           比 squared 优 ~20%（nltcs 1500轮，p<0.00001）。
         - 'squared'：exp(-d²/2h²)，高斯核（原实现，保留用于对比实验）
         - 'none'：距离项设为0，只用适应度驱动（实验中表现最差，不推荐）
+        - 'multiplicative'：乘法解耦，适应度先过 softmax，再乘距离权重 (1-d)^p，
+          最后按行归一化。不需要匹配 F 和 d 的量级，调参解耦（β 管锐度、p 管陡度）。
+    p : float, default 1.0
+        距离陡度参数（仅 multiplicative 模式使用）
+        - 控制距离权重 w=(1-d)^p 的衰减速度
+        - p=0：w 恒为 1，忽略距离
+        - p=1（默认）：线性衰减，温和
+        - p=2：二次衰减，偏近邻
+        - p 越大越强烈偏向近邻，但远候选权重始终 >0（保留逃逸通道）
 
     Returns
     -------
@@ -124,12 +134,14 @@ def compute_sampling_probs(
         raise ValueError(f"beta 必须 ≥ 0，得到 {beta}")
     if h <= 0:
         raise ValueError(f"h 必须 > 0，得到 {h}")
-    if distance_mode not in ('squared', 'linear', 'none'):
-        raise ValueError(f"distance_mode 必须是 'squared'/'linear'/'none'，得到 {distance_mode}")
+    if distance_mode not in ('squared', 'linear', 'none', 'multiplicative'):
+        raise ValueError(f"distance_mode 必须是 'squared'/'linear'/'none'/'multiplicative'，得到 {distance_mode}")
+    if p < 0:
+        raise ValueError(f"p 必须 ≥ 0，得到 {p}")
 
     # torch 路径：softmax 在设备上算（distances 可为设备上的 tensor）
     if device in ('cuda', 'cpu'):
-        return _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode)
+        return _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p)
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
 
@@ -159,9 +171,27 @@ def compute_sampling_probs(
     elif distance_mode == 'linear':
         # 拉普拉斯核：exp(-d/h)
         distance_penalty = distances / h  # (N, K)
-    else:  # distance_mode == 'none'
+    elif distance_mode == 'none':
         # 不考虑距离，距离项设为0（即权重为1）
         distance_penalty = np.zeros_like(distances)  # (N, K)
+    elif distance_mode == 'multiplicative':
+        # 乘法解耦：F 先 softmax → 乘距离权重 → 按行归一化
+        # 第1步：F 过 softmax（数值稳定：减最大值）
+        logits_F = fitness_term  # (K,)
+        logits_F_shifted = logits_F - logits_F.max()
+        exp_F = np.exp(logits_F_shifted)
+        p_F = exp_F / exp_F.sum()  # (K,) 和为1
+
+        # 第2步：距离权重
+        w = (1 - distances) ** p  # (N, K)
+
+        # 第3步：相乘
+        unnormalized = p_F[None, :] * w  # (1,K) × (N,K) → (N,K)
+
+        # 第4步：按行归一化
+        probs = unnormalized / unnormalized.sum(axis=1, keepdims=True)
+
+        return probs  # 提前返回，跳过下面的 softmax
 
     logits = fitness_term[None, :] - distance_penalty  # (N, K)
 
@@ -173,7 +203,7 @@ def compute_sampling_probs(
     return probs
 
 
-def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode):
+def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -222,8 +252,26 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         distance_penalty = dist_t ** 2 / (2 * h ** 2)          # (N, K)
     elif distance_mode == 'linear':
         distance_penalty = dist_t / h                          # (N, K)
-    else:  # distance_mode == 'none'
+    elif distance_mode == 'none':
         distance_penalty = torch.zeros_like(dist_t)            # (N, K)
+    elif distance_mode == 'multiplicative':
+        # 乘法解耦：F 先 softmax → 乘距离权重 → 按行归一化
+        # 第1步：F 过 softmax（数值稳定：减最大值）
+        fitness_term = beta * fitness_t  # (K,)
+        logits_F_shifted = fitness_term - fitness_term.max()
+        exp_F = torch.exp(logits_F_shifted)
+        p_F = exp_F / exp_F.sum()  # (K,) 和为1
+
+        # 第2步：距离权重
+        w = (1 - dist_t) ** p  # (N, K)
+
+        # 第3步：相乘
+        unnormalized = p_F.unsqueeze(0) * w  # (1,K) × (N,K) → (N,K)
+
+        # 第4步：按行归一化
+        probs = unnormalized / unnormalized.sum(dim=1, keepdim=True)
+
+        return probs  # 提前返回，跳过下面的 softmax
 
     logits = fitness_term_broadcast(fitness_t, beta) - distance_penalty  # (N, K)
 

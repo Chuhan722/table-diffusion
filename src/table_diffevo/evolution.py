@@ -66,6 +66,7 @@ def run_evolution(
     marginals: Optional[Dict[str, Any]] = None,
     log_every: int = 0,
     distance_mode: str = 'linear',
+    p: float = 1.0,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -278,7 +279,7 @@ def run_evolution(
         distances = pairwise_block_distance(
             S, S, schema, device=device, return_tensor=use_torch
         )
-        probs = compute_sampling_probs(fitness, distances, beta=beta, h=h, device=device, distance_mode=distance_mode)
+        probs = compute_sampling_probs(fitness, distances, beta=beta, h=h, device=device, distance_mode=distance_mode, p=p)
         donor_idx = sample_donors(probs, rng, device=device)
         donors = S.iloc[donor_idx].reset_index(drop=True)
 
@@ -376,6 +377,7 @@ def run_evolution(
             "batch_size": batch_size,
             "init_method": init_method,
             "distance_mode": distance_mode,
+            "p": p,
         },
     }
 
