@@ -52,6 +52,19 @@ INIT_METHOD = 'marginal'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始
 # 边缘测量文件（仅 INIT_METHOD='marginal' 时生效）
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
+# 抽样模式（可选：'linear', 'squared', 'multiplicative', 'none', 'geometric'）
+DISTANCE_MODE = 'linear'
+
+# multiplicative 模式专用参数（其他模式忽略）
+P = 1.0                # 距离陡度
+
+# geometric 模式专用参数（其他模式忽略）
+LAMBDA = 0.5           # 倾斜参数：0.5=对称，<0.5偏相似度，>0.5偏适应度
+ALPHA_MIN = 0.5        # 初始锐度（前期探索）
+ALPHA_MAX = 4.0        # 最终锐度（后期开发）
+DELTA = 0.05           # 底值（防 log(0)）
+WINSORIZE = (0.01, 0.99)  # 稳健归一化分位点
+
 BETA = 1.0             # 选择强度（固定值）
 H = 0.8                # 邻域尺度（固定值）
 RHO = 0.01             # 记录参与率（固定值）
@@ -71,6 +84,13 @@ def _run_params():
         "eval_method": EVAL_METHOD,
         "batch_size": BATCH_SIZE,
         "init_method": INIT_METHOD,
+        "distance_mode": DISTANCE_MODE,
+        "p": P,
+        "lambda": LAMBDA,
+        "alpha_min": ALPHA_MIN,
+        "alpha_max": ALPHA_MAX,
+        "delta": DELTA,
+        "winsorize": WINSORIZE,
         "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
     }
 
@@ -114,6 +134,13 @@ def main():
             init_method=INIT_METHOD,
             marginals=marginals,
             log_every=LOG_EVERY,
+            distance_mode=DISTANCE_MODE,
+            p=P,
+            lambda_param=LAMBDA,
+            alpha_min=ALPHA_MIN,
+            alpha_max=ALPHA_MAX,
+            delta=DELTA,
+            winsorize_quantiles=WINSORIZE,
         )
         sub_name = f"{i}-{seed}"
         run_dir = save_run(best_S, diagnostics,

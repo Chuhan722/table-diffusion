@@ -65,12 +65,19 @@ def _make_run_dir(outputs_dir: str, now: datetime) -> str:
         n += 1
 
 
-def create_parent_dir(outputs_dir: str = "outputs") -> str:
+def create_parent_dir(outputs_dir: str = "outputs", prefix: str = "") -> str:
     """
-    为一次多种子运行创建日期时间父文件夹 outputs/YYYY-MM-DD_HHMM/。
+    为一次多种子运行创建日期时间父文件夹 outputs/[prefix_]YYYY-MM-DD_HHMM/。
 
     与 _make_run_dir 不同：不加数字后缀（按项目约定，同一分钟不防重）。
     各种子的子文件夹（如 0-0/、1-1/）由调用方拼在此目录下。
+
+    Parameters
+    ----------
+    outputs_dir : str
+        输出根目录
+    prefix : str
+        可选前缀，若非空则加下划线附在时间戳前
 
     Returns
     -------
@@ -79,7 +86,11 @@ def create_parent_dir(outputs_dir: str = "outputs") -> str:
     """
     os.makedirs(outputs_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    parent = os.path.join(outputs_dir, stamp)
+    if prefix:
+        folder_name = f"{prefix}_{stamp}"
+    else:
+        folder_name = stamp
+    parent = os.path.join(outputs_dir, folder_name)
     os.makedirs(parent, exist_ok=True)
     return parent
 

@@ -67,6 +67,11 @@ def run_evolution(
     log_every: int = 0,
     distance_mode: str = 'linear',
     p: float = 1.0,
+    lambda_param: float = 0.5,
+    alpha_min: float = 0.5,
+    alpha_max: float = 4.0,
+    delta: float = 0.05,
+    winsorize_quantiles: tuple = (0.01, 0.99),
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -236,6 +241,7 @@ def run_evolution(
     accept_history: List[bool] = []
     donor_fitness_history: List[float] = []      # 每轮选中 donor 的平均适应度
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
+    alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
     stopped_early = False
     rounds_run = 0
 
@@ -245,6 +251,14 @@ def run_evolution(
 
     for t in range(n_rounds):
         rounds_run = t + 1
+
+        # 计算当前轮的动态锐度 α_t（geometric 模式用）
+        if n_rounds > 1:
+            progress = t / (n_rounds - 1)
+        else:
+            progress = 1.0
+        alpha_t = alpha_min + (alpha_max - alpha_min) * progress
+        alpha_history.append(alpha_t)
 
         # 1-2-4. 当前答案、残差、适应度（vectorized 一次掩码扫描全出；消除重复评价）
         q, residual, fitness = _eval_counts_resid_fitness(S)
@@ -279,7 +293,12 @@ def run_evolution(
         distances = pairwise_block_distance(
             S, S, schema, device=device, return_tensor=use_torch
         )
-        probs = compute_sampling_probs(fitness, distances, beta=beta, h=h, device=device, distance_mode=distance_mode, p=p)
+        probs = compute_sampling_probs(
+            fitness, distances, beta=beta, h=h, device=device,
+            distance_mode=distance_mode, p=p,
+            lambda_param=lambda_param, alpha=alpha_t, delta=delta,
+            winsorize_quantiles=winsorize_quantiles,
+        )
         donor_idx = sample_donors(probs, rng, device=device)
         donors = S.iloc[donor_idx].reset_index(drop=True)
 
@@ -356,6 +375,7 @@ def run_evolution(
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
+        "alpha_history": alpha_history,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
         "normalized_l1_p90": normalized_l1_p90,
@@ -377,7 +397,12 @@ def run_evolution(
             "batch_size": batch_size,
             "init_method": init_method,
             "distance_mode": distance_mode,
-            "p": p,
+            "p": p if distance_mode == 'multiplicative' else None,
+            "lambda": lambda_param if distance_mode == 'geometric' else None,
+            "alpha_min": alpha_min if distance_mode == 'geometric' else None,
+            "alpha_max": alpha_max if distance_mode == 'geometric' else None,
+            "delta": delta if distance_mode == 'geometric' else None,
+            "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
         },
     }
 

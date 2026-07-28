@@ -52,8 +52,12 @@ def compute_sampling_probs(
     beta: float = 1.0,
     h: float = 0.8,
     device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
-    distance_mode: Literal['squared', 'linear', 'none', 'multiplicative'] = 'linear',
+    distance_mode: Literal['squared', 'linear', 'none', 'multiplicative', 'geometric'] = 'linear',
     p: float = 1.0,
+    lambda_param: float = 0.5,
+    alpha: float = 1.0,
+    delta: float = 0.05,
+    winsorize_quantiles: tuple = (0.01, 0.99),
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -79,7 +83,7 @@ def compute_sampling_probs(
         - 'cuda'/'cpu'：PyTorch 实现，softmax 在设备上算。distances 可为
           留在设备上的 torch.Tensor（来自 distance 的 return_tensor=True），
           fitness 为 np.ndarray；返回留在设备上的 torch.Tensor，供 sample_donors 接力。
-    distance_mode : {'squared', 'linear', 'none', 'multiplicative'}, default 'linear'
+    distance_mode : {'squared', 'linear', 'none', 'multiplicative', 'geometric'}, default 'linear'
         距离项的处理方式：
         - 'linear'（默认，推荐）：exp(-d/h)，拉普拉斯核。实验表明在大数据上
           比 squared 优 ~20%（nltcs 1500轮，p<0.00001）。
@@ -87,6 +91,9 @@ def compute_sampling_probs(
         - 'none'：距离项设为0，只用适应度驱动（实验中表现最差，不推荐）
         - 'multiplicative'：乘法解耦，适应度先过 softmax，再乘距离权重 (1-d)^p，
           最后按行归一化。不需要匹配 F 和 d 的量级，调参解耦（β 管锐度、p 管陡度）。
+        - 'geometric'：几何平均联合抽样，稳健归一化适应度（winsorize + min-max）
+          和距离到 [δ,1]，用几何平均 f^λ · s^(1-λ) 结合，softmax(α·log A) 抽样。
+          解决量级匹配问题，λ 控制倾斜、α 控制锐度。
     p : float, default 1.0
         距离陡度参数（仅 multiplicative 模式使用）
         - 控制距离权重 w=(1-d)^p 的衰减速度
@@ -94,6 +101,24 @@ def compute_sampling_probs(
         - p=1（默认）：线性衰减，温和
         - p=2：二次衰减，偏近邻
         - p 越大越强烈偏向近邻，但远候选权重始终 >0（保留逃逸通道）
+    lambda_param : float, default 0.5
+        倾斜参数（仅 geometric 模式使用）
+        - 控制适应度与相似度的相对权重
+        - λ=0.5（默认）：对称，两者等权
+        - λ<0.5：偏相似度，更看重近
+        - λ>0.5：偏适应度，更看重好
+    alpha : float, default 1.0
+        锐度参数（仅 geometric 模式使用）
+        - 当前轮的动态锐度 α_t（由外层传入，通常从 α_min 线性升到 α_max）
+        - 值越大分布越尖锐（贪心），越小越平坦（探索）
+    delta : float, default 0.05
+        底值（仅 geometric 模式使用）
+        - 防 log(0)，保留逃逸通道
+        - f, s ∈ [δ, 1]，越小越接近硬排除
+    winsorize_quantiles : tuple, default (0.01, 0.99)
+        稳健归一化分位点（仅 geometric 模式使用）
+        - 截掉适应度的极端值，(q_low, q_high)
+        - 越收越稳健，越宽越保留极值差异
 
     Returns
     -------
@@ -134,14 +159,25 @@ def compute_sampling_probs(
         raise ValueError(f"beta 必须 ≥ 0，得到 {beta}")
     if h <= 0:
         raise ValueError(f"h 必须 > 0，得到 {h}")
-    if distance_mode not in ('squared', 'linear', 'none', 'multiplicative'):
-        raise ValueError(f"distance_mode 必须是 'squared'/'linear'/'none'/'multiplicative'，得到 {distance_mode}")
+    if distance_mode not in ('squared', 'linear', 'none', 'multiplicative', 'geometric'):
+        raise ValueError(f"distance_mode 必须是 'squared'/'linear'/'none'/'multiplicative'/'geometric'，得到 {distance_mode}")
     if p < 0:
         raise ValueError(f"p 必须 ≥ 0，得到 {p}")
+    if not (0 <= lambda_param <= 1):
+        raise ValueError(f"lambda_param 必须在 [0,1]，得到 {lambda_param}")
+    if alpha < 0:
+        raise ValueError(f"alpha 必须 ≥ 0，得到 {alpha}")
+    if not (0 < delta < 1):
+        raise ValueError(f"delta 必须在 (0,1)，得到 {delta}")
+    if len(winsorize_quantiles) != 2 or not (0 <= winsorize_quantiles[0] < winsorize_quantiles[1] <= 1):
+        raise ValueError(f"winsorize_quantiles 必须是 (q_low, q_high)，0 <= q_low < q_high <= 1，得到 {winsorize_quantiles}")
 
     # torch 路径：softmax 在设备上算（distances 可为设备上的 tensor）
     if device in ('cuda', 'cpu'):
-        return _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p)
+        return _compute_sampling_probs_torch(
+            fitness, distances, beta, h, device, distance_mode, p,
+            lambda_param, alpha, delta, winsorize_quantiles
+        )
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
 
@@ -195,6 +231,41 @@ def compute_sampling_probs(
         probs = unnormalized / unnormalized.sum(axis=1, keepdims=True)
 
         return probs  # 提前返回，跳过下面的 softmax
+    elif distance_mode == 'geometric':
+        # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
+        # 第1步：稳健归一化适应度（winsorize + min-max）
+        q_low, q_high = winsorize_quantiles
+        q_low_val = np.quantile(fitness, q_low)
+        q_high_val = np.quantile(fitness, q_high)
+
+        if q_high_val - q_low_val < 1e-8:
+            # 所有适应度相同 → f 全为 1，只剩 s 起作用（纯相似度抽样）
+            f_norm = np.ones_like(fitness)
+        else:
+            f_clip = np.clip(fitness, q_low_val, q_high_val)
+            f_norm = (f_clip - q_low_val) / (q_high_val - q_low_val + 1e-8)
+
+        # 第2步：构造正值项（加底值 δ）
+        # 先 clip 距离到 [0,1]（防止超界输入导致 s 为负）
+        distances_clipped = np.clip(distances, 0.0, 1.0)
+        f = delta + (1 - delta) * f_norm                      # (K,) ∈ [δ, 1]
+        s = delta + (1 - delta) * (1.0 - distances_clipped)   # (N, K) ∈ [δ, 1]
+
+        # 第3步：几何平均（log-space 计算防溢出）
+        # A = f^λ · s^(1-λ) → log A = λ·log f + (1-λ)·log s
+        log_f = np.log(f)                          # (K,)
+        log_s = np.log(s)                          # (N, K)
+        log_A = lambda_param * log_f[None, :] + (1 - lambda_param) * log_s  # (N, K)
+
+        # 第4步：应用锐度 α_t
+        logits = alpha * log_A  # (N, K)
+
+        # 第5步：softmax（减最大值防溢出）
+        logits_max = np.max(logits, axis=1, keepdims=True)
+        exp_logits = np.exp(logits - logits_max)
+        probs = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+
+        return probs  # 提前返回
 
     logits = fitness_term[None, :] - distance_penalty  # (N, K)
 
@@ -206,7 +277,8 @@ def compute_sampling_probs(
     return probs
 
 
-def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p):
+def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p,
+                                  lambda_param, alpha, delta, winsorize_quantiles):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -278,6 +350,39 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         probs = unnormalized / unnormalized.sum(dim=1, keepdim=True)
 
         return probs  # 提前返回，跳过下面的 softmax
+    elif distance_mode == 'geometric':
+        # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
+        # 第1步：稳健归一化适应度（winsorize + min-max）
+        q_low, q_high = winsorize_quantiles
+        q_low_val = torch.quantile(fitness_t, q_low)
+        q_high_val = torch.quantile(fitness_t, q_high)
+
+        if (q_high_val - q_low_val) < 1e-8:
+            # 所有适应度相同 → f 全为 1，只剩 s 起作用（纯相似度抽样）
+            f_norm = torch.ones_like(fitness_t)
+        else:
+            f_clip = torch.clamp(fitness_t, q_low_val, q_high_val)
+            f_norm = (f_clip - q_low_val) / (q_high_val - q_low_val + 1e-8)
+
+        # 第2步：构造正值项（加底值 δ）
+        # 先 clamp 距离到 [0,1]（防止超界输入导致 s 为负）
+        dist_t_clipped = torch.clamp(dist_t, 0.0, 1.0)
+        f = delta + (1 - delta) * f_norm                    # (K,) ∈ [δ, 1]
+        s = delta + (1 - delta) * (1.0 - dist_t_clipped)    # (N, K) ∈ [δ, 1]
+
+        # 第3步：几何平均（log-space 计算防溢出）
+        # A = f^λ · s^(1-λ) → log A = λ·log f + (1-λ)·log s
+        log_f = torch.log(f)                       # (K,)
+        log_s = torch.log(s)                       # (N, K)
+        log_A = lambda_param * log_f.unsqueeze(0) + (1 - lambda_param) * log_s  # (N, K)
+
+        # 第4步：应用锐度 α_t
+        logits = alpha * log_A  # (N, K)
+
+        # 第5步：softmax（torch 内置，自动减最大值）
+        probs = torch.softmax(logits, dim=1)
+
+        return probs  # 提前返回
 
     logits = fitness_term_broadcast(fitness_t, beta) - distance_penalty  # (N, K)
 
