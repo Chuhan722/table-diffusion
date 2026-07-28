@@ -68,8 +68,8 @@ def run_evolution(
     distance_mode: str = 'linear',
     p: float = 1.0,
     lambda_param: float = 0.5,
-    alpha_min: float = 0.5,
-    alpha_max: float = 4.0,
+    alpha_min: float = 2.0,
+    alpha_max: float = 10.0,
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
@@ -128,6 +128,14 @@ def run_evolution(
           比 squared 优 ~20%（nltcs 1500轮，p<0.00001）。
         - 'squared'：exp(-d²/2h²)，高斯核（原实现，保留用于对比实验）
         - 'none'：不考虑距离，只用适应度驱动（实验中表现最差，不推荐）
+        - 'geometric'：归一化 + 几何均值 + 动态锐度调度，跨数据集参数稳定。
+          nltcs 1500轮 3种子实验中精度最优（loss 比 linear 低 ~93%，p=0.0013）。
+          用 lambda_param/alpha_min/alpha_max/delta/winsorize_quantiles 调参。
+    lambda_param : float, default 0.5
+        （geometric 模式）适应度-距离权衡：λ↑ 更偏适应度，λ↓ 更偏距离。
+    alpha_min, alpha_max : float, default 2.0, 10.0
+        （geometric 模式）动态锐度调度的起止值，α_t 从 α_min 线性升到 α_max
+        （早期平缓探索、后期锐利收敛）。推荐 2→10（实验最优配置）。
 
     Returns
     -------
