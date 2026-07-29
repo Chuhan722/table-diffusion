@@ -27,6 +27,47 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 ## 最近变更（2026-07-28）
 
+### 对角线屏蔽 exclude_self（禁止记录抽到自己）—— 已实现+测试+回归实验，收尾
+
+**背景：** 用户担心 α2→10 高接受率是否由"抽到自己=复制自己=表不变=整代必接受"刷出来的。
+候选池=全表（K=N，全对全）含自身，自身距离=0、相似度=1，高锐度 softmax 可能把质量堆到自己身上。
+
+**诊断（scripts/diagnose_self_sampling.py，只测量不改主代码）：** 复现单轮抽样直接数 donor_idx==i 比例
+（历史 diagnostics 只存 donor_distance_history 均值、未存 donor_idx，无法从历史直接读出）。结果：
+- **nltcs α2→10**：末轮 α_t=10 自身抽样率仅 **0.04%**（万分之四）——高接受率**不是**自我复制刷的，原结论成立。
+  原因：nltcs 83% 重复，每条记录有大量等价副本瓜分"相似度=1"的质量，自身只分到 ≈1/副本数。
+- **test_300x10 α2→10**：0% 重复、无副本兜底，自身是全表唯一"满分"候选，末轮 α_t=10 自身率升到 **8.07%**
+  （单条最高 p_ii 达 71%）。小表高锐度确有自我复制浪费（该行更新被浪费、末轮收敛略慢），但因整代
+  接受判据看全表 loss、其余行照常演化，非"表死住"或"接受率虚高"。
+
+**修复（用户拍板选方案 1：对角线屏蔽）：**
+- `sampling.py`：`compute_sampling_probs` / `_compute_sampling_probs_torch` 加参数 `exclude_self=False`。
+  True 时抽样前把对角 probs[i,i] 置 0 再按行重归一化（等价对角 logit=-inf），覆盖全部 5 种 distance_mode
+  （加性 softmax 与乘性/几何提前 return 三处落点 × numpy+torch 双路径）。新增 `_exclude_self_numpy/_exclude_self_torch` 辅助函数。
+  仅在候选池=全表（方阵 N==K）时有意义，非方阵报错（防误用于共享参考池 K≠N）。
+- `evolution.py`：`run_evolution` 加形参 `exclude_self: bool=True`（B1 方案：run.py 不暴露、走默认 True，
+  只让实验脚本传 False 复现 baseline）；主循环 `distances=pairwise_block_distance(S,S,...)` 全对全，
+  抽样调用透传该形参；记进 `diagnostics["params"]["exclude_self"]` 可回溯。
+- `sampling.compute_sampling_probs` 自身默认仍 `exclude_self=False`（独立调用/诊断脚本行为不变），
+  仅 `run_evolution` 默认 True。**将来改共享参考池（K≠N）时非方阵会报错，届时需把主循环改传 False**
+  （护栏：候选池阶段绝不会带着错误的自我屏蔽静默跑起来）。
+- 新增常驻诊断字段 `donor_self_rate_history`（每轮 `mean(donor_idx==i)`），exclude_self=True 时恒 0。
+- 新增 `tests/test_sampling_exclude_self.py`（24 个）+ `test_evolution.py::TestExcludeSelf`（3 个：
+  字段存在、默认 True 自身率恒 0、False 允许非零），全套 **263 passed**（236+27），无回归。
+
+**回归实验（scripts/exclude_self_regression.py，1 号卡，α2→10 λ0.5）：**
+- **核心结论达成**：屏蔽后自身率恒 **0**（nltcs 3 种子 + 小表 5 种子末段均 0.000%）；
+  **接受率几乎不变**（nltcs 96.8%→96.6%）——直接回答用户最初疑虑：**高接受率不是"抽到自己"刷的**。
+- **nltcs loss**：False 6.87e6 vs True 7.59e6（+10.5%），但**配对 t 检验 p=0.165 不显著**，
+  且 baseline 种子间方差本就 8%。非机制退化（自身率本来 0.04%，只影响万分之四行）——
+  是屏蔽平移整行累积概率边界→`sample_donors` 同种子下抽到不同 donor→轨迹发散噪声。用户判定差异不大、不补种子。
+- **小表 test_300x10**：False 990.5 vs True 941.3（loss 略降但 p=0.319 不显著）、唯一记录 294→292（p=0.137）。
+  屏蔽消除自我复制空转，质量无损。
+- baseline（False 侧）复用写死前的旧结果：nltcs seed0 来自 `outputs/geometric_alpha2_10_2026-07-28_0530/`、
+  seed1/2 来自 `outputs/alpha_multiseed_1500/a2_10/`；新结果落 `outputs/exclude_self_regression/`。
+
+**未做：** 总结文档暂不补（用户先前指示）。`scripts/diagnose_self_sampling.py` 保留（离线诊断，不进运行期）。
+
 ### α 配置多种子验证（nltcs，1500 轮，seed=0/1/2）—— 推翻"α2→10 坍缩"判断
 
 **背景：** 用户质疑文档里"α2→10 坍缩"的说法怎么得出的。核查发现该判断是错的（α2→10 最高频 13.04% < 真实 17.67%、Top-10 全覆盖，未坍缩）。遂补 nltcs 多种子 α 对比 + 配对 t 检验，确认 α1.5→6 vs α2→10 的真实排序。

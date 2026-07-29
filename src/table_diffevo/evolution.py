@@ -65,13 +65,14 @@ def run_evolution(
     init_method: str = 'random',
     marginals: Optional[Dict[str, Any]] = None,
     log_every: int = 0,
-    distance_mode: str = 'linear',
+    distance_mode: str = 'geometric',
     p: float = 1.0,
     lambda_param: float = 0.5,
     alpha_min: float = 2.0,
     alpha_max: float = 10.0,
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
+    exclude_self: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -136,6 +137,11 @@ def run_evolution(
     alpha_min, alpha_max : float, default 2.0, 10.0
         （geometric 模式）动态锐度调度的起止值，α_t 从 α_min 线性升到 α_max
         （早期平缓探索、后期锐利收敛）。推荐 2→10（实验最优配置）。
+    exclude_self : bool, default True
+        是否禁止记录抽到自己（对角线屏蔽）。主循环候选池=全表（全对全），
+        抽到自己=该行本轮不变、对演化零贡献。默认 True 屏蔽之；传 False
+        可复现屏蔽前的旧行为（做对照实验用）。将来若改用共享参考池（K≠N），
+        距离非方阵会使 exclude_self=True 报错——届时需改为 False（池里无自身）。
 
     Returns
     -------
@@ -249,6 +255,7 @@ def run_evolution(
     accept_history: List[bool] = []
     donor_fitness_history: List[float] = []      # 每轮选中 donor 的平均适应度
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
+    donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
     stopped_early = False
     rounds_run = 0
@@ -306,6 +313,11 @@ def run_evolution(
             distance_mode=distance_mode, p=p,
             lambda_param=lambda_param, alpha=alpha_t, delta=delta,
             winsorize_quantiles=winsorize_quantiles,
+            # 候选池=全表（全对全），排除对角线=禁止记录抽到自己。
+            # 抽到自己 = 该行本轮不变、对演化零贡献；小表高锐度下自身率可达 8%
+            # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
+            # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
+            exclude_self=exclude_self,
         )
         donor_idx = sample_donors(probs, rng, device=device)
         donors = S.iloc[donor_idx].reset_index(drop=True)
@@ -330,6 +342,9 @@ def run_evolution(
         # 记录平均值
         donor_fitness_history.append(float(selected_fitness.mean()))
         donor_distance_history.append(float(selected_distances.mean()))
+        # 自身抽样率：抽到自己（donor_idx==i）的比例。exclude_self=True 时恒为 0；
+        # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
+        donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
 
         # 7. 靠近一步 → 提案
         proposal = evolve_step(
@@ -383,6 +398,7 @@ def run_evolution(
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
+        "donor_self_rate_history": donor_self_rate_history,
         "alpha_history": alpha_history,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
@@ -411,6 +427,7 @@ def run_evolution(
             "alpha_max": alpha_max if distance_mode == 'geometric' else None,
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
+            "exclude_self": exclude_self,
         },
     }
 

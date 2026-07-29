@@ -178,3 +178,44 @@ class TestIntegration:
         )
         assert best_S.shape == (300, 10)
         assert diag["best_loss"] <= diag["loss_history"][0]
+
+
+class TestExcludeSelf:
+    """对角线屏蔽在主循环层面的行为 + 自身抽样率诊断字段"""
+
+    def _setup(self):
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        return schema, queries, target
+
+    def test_self_rate_history_present_and_length(self):
+        """诊断含 donor_self_rate_history，长度=实际轮数。"""
+        schema, queries, target = self._setup()
+        _, diag = run_evolution(
+            target, queries, schema, n_records=80, n_rounds=15, seed=0,
+            distance_mode='geometric',
+        )
+        assert "donor_self_rate_history" in diag
+        assert len(diag["donor_self_rate_history"]) == diag["rounds_run"]
+
+    def test_default_excludes_self_rate_zero(self):
+        """默认 exclude_self=True → 每轮自身抽样率恒为 0。"""
+        schema, queries, target = self._setup()
+        _, diag = run_evolution(
+            target, queries, schema, n_records=80, n_rounds=15, seed=0,
+            distance_mode='geometric',
+        )
+        assert diag["params"]["exclude_self"] is True
+        assert all(r == 0.0 for r in diag["donor_self_rate_history"])
+
+    def test_disabled_allows_self_sampling(self):
+        """exclude_self=False → 全对全候选池允许抽到自己，自身率应出现非零。"""
+        schema, queries, target = self._setup()
+        _, diag = run_evolution(
+            target, queries, schema, n_records=80, n_rounds=30, seed=0,
+            distance_mode='geometric', alpha_min=6.0, alpha_max=10.0,
+            exclude_self=False,
+        )
+        assert diag["params"]["exclude_self"] is False
+        assert any(r > 0.0 for r in diag["donor_self_rate_history"])

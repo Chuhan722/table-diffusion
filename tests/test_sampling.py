@@ -41,7 +41,8 @@ class TestComputeSamplingProbs:
         distances = np.array([
             [0.0, 0.0, 0.0],  # 第 0 行：所有候选距离相同
         ])
-        probs = compute_sampling_probs(fitness, distances, beta=0.0, h=0.8)
+        probs = compute_sampling_probs(fitness, distances, beta=0.0, h=0.8,
+                                       distance_mode='linear')
         # 距离相同 + 忽略适应度 → 均匀分布
         assert np.allclose(probs[0], [1/3, 1/3, 1/3], atol=1e-6)
 
@@ -51,8 +52,9 @@ class TestComputeSamplingProbs:
         distances = np.array([
             [0.0, 0.5, 0.9],  # 第 0 行：距离差异较大
         ])
-        # h=100 时距离项 d²/(2h²) ≈ 0
-        probs = compute_sampling_probs(fitness, distances, beta=1.0, h=100.0)
+        # h=100 时距离项 d/h ≈ 0
+        probs = compute_sampling_probs(fitness, distances, beta=1.0, h=100.0,
+                                       distance_mode='linear')
         # 应该主要由适应度决定，fitness[2]=3 最大，概率应最高
         assert probs[0, 2] > probs[0, 1] > probs[0, 0]
 
@@ -64,7 +66,8 @@ class TestComputeSamplingProbs:
         ])
         # h=0.01 时距离项很大，候选 2（距离最近 0.1）应比候选 1（距离远 0.5）概率高
         # 即使候选 2 适应度最低
-        probs = compute_sampling_probs(fitness, distances, beta=1.0, h=0.01)
+        probs = compute_sampling_probs(fitness, distances, beta=1.0, h=0.01,
+                                       distance_mode='linear')
         assert probs[0, 2] > probs[0, 1]  # 距离近的候选 2 > 距离远的候选 1
 
     def test_uniform_fitness_falls_back_to_distance(self):

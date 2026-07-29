@@ -46,18 +46,35 @@ from typing import Optional, Literal
 import numpy as np
 
 
+def _exclude_self_numpy(probs):
+    """把对角线概率置 0 并按行重归一化（numpy）。
+
+    等价于抽样前将对角 logit 设为 -inf：softmax 后归一化仅在非自身候选上进行。
+    要求 probs 为方阵（N==K），调用方已校验。
+    行内除自身外全为 0 的极端情形（不会在 δ>0 的 geometric/含距离模式发生）
+    会导致除零，此处不额外兜底——若真发生应上抛而非静默。
+    """
+    probs = probs.copy()
+    n = probs.shape[0]
+    idx = np.arange(n)
+    probs[idx, idx] = 0.0
+    probs = probs / probs.sum(axis=1, keepdims=True)
+    return probs
+
+
 def compute_sampling_probs(
     fitness,
     distances,
     beta: float = 1.0,
     h: float = 0.8,
     device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
-    distance_mode: Literal['squared', 'linear', 'none', 'multiplicative', 'geometric'] = 'linear',
+    distance_mode: Literal['squared', 'linear', 'none', 'multiplicative', 'geometric'] = 'geometric',
     p: float = 1.0,
     lambda_param: float = 0.5,
     alpha: float = 1.0,
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
+    exclude_self: bool = False,
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -119,6 +136,13 @@ def compute_sampling_probs(
         稳健归一化分位点（仅 geometric 模式使用）
         - 截掉适应度的极端值，(q_low, q_high)
         - 越收越稳健，越宽越保留极值差异
+    exclude_self : bool, default False
+        是否排除对角线（禁止记录抽到自己）。
+        - False（默认）：保持原行为，候选池含自身（自身距离=0、相似度=1，
+          可能被抽中=本轮该行不变）。所有独立调用/测试维持不变。
+        - True：抽样前把对角线 probs[i,i] 置 0 并按行重归一化，等价于候选池
+          排除自身。仅在候选池=全表（K=N，行 i 与列 i 是同一条记录）时有意义，
+          故要求 distances 为方阵（N==K），否则报错。主循环全对全时开启。
 
     Returns
     -------
@@ -172,11 +196,21 @@ def compute_sampling_probs(
     if len(winsorize_quantiles) != 2 or not (0 <= winsorize_quantiles[0] < winsorize_quantiles[1] <= 1):
         raise ValueError(f"winsorize_quantiles 必须是 (q_low, q_high)，0 <= q_low < q_high <= 1，得到 {winsorize_quantiles}")
 
+    # exclude_self 只在候选池=全表（方阵，行 i 与列 i 同一条记录）时有意义。
+    # 共享参考池（K≠N）里没有"自己"，盲目屏蔽第 i 列会误伤真实候选，故此处拦截。
+    if exclude_self:
+        dshape = getattr(distances, 'shape', None)
+        if dshape is None or len(dshape) != 2 or dshape[0] != dshape[1]:
+            raise ValueError(
+                f"exclude_self=True 要求 distances 为方阵（N==K，全对全候选池），"
+                f"得到 shape {dshape}"
+            )
+
     # torch 路径：softmax 在设备上算（distances 可为设备上的 tensor）
     if device in ('cuda', 'cpu'):
         return _compute_sampling_probs_torch(
             fitness, distances, beta, h, device, distance_mode, p,
-            lambda_param, alpha, delta, winsorize_quantiles
+            lambda_param, alpha, delta, winsorize_quantiles, exclude_self
         )
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
@@ -230,6 +264,8 @@ def compute_sampling_probs(
         # 第4步：按行归一化
         probs = unnormalized / unnormalized.sum(axis=1, keepdims=True)
 
+        if exclude_self:
+            probs = _exclude_self_numpy(probs)
         return probs  # 提前返回，跳过下面的 softmax
     elif distance_mode == 'geometric':
         # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
@@ -265,6 +301,8 @@ def compute_sampling_probs(
         exp_logits = np.exp(logits - logits_max)
         probs = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
+        if exclude_self:
+            probs = _exclude_self_numpy(probs)
         return probs  # 提前返回
 
     logits = fitness_term[None, :] - distance_penalty  # (N, K)
@@ -274,11 +312,14 @@ def compute_sampling_probs(
     exp_logits = np.exp(logits_shifted)
     probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
 
+    if exclude_self:
+        probs = _exclude_self_numpy(probs)
     return probs
 
 
 def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p,
-                                  lambda_param, alpha, delta, winsorize_quantiles):
+                                  lambda_param, alpha, delta, winsorize_quantiles,
+                                  exclude_self=False):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -349,6 +390,8 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         # 第4步：按行归一化
         probs = unnormalized / unnormalized.sum(dim=1, keepdim=True)
 
+        if exclude_self:
+            probs = _exclude_self_torch(probs)
         return probs  # 提前返回，跳过下面的 softmax
     elif distance_mode == 'geometric':
         # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
@@ -382,6 +425,8 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         # 第5步：softmax（torch 内置，自动减最大值）
         probs = torch.softmax(logits, dim=1)
 
+        if exclude_self:
+            probs = _exclude_self_torch(probs)
         return probs  # 提前返回
 
     logits = fitness_term_broadcast(fitness_t, beta) - distance_penalty  # (N, K)
@@ -391,6 +436,19 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
     exp_logits = torch.exp(logits_shifted)
     probs = exp_logits / exp_logits.sum(dim=1, keepdim=True)
 
+    if exclude_self:
+        probs = _exclude_self_torch(probs)
+    return probs
+
+
+def _exclude_self_torch(probs):
+    """把对角线概率置 0 并按行重归一化（torch）。numpy 版 _exclude_self_numpy 的对应实现。"""
+    import torch
+    n = probs.shape[0]
+    idx = torch.arange(n, device=probs.device)
+    probs = probs.clone()
+    probs[idx, idx] = 0.0
+    probs = probs / probs.sum(dim=1, keepdim=True)
     return probs
 
 
