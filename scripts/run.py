@@ -53,7 +53,7 @@ INIT_METHOD = 'marginal'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
 # 抽样模式（可选：'linear', 'squared', 'multiplicative', 'none', 'geometric'）
-DISTANCE_MODE = 'linear'
+DISTANCE_MODE = 'geometric'   # 实验最优（α2→10, λ0.5），配套参数见下方 geometric 专用段
 
 # multiplicative 模式专用参数（其他模式忽略）
 P = 1.0                # 距离陡度
