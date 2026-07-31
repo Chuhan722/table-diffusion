@@ -30,7 +30,7 @@ SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
-N_ROUNDS = 1000        # 最大轮数 T
+N_ROUNDS = 600         # 二阶最大熵起点约 600 轮已接近平台（旧初始化可自行调大）
 SEEDS = [0, 1, 2]      # 随机种子列表（多种子跑，看结果波动；单种子写 [0] 即可）
 LOG_EVERY = 50         # 逐轮进度打印频率（0=每轮 | >0=每N轮，长实验建议50）
 
@@ -47,10 +47,16 @@ EVAL_METHOD = 'vectorized'
 # 内存峰值 ∝ N × BATCH_SIZE；越大越快但越吃内存
 BATCH_SIZE = 256
 
-# 初始化方式（新增）
-INIT_METHOD = 'marginal'  # 'random'=纯随机 | 'marginal'=按1-way边缘初始化
+# 初始化方式
+# 'random'=纯随机 | 'marginal'=按1-way边缘 | 'pairwise_maxent'=二阶最大熵
+INIT_METHOD = 'pairwise_maxent'  # nltcs 三种子验证后的推荐配置
 # 边缘测量文件（仅 INIT_METHOD='marginal' 时生效）
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
+
+# pairwise_maxent 专用参数（其他初始化方式忽略）
+MAXENT_MAX_STATES = 1_000_000  # 联合状态枚举上限；nltcs 为 2^16=65,536
+MAXENT_MAX_SWEEPS = 200        # IPF 最大扫描轮数
+MAXENT_TOL = 1e-8              # 最大二阶单元概率误差阈值
 
 # 抽样模式（可选：'linear', 'squared', 'multiplicative', 'none', 'geometric'）
 DISTANCE_MODE = 'geometric'   # 实验最优（α2→10, λ0.5），配套参数见下方 geometric 专用段
@@ -70,6 +76,10 @@ H = 0.8                # 邻域尺度（固定值）
 RHO = 0.01             # 记录参与率（固定值）
 ETA = 0.5              # 块复制率（固定值）
 MU = 0.01              # 变异率（固定值）
+
+# 整代提案被拒后的缩步重试（默认关闭，保持历史行为）
+MAX_RETRIES = 0        # 0=不重试；每次重试复用当轮 donor
+RETRY_RHO_DECAY = 0.5  # 重试时 rho 逐次乘以该因子
 # ===========================================
 
 
@@ -84,6 +94,9 @@ def _run_params():
         "eval_method": EVAL_METHOD,
         "batch_size": BATCH_SIZE,
         "init_method": INIT_METHOD,
+        "maxent_max_states": MAXENT_MAX_STATES,
+        "maxent_max_sweeps": MAXENT_MAX_SWEEPS,
+        "maxent_tol": MAXENT_TOL,
         "distance_mode": DISTANCE_MODE,
         "p": P,
         "lambda": LAMBDA,
@@ -92,6 +105,8 @@ def _run_params():
         "delta": DELTA,
         "winsorize": WINSORIZE,
         "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
+        "max_retries": MAX_RETRIES,
+        "retry_rho_decay": RETRY_RHO_DECAY,
     }
 
 
@@ -141,6 +156,11 @@ def main():
             alpha_max=ALPHA_MAX,
             delta=DELTA,
             winsorize_quantiles=WINSORIZE,
+            max_retries=MAX_RETRIES,
+            retry_rho_decay=RETRY_RHO_DECAY,
+            maxent_max_states=MAXENT_MAX_STATES,
+            maxent_max_sweeps=MAXENT_MAX_SWEEPS,
+            maxent_tol=MAXENT_TOL,
         )
         sub_name = f"{i}-{seed}"
         run_dir = save_run(best_S, diagnostics,
@@ -152,6 +172,14 @@ def main():
               f" | 中位: {diagnostics['normalized_l1_median']:.4f}"
               f" | P90: {diagnostics['normalized_l1_p90']:.4f}"
               f" | 最大: {diagnostics['normalized_l1_max']:.4f}")
+        init_diag = diagnostics["initialization"]
+        if init_diag["method"] == "pairwise_maxent":
+            print(
+                f"  最大熵初始化: {init_diag['usable_pairs']} 对边缘"
+                f" | {init_diag['sweeps_run']} 轮 IPF"
+                f" | 最大误差 {init_diag['max_pair_error']:.2e}"
+                f" | 收敛={init_diag['converged']}"
+            )
         print(f"  跑了轮数  : {diagnostics['rounds_run']}"
               f"（提前停止={diagnostics['stopped_early']}）"
               f" | 耗时: {diagnostics['elapsed_sec']:.1f}s"
@@ -163,6 +191,7 @@ def main():
             "best_loss": diagnostics["best_loss"],
             "normalized_l1_error": diagnostics["normalized_l1_error"],
             "elapsed_sec": diagnostics["elapsed_sec"],
+            "initialization": diagnostics["initialization"],
         })
 
     # 汇总：均值±标准差/min/max，存 summary.json 并打印

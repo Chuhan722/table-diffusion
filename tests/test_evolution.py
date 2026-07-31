@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from table_diffevo.schema import Schema, AttributeBlock
 from table_diffevo.evolution import run_evolution
+import table_diffevo.evolution as evolution_module
 
 
 def make_toy_schema():
@@ -219,3 +220,67 @@ class TestExcludeSelf:
         )
         assert diag["params"]["exclude_self"] is False
         assert any(r > 0.0 for r in diag["donor_self_rate_history"])
+
+
+class TestProposalRetries:
+    """提案被拒后缩小 rho 重试。"""
+
+    def test_default_is_single_attempt(self):
+        """默认不重试，每轮只评估一个提案。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=12, seed=7,
+        )
+
+        assert diag["params"]["max_retries"] == 0
+        assert all(n == 1 for n in diag["proposal_attempts_history"])
+        assert all(a in (0, 1) for a in diag["accepted_attempt_history"])
+
+    def test_rejected_proposal_retries_with_smaller_rho(self, monkeypatch):
+        """首次故意变差，第二次改到目标：应在缩小 rho 后接受。"""
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x", values=["a", "b"]
+            )
+        ])
+        queries = [
+            {"conditions": [{"attribute": "x", "operator": "==", "value": "a"}]}
+        ]
+        seen_rhos = []
+
+        def fake_evolve(current, donors, schema, rho, eta, mu, rng):
+            seen_rhos.append(rho)
+            value = "a" if len(seen_rhos) == 1 else "b"
+            return pd.DataFrame({"x": [value] * len(current)})
+
+        monkeypatch.setattr(evolution_module, "evolve_step", fake_evolve)
+        _, diag = run_evolution(
+            np.array([0]), queries, schema,
+            n_records=20, n_rounds=1, seed=0,
+            rho=0.2, max_retries=1, retry_rho_decay=0.25,
+        )
+
+        assert seen_rhos == pytest.approx([0.2, 0.05])
+        assert diag["proposal_attempts_history"] == [2]
+        assert diag["accepted_attempt_history"] == [2]
+        assert diag["accepted_rho_history"] == pytest.approx([0.05])
+        assert diag["best_loss"] == 0.0
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"max_retries": -1}, "max_retries"),
+            ({"max_retries": 1.5}, "max_retries"),
+            ({"retry_rho_decay": 0.0}, "retry_rho_decay"),
+            ({"retry_rho_decay": 1.0}, "retry_rho_decay"),
+        ],
+    )
+    def test_invalid_retry_parameters(self, kwargs, message):
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match=message):
+            run_evolution(target, queries, schema, n_records=100, **kwargs)
