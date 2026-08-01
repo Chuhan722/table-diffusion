@@ -17,6 +17,7 @@ import numpy as np
 from scipy import stats
 
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -57,6 +58,7 @@ def _run_one(
     changed_cells_history = []
     negative_copy_probability_history = []
     positive_copy_probability_history = []
+    copy_probability_entropy_history = []
     direction_reference_scale = None
     start = time.perf_counter()
 
@@ -135,6 +137,10 @@ def _run_one(
             copy_probabilities = tilted_copy_probabilities(
                 0.5, active_directions, effective_strength
             )
+            if len(copy_probabilities):
+                copy_probability_entropy_history.append(
+                    float(np.mean(bernoulli_entropy(copy_probabilities)))
+                )
             negative = active_directions < 0.0
             positive = active_directions > 0.0
             if np.any(negative):
@@ -217,6 +223,10 @@ def _run_one(
         "positive_direction_copy_probability": (
             float(np.mean(positive_copy_probability_history))
             if positive_copy_probability_history else None
+        ),
+        "copy_probability_entropy": (
+            float(np.mean(copy_probability_entropy_history))
+            if copy_probability_entropy_history else None
         ),
         "direction_reference_scale": direction_reference_scale,
         "mean_changed_cells": (

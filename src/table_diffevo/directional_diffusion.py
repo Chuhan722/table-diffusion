@@ -95,6 +95,33 @@ def tilted_copy_probabilities(
     return probs
 
 
+def bernoulli_entropy(probabilities: np.ndarray) -> np.ndarray:
+    """返回 Bernoulli 转移概率的逐元素熵（自然对数，单位 nat）。
+
+    ``p=0/1`` 的熵按连续极限定义为 0；``p=0.5`` 达到最大值 ``log(2)``。
+    本函数只提供诊断，不参与方向核的采样或接受决策。
+    """
+    raw_probabilities = np.asarray(probabilities)
+    if raw_probabilities.dtype.kind not in "iuf":
+        raise ValueError("probabilities 必须是 [0, 1] 内的有限数值数组")
+    probs = raw_probabilities.astype(float, copy=False)
+    if (
+        not np.all(np.isfinite(probs))
+        or np.any(probs < 0.0)
+        or np.any(probs > 1.0)
+    ):
+        raise ValueError("probabilities 必须是 [0, 1] 内的有限数值数组")
+
+    entropy = np.zeros_like(probs, dtype=float)
+    interior = (probs > 0.0) & (probs < 1.0)
+    interior_probs = probs[interior]
+    entropy[interior] = -(
+        interior_probs * np.log(interior_probs)
+        + (1.0 - interior_probs) * np.log1p(-interior_probs)
+    )
+    return entropy
+
+
 def compute_copy_direction_scores(
     current: pd.DataFrame,
     donors: pd.DataFrame,

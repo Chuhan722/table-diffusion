@@ -286,6 +286,9 @@ def main():
             "positive_direction_copy_probability": _mean_without_none(
                 diagnostics["positive_direction_copy_probability_history"]
             ),
+            "copy_probability_entropy": _mean_without_none(
+                diagnostics["copy_probability_entropy_history"]
+            ),
             "direction_reference_scale": (
                 float(diagnostics["direction_reference_scale"])
                 if diagnostics["direction_reference_scale"] is not None
@@ -351,6 +354,7 @@ def main():
         "copy_direction_negative_rate",
         "negative_direction_copy_probability",
         "positive_direction_copy_probability",
+        "copy_probability_entropy",
         "direction_reference_scale",
         "elapsed_sec",
         "direction_evaluation_elapsed_sec",

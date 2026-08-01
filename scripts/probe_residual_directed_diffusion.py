@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -196,6 +197,9 @@ def _probe_state(
         }
         for value in strengths
     }
+    direction_entropy = {
+        _strength_name(value): [] for value in strengths
+    }
 
     for proposal_index in range(proposals):
         donor_rng = np.random.default_rng(
@@ -262,6 +266,10 @@ def _probe_state(
             probabilities = tilted_copy_probabilities(
                 ETA, active, effective_strength
             )
+            if len(probabilities):
+                direction_entropy[name].append(
+                    float(np.mean(bernoulli_entropy(probabilities)))
+                )
             for label, mask in (
                 ("negative_probability", active < 0.0),
                 ("positive_probability", active > 0.0),
@@ -332,6 +340,10 @@ def _probe_state(
         },
         "proposal_rows": rows,
         "mean_copy_probability_by_direction": probability_summary,
+        "mean_copy_entropy": {
+            name: (float(np.mean(values)) if values else None)
+            for name, values in direction_entropy.items()
+        },
     }
     print(
         f"seed={seed:02d} baseline_state_rounds={state_rounds} "

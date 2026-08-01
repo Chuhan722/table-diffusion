@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -225,6 +226,30 @@ class TestCopyDirectionScores:
 
 
 class TestContinuousCopyKernel:
+    def test_bernoulli_entropy_has_expected_endpoints_and_maximum(self):
+        entropy = bernoulli_entropy(np.array([0.0, 0.25, 0.5, 0.75, 1.0]))
+
+        assert entropy[0] == 0.0
+        assert entropy[-1] == 0.0
+        assert entropy[2] == pytest.approx(np.log(2.0))
+        assert entropy[1] == pytest.approx(entropy[3])
+        assert np.all(entropy >= 0.0)
+
+    @pytest.mark.parametrize(
+        "probabilities",
+        [
+            np.array([-0.1]),
+            np.array([1.1]),
+            np.array([np.nan]),
+            np.array(["x"]),
+        ],
+    )
+    def test_bernoulli_entropy_rejects_invalid_probabilities(
+        self, probabilities
+    ):
+        with pytest.raises(ValueError, match="probabilities"):
+            bernoulli_entropy(probabilities)
+
     def test_rms_scale_is_stable_for_empty_zero_and_extreme_values(self):
         assert direction_rms_scale(np.array([])) == 0.0
         assert direction_rms_scale(np.zeros((2, 3))) == 0.0
@@ -450,6 +475,13 @@ class TestEvolutionIntegration:
             "raw_proposal_quadratic_penalty_history",
         ):
             assert endpoint_diag[key] == baseline_diag[key]
+        np.testing.assert_allclose(
+            baseline_diag["copy_probability_entropy_history"], np.log(2.0)
+        )
+        assert (
+            endpoint_diag["copy_probability_entropy_history"]
+            == baseline_diag["copy_probability_entropy_history"]
+        )
 
     def test_initial_rms_scale_is_fixed_after_first_nonzero_round(self):
         schema = load_schema("configs/test_300x10/schema.yaml")
@@ -486,6 +518,13 @@ class TestEvolutionIntegration:
             if value is not None
         ]
         np.testing.assert_allclose(effective, 0.7 / scale)
+        entropy = [
+            value
+            for value in diagnostics["copy_probability_entropy_history"]
+            if value is not None
+        ]
+        assert entropy
+        assert all(0.0 < value <= np.log(2.0) for value in entropy)
 
     def test_raw_proposal_gain_decomposition_is_exact(self):
         schema = load_schema("configs/test_300x10/schema.yaml")
@@ -532,6 +571,54 @@ class TestEvolutionIntegration:
             device="numpy",
             log_every=100,
         )
+
+    @pytest.mark.parametrize("n_rounds", [0, 3])
+    def test_zero_round_and_initial_convergence_do_not_evaluate_direction(
+        self, monkeypatch, n_rounds
+    ):
+        schema = Schema([
+            AttributeBlock(
+                name="a", type="categorical", description="a", values=[0, 1]
+            )
+        ])
+        queries = [
+            {
+                "conditions": [
+                    {"attribute": "a", "operator": "==", "value": 1}
+                ]
+            }
+        ]
+        monkeypatch.setattr(
+            evolution_module,
+            "init_synthetic_table",
+            lambda *args, **kwargs: pd.DataFrame({"a": [0, 0, 0, 0]}),
+        )
+        monkeypatch.setattr(
+            evolution_module,
+            "compute_copy_direction_scores",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("零轮或初始收敛不应计算方向")
+            ),
+        )
+
+        best, diagnostics = run_evolution(
+            np.array([0]),
+            queries,
+            schema,
+            n_records=4,
+            n_rounds=n_rounds,
+            seed=0,
+            residual_directed_diffusion=True,
+            device="numpy",
+            log_every=100,
+        )
+
+        pd.testing.assert_frame_equal(
+            best, pd.DataFrame({"a": [0, 0, 0, 0]})
+        )
+        assert diagnostics["direction_evaluation_count"] == 0
+        assert diagnostics["direction_reference_scale"] is None
+        assert diagnostics["copy_probability_entropy_history"] == []
 
     def test_retry_reuses_same_direction_matrix(self, monkeypatch):
         schema = Schema([

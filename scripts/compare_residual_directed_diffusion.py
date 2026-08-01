@@ -158,6 +158,11 @@ def _run_one(
         ]
         if value is not None
     ]
+    copy_probability_entropy = [
+        value
+        for value in diagnostics["copy_probability_entropy_history"]
+        if value is not None
+    ]
     result = {
         "seed": int(seed),
         "enabled": bool(enabled),
@@ -184,6 +189,9 @@ def _run_one(
         ),
         "positive_direction_copy_probability": _mean_or_zero(
             positive_copy_probability
+        ),
+        "copy_probability_entropy": _mean_or_zero(
+            copy_probability_entropy
         ),
         "elapsed_sec": float(diagnostics["elapsed_sec"]),
         "direction_evaluation_elapsed_sec": float(
@@ -300,6 +308,7 @@ def main():
         "copy_direction_negative_rate",
         "negative_direction_copy_probability",
         "positive_direction_copy_probability",
+        "copy_probability_entropy",
         "elapsed_sec",
         "direction_evaluation_elapsed_sec",
         "direction_reference_scale",

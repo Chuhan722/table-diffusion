@@ -44,6 +44,7 @@ from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -219,6 +220,7 @@ def run_evolution(
         - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
           原始 proposal 精确收益
         - copy_direction_*_history: 局部方向分布与正/反向实际复制概率
+        - copy_probability_entropy_history: 每轮 active Bernoulli 复制核的平均熵
         - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
         - direction_evaluation_count: int，实际计算局部方向矩阵的次数
@@ -377,6 +379,7 @@ def run_evolution(
     copy_direction_negative_rate_history: List[Optional[float]] = []
     negative_direction_copy_probability_history: List[Optional[float]] = []
     positive_direction_copy_probability_history: List[Optional[float]] = []
+    copy_probability_entropy_history: List[Optional[float]] = []
     effective_direction_strength_history: List[Optional[float]] = []
     direction_reference_scale_history: List[Optional[float]] = []
     raw_proposal_gain_history: List[List[float]] = []
@@ -562,12 +565,23 @@ def run_evolution(
                     float(np.mean(active_probabilities[positive_mask]))
                     if np.any(positive_mask) else None
                 )
+                if effective_direction_strength == 0.0:
+                    copy_probability_entropy_history.append(
+                        float(bernoulli_entropy(np.asarray([eta]))[0])
+                    )
+                else:
+                    copy_probability_entropy_history.append(
+                        float(np.mean(
+                            bernoulli_entropy(active_probabilities)
+                        ))
+                    )
             else:
                 copy_direction_mean_history.append(0.0)
                 copy_direction_positive_rate_history.append(0.0)
                 copy_direction_negative_rate_history.append(0.0)
                 negative_direction_copy_probability_history.append(None)
                 positive_direction_copy_probability_history.append(None)
+                copy_probability_entropy_history.append(None)
         else:
             copy_direction_scores = None
             effective_direction_strength = None
@@ -576,6 +590,9 @@ def run_evolution(
             copy_direction_negative_rate_history.append(None)
             negative_direction_copy_probability_history.append(None)
             positive_direction_copy_probability_history.append(None)
+            copy_probability_entropy_history.append(
+                float(bernoulli_entropy(np.asarray([eta]))[0])
+            )
             effective_direction_strength_history.append(None)
             direction_reference_scale_history.append(None)
 
@@ -695,6 +712,9 @@ def run_evolution(
         ),
         "positive_direction_copy_probability_history": (
             positive_direction_copy_probability_history
+        ),
+        "copy_probability_entropy_history": (
+            copy_probability_entropy_history
         ),
         "effective_direction_strength_history": (
             effective_direction_strength_history

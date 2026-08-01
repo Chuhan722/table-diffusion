@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -241,6 +242,9 @@ def main():
         _name(value): {"negative": [], "positive": [], "neutral": []}
         for value in args.strengths
     }
+    direction_entropy = {
+        _name(value): [] for value in args.strengths
+    }
     endpoint_exact = True
     direction_reference_scale = None
     reference_scale_proposal_index = None
@@ -309,6 +313,10 @@ def main():
             copy_probs = tilted_copy_probabilities(
                 args.eta, active, effective_strength
             )
+            if len(copy_probs):
+                direction_entropy[name].append(
+                    float(np.mean(bernoulli_entropy(copy_probs)))
+                )
             for label, mask in (
                 ("negative", active < 0.0),
                 ("positive", active > 0.0),
@@ -401,6 +409,10 @@ def main():
             for strength in args.strengths
         },
         "proposal_rows": rows,
+        "mean_copy_entropy": {
+            name: (float(np.mean(values)) if values else None)
+            for name, values in direction_entropy.items()
+        },
         "mean_copy_probability_by_direction": {
             name: {
                 label: (float(np.mean(values)) if values else None)
