@@ -6,9 +6,13 @@
 """
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
+import platform
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -38,6 +42,52 @@ def _address_seed(seed, proposal_index, stream):
         [int(seed), int(proposal_index), int(stream)]
     )
     return int(sequence.generate_state(1, dtype=np.uint64)[0])
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_text(*args):
+    result = subprocess.run(
+        ["git", *args], check=False, capture_output=True, text=True
+    )
+    return result.returncode, result.stdout.strip()
+
+
+def _environment_snapshot(device):
+    commit_code, commit = _git_text("rev-parse", "HEAD")
+    status_code, status = _git_text("status", "--porcelain")
+    snapshot = {
+        "started_at": datetime.now().astimezone().isoformat(),
+        "command": [sys.executable, *sys.argv],
+        "git_commit": commit if commit_code == 0 else None,
+        "git_worktree_clean": status_code == 0 and status == "",
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+        "requested_device": device,
+    }
+    try:
+        import torch
+    except ImportError:
+        snapshot.update({"torch": None, "cuda_available": False, "gpu": None})
+    else:
+        cuda_available = bool(torch.cuda.is_available())
+        snapshot.update({
+            "torch": torch.__version__,
+            "cuda_available": cuda_available,
+            "gpu": (
+                torch.cuda.get_device_name(0)
+                if device == "cuda" and cuda_available else None
+            ),
+        })
+    return snapshot
 
 
 def _summary(rows):
@@ -116,6 +166,10 @@ def main():
     output = Path(args.output)
     if output.exists() and not args.overwrite:
         raise FileExistsError(f"输出文件已存在，不覆盖：{output}")
+
+    environment = _environment_snapshot(args.device)
+    if args.device == "cuda" and not environment["cuda_available"]:
+        parser.error("--device=cuda，但当前可见设备中 CUDA 不可用")
 
     schema = load_schema(args.schema)
     queries = load_queries(args.queries)
@@ -283,6 +337,12 @@ def main():
         "state_sha256": hashlib.sha256(
             state.to_csv(index=False).encode("utf-8")
         ).hexdigest(),
+        "input_sha256": {
+            "state": _sha256_file(args.state),
+            "schema": _sha256_file(args.schema),
+            "queries": _sha256_file(args.queries),
+        },
+        "environment": environment,
         "state_loss": float(state_loss),
         "n_records": n_records,
         "expected_records": args.expected_records,
