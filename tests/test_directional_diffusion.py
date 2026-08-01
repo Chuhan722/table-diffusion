@@ -95,6 +95,29 @@ class TestDirectionalPotential:
 
         assert potential[0] == pytest.approx(15.0)
 
+    @pytest.mark.parametrize("device", _devices())
+    def test_four_condition_query_uses_correct_fallback(self, device):
+        rows = pd.DataFrame({"a": [0, 1, 1], "b": [1, 0, 1]})
+        query = {
+            "conditions": [
+                {"attribute": "a", "operator": "==", "value": 1},
+                {"attribute": "b", "operator": "==", "value": 1},
+                {"attribute": "a", "operator": "==", "value": 1},
+                {"attribute": "b", "operator": "==", "value": 1},
+            ]
+        }
+
+        potential = evaluate_directional_potential(
+            rows,
+            [query],
+            _binary_schema(),
+            np.array([2.5]),
+            device=device,
+            verbose=False,
+        )
+
+        np.testing.assert_array_equal(potential, [0.0, 0.0, 2.5])
+
     @pytest.mark.parametrize(
         "bad_residual",
         [np.array([1.0]), np.array([1.0, np.nan, 0.0]), np.array(["x"] * 3)],
