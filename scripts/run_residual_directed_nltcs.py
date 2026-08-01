@@ -138,6 +138,11 @@ def main():
         "--direction-strength", type=float, default=1.0
     )
     parser.add_argument(
+        "--direction-normalization",
+        choices=["none", "initial_rms"],
+        default="initial_rms",
+    )
+    parser.add_argument(
         "--baseline",
         action="store_true",
         help="关闭方向机制，运行同配置历史扩散核对照",
@@ -209,6 +214,7 @@ def main():
             max_retries=0,
             residual_directed_diffusion=direction_enabled,
             diffusion_direction_strength=args.direction_strength,
+            diffusion_direction_normalization=args.direction_normalization,
         )
 
         run_dir = parent / f"{position}-{seed}"
@@ -280,6 +286,11 @@ def main():
             "positive_direction_copy_probability": _mean_without_none(
                 diagnostics["positive_direction_copy_probability_history"]
             ),
+            "direction_reference_scale": (
+                float(diagnostics["direction_reference_scale"])
+                if diagnostics["direction_reference_scale"] is not None
+                else 0.0
+            ),
             "initialization": diagnostics["initialization"],
         }
         runs.append(record)
@@ -340,6 +351,7 @@ def main():
         "copy_direction_negative_rate",
         "negative_direction_copy_probability",
         "positive_direction_copy_probability",
+        "direction_reference_scale",
         "elapsed_sec",
         "direction_evaluation_elapsed_sec",
     ]
@@ -363,6 +375,9 @@ def main():
             "residual_directed_diffusion": direction_enabled,
             "diffusion_direction_strength": (
                 args.direction_strength if direction_enabled else None
+            ),
+            "diffusion_direction_normalization": (
+                args.direction_normalization if direction_enabled else None
             ),
         },
         "privacy_note": (

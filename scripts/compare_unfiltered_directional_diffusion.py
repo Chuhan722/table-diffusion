@@ -16,7 +16,11 @@ import time
 import numpy as np
 from scipy import stats
 
-from table_diffevo.directional_diffusion import compute_copy_direction_scores
+from table_diffevo.directional_diffusion import (
+    compute_copy_direction_scores,
+    direction_rms_scale,
+    tilted_copy_probabilities,
+)
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.marginals import load_marginals
@@ -40,7 +44,10 @@ def _name(strength):
     )
 
 
-def _run_one(target, queries, schema, marginals, seed, rounds, strength, device):
+def _run_one(
+    target, queries, schema, marginals, seed, rounds, strength, device,
+    normalization,
+):
     rng = np.random.default_rng(seed)
     state = init_synthetic_table(
         N_RECORDS, schema, rng, marginals=marginals
@@ -48,6 +55,9 @@ def _run_one(target, queries, schema, marginals, seed, rounds, strength, device)
     loss_history = []
     gain_history = []
     changed_cells_history = []
+    negative_copy_probability_history = []
+    positive_copy_probability_history = []
+    direction_reference_scale = None
     start = time.perf_counter()
 
     q, residual, fitness = evaluate_vectorized(
@@ -106,9 +116,38 @@ def _run_one(target, queries, schema, marginals, seed, rounds, strength, device)
                 batch_size=256,
                 device=device,
             )
+            differs = np.column_stack([
+                state[attr].reset_index(drop=True).to_numpy()
+                != donors[attr].to_numpy()
+                for attr in schema.attribute_names()
+            ])
+            active_directions = directions[differs]
+            if normalization == "initial_rms" and direction_reference_scale is None:
+                candidate_scale = direction_rms_scale(active_directions)
+                if candidate_scale > 0.0:
+                    direction_reference_scale = candidate_scale
+            effective_strength = (
+                strength / direction_reference_scale
+                if normalization == "initial_rms"
+                and direction_reference_scale is not None
+                else (0.0 if normalization == "initial_rms" else strength)
+            )
+            copy_probabilities = tilted_copy_probabilities(
+                0.5, active_directions, effective_strength
+            )
+            negative = active_directions < 0.0
+            positive = active_directions > 0.0
+            if np.any(negative):
+                negative_copy_probability_history.append(float(
+                    np.mean(copy_probabilities[negative])
+                ))
+            if np.any(positive):
+                positive_copy_probability_history.append(float(
+                    np.mean(copy_probabilities[positive])
+                ))
             direction_kwargs = {
                 "copy_direction_scores": directions,
-                "copy_direction_strength": strength,
+                "copy_direction_strength": effective_strength,
             }
 
         proposal = evolve_step(
@@ -171,6 +210,15 @@ def _run_one(target, queries, schema, marginals, seed, rounds, strength, device)
         "mean_negative_gain": (
             float(negative_gains.mean()) if len(negative_gains) else 0.0
         ),
+        "negative_direction_copy_probability": (
+            float(np.mean(negative_copy_probability_history))
+            if negative_copy_probability_history else None
+        ),
+        "positive_direction_copy_probability": (
+            float(np.mean(positive_copy_probability_history))
+            if positive_copy_probability_history else None
+        ),
+        "direction_reference_scale": direction_reference_scale,
         "mean_changed_cells": (
             float(np.mean(changed_cells_history))
             if changed_cells_history else 0.0
@@ -238,6 +286,11 @@ def main():
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
     )
     parser.add_argument(
+        "--normalization",
+        choices=["none", "initial_rms"],
+        default="initial_rms",
+    )
+    parser.add_argument(
         "--output",
         default="outputs/residual_directed_diffusion_small/unfiltered.json",
     )
@@ -270,12 +323,12 @@ def main():
     for seed in args.seeds:
         runs["baseline"].append(_run_one(
             target, queries, schema, marginals, seed, args.rounds, None,
-            args.device,
+            args.device, args.normalization,
         ))
         for strength in args.strengths:
             runs[_name(strength)].append(_run_one(
                 target, queries, schema, marginals, seed, args.rounds,
-                strength, args.device,
+                strength, args.device, args.normalization,
             ))
 
     metrics = (
@@ -325,6 +378,7 @@ def main():
         "seeds": args.seeds,
         "strengths": args.strengths,
         "device": args.device,
+        "normalization": args.normalization,
         "strength_zero_csv_exact": endpoint_exact,
         "runs": runs,
         "aggregate": aggregate,

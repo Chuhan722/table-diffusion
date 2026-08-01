@@ -6,6 +6,7 @@ import pytest
 
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
+    direction_rms_scale,
     tilted_copy_probabilities,
 )
 from table_diffevo.evolution import run_evolution
@@ -201,6 +202,42 @@ class TestCopyDirectionScores:
 
 
 class TestContinuousCopyKernel:
+    def test_rms_scale_is_stable_for_empty_zero_and_extreme_values(self):
+        assert direction_rms_scale(np.array([])) == 0.0
+        assert direction_rms_scale(np.zeros((2, 3))) == 0.0
+        assert direction_rms_scale(np.array([3.0, 4.0])) == pytest.approx(
+            np.sqrt(12.5)
+        )
+        extreme = direction_rms_scale(np.array([1.0e300, -1.0e300]))
+        assert np.isfinite(extreme)
+        assert extreme == pytest.approx(1.0e300)
+
+    @pytest.mark.parametrize(
+        "scores",
+        [np.array([np.nan]), np.array([np.inf]), np.array(["bad"])],
+    )
+    def test_rms_scale_rejects_invalid_values(self, scores):
+        with pytest.raises(ValueError, match="direction_scores"):
+            direction_rms_scale(scores)
+
+    def test_rms_normalized_temperature_is_scale_invariant(self):
+        scores = np.array([-2.0, -0.5, 0.0, 1.0, 3.0])
+        scaled = 37.0 * scores
+        temperature = 0.8
+
+        original = tilted_copy_probabilities(
+            0.5,
+            scores,
+            temperature / direction_rms_scale(scores),
+        )
+        rescaled = tilted_copy_probabilities(
+            0.5,
+            scaled,
+            temperature / direction_rms_scale(scaled),
+        )
+
+        np.testing.assert_allclose(original, rescaled)
+
     def test_positive_is_higher_negative_is_lower_and_neutral_is_exact(self):
         probs = tilted_copy_probabilities(
             0.5, np.array([-2.0, 0.0, 2.0]), strength=1.0
@@ -348,7 +385,8 @@ class TestContinuousCopyKernel:
 
 
 class TestEvolutionIntegration:
-    def test_enabled_strength_zero_matches_disabled_path(self):
+    @pytest.mark.parametrize("normalization", ["none", "initial_rms"])
+    def test_enabled_strength_zero_matches_disabled_path(self, normalization):
         schema = load_schema("configs/test_300x10/schema.yaml")
         queries = load_queries("configs/test_300x10/measured_50query.json")
         target = np.array([query["result"] for query in queries])
@@ -369,6 +407,7 @@ class TestEvolutionIntegration:
             schema,
             residual_directed_diffusion=True,
             diffusion_direction_strength=0.0,
+            diffusion_direction_normalization=normalization,
             **common,
         )
 
@@ -388,6 +427,42 @@ class TestEvolutionIntegration:
             "raw_proposal_quadratic_penalty_history",
         ):
             assert endpoint_diag[key] == baseline_diag[key]
+
+    def test_initial_rms_scale_is_fixed_after_first_nonzero_round(self):
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries("configs/test_300x10/measured_50query.json")
+        target = np.array([query["result"] for query in queries])
+
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            n_records=100,
+            n_rounds=8,
+            seed=51,
+            residual_directed_diffusion=True,
+            diffusion_direction_strength=0.7,
+            diffusion_direction_normalization="initial_rms",
+            device="numpy",
+            log_every=100,
+        )
+
+        scale = diagnostics["direction_reference_scale"]
+        assert scale is not None
+        assert scale > 0.0
+        present_scales = [
+            value
+            for value in diagnostics["direction_reference_scale_history"]
+            if value is not None
+        ]
+        assert present_scales
+        np.testing.assert_array_equal(present_scales, scale)
+        effective = [
+            value
+            for value in diagnostics["effective_direction_strength_history"]
+            if value is not None
+        ]
+        np.testing.assert_allclose(effective, 0.7 / scale)
 
     def test_raw_proposal_gain_decomposition_is_exact(self):
         schema = load_schema("configs/test_300x10/schema.yaml")
@@ -535,4 +610,26 @@ class TestEvolutionIntegration:
                 n_records=2,
                 n_rounds=0,
                 residual_directed_diffusion="yes",
+            )
+
+    def test_direction_normalization_validation(self):
+        with pytest.raises(
+            ValueError, match="diffusion_direction_normalization"
+        ):
+            run_evolution(
+                np.array([1]),
+                [{
+                    "conditions": [
+                        {"attribute": "a", "operator": "==", "value": 1}
+                    ]
+                }],
+                Schema([
+                    AttributeBlock(
+                        name="a", type="categorical", description="a",
+                        values=[0, 1],
+                    )
+                ]),
+                n_records=2,
+                n_rounds=0,
+                diffusion_direction_normalization="per_round",
             )

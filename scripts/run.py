@@ -81,6 +81,7 @@ MU = 0.01              # 变异率（固定值）
 # 方向信号只连续倾斜实际单块复制概率；不做正负门控或逐候选 top-k。
 RESIDUAL_DIRECTED_DIFFUSION = False
 DIFFUSION_DIRECTION_STRENGTH = 1.0
+DIFFUSION_DIRECTION_NORMALIZATION = 'initial_rms'
 
 # 整代提案被拒后的缩步重试（默认关闭，保持历史行为）
 MAX_RETRIES = 0        # 0=不重试；每次重试复用当轮 donor
@@ -114,6 +115,9 @@ def _run_params():
         "retry_rho_decay": RETRY_RHO_DECAY,
         "residual_directed_diffusion": RESIDUAL_DIRECTED_DIFFUSION,
         "diffusion_direction_strength": DIFFUSION_DIRECTION_STRENGTH,
+        "diffusion_direction_normalization": (
+            DIFFUSION_DIRECTION_NORMALIZATION
+        ),
     }
 
 
@@ -170,6 +174,9 @@ def main():
             maxent_tol=MAXENT_TOL,
             residual_directed_diffusion=RESIDUAL_DIRECTED_DIFFUSION,
             diffusion_direction_strength=DIFFUSION_DIRECTION_STRENGTH,
+            diffusion_direction_normalization=(
+                DIFFUSION_DIRECTION_NORMALIZATION
+            ),
         )
         sub_name = f"{i}-{seed}"
         run_dir = save_run(best_S, diagnostics,

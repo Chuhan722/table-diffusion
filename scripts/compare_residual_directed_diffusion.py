@@ -89,6 +89,7 @@ def _run_one(
     device,
     enabled,
     strength,
+    normalization,
 ):
     with contextlib.redirect_stdout(io.StringIO()):
         best_s, diagnostics = run_evolution(
@@ -119,6 +120,7 @@ def _run_one(
             max_retries=0,
             residual_directed_diffusion=enabled,
             diffusion_direction_strength=strength,
+            diffusion_direction_normalization=normalization,
         )
 
     gains = _first_attempts(diagnostics["raw_proposal_gain_history"])
@@ -187,6 +189,10 @@ def _run_one(
         "direction_evaluation_elapsed_sec": float(
             diagnostics["direction_evaluation_elapsed_sec"]
         ),
+        "direction_reference_scale": (
+            float(diagnostics["direction_reference_scale"])
+            if diagnostics["direction_reference_scale"] is not None else 0.0
+        ),
         "n_unique": int(len(best_s.value_counts())),
         "csv_sha256": hashlib.sha256(
             best_s.to_csv(index=False).encode("utf-8")
@@ -212,6 +218,11 @@ def main():
     )
     parser.add_argument(
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
+    )
+    parser.add_argument(
+        "--normalization",
+        choices=["none", "initial_rms"],
+        default="initial_rms",
     )
     parser.add_argument(
         "--output",
@@ -256,6 +267,7 @@ def main():
                 device=args.device,
                 enabled=False,
                 strength=0.0,
+                normalization=args.normalization,
             )
         )
         for strength in args.strengths:
@@ -270,6 +282,7 @@ def main():
                     device=args.device,
                     enabled=True,
                     strength=strength,
+                    normalization=args.normalization,
                 )
             )
 
@@ -289,6 +302,7 @@ def main():
         "positive_direction_copy_probability",
         "elapsed_sec",
         "direction_evaluation_elapsed_sec",
+        "direction_reference_scale",
         "n_unique",
     )
     aggregate = {
@@ -334,6 +348,7 @@ def main():
         "seeds": args.seeds,
         "strengths": args.strengths,
         "device": args.device,
+        "normalization": args.normalization,
         "strength_zero_csv_exact": endpoint_exact,
         "runs": runs,
         "aggregate": aggregate,

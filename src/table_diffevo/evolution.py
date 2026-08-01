@@ -45,6 +45,7 @@ from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
+    direction_rms_scale,
     tilted_copy_probabilities,
 )
 from table_diffevo.generator import init_synthetic_table
@@ -105,6 +106,7 @@ def run_evolution(
     maxent_tol: float = 1e-8,
     residual_directed_diffusion: bool = False,
     diffusion_direction_strength: float = 1.0,
+    diffusion_direction_normalization: str = "initial_rms",
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -194,6 +196,12 @@ def run_evolution(
     diffusion_direction_strength : float, default 1.0
         残差驱动扩散的非负有限强度。0 在启用机制时也精确退化到历史固定 eta；
         正值越大，复制概率对实际局部方向越敏感。
+    diffusion_direction_normalization : str, default 'initial_rms'
+        方向强度的尺度口径：
+        - 'none'：直接使用原始比例残差方向量；
+        - 'initial_rms'：用本次运行首个非零方向矩阵的 RMS 固定定标。此时
+          diffusion_direction_strength 是无量纲初始温度，后续残差变小时倾斜自然
+          冷却，不逐轮重新标准化。
 
     Returns
     -------
@@ -297,6 +305,11 @@ def run_evolution(
             f"得到 {diffusion_direction_strength!r}"
         )
     diffusion_direction_strength = float(diffusion_direction_strength)
+    if diffusion_direction_normalization not in ("none", "initial_rms"):
+        raise ValueError(
+            "diffusion_direction_normalization 必须是 'none' 或 "
+            f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
+        )
 
     rng = np.random.default_rng(seed)
 
@@ -364,6 +377,8 @@ def run_evolution(
     copy_direction_negative_rate_history: List[Optional[float]] = []
     negative_direction_copy_probability_history: List[Optional[float]] = []
     positive_direction_copy_probability_history: List[Optional[float]] = []
+    effective_direction_strength_history: List[Optional[float]] = []
+    direction_reference_scale_history: List[Optional[float]] = []
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
@@ -373,6 +388,7 @@ def run_evolution(
     distance_evaluation_count = 0
     direction_evaluation_count = 0
     direction_evaluation_elapsed_sec = 0.0
+    direction_reference_scale: Optional[float] = None
 
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
@@ -501,11 +517,31 @@ def run_evolution(
                 for attr in schema.attribute_names()
             ])
             active_directions = copy_direction_scores[differing]
+            if (
+                diffusion_direction_normalization == "initial_rms"
+                and direction_reference_scale is None
+            ):
+                candidate_scale = direction_rms_scale(active_directions)
+                if candidate_scale > 0.0:
+                    direction_reference_scale = candidate_scale
+            if diffusion_direction_normalization == "initial_rms":
+                effective_direction_strength = (
+                    diffusion_direction_strength / direction_reference_scale
+                    if direction_reference_scale is not None else 0.0
+                )
+            else:
+                effective_direction_strength = diffusion_direction_strength
+            effective_direction_strength_history.append(
+                float(effective_direction_strength)
+            )
+            direction_reference_scale_history.append(
+                direction_reference_scale
+            )
             if len(active_directions):
                 active_probabilities = tilted_copy_probabilities(
                     eta,
                     active_directions,
-                    diffusion_direction_strength,
+                    effective_direction_strength,
                 )
                 negative_mask = active_directions < 0.0
                 positive_mask = active_directions > 0.0
@@ -534,11 +570,14 @@ def run_evolution(
                 positive_direction_copy_probability_history.append(None)
         else:
             copy_direction_scores = None
+            effective_direction_strength = None
             copy_direction_mean_history.append(None)
             copy_direction_positive_rate_history.append(None)
             copy_direction_negative_rate_history.append(None)
             negative_direction_copy_probability_history.append(None)
             positive_direction_copy_probability_history.append(None)
+            effective_direction_strength_history.append(None)
+            direction_reference_scale_history.append(None)
 
         # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
         # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
@@ -555,7 +594,7 @@ def run_evolution(
         direction_kwargs = (
             {
                 "copy_direction_scores": copy_direction_scores,
-                "copy_direction_strength": diffusion_direction_strength,
+                "copy_direction_strength": effective_direction_strength,
             }
             if residual_directed_diffusion else {}
         )
@@ -657,6 +696,12 @@ def run_evolution(
         "positive_direction_copy_probability_history": (
             positive_direction_copy_probability_history
         ),
+        "effective_direction_strength_history": (
+            effective_direction_strength_history
+        ),
+        "direction_reference_scale_history": (
+            direction_reference_scale_history
+        ),
         "raw_proposal_gain_history": raw_proposal_gain_history,
         "raw_proposal_linear_gain_history": raw_proposal_linear_gain_history,
         "raw_proposal_quadratic_penalty_history": (
@@ -666,6 +711,7 @@ def run_evolution(
         "distance_evaluation_count": distance_evaluation_count,
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
+        "direction_reference_scale": direction_reference_scale,
         "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
@@ -704,6 +750,9 @@ def run_evolution(
                 residual_directed_diffusion
             ),
             "diffusion_direction_strength": diffusion_direction_strength,
+            "diffusion_direction_normalization": (
+                diffusion_direction_normalization
+            ),
         },
     }
 

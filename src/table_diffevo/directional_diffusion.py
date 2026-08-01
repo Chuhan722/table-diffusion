@@ -14,6 +14,27 @@ from table_diffevo.schema import Schema
 from table_diffevo.vectorized_eval import evaluate_directional_potential
 
 
+def direction_rms_scale(direction_scores: np.ndarray) -> float:
+    """返回有限方向量的数值稳定 RMS，用于无量纲温度定标。
+
+    空数组和全零数组返回 0。先除以最大绝对值再计算，避免有限大数平方溢出。
+    本函数只给出尺度，不改变方向符号或执行筛选。
+    """
+    raw_scores = np.asarray(direction_scores)
+    if raw_scores.dtype.kind not in "iuf":
+        raise ValueError("direction_scores 必须是有限数值数组")
+    scores = raw_scores.astype(float, copy=False)
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("direction_scores 必须是有限数值数组")
+    if scores.size == 0:
+        return 0.0
+
+    max_abs = float(np.max(np.abs(scores)))
+    if max_abs == 0.0:
+        return 0.0
+    return float(max_abs * np.sqrt(np.mean((scores / max_abs) ** 2)))
+
+
 def tilted_copy_probabilities(
     eta: float,
     direction_scores: np.ndarray,
