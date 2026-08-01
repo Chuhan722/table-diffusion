@@ -94,6 +94,59 @@ class TestParticipation:
         )
 
 
+class TestEligibilityMask:
+    """上游演化选择可以限制哪些记录有资格参与。"""
+
+    def test_ineligible_rows_never_copy(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        eligible = np.array([True, False, True, False, True])
+
+        result = evolve_step(
+            current, donors, schema,
+            rho=1.0, eta=1.0, mu=0.0,
+            rng=np.random.default_rng(3),
+            eligibility_mask=eligible,
+        )
+
+        expected = current.reset_index(drop=True).copy()
+        expected.loc[eligible] = donors.reset_index(drop=True).loc[eligible]
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_ineligible_rows_never_mutate(self):
+        schema = make_toy_schema()
+        current, _ = make_tables()
+        donors = current.copy()
+        eligible = np.zeros(len(current), dtype=bool)
+
+        result = evolve_step(
+            current, donors, schema,
+            rho=1.0, eta=1.0, mu=1.0,
+            rng=np.random.default_rng(9),
+            eligibility_mask=eligible,
+        )
+
+        pd.testing.assert_frame_equal(result, current.reset_index(drop=True))
+
+    def test_all_true_preserves_random_trace(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+
+        baseline = evolve_step(
+            current, donors, schema,
+            rho=0.6, eta=0.4, mu=0.3,
+            rng=np.random.default_rng(42),
+        )
+        gated = evolve_step(
+            current, donors, schema,
+            rho=0.6, eta=0.4, mu=0.3,
+            rng=np.random.default_rng(42),
+            eligibility_mask=np.ones(len(current), dtype=bool),
+        )
+
+        pd.testing.assert_frame_equal(gated, baseline)
+
+
 class TestBlockCopy:
     """属性块复制概率 eta"""
 
@@ -208,6 +261,22 @@ class TestValidation:
         current, donors = make_tables()
         with pytest.raises(ValueError, match="行数.*不一致"):
             evolve_step(current, donors.head(2), schema)
+
+    @pytest.mark.parametrize(
+        "mask, message",
+        [
+            ([True, False], "长度"),
+            (np.ones((5, 1), dtype=bool), "一维"),
+            (np.ones(5, dtype=int), "布尔"),
+        ],
+    )
+    def test_invalid_eligibility_mask(self, mask, message):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match=message):
+            evolve_step(
+                current, donors, schema, eligibility_mask=mask,
+            )
 
 
 class TestIntegration:

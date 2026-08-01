@@ -388,6 +388,114 @@ class TestExcludeSelf:
         assert any(r > 0.0 for r in diag["donor_self_rate_history"])
 
 
+class TestFitnessDominanceGate:
+    """只让适应度严格更高的 donor 改写 recipient。"""
+
+    @staticmethod
+    def _setup():
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x",
+                values=["a", "b"],
+            )
+        ])
+        queries = [
+            {"conditions": [{"attribute": "x", "operator": "==", "value": "a"}]}
+        ]
+        initial = pd.DataFrame({"x": ["a", "b"]})
+        return schema, queries, initial
+
+    def test_gate_keeps_better_recipient_and_updates_worse_one(self, monkeypatch):
+        schema, queries, initial = self._setup()
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        # a 的 donor 是较差的 b；b 的 donor 是较好的 a。
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.array([1, 0]),
+        )
+
+        best, diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=1, seed=0,
+            rho=1.0, eta=1.0, mu=0.0,
+            fitness_dominance_gate=True,
+        )
+
+        assert best["x"].tolist() == ["a", "a"]
+        assert diag["best_loss"] == 0.0
+        assert diag["fitness_dominance_rate_history"] == [0.5]
+        assert diag["params"]["fitness_dominance_gate"] is True
+
+    def test_without_gate_preserves_original_swap(self, monkeypatch):
+        schema, queries, initial = self._setup()
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.array([1, 0]),
+        )
+
+        best, diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=1, seed=0,
+            rho=1.0, eta=1.0, mu=0.0,
+            fitness_dominance_gate=False,
+        )
+
+        assert best["x"].tolist() == initial["x"].tolist()
+        assert diag["best_loss"] == pytest.approx(0.5)
+        assert diag["params"]["fitness_dominance_gate"] is False
+
+    def test_gate_mask_is_reused_across_retries(self, monkeypatch):
+        schema, queries, initial = self._setup()
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.array([1, 0]),
+        )
+        seen_masks = []
+
+        def fake_evolve(
+            current, donors, schema, rho, eta, mu, rng, eligibility_mask
+        ):
+            seen_masks.append(eligibility_mask.copy())
+            value = "b" if len(seen_masks) == 1 else "a"
+            return pd.DataFrame({"x": [value] * len(current)})
+
+        monkeypatch.setattr(evolution_module, "evolve_step", fake_evolve)
+        _, diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=1, seed=0,
+            rho=1.0, eta=1.0, mu=0.0,
+            max_retries=1, retry_rho_decay=0.5,
+            fitness_dominance_gate=True,
+        )
+
+        assert len(seen_masks) == 2
+        assert np.array_equal(seen_masks[0], np.array([False, True]))
+        assert np.array_equal(seen_masks[1], seen_masks[0])
+        assert diag["accepted_attempt_history"] == [2]
+        assert diag["best_loss"] == 0.0
+
+    @pytest.mark.parametrize("value", [1, "yes", None])
+    def test_gate_parameter_requires_bool(self, value):
+        schema, queries, _ = self._setup()
+        with pytest.raises(ValueError, match="fitness_dominance_gate"):
+            run_evolution(
+                np.array([2]), queries, schema,
+                n_records=2, n_rounds=1,
+                fitness_dominance_gate=value,
+            )
+
+
 class TestProposalRetries:
     """提案被拒后缩小 rho 重试。"""
 

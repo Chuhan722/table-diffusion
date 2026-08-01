@@ -77,6 +77,10 @@ RHO = 0.01             # 记录参与率（固定值）
 ETA = 0.5              # 块复制率（固定值）
 MU = 0.01              # 变异率（固定值）
 
+# 适应度支配门控：只让 fitness 严格高于 recipient 的 donor 驱动该行更新。
+# 默认关闭以保持历史配置；方法对照可设为 True。
+FITNESS_DOMINANCE_GATE = False
+
 # 整代提案被拒后的缩步重试（默认关闭，保持历史行为）
 MAX_RETRIES = 0        # 0=不重试；每次重试复用当轮 donor
 RETRY_RHO_DECAY = 0.5  # 重试时 rho 逐次乘以该因子
@@ -105,6 +109,7 @@ def _run_params():
         "delta": DELTA,
         "winsorize": WINSORIZE,
         "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
+        "fitness_dominance_gate": FITNESS_DOMINANCE_GATE,
         "max_retries": MAX_RETRIES,
         "retry_rho_decay": RETRY_RHO_DECAY,
     }
@@ -156,6 +161,7 @@ def main():
             alpha_max=ALPHA_MAX,
             delta=DELTA,
             winsorize_quantiles=WINSORIZE,
+            fitness_dominance_gate=FITNESS_DOMINANCE_GATE,
             max_retries=MAX_RETRIES,
             retry_rho_decay=RETRY_RHO_DECAY,
             maxent_max_states=MAXENT_MAX_STATES,

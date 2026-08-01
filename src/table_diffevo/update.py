@@ -39,6 +39,7 @@
 本模块只负责"给定当前记录和已对齐的参考记录，靠近一步"。
 - donors 已按行对齐：donors.iloc[i] 是 current.iloc[i] 的参考记录
   （从候选池按抽样索引取 donor 的逻辑在上游，见 sampling.sample_donors）
+- eligibility_mask 由上游的演化选择规则给出；False 的记录本轮不得复制或变异
 - ρ、η、μ 随轮次的衰减调度由主循环负责，本函数只接收当前轮的标量值
 """
 from typing import Optional
@@ -55,6 +56,7 @@ def evolve_step(
     eta: float = 0.5,
     mu: float = 0.01,
     rng: Optional[np.random.Generator] = None,
+    eligibility_mask: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """
     全表同步向参考记录靠近一步，生成下一代 S_{t+1}。
@@ -75,6 +77,9 @@ def evolve_step(
         变异概率 μ_t，参与更新的记录以此概率变异一个块
     rng : np.random.Generator or None
         随机数生成器。推荐显式传入 np.random.default_rng(seed) 保证复现
+    eligibility_mask : np.ndarray or None, shape (N,), default None
+        上游给出的记录参与资格。None 表示所有记录都有资格，保持原行为；布尔值
+        False 的记录即使抽中 rho 也不得复制 donor 或发生变异。
 
     Returns
     -------
@@ -84,7 +89,8 @@ def evolve_step(
     Raises
     ------
     ValueError
-        current 与 donors 形状不一致、概率参数越界
+        current 与 donors 形状不一致、概率参数越界，或 eligibility_mask 非布尔一维
+        数组/长度不匹配
 
     Notes
     -----
@@ -123,12 +129,27 @@ def evolve_step(
     N = len(current)
     attr_names = schema.attribute_names()
 
+    if eligibility_mask is None:
+        eligible = np.ones(N, dtype=bool)
+    else:
+        eligible = np.asarray(eligibility_mask)
+        if eligible.shape != (N,):
+            raise ValueError(
+                "eligibility_mask 必须是长度与 current 行数一致的一维数组，"
+                f"得到 shape {eligible.shape}，期望 ({N},)"
+            )
+        if eligible.dtype.kind != 'b':
+            raise ValueError("eligibility_mask 必须是布尔数组")
+
     # 以当前表为基础构造下一代（新对象，索引对齐 0..N-1）
     next_table = current.reset_index(drop=True).copy()
     donors = donors.reset_index(drop=True)
 
     # 7.2 记录参与：U_i ~ Bernoulli(rho)
-    participate = rng.random(N) < rho  # (N,) 布尔
+    # 无资格的记录仍参与固定长度的 rho 骰子；每个属性的 copy_roll 和下面的
+    # mutation roll 也仍对全部 N 行抽取。门控会减少后续按变异行逐个抽 block/value
+    # 的条件随机数，因此启用后的长期随机轨迹按设计会与 baseline 分叉。
+    participate = (rng.random(N) < rho) & eligible  # (N,) 布尔
 
     # 7.3 属性块复制：对每个块，参与且与参考不同的记录以概率 eta 复制
     for attr in attr_names:
