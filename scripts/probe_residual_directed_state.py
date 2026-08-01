@@ -115,6 +115,26 @@ def _summary(rows):
     return result
 
 
+def _paired_gain_summary(candidate_rows, baseline_rows):
+    differences = np.asarray([
+        candidate["gain"] - baseline["gain"]
+        for candidate, baseline in zip(candidate_rows, baseline_rows)
+    ], dtype=float)
+    return {
+        "mean": float(differences.mean()),
+        "std": (
+            float(differences.std(ddof=1)) if len(differences) > 1 else 0.0
+        ),
+        "median": float(np.median(differences)),
+        "min": float(differences.min()),
+        "max": float(differences.max()),
+        "wins": int(np.sum(differences > 0.0)),
+        "ties": int(np.sum(differences == 0.0)),
+        "losses": int(np.sum(differences < 0.0)),
+        "values": differences.tolist(),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
@@ -374,6 +394,13 @@ def main():
         "device": args.device,
         "strength_zero_exact": bool(endpoint_exact),
         "configs": {name: _summary(values) for name, values in rows.items()},
+        "paired_gain_improvement_vs_baseline": {
+            _name(strength): _paired_gain_summary(
+                rows[_name(strength)], rows["baseline"]
+            )
+            for strength in args.strengths
+        },
+        "proposal_rows": rows,
         "mean_copy_probability_by_direction": {
             name: {
                 label: (float(np.mean(values)) if values else None)

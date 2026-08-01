@@ -77,6 +77,26 @@ def _summarize(rows):
     return summary
 
 
+def _paired_gain_summary(candidate_rows, baseline_rows):
+    differences = np.asarray([
+        candidate["gain"] - baseline["gain"]
+        for candidate, baseline in zip(candidate_rows, baseline_rows)
+    ], dtype=float)
+    return {
+        "mean": float(differences.mean()),
+        "std": (
+            float(differences.std(ddof=1)) if len(differences) > 1 else 0.0
+        ),
+        "median": float(np.median(differences)),
+        "min": float(differences.min()),
+        "max": float(differences.max()),
+        "wins": int(np.sum(differences > 0.0)),
+        "ties": int(np.sum(differences == 0.0)),
+        "losses": int(np.sum(differences < 0.0)),
+        "values": differences.tolist(),
+    }
+
+
 def _make_baseline_state(
     target, queries, schema, marginals, seed, rounds, device
 ):
@@ -304,6 +324,13 @@ def _probe_state(
         "reference_scale_proposal_index": reference_scale_proposal_index,
         "strength_zero_exact": bool(endpoint_exact),
         "configs": {name: _summarize(values) for name, values in rows.items()},
+        "paired_gain_improvement_vs_baseline": {
+            _strength_name(strength): _paired_gain_summary(
+                rows[_strength_name(strength)], rows["baseline"]
+            )
+            for strength in strengths
+        },
+        "proposal_rows": rows,
         "mean_copy_probability_by_direction": probability_summary,
     }
     print(
