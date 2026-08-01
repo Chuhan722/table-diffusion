@@ -464,6 +464,178 @@ def evaluate_vectorized(
     return q, residual, fitness
 
 
+def evaluate_directional_potential(
+    df: pd.DataFrame,
+    queries: List[Dict[str, Any]],
+    schema: Schema,
+    residual: np.ndarray,
+    weights: Optional[np.ndarray] = None,
+    batch_size: int = 256,
+    device: Literal["numpy", "cuda", "cpu"] = "numpy",
+    verbose: bool = True,
+) -> np.ndarray:
+    """按固定残差场计算每条记录的方向势能。
+
+    对记录 ``x`` 返回
+
+    ``potential(x) = sum_j weights[j] * residual[j] * a_j(x)``。
+
+    这里不重新计算查询计数或残差，也不减去种群中心项。对于同一残差场下的
+    局部转移 ``x -> x_prime``，中心项会严格相消，因此
+    ``potential(x_prime) - potential(x)`` 正好是该转移的比例残差一阶方向量。
+    函数不执行阈值筛选或随机操作，只为扩散转移核提供连续方向信号。
+    """
+    residual = np.asarray(residual)
+    m = len(queries)
+    if residual.shape != (m,):
+        raise ValueError(
+            f"residual 必须是长度与 queries 一致的一维数组，"
+            f"得到 shape {residual.shape}，期望 ({m},)"
+        )
+    if residual.dtype.kind not in "iuf" or not np.all(np.isfinite(residual)):
+        raise ValueError("residual 必须是有限数值数组")
+
+    if weights is None:
+        weights_array = np.ones(m, dtype=float)
+    else:
+        weights_array = np.asarray(weights)
+        if weights_array.shape != (m,):
+            raise ValueError(
+                f"weights 必须是长度与 queries 一致的一维数组，"
+                f"得到 shape {weights_array.shape}，期望 ({m},)"
+            )
+        if (
+            weights_array.dtype.kind not in "iuf"
+            or not np.all(np.isfinite(weights_array))
+        ):
+            raise ValueError("weights 必须是有限数值数组")
+        weights_array = weights_array.astype(float, copy=False)
+
+    if isinstance(batch_size, bool) or not isinstance(
+        batch_size, (int, np.integer)
+    ) or batch_size <= 0:
+        raise ValueError(f"batch_size 必须是正整数，得到 {batch_size!r}")
+    if device not in ("numpy", "cuda", "cpu"):
+        raise ValueError(
+            f"device 必须是 'numpy'、'cuda' 或 'cpu'，得到 {device!r}"
+        )
+
+    N = len(df)
+    if N == 0 or m == 0:
+        return np.zeros(N, dtype=float)
+
+    weighted_residual = residual.astype(float, copy=False) * weights_array
+    X, col_index, cat_maps = _encode_table(df, schema)
+    fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig = (
+        _compile_queries(queries, col_index, cat_maps)
+    )
+    fast_set = set(fast_orig)
+    fallback_idx = [qi for qi in range(m) if qi not in fast_set]
+    if fallback_idx and verbose:
+        bad_ops = sorted({
+            c["operator"]
+            for qi in fallback_idx
+            for c in queries[qi]["conditions"]
+            if c["operator"] not in VECTORIZED_OPS
+        })
+        print(
+            f"提示：{len(fallback_idx)} 个方向查询含未向量化算子 {bad_ops}，"
+            "已走慢路径。"
+        )
+
+    potential = np.zeros(N, dtype=float)
+    fast_orig_array = np.asarray(fast_orig, dtype=np.intp)
+    if device in ("cuda", "cpu"):
+        potential += _directional_potential_torch(
+            X,
+            fast_cols,
+            fast_ops,
+            fast_lo,
+            fast_hi,
+            fast_valid,
+            fast_orig_array,
+            weighted_residual,
+            int(batch_size),
+            device,
+        )
+    else:
+        for start in range(0, len(fast_orig), int(batch_size)):
+            end = min(start + int(batch_size), len(fast_orig))
+            mask = _batch_masks_numpy(
+                X,
+                fast_cols[start:end],
+                fast_ops[start:end],
+                fast_lo[start:end],
+                fast_hi[start:end],
+                fast_valid[start:end],
+            )
+            orig = fast_orig_array[start:end]
+            potential += mask.astype(float) @ weighted_residual[orig]
+
+    if fallback_idx:
+        from table_diffevo.queries import eval_query_mask
+
+        for qi in fallback_idx:
+            potential += (
+                eval_query_mask(df, queries[qi]).astype(float)
+                * weighted_residual[qi]
+            )
+
+    return potential
+
+
+def _directional_potential_torch(
+    X,
+    fast_cols,
+    fast_ops,
+    fast_lo,
+    fast_hi,
+    fast_valid,
+    fast_orig,
+    weighted_residual,
+    batch_size,
+    device,
+):
+    """在 torch 设备上累加固定残差方向势能，只回传长度 N 的结果。"""
+    try:
+        import torch
+    except ImportError:
+        raise ImportError(
+            "PyTorch not installed. Use device='numpy' or install PyTorch."
+        )
+    if device == "cuda" and not torch.cuda.is_available():
+        print("Warning: CUDA not available, falling back to CPU")
+        device = "cpu"
+    dev = torch.device(device)
+
+    X_t = torch.as_tensor(X, dtype=torch.float32, device=dev)
+    cols_t = torch.as_tensor(fast_cols, dtype=torch.long, device=dev)
+    ops_t = torch.as_tensor(fast_ops, dtype=torch.long, device=dev)
+    lo_t = torch.as_tensor(fast_lo, dtype=torch.float32, device=dev)
+    hi_t = torch.as_tensor(fast_hi, dtype=torch.float32, device=dev)
+    valid_t = torch.as_tensor(fast_valid, dtype=torch.bool, device=dev)
+    potential_t = torch.zeros(X_t.shape[0], dtype=torch.float32, device=dev)
+
+    for start in range(0, len(fast_orig), batch_size):
+        end = min(start + batch_size, len(fast_orig))
+        mask = _batch_masks_torch(
+            X_t,
+            cols_t[start:end],
+            ops_t[start:end],
+            lo_t[start:end],
+            hi_t[start:end],
+            valid_t[start:end],
+            torch,
+        )
+        orig = fast_orig[start:end]
+        wr_t = torch.as_tensor(
+            weighted_residual[orig], dtype=torch.float32, device=dev
+        )
+        potential_t += mask.float() @ wr_t
+
+    return potential_t.cpu().numpy().astype(float)
+
+
 def _run_batches_numpy(
     X, fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig,
     q, wr_full, fitness_accum, batch_size, want_fitness, batch_wr,

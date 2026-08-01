@@ -77,6 +77,11 @@ RHO = 0.01             # 记录参与率（固定值）
 ETA = 0.5              # 块复制率（固定值）
 MU = 0.01              # 变异率（固定值）
 
+# 残差驱动的局部扩散核（研究候选，默认关闭）
+# 方向信号只连续倾斜实际单块复制概率；不做正负门控或逐候选 top-k。
+RESIDUAL_DIRECTED_DIFFUSION = False
+DIFFUSION_DIRECTION_STRENGTH = 1.0
+
 # 整代提案被拒后的缩步重试（默认关闭，保持历史行为）
 MAX_RETRIES = 0        # 0=不重试；每次重试复用当轮 donor
 RETRY_RHO_DECAY = 0.5  # 重试时 rho 逐次乘以该因子
@@ -107,6 +112,8 @@ def _run_params():
         "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
         "max_retries": MAX_RETRIES,
         "retry_rho_decay": RETRY_RHO_DECAY,
+        "residual_directed_diffusion": RESIDUAL_DIRECTED_DIFFUSION,
+        "diffusion_direction_strength": DIFFUSION_DIRECTION_STRENGTH,
     }
 
 
@@ -161,6 +168,8 @@ def main():
             maxent_max_states=MAXENT_MAX_STATES,
             maxent_max_sweeps=MAXENT_MAX_SWEEPS,
             maxent_tol=MAXENT_TOL,
+            residual_directed_diffusion=RESIDUAL_DIRECTED_DIFFUSION,
+            diffusion_direction_strength=DIFFUSION_DIRECTION_STRENGTH,
         )
         sub_name = f"{i}-{seed}"
         run_dir = save_run(best_S, diagnostics,
