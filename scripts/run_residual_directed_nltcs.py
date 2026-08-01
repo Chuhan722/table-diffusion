@@ -224,6 +224,9 @@ def main():
         raw_quadratic = _first_attempts(
             diagnostics["raw_proposal_quadratic_penalty_history"]
         )
+        raw_gain_array = np.asarray(raw_gains, dtype=float)
+        raw_late_start = 3 * len(raw_gains) // 4
+        late_raw_gains = raw_gain_array[raw_late_start:]
         accept_late_start = 3 * len(accept_history) // 4
         loss_late_start = 3 * len(loss_history) // 4
         record = {
@@ -246,7 +249,17 @@ def main():
             ),
             "raw_proposal_gain_mean": _mean_or_zero(raw_gains),
             "raw_proposal_positive_rate": _mean_or_zero(
-                np.asarray(raw_gains) > 0.0
+                raw_gain_array > 0.0
+            ),
+            "raw_positive_gain_mean": _mean_or_zero(
+                raw_gain_array[raw_gain_array > 0.0]
+            ),
+            "raw_negative_gain_mean": _mean_or_zero(
+                raw_gain_array[raw_gain_array < 0.0]
+            ),
+            "late_raw_proposal_gain_mean": _mean_or_zero(late_raw_gains),
+            "late_raw_proposal_positive_rate": _mean_or_zero(
+                late_raw_gains > 0.0
             ),
             "raw_proposal_linear_gain_mean": _mean_or_zero(raw_linear),
             "raw_proposal_quadratic_penalty_mean": _mean_or_zero(
@@ -316,6 +329,10 @@ def main():
         "late_loss_improvement",
         "raw_proposal_gain_mean",
         "raw_proposal_positive_rate",
+        "raw_positive_gain_mean",
+        "raw_negative_gain_mean",
+        "late_raw_proposal_gain_mean",
+        "late_raw_proposal_positive_rate",
         "raw_proposal_linear_gain_mean",
         "raw_proposal_quadratic_penalty_mean",
         "copy_direction_mean",
