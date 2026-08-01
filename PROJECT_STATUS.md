@@ -66,6 +66,9 @@ donor fitness、自身率和全部质量指标逐项相同。GPU 与 NumPy 的�
 该加速幅度与拒绝率有关：高接受率配置的缓存收益会更小；GPU 诊断回传修复则普遍
 有效。本次只改等价执行方式，没有更改初始化、目标函数、抽样公式或更新参数。
 
+**PR：** [#2 缓存演化状态并消除全量距离回传](https://github.com/Chuhan722/table-diffusion/pull/2)
+已于 2026-08-01 从 `houyuwushang:perf/cache-evolution-state` 提交到上游 `master`。
+
 ### 2-way 最大熵初始化——已实现+测试+nltcs 三种子验证，设为 nltcs 推荐配置
 
 **动机与诊断：** 原 `marginal` 初始化只贴合 1-way 边缘，各列独立打乱会丢掉
