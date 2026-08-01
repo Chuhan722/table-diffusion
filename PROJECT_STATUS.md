@@ -83,6 +83,9 @@ TVD 0.2834，但仍同时漏掉 10.85% 的真实模式质量、生成 15.36% 的
 **输出：** `outputs/pairwise_maxent_nltcs_600_seed{0,1,2}/`（每个目录含合成表、
 诊断、离线 evaluation 与 summary；outputs 被 gitignore，不进版本库）。
 
+**PR：** [#1 新增二阶最大熵初始化并完善扩散演化提案重试](https://github.com/Chuhan722/table-diffusion/pull/1)
+已于 2026-08-01 从 `houyuwushang:feat/pairwise-maxent-init` 提交到上游 `master`。
+
 ### 整代提案缩步重试——已实现+测试+小表/nltcs 对照，默认保持关闭
 
 **动机：** 原主循环每轮只生成一个整代提案，被贪心接受检查拒绝后，
