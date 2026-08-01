@@ -15,6 +15,7 @@ import pandas as pd
 
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
+    direction_rms_scale,
     tilted_copy_probabilities,
 )
 from table_diffevo.distance import pairwise_block_distance
@@ -76,6 +77,11 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--strengths", nargs="+", type=float, default=[0.0, 0.1, 0.5, 1.0]
+    )
+    parser.add_argument(
+        "--direction-normalization",
+        choices=["none", "initial_rms"],
+        default="initial_rms",
     )
     parser.add_argument("--rho", type=float, default=0.01)
     parser.add_argument("--eta", type=float, default=0.5)
@@ -162,6 +168,8 @@ def main():
         for value in args.strengths
     }
     endpoint_exact = True
+    direction_reference_scale = None
+    reference_scale_proposal_index = None
 
     for proposal_index in range(args.proposals):
         donor_rng = np.random.default_rng(
@@ -184,6 +192,14 @@ def main():
             for attr in columns
         ])
         active = directions[differs]
+        if (
+            args.direction_normalization == "initial_rms"
+            and direction_reference_scale is None
+        ):
+            candidate_scale = direction_rms_scale(active)
+            if candidate_scale > 0.0:
+                direction_reference_scale = candidate_scale
+                reference_scale_proposal_index = proposal_index
         proposal_seed = _address_seed(args.seed, proposal_index, 1)
         generated = {
             "baseline": evolve_step(
@@ -198,6 +214,13 @@ def main():
         }
         for strength in args.strengths:
             name = _name(strength)
+            if args.direction_normalization == "initial_rms":
+                effective_strength = (
+                    strength / direction_reference_scale
+                    if direction_reference_scale is not None else 0.0
+                )
+            else:
+                effective_strength = strength
             generated[name] = evolve_step(
                 state,
                 donors,
@@ -207,10 +230,10 @@ def main():
                 mu=args.mu,
                 rng=np.random.default_rng(proposal_seed),
                 copy_direction_scores=directions,
-                copy_direction_strength=strength,
+                copy_direction_strength=effective_strength,
             )
             copy_probs = tilted_copy_probabilities(
-                args.eta, active, strength
+                args.eta, active, effective_strength
             )
             for label, mask in (
                 ("negative", active < 0.0),
@@ -267,6 +290,23 @@ def main():
         "n_proposals": args.proposals,
         "seed": args.seed,
         "strengths": args.strengths,
+        "direction_normalization": args.direction_normalization,
+        "direction_reference_scale": direction_reference_scale,
+        "reference_scale_proposal_index": reference_scale_proposal_index,
+        "effective_direction_strengths": {
+            _name(strength): (
+                strength / direction_reference_scale
+                if (
+                    args.direction_normalization == "initial_rms"
+                    and direction_reference_scale is not None
+                ) else (
+                    0.0
+                    if args.direction_normalization == "initial_rms"
+                    else strength
+                )
+            )
+            for strength in args.strengths
+        },
         "rho": args.rho,
         "eta": args.eta,
         "mu": args.mu,
