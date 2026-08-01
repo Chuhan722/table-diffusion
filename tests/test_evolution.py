@@ -450,3 +450,125 @@ class TestProposalRetries:
         target = np.array([30, 40, 50])
         with pytest.raises(ValueError, match=message):
             run_evolution(target, queries, schema, n_records=100, **kwargs)
+
+
+class TestUpdateMode:
+    """update_mode 开关：legacy（旧机制）vs single_block（单块复制/变异）。"""
+
+    def test_default_is_legacy(self):
+        """默认 update_mode='legacy'，params 如实记录。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0
+        )
+        assert diag["params"]["update_mode"] == "legacy"
+        assert diag["params"]["epsilon"] == 0.01
+
+    def test_legacy_identical_to_before(self):
+        """legacy 模式与不传 update_mode 完全一致（回归保护）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        s1, d1 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=42
+        )
+        s2, d2 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=42,
+            update_mode="legacy",
+        )
+        pd.testing.assert_frame_equal(s1, s2)
+        assert d1["loss_history"] == d2["loss_history"]
+
+    def test_legacy_no_single_block_diag(self):
+        """legacy 模式不产生 single_block 诊断（历史列表为空）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="legacy",
+        )
+        assert diag["participation_rate_history"] == []
+        assert diag["copy_attempt_rate_history"] == []
+        assert diag["mutation_attempt_rate_history"] == []
+        assert diag["accepted_change_rate_history"] == []
+        assert diag["empty_copy_set_count_history"] == []
+
+    def test_single_block_runs(self):
+        """single_block 模式能跑通并返回正确形状。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        best_S, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=0,
+            update_mode="single_block", epsilon=0.1,
+        )
+        assert best_S.shape == (100, 3)
+        assert list(best_S.columns) == schema.attribute_names()
+        assert diag["params"]["update_mode"] == "single_block"
+        assert diag["params"]["epsilon"] == 0.1
+
+    def test_single_block_records_diagnostics(self):
+        """single_block 模式逐轮记录五项诊断，长度与轮数一致。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=15, seed=3,
+            update_mode="single_block", epsilon=0.1,
+        )
+        rounds = diag["rounds_run"]
+        assert len(diag["participation_rate_history"]) == rounds
+        assert len(diag["copy_attempt_rate_history"]) == rounds
+        assert len(diag["mutation_attempt_rate_history"]) == rounds
+        assert len(diag["accepted_change_rate_history"]) == rounds
+        assert len(diag["empty_copy_set_count_history"]) == rounds
+        # 诊断取值合理
+        for r in diag["participation_rate_history"]:
+            assert 0.0 <= r <= 1.0
+
+    def test_single_block_reproducible(self):
+        """single_block 模式相同种子 → 相同结果。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        s1, d1 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=9,
+            update_mode="single_block", epsilon=0.1,
+        )
+        s2, d2 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=9,
+            update_mode="single_block", epsilon=0.1,
+        )
+        pd.testing.assert_frame_equal(s1, s2)
+        assert d1["loss_history"] == d2["loss_history"]
+
+    def test_single_block_monotonic_loss(self):
+        """single_block 模式 loss 单调不增（世代验收保证方向正确）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=30, seed=1,
+            update_mode="single_block", epsilon=0.1,
+        )
+        losses = diag["loss_history"]
+        for prev, cur in zip(losses, losses[1:]):
+            assert cur <= prev + 1e-9
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"update_mode": "bogus"}, "update_mode"),
+            ({"epsilon": -0.1}, "epsilon"),
+            ({"epsilon": 1.5}, "epsilon"),
+        ],
+    )
+    def test_invalid_update_mode_parameters(self, kwargs, message):
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match=message):
+            run_evolution(target, queries, schema, n_records=100, **kwargs)
