@@ -16,9 +16,9 @@
 8. 整代安全检查：loss(proposal) ≤ loss(S) + 容差 → 接受，否则保持原表
 9. 更新 best_S，进下一轮
 
-## 第一版的简化（已与设计确认）
+## 当前简化与可选增强
 
-- 整代检查失败 → 保持原表（不重试、不缩小步幅）
+- 整代检查失败 → 默认保持原表；可选缩小 rho 重试
 - 参数 β/h/ρ/η/μ 用固定值（不随轮次衰减）
 - 终止条件 = 残差全 0 或达到最大轮数 T
 - 只接收 target（目标计数），不接收源数据（守铁律 6）
@@ -43,6 +43,7 @@ from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.generator import init_synthetic_table
+from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
 
 
@@ -73,6 +74,11 @@ def run_evolution(
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
     exclude_self: bool = True,
+    max_retries: int = 0,
+    retry_rho_decay: float = 0.5,
+    maxent_max_states: int = 1_000_000,
+    maxent_max_sweeps: int = 200,
+    maxent_tol: float = 1e-8,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -116,6 +122,8 @@ def run_evolution(
         初始化方法：
         - 'random'（默认）：纯随机初始化（每格从 schema 合法域均匀抽样）
         - 'marginal'：按 1-way 边缘确定性初始化（需同时提供 marginals 参数）
+        - 'pairwise_maxent'：从完整二阶等值查询拟合最大熵分布后抽样；当前仅支持
+          全类别、状态空间可枚举的数据集，不读取原始表
     marginals : Dict or None, default None
         1-way 边缘测量（marginals.load_marginals 的返回值）。
         仅当 init_method='marginal' 时生效；为 None 时忽略。
@@ -142,6 +150,18 @@ def run_evolution(
         抽到自己=该行本轮不变、对演化零贡献。默认 True 屏蔽之；传 False
         可复现屏蔽前的旧行为（做对照实验用）。将来若改用共享参考池（K≠N），
         距离非方阵会使 exclude_self=True 报错——届时需改为 False（池里无自身）。
+    max_retries : int, default 0
+        整代提案被拒后的最大重试次数。0 保持原行为；大于 0 时复用
+        当轮 donor，逐次缩小 rho 重新生成提案，避免已经计算的距离和抽样浪费。
+    retry_rho_decay : float, default 0.5
+        每次重试的参与率缩放因子，必须在 (0, 1) 内。第 a 次尝试使用
+        ``rho * retry_rho_decay ** a``（a 从 0 开始）。
+    maxent_max_states : int, default 1_000_000
+        pairwise_maxent 可枚举的最大联合状态数，防止意外耗尽内存。
+    maxent_max_sweeps : int, default 200
+        pairwise_maxent 的 IPF 最大扫描轮数。
+    maxent_tol : float, default 1e-8
+        pairwise_maxent 的最大二阶单元概率误差收敛阈值。
 
     Returns
     -------
@@ -154,6 +174,8 @@ def run_evolution(
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
+        - proposal_attempts_history: List[int]，每轮评估的提案数
+        - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
 
     Raises
     ------
@@ -164,8 +186,8 @@ def run_evolution(
     -----
     **终止条件：** 残差全 0（达标）或达到 n_rounds。
 
-    **整代检查失败：** 保持原表（第一版不重试）。best_S 保底，
-    即使某轮无进展，最终返回的仍是历史最优表。
+    **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
+    重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
 
     **GPU 加速：** device='cuda' 时，距离计算在 GPU 上进行（20-50x 加速），
     所有随机操作仍在 CPU（NumPy），确保相同种子下完全可复现。
@@ -204,9 +226,19 @@ def run_evolution(
             f"eval_method 必须是 'vectorized' 或 'legacy'，得到 {eval_method!r}"
         )
 
-    if init_method not in ('random', 'marginal'):
+    if init_method not in ('random', 'marginal', 'pairwise_maxent'):
         raise ValueError(
-            f"init_method 必须是 'random' 或 'marginal'，得到 {init_method!r}"
+            "init_method 必须是 'random'、'marginal' 或 "
+            f"'pairwise_maxent'，得到 {init_method!r}"
+        )
+
+    if isinstance(max_retries, bool) or not isinstance(max_retries, (int, np.integer)):
+        raise ValueError(f"max_retries 必须是非负整数，得到 {max_retries!r}")
+    if max_retries < 0:
+        raise ValueError(f"max_retries 必须是非负整数，得到 {max_retries}")
+    if not (0.0 < retry_rho_decay < 1.0):
+        raise ValueError(
+            f"retry_rho_decay 必须在 (0, 1) 内，得到 {retry_rho_decay}"
         )
 
     rng = np.random.default_rng(seed)
@@ -242,11 +274,24 @@ def run_evolution(
         f_ = compute_fitness(df, queries, r_, q_)
         return q_, r_, f_
 
-    # 初始表 S_0（不读源数据，只用 schema 合法域）
-    if init_method == 'marginal':
+    # 初始表 S_0（不读源数据，只用 schema、已测量 target 与可选 1-way 边缘）
+    if init_method == 'pairwise_maxent':
+        S, initialization_diagnostics = init_from_pairwise_maxent(
+            n_records=n_records,
+            schema=schema,
+            queries=queries,
+            target=target,
+            rng=rng,
+            max_states=maxent_max_states,
+            max_sweeps=maxent_max_sweeps,
+            tol=maxent_tol,
+        )
+    elif init_method == 'marginal':
         S = init_synthetic_table(n_records, schema, rng, marginals=marginals)
+        initialization_diagnostics = {"method": "marginal"}
     else:
         S = init_synthetic_table(n_records, schema, rng)
+        initialization_diagnostics = {"method": "random"}
 
     best_S = S.copy()
     best_loss = compute_loss(target, _eval_counts(S))
@@ -257,6 +302,9 @@ def run_evolution(
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
     donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
+    proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
+    accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
+    accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     stopped_early = False
     rounds_run = 0
 
@@ -346,27 +394,43 @@ def run_evolution(
         # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
         donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
 
-        # 7. 靠近一步 → 提案
-        proposal = evolve_step(
-            S, donors, schema, rho=rho, eta=eta, mu=mu, rng=rng
-        )
+        # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
+        # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
+        # evolve_step + 一次提案查询评价。max_retries=0 时与原逻辑完全一致。
+        accepted = False
+        accepted_attempt = 0
+        accepted_rho = None
+        proposal_attempts = 0
+        current_loss = loss
+        for attempt in range(max_retries + 1):
+            attempt_rho = rho * (retry_rho_decay ** attempt)
+            proposal = evolve_step(
+                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng
+            )
+            proposal_q = _eval_counts(proposal)
+            proposal_loss = compute_loss(target, proposal_q)
+            proposal_attempts += 1
 
-        # 8. 整代安全检查（提案只需计数算 loss）
-        proposal_q = _eval_counts(proposal)
-        proposal_loss = compute_loss(target, proposal_q)
-        accepted = proposal_loss <= loss + tol
+            if proposal_loss <= loss + tol:
+                accepted = True
+                accepted_attempt = attempt + 1
+                accepted_rho = attempt_rho
+                current_loss = proposal_loss
+                S = proposal
+                break
+
         accept_history.append(accepted)
-        if accepted:
-            S = proposal
-        # 否则保持原表（第一版不重试）
+        proposal_attempts_history.append(proposal_attempts)
+        accepted_attempt_history.append(accepted_attempt)
+        accepted_rho_history.append(accepted_rho)
 
         # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
         if do_log:
             print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}"
-                  f" | 接受: {'是' if accepted else '否'}")
+                  f" | 接受: {'是' if accepted else '否'}"
+                  f" | 尝试: {proposal_attempts}")
 
         # 9. 更新历史最优（直接用已知 loss，不重复评价）
-        current_loss = proposal_loss if accepted else loss
         if current_loss < best_loss:
             best_loss = current_loss
             best_S = S.copy()
@@ -400,6 +464,10 @@ def run_evolution(
         "donor_distance_history": donor_distance_history,
         "donor_self_rate_history": donor_self_rate_history,
         "alpha_history": alpha_history,
+        "proposal_attempts_history": proposal_attempts_history,
+        "accepted_attempt_history": accepted_attempt_history,
+        "accepted_rho_history": accepted_rho_history,
+        "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
         "normalized_l1_p90": normalized_l1_p90,
@@ -428,6 +496,11 @@ def run_evolution(
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
             "exclude_self": exclude_self,
+            "max_retries": int(max_retries),
+            "retry_rho_decay": retry_rho_decay,
+            "maxent_max_states": int(maxent_max_states),
+            "maxent_max_sweeps": int(maxent_max_sweeps),
+            "maxent_tol": maxent_tol,
         },
     }
 
