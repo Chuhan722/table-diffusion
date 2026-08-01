@@ -14,7 +14,8 @@
 - PR #1：二阶最大熵初始化与可选缩步重试，已合并。
 - PR #2：性能修复，当前 Open、Ready、CLEAN、MERGEABLE：
   <https://github.com/Chuhan722/table-diffusion/pull/2>
-- PR #3：本文档分支对应的项目代理规范与交接文档 PR：
+- PR #3：本文档分支对应的项目代理规范与交接文档 PR，当前 Open、Ready、
+  CLEAN、MERGEABLE：
   <https://github.com/Chuhan722/table-diffusion/pull/3>
 - 本文档分支不包含 PR #2 的代码；后续若 PR #2 先合并，文档 PR 应在合入前同步
   最新 `origin/master` 并重新检查冲突。
@@ -136,8 +137,8 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src conda run -n de \
 - 当前分支只改文档；基于 `origin/master` 的完整测试为 **277 passed**。
 - PR #2 的性能分支另有 6 个新增回归测试，完整测试为 **283 passed**；两者不是
   同一 commit，测试数不能混用。
-- GitHub 实时复核：PR #1 已合并；PR #2 当前 Ready、CLEAN、MERGEABLE；本文档
-  对应 PR #3 已创建。
+- GitHub 实时复核：PR #1 已合并；PR #2 与本文档对应的 PR #3 当前均为 Ready、
+  CLEAN、MERGEABLE。
 
 ## 9. 交接检查清单
 
