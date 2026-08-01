@@ -23,6 +23,7 @@
 - 终止条件 = 残差全 0 或达到最大轮数 T
 - 只接收 target（目标计数），不接收源数据（守铁律 6）
 - 诊断只记每轮 loss + 少量汇总
+- 提案被拒后 S 不变，复用当前答案/适应度/距离；动态抽样概率仍按每轮 alpha 重算
 
 ## 铁律遵守
 
@@ -45,6 +46,25 @@ from table_diffevo.update import evolve_step
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
+
+
+def _mean_selected_distance(distances, donor_idx, use_torch: bool = False) -> float:
+    """只提取每行选中 donor 的距离并求均值，避免回传完整 GPU 距离矩阵。"""
+    donor_idx = np.asarray(donor_idx, dtype=np.intp)
+    n_rows = len(donor_idx)
+
+    if use_torch:
+        import torch
+
+        if isinstance(distances, torch.Tensor):
+            rows = torch.arange(n_rows, device=distances.device)
+            donors = torch.as_tensor(
+                donor_idx, dtype=torch.long, device=distances.device
+            )
+            return float(distances[rows, donors].mean().item())
+
+    distances_array = np.asarray(distances)
+    return float(distances_array[np.arange(n_rows), donor_idx].mean())
 
 
 def run_evolution(
@@ -176,6 +196,8 @@ def run_evolution(
         - accept_history: List[bool]，每轮整代检查是否接受提案
         - proposal_attempts_history: List[int]，每轮评估的提案数
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
+        - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
+        - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
 
     Raises
     ------
@@ -293,9 +315,6 @@ def run_evolution(
         S = init_synthetic_table(n_records, schema, rng)
         initialization_diagnostics = {"method": "random"}
 
-    best_S = S.copy()
-    best_loss = compute_loss(target, _eval_counts(S))
-
     loss_history: List[float] = []
     accept_history: List[bool] = []
     donor_fitness_history: List[float] = []      # 每轮选中 donor 的平均适应度
@@ -307,10 +326,29 @@ def run_evolution(
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     stopped_early = False
     rounds_run = 0
+    state_evaluation_count = 0
+    distance_evaluation_count = 0
+
+    # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
+    # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
+    # 后统一失效，确保缓存永远和 S 对齐。
+    state_eval_cache = None
+    distance_cache = None
 
     # 计时：主循环墙钟时间（不含 init/最终指标），用于扫描时估时与"快且好"对比。
     # 用 perf_counter（单调、不受系统时钟调整影响）。
     loop_start = time.perf_counter()
+
+    # 直接完成第一轮需要的完整评价，同时据此初始化 best，避免先做一次 counts-only
+    # 又在第一轮重复扫描同一张 S_0。
+    initial_q, initial_residual, initial_fitness = _eval_counts_resid_fitness(S)
+    initial_loss = compute_loss(target, initial_q)
+    state_eval_cache = (
+        initial_q, initial_residual, initial_fitness, initial_loss
+    )
+    state_evaluation_count += 1
+    best_S = S.copy()
+    best_loss = initial_loss
 
     for t in range(n_rounds):
         rounds_run = t + 1
@@ -323,9 +361,15 @@ def run_evolution(
         alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
 
-        # 1-2-4. 当前答案、残差、适应度（vectorized 一次掩码扫描全出；消除重复评价）
-        q, residual, fitness = _eval_counts_resid_fitness(S)
-        loss = compute_loss(target, q)
+        # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
+        # 拒绝后的下一轮复用上一轮结果。
+        if state_eval_cache is None:
+            q, residual, fitness = _eval_counts_resid_fitness(S)
+            loss = compute_loss(target, q)
+            state_eval_cache = (q, residual, fitness, loss)
+            state_evaluation_count += 1
+        else:
+            q, residual, fitness, loss = state_eval_cache
         loss_history.append(loss)
 
         # 是否在本轮打印进度：log_every=0 每轮打印；否则每 log_every 轮，
@@ -353,9 +397,12 @@ def run_evolution(
         #   数据不下显存，只回传 N 个 donor 索引；随机数仍用 numpy rng（保可复现）。
         # numpy：原路径，全程 NumPy。
         use_torch = device in ('cuda', 'cpu')
-        distances = pairwise_block_distance(
-            S, S, schema, device=device, return_tensor=use_torch
-        )
+        if distance_cache is None:
+            distance_cache = pairwise_block_distance(
+                S, S, schema, device=device, return_tensor=use_torch
+            )
+            distance_evaluation_count += 1
+        distances = distance_cache
         probs = compute_sampling_probs(
             fitness, distances, beta=beta, h=h, device=device,
             distance_mode=distance_mode, p=p,
@@ -368,28 +415,22 @@ def run_evolution(
             exclude_self=exclude_self,
         )
         donor_idx = sample_donors(probs, rng, device=device)
+        # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
+        del probs
         donors = S.iloc[donor_idx].reset_index(drop=True)
 
         # 诊断：记录选中 donor 的适应度和距离
         N = len(S)  # 记录数
         selected_fitness = fitness[donor_idx]  # (N,) 每条记录选中的 donor 适应度
-        # 距离矩阵可能是 numpy array 或 torch tensor，统一处理
-        if device in ('cuda', 'cpu'):
-            # torch tensor，需要转回 numpy
-            import torch
-            if isinstance(distances, torch.Tensor):
-                dist_np = distances.cpu().numpy()
-            else:
-                dist_np = distances
-        else:
-            dist_np = distances
-
-        # 提取每条记录到其选中 donor 的距离：distances[i, donor_idx[i]]
-        selected_distances = dist_np[np.arange(N), donor_idx]  # (N,)
+        # GPU/torch 路径只 gather 被选中的 N 个元素并回传一个均值标量，不再为了
+        # 诊断把完整 N×N 距离矩阵搬回 CPU。
+        selected_distance_mean = _mean_selected_distance(
+            distances, donor_idx, use_torch=use_torch
+        )
 
         # 记录平均值
         donor_fitness_history.append(float(selected_fitness.mean()))
-        donor_distance_history.append(float(selected_distances.mean()))
+        donor_distance_history.append(selected_distance_mean)
         # 自身抽样率：抽到自己（donor_idx==i）的比例。exclude_self=True 时恒为 0；
         # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
         donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
@@ -423,6 +464,13 @@ def run_evolution(
         proposal_attempts_history.append(proposal_attempts)
         accepted_attempt_history.append(accepted_attempt)
         accepted_rho_history.append(accepted_rho)
+
+        if accepted:
+            # S 已替换为 proposal，旧表对应的所有缓存立即失效。显式删除本地距离
+            # 引用，避免下一轮计算新矩阵时旧矩阵仍占一份设备内存。
+            state_eval_cache = None
+            distance_cache = None
+            del distances
 
         # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
         if do_log:
@@ -467,6 +515,8 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
+        "state_evaluation_count": state_evaluation_count,
+        "distance_evaluation_count": distance_evaluation_count,
         "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
