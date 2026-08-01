@@ -162,6 +162,172 @@ class TestCorrectness:
             assert losses[i] <= losses[i-1] + 1e-9
 
 
+class TestStateCache:
+    """当前表不变时复用评价与距离，接受提案后正确失效。"""
+
+    @staticmethod
+    def _schema_and_queries():
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x", values=["a", "b"]
+            )
+        ])
+        queries = [
+            {"conditions": [{"attribute": "x", "operator": "==", "value": "a"}]}
+        ]
+        return schema, queries
+
+    def test_selected_distance_mean_numpy(self):
+        """NumPy 路径只取每行选中的距离。"""
+        distances = np.array([[0.0, 0.25], [0.75, 0.0]])
+        donor_idx = np.array([1, 0])
+        result = evolution_module._mean_selected_distance(distances, donor_idx)
+        assert result == pytest.approx(0.5)
+
+    def test_selected_distance_mean_torch(self):
+        """torch 路径在设备上 gather，数值与 NumPy 路径一致。"""
+        torch = pytest.importorskip("torch")
+        distances = torch.tensor([[0.0, 0.25], [0.75, 0.0]])
+        donor_idx = np.array([1, 0])
+        result = evolution_module._mean_selected_distance(
+            distances, donor_idx, use_torch=True
+        )
+        assert result == pytest.approx(0.5)
+
+    def test_zero_rounds_evaluates_initial_state_without_distance(self, monkeypatch):
+        """零轮仍返回有效初始 best，但不应构造未使用的距离矩阵。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        _, diag = run_evolution(
+            np.array([0]), queries, schema,
+            n_records=4, n_rounds=0, seed=0, device="numpy",
+        )
+
+        assert diag["rounds_run"] == 0
+        assert diag["loss_history"] == []
+        assert diag["best_loss"] == pytest.approx(0.5)
+        assert diag["state_evaluation_count"] == 1
+        assert diag["distance_evaluation_count"] == 0
+
+    def test_initially_converged_stops_before_distance(self, monkeypatch):
+        """初始表已达标时只用状态缓存完成终止检查，不计算距离。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        _, diag = run_evolution(
+            np.array([1]), queries, schema,
+            n_records=4, n_rounds=5, seed=0, device="numpy", log_every=100,
+        )
+
+        assert diag["rounds_run"] == 1
+        assert diag["stopped_early"] is True
+        assert diag["best_loss"] == 0.0
+        assert diag["state_evaluation_count"] == 1
+        assert diag["distance_evaluation_count"] == 0
+
+    def test_rejected_rounds_reuse_state_and_distance(self, monkeypatch):
+        """连续拒绝时只评价一次当前表和一次距离，但每轮仍重新抽样。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        calls = {"full_eval": 0, "proposal_eval": 0, "distance": 0, "probs": 0}
+
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        original_eval = evolution_module.evaluate_vectorized
+
+        def counted_eval(*args, **kwargs):
+            if kwargs.get("want_fitness", True):
+                calls["full_eval"] += 1
+            else:
+                calls["proposal_eval"] += 1
+            return original_eval(*args, **kwargs)
+
+        monkeypatch.setattr(evolution_module, "evaluate_vectorized", counted_eval)
+
+        original_distance = evolution_module.pairwise_block_distance
+
+        def counted_distance(*args, **kwargs):
+            calls["distance"] += 1
+            return original_distance(*args, **kwargs)
+
+        monkeypatch.setattr(
+            evolution_module, "pairwise_block_distance", counted_distance
+        )
+
+        original_probs = evolution_module.compute_sampling_probs
+
+        def counted_probs(*args, **kwargs):
+            calls["probs"] += 1
+            return original_probs(*args, **kwargs)
+
+        monkeypatch.setattr(evolution_module, "compute_sampling_probs", counted_probs)
+        monkeypatch.setattr(
+            evolution_module, "evolve_step",
+            lambda current, donors, schema, rho, eta, mu, rng:
+                pd.DataFrame({"x": ["a"] * len(current)}),
+        )
+
+        _, diag = run_evolution(
+            np.array([0]), queries, schema,
+            n_records=4, n_rounds=3, seed=0, device="numpy", log_every=100,
+        )
+
+        assert diag["accept_history"] == [False, False, False]
+        assert diag["state_evaluation_count"] == 1
+        assert diag["distance_evaluation_count"] == 1
+        assert calls == {
+            "full_eval": 1,
+            "proposal_eval": 3,
+            "distance": 1,
+            "probs": 3,
+        }
+
+    def test_accepted_round_invalidates_state_and_distance(self, monkeypatch):
+        """接受提案后，下一轮必须重新评价新表并重算距离。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        proposals = [
+            pd.DataFrame({"x": ["a", "a", "b", "b"]}),
+            initial,
+        ]
+        proposal_position = 0
+
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        def fake_evolve(current, donors, schema, rho, eta, mu, rng):
+            nonlocal proposal_position
+            proposal = proposals[proposal_position]
+            proposal_position += 1
+            return proposal.copy()
+
+        monkeypatch.setattr(evolution_module, "evolve_step", fake_evolve)
+
+        _, diag = run_evolution(
+            np.array([3]), queries, schema,
+            n_records=4, n_rounds=2, seed=0, device="numpy", log_every=100,
+        )
+
+        assert diag["accept_history"] == [True, False]
+        assert diag["state_evaluation_count"] == 2
+        assert diag["distance_evaluation_count"] == 2
+        assert diag["best_loss"] == pytest.approx(0.5)
+
+
 class TestIntegration:
     """真实数据端到端"""
 
