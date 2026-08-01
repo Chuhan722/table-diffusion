@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from table_diffevo.schema import Schema, AttributeBlock
 from table_diffevo.update import evolve_step
+import table_diffevo.update as update_module
 
 
 def make_toy_schema():
@@ -94,39 +95,49 @@ class TestParticipation:
         )
 
 
-class TestEligibilityMask:
-    """上游演化选择可以限制哪些记录有资格参与。"""
+class TestCopyParticipationScale:
+    """上游可缩放 donor 复制参与率，但不关闭随机变异。"""
 
     def test_ineligible_rows_never_copy(self):
         schema = make_toy_schema()
         current, donors = make_tables()
-        eligible = np.array([True, False, True, False, True])
+        copy_scale = np.array([1.0, 0.0, 1.0, 0.0, 1.0])
 
         result = evolve_step(
             current, donors, schema,
             rho=1.0, eta=1.0, mu=0.0,
             rng=np.random.default_rng(3),
-            eligibility_mask=eligible,
+            copy_participation_scale=copy_scale,
         )
 
         expected = current.reset_index(drop=True).copy()
-        expected.loc[eligible] = donors.reset_index(drop=True).loc[eligible]
+        expected.loc[copy_scale == 1.0] = (
+            donors.reset_index(drop=True).loc[copy_scale == 1.0]
+        )
         pd.testing.assert_frame_equal(result, expected)
 
-    def test_ineligible_rows_never_mutate(self):
+    def test_copy_ineligible_rows_can_still_mutate(self, monkeypatch):
         schema = make_toy_schema()
         current, _ = make_tables()
         donors = current.copy()
-        eligible = np.zeros(len(current), dtype=bool)
+        copy_scale = np.zeros(len(current), dtype=float)
+        monkeypatch.setattr(
+            update_module, "_sample_mutation_block", lambda *args: "job"
+        )
+        monkeypatch.setattr(
+            update_module, "_sample_legal_value", lambda *args: "c"
+        )
 
         result = evolve_step(
             current, donors, schema,
             rho=1.0, eta=1.0, mu=1.0,
             rng=np.random.default_rng(9),
-            eligibility_mask=eligible,
+            copy_participation_scale=copy_scale,
         )
 
-        pd.testing.assert_frame_equal(result, current.reset_index(drop=True))
+        expected = current.reset_index(drop=True).copy()
+        expected["job"] = "c"
+        pd.testing.assert_frame_equal(result, expected)
 
     def test_all_true_preserves_random_trace(self):
         schema = make_toy_schema()
@@ -141,10 +152,44 @@ class TestEligibilityMask:
             current, donors, schema,
             rho=0.6, eta=0.4, mu=0.3,
             rng=np.random.default_rng(42),
-            eligibility_mask=np.ones(len(current), dtype=bool),
+            copy_participation_scale=np.ones(len(current), dtype=float),
         )
 
         pd.testing.assert_frame_equal(gated, baseline)
+
+    def test_fractional_scale_uses_same_participation_roll(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        scale = np.full(len(current), 0.5)
+        expected_roll = np.random.default_rng(123).random(len(current))
+
+        result = evolve_step(
+            current, donors, schema,
+            rho=1.0, eta=1.0, mu=0.0,
+            rng=np.random.default_rng(123),
+            copy_participation_scale=scale,
+        )
+
+        expected = current.reset_index(drop=True).copy()
+        copied = expected_roll < scale
+        expected.loc[copied] = donors.reset_index(drop=True).loc[copied]
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_scale_does_not_change_random_consumption(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        next_draws = []
+
+        for value in (0.0, 0.2, 1.0):
+            rng = np.random.default_rng(314)
+            evolve_step(
+                current, donors, schema,
+                rho=0.6, eta=0.4, mu=0.3, rng=rng,
+                copy_participation_scale=np.full(len(current), value),
+            )
+            next_draws.append(rng.random())
+
+        assert next_draws[0] == next_draws[1] == next_draws[2]
 
 
 class TestBlockCopy:
@@ -263,19 +308,21 @@ class TestValidation:
             evolve_step(current, donors.head(2), schema)
 
     @pytest.mark.parametrize(
-        "mask, message",
+        "scale, message",
         [
             ([True, False], "长度"),
             (np.ones((5, 1), dtype=bool), "一维"),
-            (np.ones(5, dtype=int), "布尔"),
+            (np.ones(5, dtype=bool), "数值"),
+            (np.array([1, 1, 1, 1, 2]), r"\[0, 1\]"),
+            (np.array([0.0, 0.0, 0.0, 0.0, np.inf]), "有限"),
         ],
     )
-    def test_invalid_eligibility_mask(self, mask, message):
+    def test_invalid_copy_participation_scale(self, scale, message):
         schema = make_toy_schema()
         current, donors = make_tables()
         with pytest.raises(ValueError, match=message):
             evolve_step(
-                current, donors, schema, eligibility_mask=mask,
+                current, donors, schema, copy_participation_scale=scale,
             )
 
 

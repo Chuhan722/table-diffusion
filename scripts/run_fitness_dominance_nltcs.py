@@ -1,4 +1,4 @@
-"""运行并离线评价 nltcs 的适应度支配门控实验。
+"""运行并离线评价 nltcs 的适应度支配软门控实验。
 
 生成阶段固定使用仓库原始的 marginal、精确 measured workload 和 geometric 配置；
 训练/测试原始表只在 run_evolution 返回后用于离线联合 TVD 与支持集评价。
@@ -6,8 +6,8 @@
 示例：
     CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src python \
         scripts/run_fitness_dominance_nltcs.py \
-        --seeds 0 --rounds 1500 \
-        --output-dir outputs/fitness_dominance_nltcs_seed0_finalcode
+        --seeds 0 --rounds 1500 --exploration-rate 0.02 \
+        --output-dir outputs/fitness_soft_dominance_nltcs_seed0
 """
 import argparse
 import json
@@ -68,6 +68,11 @@ def _aggregate(records, key):
     }
 
 
+def _mean_or_zero(values):
+    """初始即达标、没有提案历史时按零次事件记录为 0。"""
+    return float(np.mean(values)) if len(values) else 0.0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
@@ -75,7 +80,14 @@ def main():
     parser.add_argument("--device", choices=["cuda", "cpu", "numpy"], default="cuda")
     parser.add_argument("--output-dir")
     parser.add_argument("--log-every", type=int, default=100)
+    parser.add_argument("--exploration-rate", type=float, default=0.02)
     args = parser.parse_args()
+    if args.rounds <= 0:
+        parser.error("--rounds 必须为正数")
+    if len(set(args.seeds)) != len(args.seeds):
+        parser.error("--seeds 不得重复")
+    if not 0.0 <= args.exploration_rate <= 1.0:
+        parser.error("--exploration-rate 必须在 [0, 1] 内")
 
     schema = load_schema(SCHEMA_PATH)
     queries = load_queries(QUERY_PATH)
@@ -89,7 +101,7 @@ def main():
             raise FileExistsError(f"输出目录已存在且非空，不覆盖：{parent}")
         parent.mkdir(parents=True, exist_ok=True)
     else:
-        parent = Path(create_parent_dir(prefix="fitness_dominance_nltcs"))
+        parent = Path(create_parent_dir(prefix="fitness_soft_dominance_nltcs"))
 
     runs = []
     generated_tables = []
@@ -124,6 +136,7 @@ def main():
             winsorize_quantiles=(0.01, 0.99),
             exclude_self=True,
             fitness_dominance_gate=True,
+            fitness_dominance_exploration_rate=args.exploration_rate,
             max_retries=0,
         )
 
@@ -132,21 +145,39 @@ def main():
         dominance_rates = np.asarray(
             diagnostics["fitness_dominance_rate_history"], dtype=float
         )
+        copy_scales = np.asarray(
+            diagnostics["fitness_copy_participation_scale_history"],
+            dtype=float,
+        )
+        accept_history = diagnostics["accept_history"]
+        loss_history = diagnostics["loss_history"]
+        accept_late_start = 3 * len(accept_history) // 4
+        loss_late_start = 3 * len(loss_history) // 4
         record = {
             "seed": seed,
             "run_dir": run_dir.name,
             "best_loss": float(diagnostics["best_loss"]),
             "training_l1": float(diagnostics["normalized_l1_error"]),
             "elapsed_sec": float(diagnostics["elapsed_sec"]),
-            "accept_rate": float(np.mean(diagnostics["accept_history"])),
-            "mean_dominance_rate": float(dominance_rates.mean()),
+            "rounds_run": int(diagnostics["rounds_run"]),
+            "stopped_early": bool(diagnostics["stopped_early"]),
+            "accept_rate": _mean_or_zero(accept_history),
+            "late_accept_rate": _mean_or_zero(
+                accept_history[accept_late_start:]
+            ),
+            "late_loss_improvement": float(
+                loss_history[loss_late_start] - diagnostics["best_loss"]
+            ),
+            "mean_dominance_rate": _mean_or_zero(dominance_rates),
+            "mean_copy_participation_scale": _mean_or_zero(copy_scales),
             "initialization": diagnostics["initialization"],
         }
         runs.append(record)
         generated_tables.append(best)
         print(
             f"loss={record['best_loss']:.1f} | L1={record['training_l1']:.6f} | "
-            f"支配率={record['mean_dominance_rate']:.2%}",
+            f"支配率={record['mean_dominance_rate']:.2%} | "
+            f"复制缩放={record['mean_copy_participation_scale']:.2%}",
             flush=True,
         )
 
@@ -172,10 +203,12 @@ def main():
     metric_names = [
         "best_loss", "training_l1", "train_tvd", "test_tvd",
         "n_unique", "missing_train_mass", "novel_synthetic_mass",
-        "accept_rate", "mean_dominance_rate", "elapsed_sec",
+        "rounds_run", "accept_rate", "late_accept_rate",
+        "late_loss_improvement", "mean_dominance_rate",
+        "mean_copy_participation_scale", "elapsed_sec",
     ]
     summary = {
-        "experiment": "fitness_dominance_nltcs",
+        "experiment": "fitness_soft_dominance_nltcs",
         "scope": "fixed_workload_exact_target_no_noise",
         "params": {
             "seeds": args.seeds,
@@ -183,6 +216,7 @@ def main():
             "device": args.device,
             "init_method": "marginal",
             "fitness_dominance_gate": True,
+            "fitness_dominance_exploration_rate": args.exploration_rate,
         },
         "privacy_note": (
             "run_evolution 不读取原始表；train/test 仅在结束后计算离线评价指标。"

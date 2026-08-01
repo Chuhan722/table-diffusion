@@ -9,6 +9,7 @@ import pytest
 from table_diffevo.schema import Schema, AttributeBlock
 from table_diffevo.evolution import run_evolution
 import table_diffevo.evolution as evolution_module
+import table_diffevo.update as update_module
 
 
 def make_toy_schema():
@@ -213,6 +214,8 @@ class TestStateCache:
         assert diag["best_loss"] == pytest.approx(0.5)
         assert diag["state_evaluation_count"] == 1
         assert diag["distance_evaluation_count"] == 0
+        assert diag["fitness_dominance_rate_history"] == []
+        assert diag["fitness_copy_participation_scale_history"] == []
 
     def test_initially_converged_stops_before_distance(self, monkeypatch):
         """初始表已达标时只用状态缓存完成终止检查，不计算距离。"""
@@ -233,6 +236,8 @@ class TestStateCache:
         assert diag["best_loss"] == 0.0
         assert diag["state_evaluation_count"] == 1
         assert diag["distance_evaluation_count"] == 0
+        assert diag["fitness_dominance_rate_history"] == []
+        assert diag["fitness_copy_participation_scale_history"] == []
 
     def test_rejected_rounds_reuse_state_and_distance(self, monkeypatch):
         """连续拒绝时只评价一次当前表和一次距离，但每轮仍重新抽样。"""
@@ -389,7 +394,7 @@ class TestExcludeSelf:
 
 
 class TestFitnessDominanceGate:
-    """只让适应度严格更高的 donor 改写 recipient。"""
+    """donor 复制偏向适应度支配 pair，同时保留可控探索。"""
 
     @staticmethod
     def _setup():
@@ -422,12 +427,46 @@ class TestFitnessDominanceGate:
             n_records=2, n_rounds=1, seed=0,
             rho=1.0, eta=1.0, mu=0.0,
             fitness_dominance_gate=True,
+            fitness_dominance_exploration_rate=0.0,
         )
 
         assert best["x"].tolist() == ["a", "a"]
         assert diag["best_loss"] == 0.0
         assert diag["fitness_dominance_rate_history"] == [0.5]
+        assert diag["fitness_copy_participation_scale_history"] == [0.5]
         assert diag["params"]["fitness_dominance_gate"] is True
+        assert diag["params"]["fitness_dominance_exploration_rate"] == 0.0
+
+    def test_default_gate_keeps_soft_copy_support(self, monkeypatch):
+        schema, queries, initial = self._setup()
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.array([1, 0]),
+        )
+        seen_scales = []
+
+        def fake_evolve(
+            current, donors, schema, rho, eta, mu, rng,
+            copy_participation_scale,
+        ):
+            seen_scales.append(copy_participation_scale.copy())
+            return current.copy()
+
+        monkeypatch.setattr(evolution_module, "evolve_step", fake_evolve)
+        _, diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=1, seed=0,
+            fitness_dominance_gate=True,
+        )
+
+        assert len(seen_scales) == 1
+        assert np.array_equal(seen_scales[0], np.array([0.02, 1.0]))
+        assert diag["fitness_copy_participation_scale_history"] == [0.51]
+        assert diag["params"]["fitness_dominance_exploration_rate"] == 0.02
 
     def test_without_gate_preserves_original_swap(self, monkeypatch):
         schema, queries, initial = self._setup()
@@ -450,8 +489,9 @@ class TestFitnessDominanceGate:
         assert best["x"].tolist() == initial["x"].tolist()
         assert diag["best_loss"] == pytest.approx(0.5)
         assert diag["params"]["fitness_dominance_gate"] is False
+        assert diag["fitness_copy_participation_scale_history"] == [1.0]
 
-    def test_gate_mask_is_reused_across_retries(self, monkeypatch):
+    def test_copy_scale_is_reused_across_retries(self, monkeypatch):
         schema, queries, initial = self._setup()
         monkeypatch.setattr(
             evolution_module, "init_synthetic_table",
@@ -461,13 +501,14 @@ class TestFitnessDominanceGate:
             evolution_module, "sample_donors",
             lambda *args, **kwargs: np.array([1, 0]),
         )
-        seen_masks = []
+        seen_scales = []
 
         def fake_evolve(
-            current, donors, schema, rho, eta, mu, rng, eligibility_mask
+            current, donors, schema, rho, eta, mu, rng,
+            copy_participation_scale,
         ):
-            seen_masks.append(eligibility_mask.copy())
-            value = "b" if len(seen_masks) == 1 else "a"
+            seen_scales.append(copy_participation_scale.copy())
+            value = "b" if len(seen_scales) == 1 else "a"
             return pd.DataFrame({"x": [value] * len(current)})
 
         monkeypatch.setattr(evolution_module, "evolve_step", fake_evolve)
@@ -477,11 +518,12 @@ class TestFitnessDominanceGate:
             rho=1.0, eta=1.0, mu=0.0,
             max_retries=1, retry_rho_decay=0.5,
             fitness_dominance_gate=True,
+            fitness_dominance_exploration_rate=0.7,
         )
 
-        assert len(seen_masks) == 2
-        assert np.array_equal(seen_masks[0], np.array([False, True]))
-        assert np.array_equal(seen_masks[1], seen_masks[0])
+        assert len(seen_scales) == 2
+        assert np.array_equal(seen_scales[0], np.array([0.7, 1.0]))
+        assert np.array_equal(seen_scales[1], seen_scales[0])
         assert diag["accepted_attempt_history"] == [2]
         assert diag["best_loss"] == 0.0
 
@@ -494,6 +536,121 @@ class TestFitnessDominanceGate:
                 n_records=2, n_rounds=1,
                 fitness_dominance_gate=value,
             )
+
+    @pytest.mark.parametrize(
+        "value", [-0.01, 1.01, np.inf, np.nan, "0.1", True]
+    )
+    def test_exploration_rate_bounds(self, value):
+        schema, queries, _ = self._setup()
+        with pytest.raises(
+            ValueError, match="fitness_dominance_exploration_rate"
+        ):
+            run_evolution(
+                np.array([2]), queries, schema,
+                n_records=2, n_rounds=1,
+                fitness_dominance_exploration_rate=value,
+            )
+
+    def test_exploration_one_matches_gate_off_exactly(self, monkeypatch):
+        schema, queries, initial = self._setup()
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.array([1, 0]),
+        )
+
+        baseline, baseline_diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=3, seed=19,
+            rho=0.6, eta=0.4, mu=0.3,
+            fitness_dominance_gate=False,
+        )
+        explored, explored_diag = run_evolution(
+            np.array([2]), queries, schema,
+            n_records=2, n_rounds=3, seed=19,
+            rho=0.6, eta=0.4, mu=0.3,
+            fitness_dominance_gate=True,
+            fitness_dominance_exploration_rate=1.0,
+        )
+
+        pd.testing.assert_frame_equal(explored, baseline)
+        for key in (
+            "best_loss",
+            "rounds_run",
+            "stopped_early",
+            "loss_history",
+            "accept_history",
+            "donor_fitness_history",
+            "donor_distance_history",
+            "donor_self_rate_history",
+            "fitness_dominance_rate_history",
+            "fitness_copy_participation_scale_history",
+            "alpha_history",
+            "proposal_attempts_history",
+            "accepted_attempt_history",
+            "accepted_rho_history",
+            "state_evaluation_count",
+            "distance_evaluation_count",
+            "normalized_l1_error",
+            "normalized_l1_median",
+            "normalized_l1_p90",
+            "normalized_l1_max",
+            "initialization",
+        ):
+            assert explored_diag[key] == baseline_diag[key]
+        assert all(
+            rate == 1.0
+            for rate in explored_diag[
+                "fitness_copy_participation_scale_history"
+            ]
+        )
+
+    def test_equal_fitness_can_escape_through_mutation(self, monkeypatch):
+        n_records = 4
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x",
+                values=["a", "b"],
+            )
+        ])
+        queries = [
+            {
+                "conditions": [
+                    {"attribute": "x", "operator": "==", "value": "b"}
+                ]
+            }
+        ]
+        initial = pd.DataFrame({"x": ["a"] * n_records})
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module, "sample_donors",
+            lambda *args, **kwargs: np.roll(np.arange(n_records), 1),
+        )
+        monkeypatch.setattr(
+            update_module, "_sample_mutation_block", lambda *args: "x"
+        )
+        monkeypatch.setattr(
+            update_module, "_sample_legal_value", lambda *args: "b"
+        )
+
+        best, diag = run_evolution(
+            np.array([n_records]), queries, schema,
+            n_records=n_records, n_rounds=1, seed=0,
+            rho=1.0, eta=1.0, mu=1.0,
+            fitness_dominance_gate=True,
+            fitness_dominance_exploration_rate=0.0,
+        )
+
+        assert best["x"].tolist() == ["b"] * n_records
+        assert diag["best_loss"] == 0.0
+        assert diag["fitness_dominance_rate_history"] == [0.0]
+        assert diag["fitness_copy_participation_scale_history"] == [0.0]
 
 
 class TestProposalRetries:
