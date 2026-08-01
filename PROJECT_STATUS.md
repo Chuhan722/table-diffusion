@@ -47,8 +47,8 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
   1 GiB 的 CPU 距离副本；donor 抽出后立即释放 `N×N` 概率矩阵。
 - 新增 `state_evaluation_count` / `distance_evaluation_count` 诊断，直接记录昂贵阶段
   实际执行次数。
-- 新增 4 个回归测试，覆盖 NumPy/torch 诊断、连续拒绝复用缓存、接受后缓存失效；
-  完整测试集 **281 passed**。
+- 新增 6 个回归测试，覆盖 NumPy/torch 诊断、连续拒绝复用缓存、接受后缓存失效、
+  零轮和初始即收敛边界；完整测试集 **283 passed**。
 
 **nltcs 正式对拍：** RTX 4090、种子 0、二阶最大熵初始化、600 轮，其余参数完全
 相同。合并前保存的成品与优化后成品 CSV 的 SHA-256 均为
@@ -62,6 +62,14 @@ donor fitness、自身率和全部质量指标逐项相同。GPU 与 NumPy 的�
 | 单轮墙钟 | 0.4481s | **0.0520s** | -88.4% |
 | 当前表完整评价次数 | 600 | **21** | -96.5% |
 | 全对全距离计算次数 | 600 | **21** | -96.5% |
+
+**合入前深度审查：** 另以合并前 `origin/master` 建立独立 worktree，对 8 组配置逐项
+运行旧版与新版：NumPy geometric 两种子、缩步重试、linear、legacy 评价、允许抽到
+自身、torch CPU、torch CUDA。8 组的合成表哈希、loss、接受/重试轨迹和全部算法
+诊断完全一致；torch donor 距离归约最大浮点差为 `5.96e-8`。5 轮全部接受、没有
+缓存命中的 nltcs 短程内存对照中，进程峰值 RSS 从约 3.12 GiB 降至 1.14 GiB，
+GPU 峰值从约 10.0 GiB 降至 9.0 GiB，验证全量回传与概率矩阵生命周期修复本身
+也独立生效。
 
 该加速幅度与拒绝率有关：高接受率配置的缓存收益会更小；GPU 诊断回传修复则普遍
 有效。本次只改等价执行方式，没有更改初始化、目标函数、抽样公式或更新参数。

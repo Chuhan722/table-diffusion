@@ -194,6 +194,46 @@ class TestStateCache:
         )
         assert result == pytest.approx(0.5)
 
+    def test_zero_rounds_evaluates_initial_state_without_distance(self, monkeypatch):
+        """零轮仍返回有效初始 best，但不应构造未使用的距离矩阵。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        _, diag = run_evolution(
+            np.array([0]), queries, schema,
+            n_records=4, n_rounds=0, seed=0, device="numpy",
+        )
+
+        assert diag["rounds_run"] == 0
+        assert diag["loss_history"] == []
+        assert diag["best_loss"] == pytest.approx(0.5)
+        assert diag["state_evaluation_count"] == 1
+        assert diag["distance_evaluation_count"] == 0
+
+    def test_initially_converged_stops_before_distance(self, monkeypatch):
+        """初始表已达标时只用状态缓存完成终止检查，不计算距离。"""
+        schema, queries = self._schema_and_queries()
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        monkeypatch.setattr(
+            evolution_module, "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        _, diag = run_evolution(
+            np.array([1]), queries, schema,
+            n_records=4, n_rounds=5, seed=0, device="numpy", log_every=100,
+        )
+
+        assert diag["rounds_run"] == 1
+        assert diag["stopped_early"] is True
+        assert diag["best_loss"] == 0.0
+        assert diag["state_evaluation_count"] == 1
+        assert diag["distance_evaluation_count"] == 0
+
     def test_rejected_rounds_reuse_state_and_distance(self, monkeypatch):
         """连续拒绝时只评价一次当前表和一次距离，但每轮仍重新抽样。"""
         schema, queries = self._schema_and_queries()
