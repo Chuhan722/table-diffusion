@@ -735,7 +735,6 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
-<<<<<<< HEAD
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history
