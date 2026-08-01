@@ -99,6 +99,8 @@ def run_evolution(
     maxent_max_states: int = 1_000_000,
     maxent_max_sweeps: int = 200,
     maxent_tol: float = 1e-8,
+    fitness_dominance_gate: bool = False,
+    fitness_dominance_exploration_rate: float = 0.02,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -182,6 +184,17 @@ def run_evolution(
         pairwise_maxent 的 IPF 最大扫描轮数。
     maxent_tol : float, default 1e-8
         pairwise_maxent 的最大二阶单元概率误差收敛阈值。
+    fitness_dominance_gate : bool, default False
+        是否启用适应度支配门控。启用后，记录 i 只有在所选 donor 的当前适应度
+        严格高于自身，即 ``fitness[donor_idx[i]] > fitness[i]`` 时，才默认有资格
+        复制 donor；随机变异不受该门控限制。默认 False，确保历史配置和随机轨迹
+        不变。
+    fitness_dominance_exploration_rate : float, default 0.02
+        门控启用时，非支配 donor-recipient pair 的 donor 复制参与率缩放，必须在
+        [0, 1] 内。0 表示硬复制门控，1 表示复制路径完全回到 baseline；中间值使
+        非支配 pair 以 ``rho * rate`` 的概率参与复制，在利用适应度方向的同时保留
+        非正向/中性转移。该缩放不额外抽随机数；同一轮缩步重试复用缩放向量，但
+        与原重试语义一致，每次重试重新抽参与骰子。
 
     Returns
     -------
@@ -194,6 +207,10 @@ def run_evolution(
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
+        - fitness_dominance_rate_history: List[float]，所选 donor 适应度严格高于
+          recipient 的逐轮比例（无论门控是否启用都记录）
+        - fitness_copy_participation_scale_history: List[float]，逐轮平均 donor 复制
+          参与率缩放；门控关闭时恒为 1
         - proposal_attempts_history: List[int]，每轮评估的提案数
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
         - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
@@ -262,6 +279,27 @@ def run_evolution(
         raise ValueError(
             f"retry_rho_decay 必须在 (0, 1) 内，得到 {retry_rho_decay}"
         )
+    if not isinstance(fitness_dominance_gate, (bool, np.bool_)):
+        raise ValueError(
+            "fitness_dominance_gate 必须是布尔值，"
+            f"得到 {fitness_dominance_gate!r}"
+        )
+    if (
+        isinstance(fitness_dominance_exploration_rate, (bool, np.bool_))
+        or not isinstance(
+            fitness_dominance_exploration_rate,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(fitness_dominance_exploration_rate)
+        or not 0.0 <= fitness_dominance_exploration_rate <= 1.0
+    ):
+        raise ValueError(
+            "fitness_dominance_exploration_rate 必须是 [0, 1] 内的有限数值，"
+            f"得到 {fitness_dominance_exploration_rate!r}"
+        )
+    fitness_dominance_exploration_rate = float(
+        fitness_dominance_exploration_rate
+    )
 
     rng = np.random.default_rng(seed)
 
@@ -320,6 +358,8 @@ def run_evolution(
     donor_fitness_history: List[float] = []      # 每轮选中 donor 的平均适应度
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
     donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
+    fitness_dominance_rate_history: List[float] = []  # donor 适应度严格高于 recipient 的比例
+    fitness_copy_participation_scale_history: List[float] = []  # 平均复制参与率缩放
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
@@ -422,6 +462,21 @@ def run_evolution(
         # 诊断：记录选中 donor 的适应度和距离
         N = len(S)  # 记录数
         selected_fitness = fitness[donor_idx]  # (N,) 每条记录选中的 donor 适应度
+        dominance_mask = selected_fitness > fitness
+        if not fitness_dominance_gate:
+            # 默认关闭路径无需为诊断额外分配长度 N 的全 1 数组；调用 evolve_step
+            # 时也继续省略新参数，保持历史执行路径与随机轨迹不变。
+            copy_participation_scale = None
+            mean_copy_participation_scale = 1.0
+        else:
+            copy_participation_scale = np.where(
+                dominance_mask,
+                1.0,
+                fitness_dominance_exploration_rate,
+            )
+            mean_copy_participation_scale = float(
+                np.mean(copy_participation_scale)
+            )
         # GPU/torch 路径只 gather 被选中的 N 个元素并回传一个均值标量，不再为了
         # 诊断把完整 N×N 距离矩阵搬回 CPU。
         selected_distance_mean = _mean_selected_distance(
@@ -434,6 +489,10 @@ def run_evolution(
         # 自身抽样率：抽到自己（donor_idx==i）的比例。exclude_self=True 时恒为 0；
         # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
         donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
+        fitness_dominance_rate_history.append(float(np.mean(dominance_mask)))
+        fitness_copy_participation_scale_history.append(
+            mean_copy_participation_scale
+        )
 
         # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
         # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
@@ -445,8 +504,13 @@ def run_evolution(
         current_loss = loss
         for attempt in range(max_retries + 1):
             attempt_rho = rho * (retry_rho_decay ** attempt)
+            gate_kwargs = (
+                {"copy_participation_scale": copy_participation_scale}
+                if fitness_dominance_gate else {}
+            )
             proposal = evolve_step(
-                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng
+                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng,
+                **gate_kwargs,
             )
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
@@ -511,6 +575,10 @@ def run_evolution(
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
         "donor_self_rate_history": donor_self_rate_history,
+        "fitness_dominance_rate_history": fitness_dominance_rate_history,
+        "fitness_copy_participation_scale_history": (
+            fitness_copy_participation_scale_history
+        ),
         "alpha_history": alpha_history,
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
@@ -546,6 +614,10 @@ def run_evolution(
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
             "exclude_self": exclude_self,
+            "fitness_dominance_gate": bool(fitness_dominance_gate),
+            "fitness_dominance_exploration_rate": (
+                fitness_dominance_exploration_rate
+            ),
             "max_retries": int(max_retries),
             "retry_rho_decay": retry_rho_decay,
             "maxent_max_states": int(maxent_max_states),

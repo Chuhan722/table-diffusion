@@ -77,6 +77,11 @@ RHO = 0.01             # 记录参与率（固定值）
 ETA = 0.5              # 块复制率（固定值）
 MU = 0.01              # 变异率（固定值）
 
+# 适应度支配软门控：支配 pair 使用完整复制参与率，非支配 pair 按下方比例缩放；
+# 随机变异不受门控影响。默认关闭以保持历史配置；方法对照可设为 True。
+FITNESS_DOMINANCE_GATE = False
+FITNESS_DOMINANCE_EXPLORATION_RATE = 0.02  # 门控开启时非支配 pair 的复制率缩放
+
 # 整代提案被拒后的缩步重试（默认关闭，保持历史行为）
 MAX_RETRIES = 0        # 0=不重试；每次重试复用当轮 donor
 RETRY_RHO_DECAY = 0.5  # 重试时 rho 逐次乘以该因子
@@ -105,6 +110,10 @@ def _run_params():
         "delta": DELTA,
         "winsorize": WINSORIZE,
         "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
+        "fitness_dominance_gate": FITNESS_DOMINANCE_GATE,
+        "fitness_dominance_exploration_rate": (
+            FITNESS_DOMINANCE_EXPLORATION_RATE
+        ),
         "max_retries": MAX_RETRIES,
         "retry_rho_decay": RETRY_RHO_DECAY,
     }
@@ -156,6 +165,10 @@ def main():
             alpha_max=ALPHA_MAX,
             delta=DELTA,
             winsorize_quantiles=WINSORIZE,
+            fitness_dominance_gate=FITNESS_DOMINANCE_GATE,
+            fitness_dominance_exploration_rate=(
+                FITNESS_DOMINANCE_EXPLORATION_RATE
+            ),
             max_retries=MAX_RETRIES,
             retry_rho_decay=RETRY_RHO_DECAY,
             maxent_max_states=MAXENT_MAX_STATES,

@@ -39,6 +39,8 @@
 本模块只负责"给定当前记录和已对齐的参考记录，靠近一步"。
 - donors 已按行对齐：donors.iloc[i] 是 current.iloc[i] 的参考记录
   （从候选池按抽样索引取 donor 的逻辑在上游，见 sampling.sample_donors）
+- copy_participation_scale 由上游的演化选择规则给出；它只缩放 donor 复制参与率，
+  不缩放随机变异通道
 - ρ、η、μ 随轮次的衰减调度由主循环负责，本函数只接收当前轮的标量值
 """
 from typing import Optional
@@ -55,6 +57,7 @@ def evolve_step(
     eta: float = 0.5,
     mu: float = 0.01,
     rng: Optional[np.random.Generator] = None,
+    copy_participation_scale: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """
     全表同步向参考记录靠近一步，生成下一代 S_{t+1}。
@@ -75,6 +78,10 @@ def evolve_step(
         变异概率 μ_t，参与更新的记录以此概率变异一个块
     rng : np.random.Generator or None
         随机数生成器。推荐显式传入 np.random.default_rng(seed) 保证复现
+    copy_participation_scale : np.ndarray or None, shape (N,), default None
+        上游给出的 donor 复制参与率缩放，元素必须在 [0, 1] 内。None 表示全 1，
+        保持原行为。第 i 行以 ``rho * scale[i]`` 参与 donor 复制，但随机变异仍以
+        完整 rho 参与，避免选择偏置关闭探索通道。
 
     Returns
     -------
@@ -84,7 +91,8 @@ def evolve_step(
     Raises
     ------
     ValueError
-        current 与 donors 形状不一致、概率参数越界
+        current 与 donors 形状不一致、概率参数越界，或 copy_participation_scale
+        不是长度匹配、元素位于 [0, 1] 的有限数值一维数组
 
     Notes
     -----
@@ -123,12 +131,42 @@ def evolve_step(
     N = len(current)
     attr_names = schema.attribute_names()
 
+    if copy_participation_scale is None:
+        copy_scale = None
+    else:
+        copy_scale = np.asarray(copy_participation_scale)
+        if copy_scale.shape != (N,):
+            raise ValueError(
+                "copy_participation_scale 必须是长度与 current 行数一致的一维数组，"
+                f"得到 shape {copy_scale.shape}，期望 ({N},)"
+            )
+        if copy_scale.dtype.kind not in 'iuf':
+            raise ValueError("copy_participation_scale 必须是数值数组")
+        copy_scale = copy_scale.astype(float, copy=False)
+        if (
+            not np.all(np.isfinite(copy_scale))
+            or np.any(copy_scale < 0.0)
+            or np.any(copy_scale > 1.0)
+        ):
+            raise ValueError(
+                "copy_participation_scale 的元素必须是 [0, 1] 内的有限数值"
+            )
+
     # 以当前表为基础构造下一代（新对象，索引对齐 0..N-1）
     next_table = current.reset_index(drop=True).copy()
     donors = donors.reset_index(drop=True)
 
     # 7.2 记录参与：U_i ~ Bernoulli(rho)
-    participate = rng.random(N) < rho  # (N,) 布尔
+    # 复制和变异共用同一个基础参与骰子。scale<=1 保证 copy_participate 始终是
+    # participate 的子集；非支配 pair 的复制率可缩小，但 7.4 变异仍使用完整 rho。
+    # 这既保留探索，又不为软门控额外消耗随机数，便于不同 rate 做同随机流对拍。
+    participation_roll = rng.random(N)
+    participate = participation_roll < rho  # (N,) 布尔
+    if copy_scale is None:
+        # 默认路径直接复用原 participate，避免全 1 数组、逐元素乘法和重复比较。
+        copy_participate = participate
+    else:
+        copy_participate = participation_roll < (rho * copy_scale)
 
     # 7.3 属性块复制：对每个块，参与且与参考不同的记录以概率 eta 复制
     for attr in attr_names:
@@ -136,7 +174,7 @@ def evolve_step(
         donor_col = donors[attr].to_numpy()
         differ = cur_col != donor_col  # (N,) 与参考记录不同的位置
         copy_roll = rng.random(N) < eta  # (N,) 每条记录的复制骰子
-        copy_mask = participate & differ & copy_roll
+        copy_mask = copy_participate & differ & copy_roll
         if copy_mask.any():
             new_col = next_table[attr].to_numpy().copy()
             new_col[copy_mask] = donor_col[copy_mask]
