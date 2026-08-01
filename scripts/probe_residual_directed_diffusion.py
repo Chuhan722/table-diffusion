@@ -17,6 +17,7 @@ import numpy as np
 
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
+    direction_rms_scale,
     tilted_copy_probabilities,
 )
 from table_diffevo.distance import pairwise_block_distance
@@ -129,6 +130,7 @@ def _probe_state(
     strengths,
     proposals,
     device,
+    normalization,
 ):
     q, residual, fitness = evaluate_vectorized(
         state,
@@ -164,6 +166,8 @@ def _probe_state(
     configs = ["baseline"] + [_strength_name(value) for value in strengths]
     rows = {name: [] for name in configs}
     endpoint_exact = True
+    direction_reference_scale = None
+    reference_scale_proposal_index = None
     direction_probability = {
         _strength_name(value): {
             "negative_probability": [],
@@ -194,6 +198,14 @@ def _probe_state(
             for attr in schema.attribute_names()
         ])
         active = directions[differs]
+        if (
+            normalization == "initial_rms"
+            and direction_reference_scale is None
+        ):
+            candidate_scale = direction_rms_scale(active)
+            if candidate_scale > 0.0:
+                direction_reference_scale = candidate_scale
+                reference_scale_proposal_index = proposal_index
 
         proposal_seed = _address_seed(seed, state_index, proposal_index, 1)
         baseline = evolve_step(
@@ -210,6 +222,12 @@ def _probe_state(
         generated = {"baseline": baseline}
         for strength in strengths:
             name = _strength_name(strength)
+            effective_strength = (
+                strength / direction_reference_scale
+                if normalization == "initial_rms"
+                and direction_reference_scale is not None
+                else (0.0 if normalization == "initial_rms" else strength)
+            )
             generated[name] = evolve_step(
                 state,
                 donors,
@@ -219,10 +237,10 @@ def _probe_state(
                 mu=MU,
                 rng=np.random.default_rng(proposal_seed),
                 copy_direction_scores=directions,
-                copy_direction_strength=strength,
+                copy_direction_strength=effective_strength,
             )
             probabilities = tilted_copy_probabilities(
-                ETA, active, strength
+                ETA, active, effective_strength
             )
             for label, mask in (
                 ("negative_probability", active < 0.0),
@@ -281,6 +299,9 @@ def _probe_state(
             state.to_csv(index=False).encode("utf-8")
         ).hexdigest(),
         "n_proposals": int(proposals),
+        "direction_normalization": normalization,
+        "direction_reference_scale": direction_reference_scale,
+        "reference_scale_proposal_index": reference_scale_proposal_index,
         "strength_zero_exact": bool(endpoint_exact),
         "configs": {name: _summarize(values) for name, values in rows.items()},
         "mean_copy_probability_by_direction": probability_summary,
@@ -309,7 +330,12 @@ def main():
     )
     parser.add_argument("--proposals", type=int, default=100)
     parser.add_argument(
-        "--strengths", nargs="+", type=float, default=[0.0, 20.0, 100.0]
+        "--strengths", nargs="+", type=float, default=[0.0, 1.0]
+    )
+    parser.add_argument(
+        "--normalization",
+        choices=["none", "initial_rms"],
+        default="initial_rms",
     )
     parser.add_argument(
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
@@ -329,6 +355,8 @@ def main():
         parser.error("--proposals 必须为正数")
     if 0.0 not in args.strengths:
         parser.error("--strengths 必须包含 0")
+    if len(set(args.strengths)) != len(args.strengths):
+        parser.error("--strengths 不得重复")
     if any(not np.isfinite(value) or value < 0.0 for value in args.strengths):
         parser.error("--strengths 必须全部为非负有限数值")
 
@@ -364,6 +392,7 @@ def main():
                 strengths=args.strengths,
                 proposals=args.proposals,
                 device=args.device,
+                normalization=args.normalization,
             ))
 
     summary = {
@@ -374,6 +403,7 @@ def main():
         "state_rounds": args.state_rounds,
         "n_proposals_per_state": args.proposals,
         "strengths": args.strengths,
+        "normalization": args.normalization,
         "device": args.device,
         "all_strength_zero_exact": all(
             state["strength_zero_exact"] for state in states
