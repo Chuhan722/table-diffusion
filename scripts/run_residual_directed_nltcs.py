@@ -138,6 +138,11 @@ def main():
         "--direction-strength", type=float, default=1.0
     )
     parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="关闭方向机制，运行同配置历史扩散核对照",
+    )
+    parser.add_argument(
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
     )
     parser.add_argument("--output-dir")
@@ -159,6 +164,7 @@ def main():
     marginals = load_marginals(MARGINALS_PATH)
     columns = schema.attribute_names()
     environment = _environment_snapshot(args.device)
+    direction_enabled = not args.baseline
 
     if args.output_dir:
         parent = Path(args.output_dir)
@@ -201,7 +207,7 @@ def main():
             winsorize_quantiles=(0.01, 0.99),
             exclude_self=True,
             max_retries=0,
-            residual_directed_diffusion=True,
+            residual_directed_diffusion=direction_enabled,
             diffusion_direction_strength=args.direction_strength,
         )
 
@@ -265,11 +271,15 @@ def main():
         }
         runs.append(record)
         generated_tables.append(best)
+        reverse_probability = (
+            f"{record['negative_direction_copy_probability']:.1%}"
+            if direction_enabled else "不适用"
+        )
         print(
             f"loss={record['best_loss']:.1f} | L1={record['training_l1']:.6f} "
             f"| raw gain={record['raw_proposal_gain_mean']:+.1f} "
             f"| raw 正收益={record['raw_proposal_positive_rate']:.1%} "
-            f"| 反向复制概率={record['negative_direction_copy_probability']:.1%}",
+            f"| 反向复制概率={reverse_probability}",
             flush=True,
         )
 
@@ -317,7 +327,10 @@ def main():
         "direction_evaluation_elapsed_sec",
     ]
     summary = {
-        "experiment": "residual_directed_diffusion_nltcs",
+        "experiment": (
+            "residual_directed_diffusion_nltcs"
+            if direction_enabled else "baseline_diffusion_nltcs"
+        ),
         "scope": "fixed_workload_exact_target_no_noise",
         "primary_evidence": "raw_proposal_before_generation_acceptance",
         "hypothesis": (
@@ -330,8 +343,10 @@ def main():
             "n_rounds": args.rounds,
             "device": args.device,
             "init_method": "marginal",
-            "residual_directed_diffusion": True,
-            "diffusion_direction_strength": args.direction_strength,
+            "residual_directed_diffusion": direction_enabled,
+            "diffusion_direction_strength": (
+                args.direction_strength if direction_enabled else None
+            ),
         },
         "privacy_note": (
             "run_evolution 不读取原始表；train/test 仅在全部生成结束后离线评价。"

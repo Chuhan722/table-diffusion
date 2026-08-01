@@ -9,7 +9,8 @@ from table_diffevo.directional_diffusion import (
     tilted_copy_probabilities,
 )
 from table_diffevo.evolution import run_evolution
-from table_diffevo.queries import load_queries
+from table_diffevo.generator import init_synthetic_table
+from table_diffevo.queries import eval_query_mask, load_queries
 from table_diffevo.schema import AttributeBlock, Schema, load_schema
 from table_diffevo.update import evolve_step
 from table_diffevo.vectorized_eval import evaluate_directional_potential
@@ -133,6 +134,48 @@ class TestCopyDirectionScores:
             np.ones(3),
         )
         np.testing.assert_array_equal(scores, np.zeros((2, 2)))
+
+    @pytest.mark.parametrize("device", _devices())
+    def test_matches_bruteforce_full_query_delta(self, device):
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries(
+            "configs/test_300x10/measured_50query.json"
+        )
+        rng = np.random.default_rng(20260801)
+        current = init_synthetic_table(24, schema, rng)
+        donors = current.iloc[rng.permutation(len(current))].reset_index(
+            drop=True
+        )
+        residual = rng.normal(size=len(queries))
+        weights = rng.uniform(0.1, 2.0, size=len(queries))
+
+        actual = compute_copy_direction_scores(
+            current,
+            donors,
+            schema,
+            queries,
+            residual,
+            weights=weights,
+            batch_size=7,
+            device=device,
+        )
+
+        base_contributions = np.column_stack([
+            eval_query_mask(current, query) for query in queries
+        ]).astype(float)
+        expected = np.zeros_like(actual)
+        weighted_residual = weights * residual
+        for attr_idx, attr in enumerate(schema.attribute_names()):
+            candidates = current.copy()
+            candidates[attr] = donors[attr].to_numpy()
+            candidate_contributions = np.column_stack([
+                eval_query_mask(candidates, query) for query in queries
+            ]).astype(float)
+            expected[:, attr_idx] = (
+                candidate_contributions - base_contributions
+            ) @ weighted_residual
+
+        np.testing.assert_allclose(actual, expected, atol=1e-5)
 
     @pytest.mark.parametrize(
         "kwargs,match",
