@@ -230,6 +230,7 @@ def _run_one(
     final_loss = float(compute_loss(target, q))
     elapsed = time.perf_counter() - start
     gains = np.asarray(gain_history, dtype=float)
+    losses = np.asarray(loss_history, dtype=float)
     positive_gains = gains[gains > 0.0]
     negative_gains = gains[gains < 0.0]
     label = "independent" if sweeps == 0 else f"gibbs_{sweeps}_sweeps"
@@ -244,6 +245,15 @@ def _run_one(
         "best_loss_diagnostic_only": best_loss,
         "final_change_pct": (final_loss / initial_loss - 1.0) * 100.0,
         "mean_raw_gain": float(gains.mean()) if len(gains) else 0.0,
+        "mean_trajectory_loss": (
+            float(losses.mean()) if len(losses) else final_loss
+        ),
+        "late_100_mean_loss": (
+            float(losses[-100:].mean()) if len(losses) else final_loss
+        ),
+        "late_250_mean_loss": (
+            float(losses[-250:].mean()) if len(losses) else final_loss
+        ),
         "positive_gain_rate": (
             float(np.mean(gains > 0.0)) if len(gains) else 0.0
         ),
@@ -396,6 +406,9 @@ def main():
         "best_loss_diagnostic_only",
         "final_change_pct",
         "mean_raw_gain",
+        "mean_trajectory_loss",
+        "late_100_mean_loss",
+        "late_250_mean_loss",
         "positive_gain_rate",
         "negative_gain_rate",
         "mean_positive_gain",
@@ -428,6 +441,24 @@ def main():
             runs["independent"],
             "mean_raw_gain",
             False,
+        ),
+        "mean_trajectory_loss": _paired(
+            runs[candidate_name],
+            runs["independent"],
+            "mean_trajectory_loss",
+            True,
+        ),
+        "late_100_mean_loss": _paired(
+            runs[candidate_name],
+            runs["independent"],
+            "late_100_mean_loss",
+            True,
+        ),
+        "late_250_mean_loss": _paired(
+            runs[candidate_name],
+            runs["independent"],
+            "late_250_mean_loss",
+            True,
         ),
         "positive_gain_rate": _paired(
             runs[candidate_name],
