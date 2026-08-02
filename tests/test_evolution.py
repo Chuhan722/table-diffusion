@@ -450,3 +450,269 @@ class TestProposalRetries:
         target = np.array([30, 40, 50])
         with pytest.raises(ValueError, match=message):
             run_evolution(target, queries, schema, n_records=100, **kwargs)
+
+
+class TestUpdateMode:
+    """update_mode 开关：legacy（旧机制）vs single_block（单块复制/变异）。"""
+
+    def test_default_is_legacy(self):
+        """默认 update_mode='legacy'，params 如实记录。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0
+        )
+        assert diag["params"]["update_mode"] == "legacy"
+        assert diag["params"]["epsilon"] == 0.01
+
+    def test_legacy_identical_to_before(self):
+        """legacy 模式与不传 update_mode 完全一致（回归保护）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        s1, d1 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=42
+        )
+        s2, d2 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=42,
+            update_mode="legacy",
+        )
+        pd.testing.assert_frame_equal(s1, s2)
+        assert d1["loss_history"] == d2["loss_history"]
+
+    def test_legacy_no_single_block_diag(self):
+        """legacy 模式不产生 single_block 诊断（历史列表为空）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="legacy",
+        )
+        assert diag["participation_rate_history"] == []
+        assert diag["copy_attempt_rate_history"] == []
+        assert diag["mutation_attempt_rate_history"] == []
+        assert diag["accepted_change_rate_history"] == []
+        assert diag["empty_copy_set_count_history"] == []
+
+    def test_single_block_runs(self):
+        """single_block 模式能跑通并返回正确形状。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        best_S, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=0,
+            update_mode="single_block", epsilon=0.1,
+        )
+        assert best_S.shape == (100, 3)
+        assert list(best_S.columns) == schema.attribute_names()
+        assert diag["params"]["update_mode"] == "single_block"
+        assert diag["params"]["epsilon"] == 0.1
+
+    def test_single_block_records_diagnostics(self):
+        """single_block 模式逐轮记录五项诊断，长度与轮数一致。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=15, seed=3,
+            update_mode="single_block", epsilon=0.1,
+        )
+        rounds = diag["rounds_run"]
+        assert len(diag["participation_rate_history"]) == rounds
+        assert len(diag["copy_attempt_rate_history"]) == rounds
+        assert len(diag["mutation_attempt_rate_history"]) == rounds
+        assert len(diag["accepted_change_rate_history"]) == rounds
+        assert len(diag["empty_copy_set_count_history"]) == rounds
+        # 诊断取值合理
+        for r in diag["participation_rate_history"]:
+            assert 0.0 <= r <= 1.0
+
+    def test_single_block_reproducible(self):
+        """single_block 模式相同种子 → 相同结果。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        s1, d1 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=9,
+            update_mode="single_block", epsilon=0.1,
+        )
+        s2, d2 = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=20, seed=9,
+            update_mode="single_block", epsilon=0.1,
+        )
+        pd.testing.assert_frame_equal(s1, s2)
+        assert d1["loss_history"] == d2["loss_history"]
+
+    def test_single_block_monotonic_loss(self):
+        """single_block 模式 loss 单调不增（世代验收保证方向正确）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=30, seed=1,
+            update_mode="single_block", epsilon=0.1,
+        )
+        losses = diag["loss_history"]
+        for prev, cur in zip(losses, losses[1:]):
+            assert cur <= prev + 1e-9
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"update_mode": "bogus"}, "update_mode"),
+            ({"epsilon": -0.1}, "epsilon"),
+            ({"epsilon": 1.5}, "epsilon"),
+        ],
+    )
+    def test_invalid_update_mode_parameters(self, kwargs, message):
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match=message):
+            run_evolution(target, queries, schema, n_records=100, **kwargs)
+
+
+class TestSingleBlockDirectionGuard:
+    """single_block 与残差方向核联合语义未定义，应互斥拒绝。"""
+
+    def test_single_block_with_direction_raises(self):
+        """single_block + residual_directed_diffusion 同开直接报错。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match="联合算子"):
+            run_evolution(
+                target, queries, schema, n_records=100, n_rounds=10, seed=0,
+                update_mode="single_block", residual_directed_diffusion=True,
+            )
+
+    def test_guard_raises_before_direction_computation(self):
+        """护栏在方向矩阵计算前抛出：未产生任何方向评价。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        # 用极小 n_records/n_rounds，若护栏失效则会进入主循环并计算方向
+        with pytest.raises(ValueError, match="联合算子"):
+            run_evolution(
+                target, queries, schema, n_records=10, n_rounds=1, seed=0,
+                update_mode="single_block", residual_directed_diffusion=True,
+                diffusion_direction_strength=1.0,
+            )
+
+    def test_single_block_alone_has_no_copy_kernel_entropy(self):
+        """single_block 不使用 eta 复制核，熵历史应全为 None。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="single_block", epsilon=0.1,
+        )
+        entropy_hist = diag["copy_probability_entropy_history"]
+        assert len(entropy_hist) == 10
+        assert all(e is None for e in entropy_hist)
+        # 方向核未启用，方向评价次数为 0
+        assert diag["direction_evaluation_count"] == 0
+
+    def test_legacy_alone_still_records_eta_entropy(self):
+        """回归：legacy 单独运行仍按 eta 记录复制核熵（非 None）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="legacy",
+        )
+        entropy_hist = diag["copy_probability_entropy_history"]
+        assert all(e is not None for e in entropy_hist)
+
+
+class TestSingleBlockEmptyCopySetRetrySemantics:
+    """empty_copy_set_count_history 口径：每轮只记被接受 / 最后一次失败尝试。
+
+    坐实 PROJECT_STATUS 的口径说明——max_retries>0 时该历史不含被丢弃的中间尝试。
+    用 monkeypatch 控制每次 attempt 的 proposal 与 empty_copy_set_count。
+    """
+
+    def _schema_queries(self):
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x", values=["a", "b"]
+            )
+        ])
+        queries = [
+            {"conditions": [{"attribute": "x", "operator": "==", "value": "a"}]}
+        ]
+        return schema, queries
+
+    def test_first_rejected_second_accepted_records_accepted_attempt(self):
+        """首试拒、二试接受：历史只记被接受那次的 empty_copy_set_count。"""
+        schema, queries = self._schema_queries()
+        # target=0 个 "a"。首试全 "a"(count_a=20，loss 变差被拒，empty=7)，
+        # 二试全 "b"(count_a=0 命中 target 被接受，empty=2)。
+        attempts = [("a", 7), ("b", 2)]
+        calls = {"i": 0}
+
+        def fake(current, donors, schema, rho, epsilon, rng):
+            value, empty = attempts[calls["i"]]
+            calls["i"] += 1
+            proposal = pd.DataFrame({"x": [value] * len(current)})
+            return proposal, {
+                "participation_rate": 1.0, "copy_attempt_rate": 1.0,
+                "mutation_attempt_rate": 0.0, "accepted_change_rate": 1.0,
+                "empty_copy_set_count": empty,
+            }
+
+        orig = evolution_module.evolve_step_single_block
+        evolution_module.evolve_step_single_block = fake
+        try:
+            _, diag = run_evolution(
+                np.array([0]), queries, schema,
+                n_records=20, n_rounds=1, seed=0,
+                rho=0.5, max_retries=1, retry_rho_decay=0.5,
+                update_mode="single_block", epsilon=0.0,
+            )
+        finally:
+            evolution_module.evolve_step_single_block = orig
+
+        assert diag["accept_history"] == [True]
+        assert diag["accepted_attempt_history"] == [2]  # 第 2 次尝试被接受
+        # 只记被接受那次(2)，不是两次相加(9)也不是首次(7)
+        assert diag["empty_copy_set_count_history"] == [2]
+
+    def test_all_rejected_records_last_attempt(self):
+        """全部拒绝：历史记最后一次失败尝试的 empty_copy_set_count。"""
+        schema, queries = self._schema_queries()
+        # target=20 个 "a"，但每次都产出全 "b"(count_a=0) → 恒不改善被拒。
+        empties = [5, 4, 3]  # 三次尝试(初试+2重试)各自的 empty_copy_set_count
+        calls = {"i": 0}
+
+        def fake(current, donors, schema, rho, epsilon, rng):
+            empty = empties[calls["i"]]
+            calls["i"] += 1
+            proposal = pd.DataFrame({"x": ["b"] * len(current)})
+            return proposal, {
+                "participation_rate": 1.0, "copy_attempt_rate": 1.0,
+                "mutation_attempt_rate": 0.0, "accepted_change_rate": 1.0,
+                "empty_copy_set_count": empty,
+            }
+
+        orig = evolution_module.evolve_step_single_block
+        evolution_module.evolve_step_single_block = fake
+        try:
+            _, diag = run_evolution(
+                np.array([20]), queries, schema,
+                n_records=20, n_rounds=1, seed=0,
+                rho=0.5, max_retries=2, retry_rho_decay=0.5,
+                update_mode="single_block", epsilon=0.0,
+            )
+        finally:
+            evolution_module.evolve_step_single_block = orig
+
+        assert diag["accept_history"] == [False]
+        assert diag["accepted_attempt_history"] == [0]  # 全拒
+        assert diag["proposal_attempts_history"] == [3]
+        # 记最后一次失败尝试(3)，不是首次(5)也不是三次相加(12)
+        assert diag["empty_copy_set_count_history"] == [3]

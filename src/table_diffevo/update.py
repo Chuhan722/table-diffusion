@@ -234,3 +234,188 @@ def _sample_legal_value(block, rng: np.random.Generator):
     else:
         idx = rng.integers(0, len(block.values))
         return block.values[idx]
+
+
+def evolve_step_single_block(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    rho: float = 0.01,
+    epsilon: float = 0.01,
+    rng: Optional[np.random.Generator] = None,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    单块复制或变异：每条记录每轮最多改变一个合法块。
+
+    参考第七节设计提案的"记录参与率下的单块复制与合法变异"，当前为单字段 schema
+    下的第一版原型（未含结构合法性/局部重抽/回退等，详见 PROJECT_STATUS 未实现边界）。
+    保留记录参与率 ρ；删除逐属性块复制率 η；参与更新后只执行一次原子动作——
+    复制参考记录的一个不同合法块，或变异一个合法块。复制与变异互斥。
+
+    Parameters
+    ----------
+    current : pd.DataFrame, shape (N, n_attributes)
+        当前记录表 S_t
+    donors : pd.DataFrame, shape (N, n_attributes)
+        已按行对齐的参考记录：donors.iloc[i] 是 current.iloc[i] 的参考记录
+    schema : Schema
+        属性 schema 定义
+    rho : float, default 0.01
+        记录参与率 ρ_t，一轮中大约多少比例的记录获得一次更新机会
+    epsilon : float, default 0.01
+        参与更新后分配给变异的固定比例 ε。
+        P(保持不变) = 1-ρ
+        P(复制一个参考块) = ρ(1-ε)
+        P(变异一个合法块) = ρε
+    rng : np.random.Generator or None
+        随机数生成器。推荐显式传入 np.random.default_rng(seed) 保证复现
+
+    Returns
+    -------
+    next_table : pd.DataFrame, shape (N, n_attributes)
+        下一代记录表 S_{t+1}（新对象，不修改输入）
+    diagnostics : dict
+        本轮更新的诊断信息，包含：
+        - participation_rate: 实际抽到参与更新的记录比例
+        - copy_attempt_rate: 尝试复制一个参考块的比例
+        - mutation_attempt_rate: 尝试合法变异的比例
+        - accepted_change_rate: 最终记录内容真正发生变化的比例
+        - empty_copy_set_count: 抽到复制但 D_i 为空的记录数
+
+    Raises
+    ------
+    ValueError
+        current 与 donors 形状不一致、概率参数越界
+
+    Notes
+    -----
+    **复现性（铁律 5）：** 使用固定种子的 rng 保证结果可复现。
+
+    **全表同步（铁律）：** 所有记录基于同一份输入同步生成下一状态。
+
+    **设计要点**：
+    - 每条记录每轮最多改变一个最小合法块
+    - 复制与变异互斥：参与后以概率 ε 二选一
+    - 复制动作：从不同合法块集合 D_i 中均匀随机选一个
+    - D_i 为空时保持不变，不转成变异（保证 ε 含义稳定）
+    - 变异动作：均匀抽样 + 排除当前值
+    """
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError(f"rho 必须在 [0, 1]，得到 {rho}")
+    if (
+        isinstance(epsilon, (bool, np.bool_))
+        or not isinstance(epsilon, (int, float, np.integer, np.floating))
+        or not np.isfinite(epsilon)
+        or not (0.0 <= epsilon <= 1.0)
+    ):
+        raise ValueError(f"epsilon 必须是 [0, 1] 内的有限数值，得到 {epsilon!r}")
+    epsilon = float(epsilon)
+
+    if len(current) != len(donors):
+        raise ValueError(
+            f"current 行数 ({len(current)}) 与 donors 行数 ({len(donors)}) 不一致"
+        )
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    N = len(current)
+    attr_names = schema.attribute_names()
+
+    # 以当前表为基础构造下一代（新对象，索引对齐 0..N-1）
+    next_table = current.reset_index(drop=True).copy()
+    donors_aligned = donors.reset_index(drop=True)
+
+    # 记录参与：U_i ~ Bernoulli(rho)
+    participate = rng.random(N) < rho  # (N,) 布尔
+    participation_rate = float(participate.mean())
+
+    # 统计量
+    copy_attempt_count = 0
+    mutation_attempt_count = 0
+    empty_copy_set_count = 0
+
+    # 对每个参与的记录，决定复制或变异（互斥）
+    participating_rows = np.nonzero(participate)[0]
+    for i in participating_rows:
+        # 先抽 M_i ~ Bernoulli(epsilon)：0=复制，1=变异
+        do_mutation = rng.random() < epsilon
+
+        if do_mutation:
+            # 变异：随机选一个块，从合法值里排除当前值后均匀抽
+            mutation_attempt_count += 1
+            chosen_attr = attr_names[rng.integers(0, len(attr_names))]
+            block = schema.get_block(chosen_attr)
+            current_val = next_table.at[i, chosen_attr]
+            new_value = _sample_legal_value_excluding_current(
+                block, current_val, rng
+            )
+            if new_value is not None:
+                next_table.at[i, chosen_attr] = new_value
+        else:
+            # 复制：找 D_i（当前记录与参考记录不同的块集合）
+            copy_attempt_count += 1
+            diff_blocks = []
+            for attr in attr_names:
+                if next_table.at[i, attr] != donors_aligned.at[i, attr]:
+                    diff_blocks.append(attr)
+
+            if diff_blocks:
+                # 从 D_i 中均匀随机选一个块复制
+                chosen_attr = diff_blocks[rng.integers(0, len(diff_blocks))]
+                next_table.at[i, chosen_attr] = donors_aligned.at[i, chosen_attr]
+            else:
+                # D_i 为空，保持不变（不转成变异）
+                empty_copy_set_count += 1
+
+    # 计算实际变化率：逐行比较，任意属性不同即算变化
+    changed = (next_table != current.reset_index(drop=True)).any(axis=1)
+    accepted_change_rate = float(changed.mean())
+
+    copy_attempt_rate = copy_attempt_count / N if N > 0 else 0.0
+    mutation_attempt_rate = mutation_attempt_count / N if N > 0 else 0.0
+
+    diagnostics = {
+        "participation_rate": participation_rate,
+        "copy_attempt_rate": copy_attempt_rate,
+        "mutation_attempt_rate": mutation_attempt_rate,
+        "accepted_change_rate": accepted_change_rate,
+        "empty_copy_set_count": empty_copy_set_count,
+    }
+
+    return next_table, diagnostics
+
+
+def _sample_legal_value_excluding_current(
+    block, current_value, rng: np.random.Generator
+):
+    """
+    从块的合法先验分布抽一个值，排除当前值。
+
+    - 类别块：合法取值集合排除当前值后的均匀抽样
+    - 数值块：[min, max] 范围内排除当前值的均匀整数
+
+    Returns
+    -------
+    新值，或 None（若排除当前值后无候选）
+    """
+    if block.is_numeric():
+        low, high = int(block.range[0]), int(block.range[1])
+        domain_size = high - low + 1
+        # 当前值不在合法域内：直接全域均匀抽（O(1)）
+        if not (low <= current_value <= high):
+            return int(rng.integers(low, high + 1))
+        # 当前值在域内：单值域无候选
+        if domain_size <= 1:
+            return None
+        # 在 domain_size-1 个非当前值上均匀抽：先抽偏移，再跨过当前值（O(1)）
+        offset = int(rng.integers(0, domain_size - 1))
+        value = low + offset
+        if value >= int(current_value):
+            value += 1
+        return int(value)
+    else:
+        candidates = [v for v in block.values if v != current_value]
+        if candidates:
+            return candidates[rng.integers(0, len(candidates))]
+        return None

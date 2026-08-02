@@ -42,7 +42,7 @@ from table_diffevo.objective import compute_residual, compute_loss
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
-from table_diffevo.update import evolve_step
+from table_diffevo.update import evolve_step, evolve_step_single_block
 from table_diffevo.directional_diffusion import (
     bernoulli_entropy,
     compute_copy_direction_scores,
@@ -108,6 +108,8 @@ def run_evolution(
     residual_directed_diffusion: bool = False,
     diffusion_direction_strength: float = 1.0,
     diffusion_direction_normalization: str = "initial_rms",
+    update_mode: str = 'legacy',
+    epsilon: float = 0.01,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -312,6 +314,17 @@ def run_evolution(
             "diffusion_direction_normalization 必须是 'none' 或 "
             f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
         )
+    if update_mode not in ('legacy', 'single_block'):
+        raise ValueError(
+            f"update_mode 必须是 'legacy' 或 'single_block'，得到 {update_mode!r}"
+        )
+    if not (0.0 <= epsilon <= 1.0):
+        raise ValueError(f"epsilon 必须在 [0, 1]，得到 {epsilon}")
+    if update_mode == 'single_block' and residual_directed_diffusion:
+        raise ValueError(
+            "single_block 与 residual_directed_diffusion 尚未定义联合算子，"
+            "当前不能同时启用"
+        )
 
     rng = np.random.default_rng(seed)
 
@@ -385,6 +398,12 @@ def run_evolution(
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    # single_block 模式的诊断历史（仅 update_mode='single_block' 时收集）
+    participation_rate_history: List[float] = []
+    copy_attempt_rate_history: List[float] = []
+    mutation_attempt_rate_history: List[float] = []
+    accepted_change_rate_history: List[float] = []
+    empty_copy_set_count_history: List[int] = []
     stopped_early = False
     rounds_run = 0
     state_evaluation_count = 0
@@ -590,9 +609,13 @@ def run_evolution(
             copy_direction_negative_rate_history.append(None)
             negative_direction_copy_probability_history.append(None)
             positive_direction_copy_probability_history.append(None)
-            copy_probability_entropy_history.append(
-                float(bernoulli_entropy(np.asarray([eta]))[0])
-            )
+            if update_mode == 'single_block':
+                # single_block 不使用 eta 复制核，熵无定义，填 None 更准确
+                copy_probability_entropy_history.append(None)
+            else:
+                copy_probability_entropy_history.append(
+                    float(bernoulli_entropy(np.asarray([eta]))[0])
+                )
             effective_direction_strength_history.append(None)
             direction_reference_scale_history.append(None)
 
@@ -615,12 +638,19 @@ def run_evolution(
             }
             if residual_directed_diffusion else {}
         )
+        accepted_step_diag = None  # single_block 模式下被接受尝试的诊断
         for attempt in range(max_retries + 1):
             attempt_rho = rho * (retry_rho_decay ** attempt)
-            proposal = evolve_step(
-                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng,
-                **direction_kwargs,
-            )
+            if update_mode == 'legacy':
+                proposal = evolve_step(
+                    S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng,
+                    **direction_kwargs,
+                )
+                step_diag = None
+            else:  # single_block：复制/变异互斥，每行最多改一个块
+                proposal, step_diag = evolve_step_single_block(
+                    S, donors, schema, rho=attempt_rho, epsilon=epsilon, rng=rng
+                )
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
@@ -638,7 +668,10 @@ def run_evolution(
                 accepted_rho = attempt_rho
                 current_loss = proposal_loss
                 S = proposal
+                accepted_step_diag = step_diag
                 break
+            # 未接受：single_block 记录最后一次尝试的诊断（反映实际发生的更新）
+            accepted_step_diag = step_diag
 
         accept_history.append(accepted)
         proposal_attempts_history.append(proposal_attempts)
@@ -657,7 +690,18 @@ def run_evolution(
             distance_cache = None
             del distances
 
-        # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
+        # single_block 更新诊断（legacy 模式下 step_diag 为 None，记 None 占位）
+        if accepted_step_diag is not None:
+            participation_rate_history.append(
+                accepted_step_diag['participation_rate'])
+            copy_attempt_rate_history.append(
+                accepted_step_diag['copy_attempt_rate'])
+            mutation_attempt_rate_history.append(
+                accepted_step_diag['mutation_attempt_rate'])
+            accepted_change_rate_history.append(
+                accepted_step_diag['accepted_change_rate'])
+            empty_copy_set_count_history.append(
+                accepted_step_diag['empty_copy_set_count'])
         if do_log:
             print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}"
                   f" | 接受: {'是' if accepted else '否'}"
@@ -732,6 +776,11 @@ def run_evolution(
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
         "direction_reference_scale": direction_reference_scale,
+        "participation_rate_history": participation_rate_history,
+        "copy_attempt_rate_history": copy_attempt_rate_history,
+        "mutation_attempt_rate_history": mutation_attempt_rate_history,
+        "accepted_change_rate_history": accepted_change_rate_history,
+        "empty_copy_set_count_history": empty_copy_set_count_history,
         "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
@@ -748,6 +797,8 @@ def run_evolution(
             "rho": rho,
             "eta": eta,
             "mu": mu,
+            "update_mode": update_mode,
+            "epsilon": epsilon,
             "tol": tol,
             "device": device,
             "eval_method": eval_method,
