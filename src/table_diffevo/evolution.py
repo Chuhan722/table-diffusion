@@ -320,6 +320,11 @@ def run_evolution(
         )
     if not (0.0 <= epsilon <= 1.0):
         raise ValueError(f"epsilon 必须在 [0, 1]，得到 {epsilon}")
+    if update_mode == 'single_block' and residual_directed_diffusion:
+        raise ValueError(
+            "single_block 与 residual_directed_diffusion 尚未定义联合算子，"
+            "当前不能同时启用"
+        )
 
     rng = np.random.default_rng(seed)
 
@@ -604,9 +609,13 @@ def run_evolution(
             copy_direction_negative_rate_history.append(None)
             negative_direction_copy_probability_history.append(None)
             positive_direction_copy_probability_history.append(None)
-            copy_probability_entropy_history.append(
-                float(bernoulli_entropy(np.asarray([eta]))[0])
-            )
+            if update_mode == 'single_block':
+                # single_block 不使用 eta 复制核，熵无定义，填 None 更准确
+                copy_probability_entropy_history.append(None)
+            else:
+                copy_probability_entropy_history.append(
+                    float(bernoulli_entropy(np.asarray([eta]))[0])
+                )
             effective_direction_strength_history.append(None)
             direction_reference_scale_history.append(None)
 

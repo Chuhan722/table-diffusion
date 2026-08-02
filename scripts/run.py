@@ -30,7 +30,7 @@ SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 
 N_RECORDS = 16181      # 合成表记录条数（nltcs train 集）
-N_ROUNDS = 1000        # 1-way 起点较弱，需更多轮；与旧 marginal 实验一致
+N_ROUNDS = 600         # 二阶最大熵起点约 600 轮已接近平台（旧初始化可自行调大）
 SEEDS = [0, 1, 2]      # 随机种子列表（多种子跑，看结果波动；单种子写 [0] 即可）
 LOG_EVERY = 50         # 逐轮进度打印频率（0=每轮 | >0=每N轮，长实验建议50）
 
@@ -49,7 +49,7 @@ BATCH_SIZE = 256
 
 # 初始化方式
 # 'random'=纯随机 | 'marginal'=按1-way边缘 | 'pairwise_maxent'=二阶最大熵
-INIT_METHOD = 'marginal'  # 用回 1-way 边缘初始化
+INIT_METHOD = 'pairwise_maxent'  # nltcs 三种子验证后的推荐配置
 # 边缘测量文件（仅 INIT_METHOD='marginal' 时生效）
 MARGINALS_PATH = "configs/nltcs/init_marginals.json"
 
@@ -74,7 +74,7 @@ WINSORIZE = (0.01, 0.99)  # 稳健归一化分位点
 BETA = 1.0             # 选择强度（固定值）
 H = 0.8                # 邻域尺度（固定值）
 RHO = 0.01             # 记录参与率（固定值）。legacy 用 0.01；
-                       # single_block 推荐 0.10（nltcs 扫描 L1 最优，接受率仍健康）
+                       # single_block seed 0 探索试过 0.10（落在扫描上界、未定界，非推荐值）
 ETA = 0.5              # 块复制率（固定值，仅 legacy 模式生效）
 MU = 0.01              # 变异率（固定值，仅 legacy 模式生效）
 
@@ -82,10 +82,10 @@ MU = 0.01              # 变异率（固定值，仅 legacy 模式生效）
 #   'legacy'=旧三参数机制（ρ 参与 + η 块复制率 + μ 变异率）
 #   'single_block'=单块复制/变异互斥（参与后至多改一个合法块，η 失效，用 ε 控制变异占比）
 UPDATE_MODE = 'legacy'  # 默认保持历史行为
-                        # 切 single_block 时推荐配套：RHO=0.10, EPSILON=0.05
+                        # 切 single_block 时 seed 0 探索用过：RHO=0.10, EPSILON=0.05（非推荐值）
 EPSILON = 0.01          # 变异占比：P(复制)=ρ(1-ε), P(变异)=ρε（仅 single_block 生效）
-                        # single_block 推荐 0.05：nltcs 上 ε=0 的 L1 略优但变异归零、
-                        # 理论上锁死搜索空间，取 0.05 保留探索（L1 仅差约 2%，多在噪声内）
+                        # single_block 曾试 0.05：nltcs seed 0 上 ε=0 的 L1 略优但变异归零、
+                        # 理论上锁死搜索空间，取 0.05 保留探索（L1 差约 2%，仅单种子、待多种子确认）
 
 # 残差驱动的局部扩散核（研究候选，默认关闭）
 # 方向信号只连续倾斜实际单块复制概率；不做正负门控或逐候选 top-k。

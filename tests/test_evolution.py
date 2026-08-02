@@ -572,3 +572,58 @@ class TestUpdateMode:
         target = np.array([30, 40, 50])
         with pytest.raises(ValueError, match=message):
             run_evolution(target, queries, schema, n_records=100, **kwargs)
+
+
+class TestSingleBlockDirectionGuard:
+    """single_block 与残差方向核联合语义未定义，应互斥拒绝。"""
+
+    def test_single_block_with_direction_raises(self):
+        """single_block + residual_directed_diffusion 同开直接报错。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match="联合算子"):
+            run_evolution(
+                target, queries, schema, n_records=100, n_rounds=10, seed=0,
+                update_mode="single_block", residual_directed_diffusion=True,
+            )
+
+    def test_guard_raises_before_direction_computation(self):
+        """护栏在方向矩阵计算前抛出：未产生任何方向评价。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        # 用极小 n_records/n_rounds，若护栏失效则会进入主循环并计算方向
+        with pytest.raises(ValueError, match="联合算子"):
+            run_evolution(
+                target, queries, schema, n_records=10, n_rounds=1, seed=0,
+                update_mode="single_block", residual_directed_diffusion=True,
+                diffusion_direction_strength=1.0,
+            )
+
+    def test_single_block_alone_has_no_copy_kernel_entropy(self):
+        """single_block 不使用 eta 复制核，熵历史应全为 None。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="single_block", epsilon=0.1,
+        )
+        entropy_hist = diag["copy_probability_entropy_history"]
+        assert len(entropy_hist) == 10
+        assert all(e is None for e in entropy_hist)
+        # 方向核未启用，方向评价次数为 0
+        assert diag["direction_evaluation_count"] == 0
+
+    def test_legacy_alone_still_records_eta_entropy(self):
+        """回归：legacy 单独运行仍按 eta 记录复制核熵（非 None）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            update_mode="legacy",
+        )
+        entropy_hist = diag["copy_probability_entropy_history"]
+        assert all(e is not None for e in entropy_hist)

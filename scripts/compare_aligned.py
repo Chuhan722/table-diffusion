@@ -1,10 +1,12 @@
 """
-对齐改动量的对照实验：legacy vs single_block
+名义改动尺度对照实验：legacy vs single_block
 
-关键设计：
-- legacy: ρ=0.01，参与后期望改 ≈5 块/记录
+关键设计（注意是"名义"对齐，非实测对齐）：
+- legacy: ρ=0.01，参与后**名义**期望改 ≈5 块/记录（用 10 块 × η=0.5 估算，未实测）
 - single_block: ρ=0.05（5倍），参与后改 1 块/记录
-→ 每轮总改动量对齐，验证新方法在速度对齐后能否达到相近的收敛效果
+→ 按名义改动尺度对齐 ρ，粗略对照新方法在相近改动强度下的收敛效果。
+  本脚本未逐轮记录 legacy 实际修改块数，故只是名义对照，不足以证明两侧改动量精确对齐；
+  要做严格对齐需先记录每轮实测改动块数。
 """
 import json
 import numpy as np
@@ -119,9 +121,9 @@ def compare_results(legacy_result: dict, single_block_result: dict):
     acc_diff_pct = (sb_acc / legacy_acc - 1) * 100
 
     print(f"\n参与率设置:")
-    print(f"  legacy:       ρ={legacy_result['rho']} (期望改 ~5块/记录)")
+    print(f"  legacy:       ρ={legacy_result['rho']} (名义期望改 ~5块/记录，未实测)")
     print(f"  single_block: ρ={single_block_result['rho']} (改 1块/记录)")
-    print(f"  → 对齐每轮总改动量")
+    print(f"  → 按名义改动尺度对齐 ρ（非实测对齐）")
 
     print(f"\n最终 loss:")
     print(f"  legacy:       {legacy_loss:.2e}")
@@ -151,14 +153,17 @@ def compare_results(legacy_result: dict, single_block_result: dict):
         print(f"\nsingle_block 空复制集: {sb['empty_copy_set_total']} 次")
 
     print(f"\n结论:")
-    if abs(loss_diff_pct) < 10 and sb_acc > 0.5:
-        print("  ✓ 对齐改动量后，single_block 能达到相近收敛效果")
-        print("  ✓ 新方法的可控性/可解释性优势成立，速度不是瓶颈")
-    elif loss_diff_pct > 10:
-        print("  ✗ 即使对齐改动量，legacy 仍明显更优")
-        print("  → 新方法可能在更新质量上有劣势（不只是数量问题）")
-    elif sb_acc < 0.5:
+    if sb_acc < 0.5:
         print("  ⚠ single_block 接受率过低，需降低 ρ 或调整其他参数")
+    elif loss_diff_pct <= -10:
+        print("  ✓ 对齐名义改动尺度后，single_block 明显更优（loss 低超 10%）")
+        print("  ✓ 接受率健康，新方法在更新质量上占优")
+    elif abs(loss_diff_pct) < 10:
+        print("  ✓ 对齐名义改动尺度后，single_block 能达到相近收敛效果")
+        print("  ✓ 新方法的可控性/可解释性优势成立，速度不是瓶颈")
+    else:  # loss_diff_pct > 10
+        print("  ✗ 即使对齐名义改动尺度，legacy 仍明显更优")
+        print("  → 新方法可能在更新质量上有劣势（不只是数量问题）")
 
 
 def main():

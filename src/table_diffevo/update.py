@@ -247,7 +247,8 @@ def evolve_step_single_block(
     """
     单块复制或变异：每条记录每轮最多改变一个合法块。
 
-    第七节最终设计："记录参与率下的单块复制与合法变异"。
+    参考第七节设计提案的"记录参与率下的单块复制与合法变异"，当前为单字段 schema
+    下的第一版原型（未含结构合法性/局部重抽/回退等，详见 PROJECT_STATUS 未实现边界）。
     保留记录参与率 ρ；删除逐属性块复制率 η；参与更新后只执行一次原子动作——
     复制参考记录的一个不同合法块，或变异一个合法块。复制与变异互斥。
 
@@ -301,8 +302,14 @@ def evolve_step_single_block(
     """
     if not (0.0 <= rho <= 1.0):
         raise ValueError(f"rho 必须在 [0, 1]，得到 {rho}")
-    if not (0.0 <= epsilon <= 1.0):
-        raise ValueError(f"epsilon 必须在 [0, 1]，得到 {epsilon}")
+    if (
+        isinstance(epsilon, (bool, np.bool_))
+        or not isinstance(epsilon, (int, float, np.integer, np.floating))
+        or not np.isfinite(epsilon)
+        or not (0.0 <= epsilon <= 1.0)
+    ):
+        raise ValueError(f"epsilon 必须是 [0, 1] 内的有限数值，得到 {epsilon!r}")
+    epsilon = float(epsilon)
 
     if len(current) != len(donors):
         raise ValueError(
@@ -393,12 +400,20 @@ def _sample_legal_value_excluding_current(
     新值，或 None（若排除当前值后无候选）
     """
     if block.is_numeric():
-        low, high = block.range
-        candidates = [v for v in range(int(low), int(high) + 1)
-                     if v != current_value]
-        if candidates:
-            return int(candidates[rng.integers(0, len(candidates))])
-        return None
+        low, high = int(block.range[0]), int(block.range[1])
+        domain_size = high - low + 1
+        # 当前值不在合法域内：直接全域均匀抽（O(1)）
+        if not (low <= current_value <= high):
+            return int(rng.integers(low, high + 1))
+        # 当前值在域内：单值域无候选
+        if domain_size <= 1:
+            return None
+        # 在 domain_size-1 个非当前值上均匀抽：先抽偏移，再跨过当前值（O(1)）
+        offset = int(rng.integers(0, domain_size - 1))
+        value = low + offset
+        if value >= int(current_value):
+            value += 1
+        return int(value)
     else:
         candidates = [v for v in block.values if v != current_value]
         if candidates:

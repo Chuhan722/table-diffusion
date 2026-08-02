@@ -29,11 +29,41 @@ SEED = 0
 # 扫描网格（往低侧多覆盖：nltcs 接受率可能比小数据更早崩）
 RHO_GRID = [0.03, 0.05, 0.08, 0.10]
 EPS_FIXED_FOR_RHO = 0.05
-RHO_STAR = 0.10          # 阶段1定：nltcs 接受率不崩，L1 单调降到 0.10；空集高是收手信号
+RHO_STAR = 0.10          # 阶段1 seed 0：L1 单调降到扫描上界 0.10（未定界），接受率不崩
 EPS_GRID = [0.0, 0.05, 0.10, 0.20]  # 往上探：空集高，看变异能否把浪费转成有效改动
 
 SWEEP_ROUNDS = 500
 OUTPUT_DIR = Path("outputs/nltcs_sweep")
+
+
+def _run_metadata(phase, extra=None):
+    """记录可复现元信息：git commit、设备、种子、轮数、配置路径等。"""
+    import subprocess
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], text=True).strip())
+    except Exception:
+        commit, dirty = "unknown", None
+    meta = {
+        "phase": phase,
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "seed": SEED,
+        "n_records": N_RECORDS,
+        "sweep_rounds": SWEEP_ROUNDS,
+        "device": "cuda",
+        "schema_path": SCHEMA_PATH,
+        "query_path": QUERY_PATH,
+        "marginals_path": MARGINALS_PATH,
+        "init_method": "marginal",
+        "distance_mode": "geometric",
+        "note": "单种子(seed 0)探索，非推荐参数；CUDA_VISIBLE_DEVICES 决定实际卡号",
+    }
+    if extra:
+        meta.update(extra)
+    return meta
 
 
 def run_one(rho, epsilon, n_rounds, seed=SEED):
@@ -100,8 +130,13 @@ def phase_rho():
               f"{r['loss_reduction_pct']:>5.1f}% | {r['acceptance_rate']:>6.1%} | "
               f"{r['acceptance_rate_late']:>8.1%} | {r['normalized_l1_error']:>7.4f} | "
               f"{r['mutation_attempt_rate_mean']:>7.4f} | {r['empty_copy_set_total']:>5d}")
+    payload = {
+        "meta": _run_metadata("rho_sweep",
+                              {"rho_grid": RHO_GRID, "epsilon_fixed": EPS_FIXED_FOR_RHO}),
+        "results": results,
+    }
     with open(OUTPUT_DIR / "rho_sweep.json", 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(payload, f, indent=2, ensure_ascii=False)
     print(f"\n已保存: {OUTPUT_DIR / 'rho_sweep.json'}")
 
 
@@ -119,8 +154,13 @@ def phase_eps():
               f"{r['loss_reduction_pct']:>5.1f}% | {r['acceptance_rate']:>6.1%} | "
               f"{r['acceptance_rate_late']:>8.1%} | {r['normalized_l1_error']:>7.4f} | "
               f"{r['mutation_attempt_rate_mean']:>7.4f} | {r['empty_copy_set_total']:>5d}")
+    payload = {
+        "meta": _run_metadata("eps_sweep",
+                              {"rho_fixed": RHO_STAR, "eps_grid": EPS_GRID}),
+        "results": results,
+    }
     with open(OUTPUT_DIR / "eps_sweep.json", 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(payload, f, indent=2, ensure_ascii=False)
     print(f"\n已保存: {OUTPUT_DIR / 'eps_sweep.json'}")
 
 

@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 from table_diffevo.schema import Schema, AttributeBlock
-from table_diffevo.update import evolve_step, evolve_step_single_block
+from table_diffevo.update import (
+    evolve_step,
+    evolve_step_single_block,
+    _sample_legal_value_excluding_current,
+)
 
 
 def make_toy_schema():
@@ -523,7 +527,7 @@ class TestSingleBlockValidation:
     def test_epsilon_out_of_range(self):
         schema = make_toy_schema()
         current, donors = make_tables()
-        with pytest.raises(ValueError, match="epsilon 必须在"):
+        with pytest.raises(ValueError, match="epsilon 必须是"):
             evolve_step_single_block(current, donors, schema, epsilon=-0.1)
 
     def test_length_mismatch(self):
@@ -572,3 +576,85 @@ class TestSingleBlockEdgeCases:
             current, donors, schema, rho=1.0, epsilon=1.0, rng=rng
         )
         assert diag["copy_attempt_rate"] == 0.0
+
+
+class TestEpsilonHardening:
+    """epsilon 非法值校验：拒 bool / 非数值 / NaN / Inf"""
+
+    @pytest.mark.parametrize("bad", [True, False, np.bool_(True)])
+    def test_epsilon_rejects_bool(self, bad):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match="epsilon 必须是"):
+            evolve_step_single_block(current, donors, schema, epsilon=bad)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_epsilon_rejects_nonfinite(self, bad):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match="epsilon 必须是"):
+            evolve_step_single_block(current, donors, schema, epsilon=bad)
+
+    def test_epsilon_rejects_string(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match="epsilon 必须是"):
+            evolve_step_single_block(current, donors, schema, epsilon="0.5")
+
+
+class TestSampleLegalValueExcludingCurrent:
+    """数值块 O(1) 抽样：排除当前值 / 单值域 / 域外 / 边界"""
+
+    def _numeric_block(self, low, high):
+        return AttributeBlock(name="n", type="numeric",
+                              description="数值", range=[low, high])
+
+    def test_excludes_current_and_covers_rest(self):
+        """排除当前值，且能覆盖域内其余全部值"""
+        block = self._numeric_block(0, 4)
+        rng = np.random.default_rng(0)
+        vals = {_sample_legal_value_excluding_current(block, 2, rng)
+                for _ in range(2000)}
+        assert 2 not in vals
+        assert vals == {0, 1, 3, 4}
+
+    def test_single_value_domain_returns_none(self):
+        """单值域排除当前值后无候选，返回 None"""
+        block = self._numeric_block(3, 3)
+        rng = np.random.default_rng(0)
+        assert _sample_legal_value_excluding_current(block, 3, rng) is None
+
+    def test_current_value_outside_domain_samples_full(self):
+        """当前值不在合法域内时，从全域均匀抽"""
+        block = self._numeric_block(0, 4)
+        rng = np.random.default_rng(0)
+        vals = {_sample_legal_value_excluding_current(block, 99, rng)
+                for _ in range(1000)}
+        assert vals == {0, 1, 2, 3, 4}
+
+    def test_boundary_low_value(self):
+        """当前值在下边界，排除后覆盖其余"""
+        block = self._numeric_block(0, 4)
+        rng = np.random.default_rng(1)
+        vals = {_sample_legal_value_excluding_current(block, 0, rng)
+                for _ in range(2000)}
+        assert 0 not in vals
+        assert vals == {1, 2, 3, 4}
+
+    def test_boundary_high_value(self):
+        """当前值在上边界，排除后覆盖其余"""
+        block = self._numeric_block(0, 4)
+        rng = np.random.default_rng(2)
+        vals = {_sample_legal_value_excluding_current(block, 4, rng)
+                for _ in range(2000)}
+        assert 4 not in vals
+        assert vals == {0, 1, 2, 3}
+
+    def test_large_domain_is_cheap(self):
+        """大整数域不枚举全域：抽样结果合法且排除当前值"""
+        block = self._numeric_block(0, 10_000_000)
+        rng = np.random.default_rng(3)
+        for _ in range(1000):
+            v = _sample_legal_value_excluding_current(block, 5_000_000, rng)
+            assert 0 <= v <= 10_000_000
+            assert v != 5_000_000
