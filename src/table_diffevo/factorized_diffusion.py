@@ -5,9 +5,9 @@
 mask 分布。它不执行正收益门槛、方向 argmax、top-k 或整代 proposal 接受检查。
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -189,7 +189,10 @@ def build_sparse_mask_energy(
         weight_values = _validate_numeric_vector(
             weights, len(queries), "weights"
         )
-    weighted_residual = residual_values * weight_values
+    with np.errstate(over="ignore", invalid="ignore"):
+        weighted_residual = residual_values * weight_values
+    if not np.all(np.isfinite(weighted_residual)):
+        raise ValueError("residual * weights 超出 float64 可表示范围")
 
     recipient_reset = recipient.reset_index(drop=True)
     donor_reset = donor.reset_index(drop=True)
@@ -214,13 +217,20 @@ def build_sparse_mask_energy(
     n_active_queries = 0
     max_active_query_order = 0
     for query_index, query in enumerate(queries):
+        if not isinstance(query, dict):
+            raise ValueError(f"queries[{query_index}] 必须是字典")
         conditions = query.get("conditions")
         if not isinstance(conditions, list):
             raise ValueError(
                 f"queries[{query_index}].conditions 必须是列表"
             )
         query_attributes = []
-        for condition in conditions:
+        for condition_index, condition in enumerate(conditions):
+            if not isinstance(condition, dict):
+                raise ValueError(
+                    f"queries[{query_index}].conditions[{condition_index}] "
+                    "必须是字典"
+                )
             attr = condition.get("attribute")
             if attr not in schema_attributes:
                 raise ValueError(
@@ -273,6 +283,8 @@ def build_sparse_mask_energy(
     factors = []
     for scope in sorted(aggregated, key=lambda item: (len(item), item)):
         values = np.asarray(aggregated[scope], dtype=float)
+        if not np.all(np.isfinite(values)):
+            raise ValueError("聚合后的因子能量超出 float64 可表示范围")
         values[0] = 0.0
         if np.any(values != 0.0):
             factors.append(MaskEnergyFactor(scope=scope, values=values))
@@ -497,13 +509,16 @@ def propagate_random_scan_distribution(
     if raw_probabilities.dtype.kind not in "iuf":
         raise ValueError("initial_probabilities 必须是非负有限数值数组")
     probabilities = raw_probabilities.astype(float, copy=True)
+    with np.errstate(over="ignore", invalid="ignore"):
+        total_probability = float(probabilities.sum())
     if (
         not np.all(np.isfinite(probabilities))
         or np.any(probabilities < 0.0)
-        or probabilities.sum() <= 0.0
+        or not np.isfinite(total_probability)
+        or total_probability <= 0.0
     ):
         raise ValueError("initial_probabilities 必须是非负有限且总和为正")
-    probabilities /= probabilities.sum()
+    probabilities /= total_probability
     if steps == 0 or model.n_active_attributes == 0:
         return probabilities
 
@@ -554,7 +569,7 @@ def evolve_step_factorized_gibbs(
     gibbs_rng: Optional[np.random.Generator] = None,
     weights: Optional[np.ndarray] = None,
     max_factor_order: int = 3,
-) -> Tuple[pd.DataFrame, Dict[str, float]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
 
     主 ``rng`` 的抽取顺序与 :func:`table_diffevo.update.evolve_step` 保持一致：
@@ -598,6 +613,18 @@ def evolve_step_factorized_gibbs(
             raise ValueError(
                 "n_sweeps 非零时 gibbs_rng 必须是 np.random.Generator"
             )
+        residual_values = _validate_numeric_vector(
+            residual, len(queries), "residual"
+        )
+        weight_values = (
+            None
+            if weights is None
+            else _validate_numeric_vector(weights, len(queries), "weights")
+        )
+    else:
+        # 0 sweep 不使用查询或残差，保留与既有 evolve_step 相同的最小依赖边界。
+        residual_values = residual
+        weight_values = weights
 
     attr_names = schema.attribute_names()
     n_records = len(current)
@@ -658,8 +685,8 @@ def evolve_step_factorized_gibbs(
                 donors_reset.iloc[[row_index]],
                 schema,
                 queries,
-                residual,
-                weights=weights,
+                residual_values,
+                weights=weight_values,
                 max_factor_order=maximum_order,
             )
             factor_build_elapsed += time.perf_counter() - build_start

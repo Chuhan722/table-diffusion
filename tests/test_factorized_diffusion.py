@@ -165,13 +165,17 @@ class TestSparseMaskEnergy:
             [0.0],
         )
 
-    def test_real_workload_matches_full_hybrid_oracle_for_all_masks(self):
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_real_workload_matches_full_hybrid_oracle_for_all_masks(
+        self, weighted
+    ):
         schema = load_schema("configs/test_300x10/schema.yaml")
         queries = load_queries("configs/test_300x10/measured_50query.json")
         rng = np.random.default_rng(20260802)
         current = init_synthetic_table(8, schema, rng)
         donors = current.iloc[rng.permutation(len(current))].reset_index(drop=True)
         residual = rng.normal(size=len(queries))
+        weights = rng.uniform(0.1, 2.0, size=len(queries)) if weighted else None
 
         exact_landscapes = compute_joint_mask_landscapes(
             current,
@@ -180,6 +184,7 @@ class TestSparseMaskEnergy:
             schema,
             queries,
             residual,
+            weights=weights,
             max_active_attributes=12,
         )
         for landscape in exact_landscapes:
@@ -190,6 +195,7 @@ class TestSparseMaskEnergy:
                 schema,
                 queries,
                 residual,
+                weights=weights,
             )
             assert tuple(model.active_attribute_indices) == tuple(
                 landscape.active_attribute_indices
@@ -248,6 +254,34 @@ class TestSparseMaskEnergy:
                 _three_bit_queries(),
                 residual,
                 **kwargs,
+            )
+
+    @pytest.mark.parametrize(
+        "queries,match",
+        [
+            ([None], "必须是字典"),
+            ([{"conditions": [None]}], "必须是字典"),
+        ],
+    )
+    def test_rejects_malformed_query_structure(self, queries, match):
+        with pytest.raises(ValueError, match=match):
+            build_sparse_mask_energy(
+                pd.DataFrame({"a": [0], "b": [0], "c": [0]}),
+                pd.DataFrame({"a": [1], "b": [1], "c": [1]}),
+                _three_bit_schema(),
+                queries,
+                np.ones(len(queries)),
+            )
+
+    def test_rejects_weighted_residual_overflow(self):
+        with pytest.raises(ValueError, match="float64"):
+            build_sparse_mask_energy(
+                pd.DataFrame({"a": [0], "b": [0], "c": [0]}),
+                pd.DataFrame({"a": [1], "b": [1], "c": [1]}),
+                _three_bit_schema(),
+                [_three_bit_queries()[0]],
+                np.array([np.finfo(float).max]),
+                weights=np.array([2.0]),
             )
 
 
@@ -400,6 +434,16 @@ class TestRandomScanGibbs:
         assert np.all(propagated > 0.0)
         assert propagated.sum() == pytest.approx(1.0)
 
+    def test_rejects_probability_sum_overflow(self):
+        with pytest.raises(ValueError, match="总和为正"):
+            propagate_random_scan_distribution(
+                _three_bit_model(),
+                np.full(8, np.finfo(float).max),
+                eta=0.5,
+                strength=0.7,
+                n_steps=1,
+            )
+
     @pytest.mark.parametrize(
         "function,kwargs,match",
         [
@@ -446,18 +490,21 @@ class TestFactorizedGibbsEvolutionStep:
         donors = current.iloc[[3, 2, 1, 0]].reset_index(drop=True)
         return current, donors
 
-    def test_zero_sweeps_matches_existing_directional_step_and_rng(self):
+    @pytest.mark.parametrize("eta", [0.0, 0.4, 1.0])
+    def test_zero_sweeps_matches_existing_directional_step_and_rng(self, eta):
         current, donors = self._tables()
         scores = np.random.default_rng(8).normal(size=(4, 3))
         existing_rng = np.random.default_rng(2026)
         factorized_rng = np.random.default_rng(2026)
+        unused_gibbs_rng = np.random.default_rng(2027)
+        reference_gibbs_rng = np.random.default_rng(2027)
 
         expected = evolve_step(
             current,
             donors,
             _three_bit_schema(),
             rho=0.75,
-            eta=0.4,
+            eta=eta,
             mu=0.6,
             rng=existing_rng,
             copy_direction_scores=scores,
@@ -470,9 +517,10 @@ class TestFactorizedGibbsEvolutionStep:
             _three_bit_queries(),
             np.ones(4),
             rho=0.75,
-            eta=0.4,
+            eta=eta,
             mu=0.6,
             rng=factorized_rng,
+            gibbs_rng=unused_gibbs_rng,
             copy_direction_scores=scores,
             copy_direction_strength=0.7,
             n_sweeps=0,
@@ -481,6 +529,9 @@ class TestFactorizedGibbsEvolutionStep:
         pd.testing.assert_frame_equal(actual, expected)
         np.testing.assert_array_equal(
             factorized_rng.random(20), existing_rng.random(20)
+        )
+        np.testing.assert_array_equal(
+            unused_gibbs_rng.random(20), reference_gibbs_rng.random(20)
         )
         assert diagnostics["factor_count"] == 0
         assert diagnostics["gibbs_microsteps"] == 0
@@ -558,6 +609,81 @@ class TestFactorizedGibbsEvolutionStep:
         for key in first_diagnostics:
             if not key.endswith("elapsed_sec"):
                 assert first_diagnostics[key] == second_diagnostics[key]
+
+    def test_update_does_not_mutate_inputs(self):
+        current, donors = self._tables()
+        current_before = current.copy(deep=True)
+        donors_before = donors.copy(deep=True)
+        residual = np.ones(4)
+        residual_before = residual.copy()
+        scores = np.ones((4, 3))
+        scores_before = scores.copy()
+
+        evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            residual,
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=scores,
+            copy_direction_strength=0.3,
+            n_sweeps=2,
+            rng=np.random.default_rng(4),
+            gibbs_rng=np.random.default_rng(5),
+        )
+
+        pd.testing.assert_frame_equal(current, current_before)
+        pd.testing.assert_frame_equal(donors, donors_before)
+        np.testing.assert_array_equal(residual, residual_before)
+        np.testing.assert_array_equal(scores, scores_before)
+
+    def test_no_active_rows_do_not_consume_gibbs_rng(self):
+        current, _ = self._tables()
+        gibbs_rng = np.random.default_rng(91)
+        reference_rng = np.random.default_rng(91)
+
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            current.copy(),
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.zeros((4, 3)),
+            copy_direction_strength=0.0,
+            n_sweeps=2,
+            rng=np.random.default_rng(90),
+            gibbs_rng=gibbs_rng,
+        )
+
+        assert diagnostics["active_gibbs_rows"] == 0
+        np.testing.assert_array_equal(
+            gibbs_rng.random(20), reference_rng.random(20)
+        )
+
+    def test_nonzero_sweeps_validate_residual_without_participants(self):
+        current, donors = self._tables()
+        with pytest.raises(ValueError, match="residual"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                _three_bit_schema(),
+                _three_bit_queries(),
+                np.ones(3),
+                rho=0.0,
+                eta=0.5,
+                mu=0.0,
+                copy_direction_scores=np.zeros((4, 3)),
+                copy_direction_strength=0.0,
+                n_sweeps=1,
+                rng=np.random.default_rng(0),
+                gibbs_rng=np.random.default_rng(1),
+            )
 
     @pytest.mark.parametrize("eta", [0.0, 1.0])
     def test_nonzero_sweeps_require_open_eta(self, eta):

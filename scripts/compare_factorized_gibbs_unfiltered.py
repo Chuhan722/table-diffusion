@@ -52,6 +52,27 @@ def _git_commit():
     return completed.stdout.strip()
 
 
+def _environment(device):
+    result = {
+        "conda_default_env": os.environ.get("CONDA_DEFAULT_ENV"),
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "platform": platform.platform(),
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+    }
+    if device in ("cuda", "cpu"):
+        import torch
+
+        result["torch"] = torch.__version__
+        result["torch_cuda_runtime"] = torch.version.cuda
+        if device == "cuda":
+            result["cuda_device_name"] = torch.cuda.get_device_name(0)
+            result["cuda_device_capability"] = list(
+                torch.cuda.get_device_capability(0)
+            )
+    return result
+
+
 def _gibbs_seed(seed):
     sequence = np.random.SeedSequence([int(seed), 0x4749424253])
     return int(sequence.generate_state(1, dtype=np.uint64)[0])
@@ -480,6 +501,19 @@ def main():
             runs["independent"], runs[candidate_name]
         )
     )
+    initial_loss_aligned = all(
+        baseline["initial_loss"] == candidate["initial_loss"]
+        for baseline, candidate in zip(
+            runs["independent"], runs[candidate_name]
+        )
+    )
+    direction_scale_aligned = all(
+        baseline["direction_reference_scale"]
+        == candidate["direction_reference_scale"]
+        for baseline, candidate in zip(
+            runs["independent"], runs[candidate_name]
+        )
+    )
     summary = {
         "experiment": "factorized_gibbs_unfiltered_dynamics",
         "scope": (
@@ -498,13 +532,12 @@ def main():
         "device": args.device,
         "git_commit": _git_commit(),
         "command_argv": sys.argv,
-        "environment": {
-            "conda_default_env": os.environ.get("CONDA_DEFAULT_ENV"),
-            "python": platform.python_version(),
-            "numpy": np.__version__,
-            "platform": platform.platform(),
-        },
+        "environment": _environment(args.device),
         "primary_rng_aligned_all_seeds": primary_rng_aligned,
+        "initial_loss_aligned_all_seeds": initial_loss_aligned,
+        "direction_reference_scale_aligned_all_seeds": (
+            direction_scale_aligned
+        ),
         "runs": runs,
         "aggregate": aggregate,
         "comparisons": comparisons,
@@ -525,6 +558,8 @@ def main():
             f"elapsed={elapsed['mean']:.1f}s"
         )
     print(f"主随机流逐种子对齐：{primary_rng_aligned}")
+    print(f"初始 loss 逐种子对齐：{initial_loss_aligned}")
+    print(f"首轮方向尺度逐种子对齐：{direction_scale_aligned}")
     print(f"详细结果：{output}")
 
 

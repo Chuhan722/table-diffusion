@@ -230,6 +230,55 @@ Gibbs 采样每种子分别耗时 8.23s 和 0.445s；增量成本主要来自当
 首批输出：
 `outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_10seed_e586d62.json`。
 
+### 5.4 追加 20 种子与顺序合计结果
+
+追加运行在 commit `102aa24` 上完成，种子 `10..29` 全部跑满 1000 轮，20/20 主
+RNG 对齐。它单独给出：
+
+| 指标 | 0 sweep | 8 sweep | 配对结果 |
+|------|--------:|--------:|---------:|
+| 最终当前 loss（主指标） | 102.35 ± 28.25 | **89.03 ± 22.92** | -13.33，15/0/5 |
+| 最后 250 轮平均 loss（预设副指标） | 121.94 ± 14.75 | **101.64 ± 13.25** | -20.29，17/0/3 |
+| 全轨迹平均 loss | 299.16 ± 34.87 | **221.27 ± 21.13** | -77.89，20/0/0 |
+
+追加 20 种子复现了首批方向，说明结果不是只由首批 seed 4 的大改善驱动。最终单点
+仍有 5 个失败种子和较大波动；末 250 轮与全轨迹均值更稳定地支持“更快进入并更久
+处于低 loss 区域”。
+
+首批与追加合计 30 种子的顺序描述性汇总为：
+
+| 指标 | 0 sweep | 8 sweep | 相对变化 | 胜/平/负 |
+|------|--------:|--------:|---------:|---------:|
+| 最终当前 loss | 106.30 ± 34.92 | **89.93 ± 20.35** | **-15.40%** | 22/0/8 |
+| 最后 100 轮平均 loss | 114.52 ± 21.76 | **92.81 ± 15.10** | **-18.95%** | 22/0/8 |
+| 最后 250 轮平均 loss | 122.02 ± 16.17 | **102.27 ± 12.75** | **-16.19%** | 25/0/5 |
+| 全轨迹平均 loss | 296.94 ± 32.35 | **221.76 ± 19.38** | **-25.32%** | 30/0/0 |
+| best loss（仅诊断） | 76.85 ± 14.03 | **61.20 ± 12.04** | **-20.36%** | 24/0/6 |
+| 正收益事件比例 | 50.64% | 50.06% | -0.58 个百分点 | 11/0/19 |
+| 正收益平均幅度 | 9.79 | 9.69 | -1.07% | 11/0/19 |
+| 负收益平均幅度 | -7.08 | **-6.73** | 绝对值 -4.98% | 24/0/6 |
+| 最终唯一状态数 | 285.47 | 284.07 | -0.49% | 10/2/18 |
+
+改善没有来自“正收益事件变多”：正收益比例略降，正收益幅度近似不变，而负收益的
+绝对幅度缩小约 5%。这与连续联合扩散重新分配转移质量、减轻反向步幅的机制一致，
+也没有依赖 generation acceptance。最终唯一状态数只下降 0.49%，当前小表没有
+明显支持集塌缩信号；但这不是高维支持集或真实分布多样性的充分证明。
+
+合计同轮数墙钟为 `15.50→24.97s/种子`（+61.12%）。candidate 中因子构造平均
+8.22s，真正 8-sweep Gibbs 抽样仅 0.444s；当前工程瓶颈是反复用 Pandas 评价并构造
+查询局部因子，而不是 Gibbs 混合本身。因子预编译与批量构造属于独立性能目标，
+不应在本方法 PR 中顺手混入。
+
+因为追加样本量是在观察首批结果后决定的，合计 30 种子的配对区间和 p 值只作
+描述；不能把它们描述为一次性固定 30 种子的确认性检验。更稳妥的结论是：冻结
+oracle、独立追加种子和无接受长轨迹共同支持低阶联合 Gibbs 改善扩散动力，但尚未
+验证标准接受闭环、nltcs、真实离线 TVD 或跨 workload 泛化。
+
+追加与汇总输出：
+
+- `outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_seed10_29_102aa24.json`
+- `outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_sequential_30seed_summary_final.json`
+
 ## 6. 当前边界
 
 - 本方案不改变默认生成器，也不声称已经找到宽表上的最优混合器；
@@ -238,5 +287,58 @@ Gibbs 采样每种子分别耗时 8.23s 和 0.445s；增量成本主要来自当
   的有限状态证据；
 - 固定 sweep 数必须是公开算法参数，不能依据私有训练表、测试表或完整联合 TVD
   在线调节；
+- 当前只验证无接受动力学，没有把 candidate 接入 `run_evolution` 默认闭环，也没有
+  依据小表结果改变默认温度或 sweep；
+- 当前因子构造比独立核明显更慢；未来性能优化必须单独证明能量、采样轨迹和结果
+  等价，并报告墙钟与内存；
 - 将来进入 select-measure 与加噪 pipeline 后，查询选择、测量、预算核算和带噪
   一致性仍需单独设计与验证。
+
+## 7. 复现记录
+
+冻结混合实验使用 Conda `qdte`（Python 3.11.15、NumPy 2.4.6）和 NumPy/CPU。
+无接受动力学使用 Conda `gsd`（Python 3.9.21、NumPy 1.26.4）与
+`CUDA_VISIBLE_DEVICES=0`，设备为 NVIDIA GeForce RTX 4090 24 GiB。实验开始前
+GPU 0 空闲。核心命令为：
+
+```bash
+PYTHONPATH=src conda run -n qdte python \
+  scripts/probe_factorized_gibbs_mixing.py \
+  --seeds 0 1 2 --state-rounds 0 100 --proposals 200 \
+  --temperatures 1 2 --sweeps 0 1 2 4 8 --device numpy \
+  --output outputs/factorized_gibbs/frozen_3seed_2state_200p_tau1_2_sweep0_8_a1681e7.json
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src conda run -n gsd python \
+  scripts/compare_factorized_gibbs_unfiltered.py \
+  --rounds 1000 --seeds 0 1 2 3 4 5 6 7 8 9 \
+  --temperature 2 --sweeps 8 --device cuda \
+  --output outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_10seed_e586d62.json
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src conda run -n gsd python \
+  scripts/compare_factorized_gibbs_unfiltered.py \
+  --rounds 1000 --seeds 10 11 12 13 14 15 16 17 18 19 \
+  20 21 22 23 24 25 26 27 28 29 \
+  --temperature 2 --sweeps 8 --device cuda \
+  --output outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_seed10_29_102aa24.json
+
+PYTHONPATH=src conda run -n qdte python \
+  scripts/analyze_factorized_gibbs_sequential.py \
+  --initial outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_10seed_e586d62.json \
+  --extension outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_seed10_29_102aa24.json \
+  --output outputs/factorized_gibbs/unfiltered_tau2_sweep8_1000r_sequential_30seed_summary_final.json
+```
+
+`outputs/` 保持 Git 忽略；原始逐 proposal、逐轮和全部失败种子均保留，没有按结果
+筛种子。冻结实验与动力学分别对应算法 commit `a1681e7` 和 `e586d62`；追加运行只在
+`102aa24` 增加预注册说明和只读报告字段，没有改变更新算法。
+
+最终深审门禁结果：
+
+- `tests/test_factorized_diffusion.py`：34 passed；
+- 因子、联合 oracle、方向、更新和集成相关测试：181 passed, 1 skipped；
+- `gsd` 环境完整 CPU/torch/CUDA 测试：418 passed；
+- `qdte` 环境既有演化测试：25 passed, 1 skipped；
+- 三个本阶段实验/分析脚本及核心模块均通过 `py_compile`，`git diff --check` 通过；
+- 正式配置 10 轮 endpoint 回归中，0 sweep 与历史 baseline 的最终表哈希均为
+  `1f6890ac1c68a9627d018f0f642f6a06e343a838462530e4781a68b75f487b07`，主 RNG、
+  初始 loss 和首轮方向尺度全部对齐。
