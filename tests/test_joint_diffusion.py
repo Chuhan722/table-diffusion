@@ -21,6 +21,18 @@ from table_diffevo.joint_diffusion import (
 from table_diffevo.schema import AttributeBlock, Schema
 
 
+def _devices():
+    devices = ["numpy"]
+    try:
+        import torch
+    except ImportError:
+        return devices
+    devices.append("cpu")
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    return devices
+
+
 def _binary_schema():
     return Schema([
         AttributeBlock(
@@ -68,7 +80,7 @@ class TestMaskEnumeration:
             (3, 2, "护栏"),
             (-1, 4, "非负整数"),
             (True, 4, "非负整数"),
-            (1, 63, "不得超过"),
+            (1, 21, "绝对护栏"),
         ],
     )
     def test_enumeration_guard_and_validation(self, n_active, maximum, match):
@@ -246,7 +258,10 @@ class TestJointGibbsKernel:
 
 
 class TestJointMaskLandscapes:
-    def test_exact_hybrid_directions_expose_nonadditive_interaction(self):
+    @pytest.mark.parametrize("device", _devices())
+    def test_exact_hybrid_directions_expose_nonadditive_interaction(
+        self, device
+    ):
         current = pd.DataFrame({"a": [0, 1], "b": [0, 1]})
         donors = pd.DataFrame({"a": [1, 0], "b": [1, 0]})
 
@@ -257,6 +272,7 @@ class TestJointMaskLandscapes:
             _binary_schema(),
             _binary_queries(),
             np.array([1.0, 2.0, 4.0]),
+            device=device,
         )
 
         assert [item.row_index for item in landscapes] == [0, 1]
@@ -265,10 +281,12 @@ class TestJointMaskLandscapes:
             landscapes[0].masks, enumerate_copy_masks(2)
         )
         np.testing.assert_allclose(
-            landscapes[0].directions, [0.0, 1.0, 2.0, 7.0]
+            landscapes[0].directions, [0.0, 1.0, 2.0, 7.0], atol=1e-6
         )
         np.testing.assert_allclose(
-            landscapes[1].directions, [0.0, -5.0, -6.0, -7.0]
+            landscapes[1].directions,
+            [0.0, -5.0, -6.0, -7.0],
+            atol=1e-6,
         )
         additive = additive_mask_directions(
             landscapes[0].masks,
@@ -277,6 +295,7 @@ class TestJointMaskLandscapes:
         np.testing.assert_allclose(
             landscapes[0].directions - additive,
             [0.0, 0.0, 0.0, 4.0],
+            atol=1e-6,
         )
 
     def test_same_row_has_one_empty_mask_and_zero_direction(self):
@@ -299,7 +318,7 @@ class TestJointMaskLandscapes:
         landscapes = compute_joint_mask_landscapes(
             current,
             current.copy(),
-            np.array([], dtype=int),
+            [],
             _binary_schema(),
             _binary_queries(),
             np.ones(3),

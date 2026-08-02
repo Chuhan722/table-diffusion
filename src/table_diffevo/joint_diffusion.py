@@ -55,8 +55,10 @@ def enumerate_copy_masks(
     maximum = _validate_nonnegative_integer(
         max_active_attributes, "max_active_attributes"
     )
-    if maximum > 62:
-        raise ValueError("max_active_attributes 不得超过 62")
+    # 即使调用方主动调大软护栏，也保留绝对上限，避免 2**k 在进入后续评价前
+    # 就分配不可控内存。20 个布尔属性的 mask 本身已约 20 MiB。
+    if maximum > 20:
+        raise ValueError("max_active_attributes 不得超过绝对护栏 20")
     if n_active > maximum:
         raise ValueError(
             "活跃属性数超过精确枚举护栏："
@@ -420,9 +422,14 @@ def compute_joint_mask_landscapes(
         )
 
     raw_indices = np.asarray(row_indices)
-    if raw_indices.ndim != 1 or raw_indices.dtype.kind not in "iu":
+    if raw_indices.ndim != 1:
         raise ValueError("row_indices 必须是一维整数序列")
-    indices = raw_indices.astype(np.intp, copy=False)
+    if raw_indices.size == 0:
+        indices = np.empty(0, dtype=np.intp)
+    elif raw_indices.dtype.kind in "iu":
+        indices = raw_indices.astype(np.intp, copy=False)
+    else:
+        raise ValueError("row_indices 必须是一维整数序列")
     if np.any(indices < 0) or np.any(indices >= len(current)):
         raise ValueError("row_indices 包含越界位置")
     if len(np.unique(indices)) != len(indices):
