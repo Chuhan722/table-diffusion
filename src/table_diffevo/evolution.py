@@ -43,6 +43,12 @@ from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
+from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
+    compute_copy_direction_scores,
+    direction_rms_scale,
+    tilted_copy_probabilities,
+)
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
@@ -99,6 +105,9 @@ def run_evolution(
     maxent_max_states: int = 1_000_000,
     maxent_max_sweeps: int = 200,
     maxent_tol: float = 1e-8,
+    residual_directed_diffusion: bool = False,
+    diffusion_direction_strength: float = 1.0,
+    diffusion_direction_normalization: str = "initial_rms",
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -182,6 +191,18 @@ def run_evolution(
         pairwise_maxent 的 IPF 最大扫描轮数。
     maxent_tol : float, default 1e-8
         pairwise_maxent 的最大二阶单元概率误差收敛阈值。
+    residual_directed_diffusion : bool, default False
+        是否让实际单块 donor 复制的比例残差方向量连续倾斜复制概率。默认关闭，
+        保持历史算法与随机轨迹。该机制不执行正负门控或逐候选 top-k。
+    diffusion_direction_strength : float, default 1.0
+        残差驱动扩散的非负有限强度。0 在启用机制时也精确退化到历史固定 eta；
+        正值越大，复制概率对实际局部方向越敏感。
+    diffusion_direction_normalization : str, default 'initial_rms'
+        方向强度的尺度口径：
+        - 'none'：直接使用原始比例残差方向量；
+        - 'initial_rms'：用本次运行首个非零方向矩阵的 RMS 固定定标。此时
+          diffusion_direction_strength 是无量纲初始温度，后续残差变小时倾斜自然
+          冷却，不逐轮重新标准化。
 
     Returns
     -------
@@ -196,8 +217,13 @@ def run_evolution(
         - accept_history: List[bool]，每轮整代检查是否接受提案
         - proposal_attempts_history: List[int]，每轮评估的提案数
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
+        - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
+          原始 proposal 精确收益
+        - copy_direction_*_history: 局部方向分布与正/反向实际复制概率
+        - copy_probability_entropy_history: 每轮 active Bernoulli 复制核的平均熵
         - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
+        - direction_evaluation_count: int，实际计算局部方向矩阵的次数
 
     Raises
     ------
@@ -262,6 +288,30 @@ def run_evolution(
         raise ValueError(
             f"retry_rho_decay 必须在 (0, 1) 内，得到 {retry_rho_decay}"
         )
+    if not isinstance(residual_directed_diffusion, (bool, np.bool_)):
+        raise ValueError(
+            "residual_directed_diffusion 必须是布尔值，"
+            f"得到 {residual_directed_diffusion!r}"
+        )
+    if (
+        isinstance(diffusion_direction_strength, (bool, np.bool_))
+        or not isinstance(
+            diffusion_direction_strength,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(diffusion_direction_strength)
+        or diffusion_direction_strength < 0.0
+    ):
+        raise ValueError(
+            "diffusion_direction_strength 必须是非负有限数值，"
+            f"得到 {diffusion_direction_strength!r}"
+        )
+    diffusion_direction_strength = float(diffusion_direction_strength)
+    if diffusion_direction_normalization not in ("none", "initial_rms"):
+        raise ValueError(
+            "diffusion_direction_normalization 必须是 'none' 或 "
+            f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
+        )
 
     rng = np.random.default_rng(seed)
 
@@ -324,10 +374,24 @@ def run_evolution(
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
+    copy_direction_mean_history: List[Optional[float]] = []
+    copy_direction_positive_rate_history: List[Optional[float]] = []
+    copy_direction_negative_rate_history: List[Optional[float]] = []
+    negative_direction_copy_probability_history: List[Optional[float]] = []
+    positive_direction_copy_probability_history: List[Optional[float]] = []
+    copy_probability_entropy_history: List[Optional[float]] = []
+    effective_direction_strength_history: List[Optional[float]] = []
+    direction_reference_scale_history: List[Optional[float]] = []
+    raw_proposal_gain_history: List[List[float]] = []
+    raw_proposal_linear_gain_history: List[List[float]] = []
+    raw_proposal_quadratic_penalty_history: List[List[float]] = []
     stopped_early = False
     rounds_run = 0
     state_evaluation_count = 0
     distance_evaluation_count = 0
+    direction_evaluation_count = 0
+    direction_evaluation_elapsed_sec = 0.0
+    direction_reference_scale: Optional[float] = None
 
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
@@ -435,6 +499,103 @@ def run_evolution(
         # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
         donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
 
+        if residual_directed_diffusion:
+            direction_start = time.perf_counter()
+            copy_direction_scores = compute_copy_direction_scores(
+                S,
+                donors,
+                schema,
+                queries,
+                residual,
+                batch_size=batch_size,
+                device=device,
+            )
+            direction_evaluation_elapsed_sec += (
+                time.perf_counter() - direction_start
+            )
+            direction_evaluation_count += 1
+            differing = np.column_stack([
+                S[attr].reset_index(drop=True).to_numpy()
+                != donors[attr].to_numpy()
+                for attr in schema.attribute_names()
+            ])
+            active_directions = copy_direction_scores[differing]
+            if (
+                diffusion_direction_normalization == "initial_rms"
+                and direction_reference_scale is None
+            ):
+                candidate_scale = direction_rms_scale(active_directions)
+                if candidate_scale > 0.0:
+                    direction_reference_scale = candidate_scale
+            if diffusion_direction_normalization == "initial_rms":
+                effective_direction_strength = (
+                    diffusion_direction_strength / direction_reference_scale
+                    if direction_reference_scale is not None else 0.0
+                )
+            else:
+                effective_direction_strength = diffusion_direction_strength
+            effective_direction_strength_history.append(
+                float(effective_direction_strength)
+            )
+            direction_reference_scale_history.append(
+                direction_reference_scale
+            )
+            if len(active_directions):
+                active_probabilities = tilted_copy_probabilities(
+                    eta,
+                    active_directions,
+                    effective_direction_strength,
+                )
+                negative_mask = active_directions < 0.0
+                positive_mask = active_directions > 0.0
+                copy_direction_mean_history.append(
+                    float(np.mean(active_directions))
+                )
+                copy_direction_positive_rate_history.append(
+                    float(np.mean(active_directions > 0.0))
+                )
+                copy_direction_negative_rate_history.append(
+                    float(np.mean(negative_mask))
+                )
+                negative_direction_copy_probability_history.append(
+                    float(np.mean(active_probabilities[negative_mask]))
+                    if np.any(negative_mask) else None
+                )
+                positive_direction_copy_probability_history.append(
+                    float(np.mean(active_probabilities[positive_mask]))
+                    if np.any(positive_mask) else None
+                )
+                if effective_direction_strength == 0.0:
+                    copy_probability_entropy_history.append(
+                        float(bernoulli_entropy(np.asarray([eta]))[0])
+                    )
+                else:
+                    copy_probability_entropy_history.append(
+                        float(np.mean(
+                            bernoulli_entropy(active_probabilities)
+                        ))
+                    )
+            else:
+                copy_direction_mean_history.append(0.0)
+                copy_direction_positive_rate_history.append(0.0)
+                copy_direction_negative_rate_history.append(0.0)
+                negative_direction_copy_probability_history.append(None)
+                positive_direction_copy_probability_history.append(None)
+                copy_probability_entropy_history.append(None)
+        else:
+            copy_direction_scores = None
+            effective_direction_strength = None
+            copy_direction_mean_history.append(None)
+            copy_direction_positive_rate_history.append(None)
+            copy_direction_negative_rate_history.append(None)
+            negative_direction_copy_probability_history.append(None)
+            positive_direction_copy_probability_history.append(None)
+            copy_probability_entropy_history.append(
+                float(bernoulli_entropy(np.asarray([eta]))[0])
+            )
+            effective_direction_strength_history.append(None)
+            direction_reference_scale_history.append(None)
+
         # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
         # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
         # evolve_step + 一次提案查询评价。max_retries=0 时与原逻辑完全一致。
@@ -443,14 +604,33 @@ def run_evolution(
         accepted_rho = None
         proposal_attempts = 0
         current_loss = loss
+        attempt_gains: List[float] = []
+        attempt_linear_gains: List[float] = []
+        attempt_quadratic_penalties: List[float] = []
+        count_residual = target - q
+        direction_kwargs = (
+            {
+                "copy_direction_scores": copy_direction_scores,
+                "copy_direction_strength": effective_direction_strength,
+            }
+            if residual_directed_diffusion else {}
+        )
         for attempt in range(max_retries + 1):
             attempt_rho = rho * (retry_rho_decay ** attempt)
             proposal = evolve_step(
-                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng
+                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng,
+                **direction_kwargs,
             )
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
+
+            delta_q = proposal_q - q
+            linear_gain = float(np.dot(count_residual, delta_q))
+            quadratic_penalty = float(0.5 * np.dot(delta_q, delta_q))
+            attempt_linear_gains.append(linear_gain)
+            attempt_quadratic_penalties.append(quadratic_penalty)
+            attempt_gains.append(float(loss - proposal_loss))
 
             if proposal_loss <= loss + tol:
                 accepted = True
@@ -464,6 +644,11 @@ def run_evolution(
         proposal_attempts_history.append(proposal_attempts)
         accepted_attempt_history.append(accepted_attempt)
         accepted_rho_history.append(accepted_rho)
+        raw_proposal_gain_history.append(attempt_gains)
+        raw_proposal_linear_gain_history.append(attempt_linear_gains)
+        raw_proposal_quadratic_penalty_history.append(
+            attempt_quadratic_penalties
+        )
 
         if accepted:
             # S 已替换为 proposal，旧表对应的所有缓存立即失效。显式删除本地距离
@@ -515,8 +700,38 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
+        "copy_direction_mean_history": copy_direction_mean_history,
+        "copy_direction_positive_rate_history": (
+            copy_direction_positive_rate_history
+        ),
+        "copy_direction_negative_rate_history": (
+            copy_direction_negative_rate_history
+        ),
+        "negative_direction_copy_probability_history": (
+            negative_direction_copy_probability_history
+        ),
+        "positive_direction_copy_probability_history": (
+            positive_direction_copy_probability_history
+        ),
+        "copy_probability_entropy_history": (
+            copy_probability_entropy_history
+        ),
+        "effective_direction_strength_history": (
+            effective_direction_strength_history
+        ),
+        "direction_reference_scale_history": (
+            direction_reference_scale_history
+        ),
+        "raw_proposal_gain_history": raw_proposal_gain_history,
+        "raw_proposal_linear_gain_history": raw_proposal_linear_gain_history,
+        "raw_proposal_quadratic_penalty_history": (
+            raw_proposal_quadratic_penalty_history
+        ),
         "state_evaluation_count": state_evaluation_count,
         "distance_evaluation_count": distance_evaluation_count,
+        "direction_evaluation_count": direction_evaluation_count,
+        "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
+        "direction_reference_scale": direction_reference_scale,
         "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
@@ -551,6 +766,13 @@ def run_evolution(
             "maxent_max_states": int(maxent_max_states),
             "maxent_max_sweeps": int(maxent_max_sweeps),
             "maxent_tol": maxent_tol,
+            "residual_directed_diffusion": bool(
+                residual_directed_diffusion
+            ),
+            "diffusion_direction_strength": diffusion_direction_strength,
+            "diffusion_direction_normalization": (
+                diffusion_direction_normalization
+            ),
         },
     }
 

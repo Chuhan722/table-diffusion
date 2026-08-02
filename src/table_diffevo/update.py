@@ -21,6 +21,13 @@
 - 与参考记录相同 → 直接保持
 - 与参考记录不同 → 以概率 η_t 复制参考记录该块，否则保持原值
 
+可选的残差驱动扩散会在 Bernoulli 对数几率上连续加入实际单块转移的方向量：
+
+    logit(p_copy) = logit(η_t) + strength * direction
+
+方向为零或 strength=0 时精确保持 η_t；负方向概率降低但在有限数值下不被硬置零。
+它改变随机转移核，不使用 ``direction > 0`` 资格筛选。
+
 逐块靠近，不是一步整行复制。
 
 ## 变异（7.4，μ_t）
@@ -45,6 +52,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from table_diffevo.schema import Schema
+from table_diffevo.directional_diffusion import tilted_copy_probabilities
 
 
 def evolve_step(
@@ -55,6 +63,8 @@ def evolve_step(
     eta: float = 0.5,
     mu: float = 0.01,
     rng: Optional[np.random.Generator] = None,
+    copy_direction_scores: Optional[np.ndarray] = None,
+    copy_direction_strength: float = 0.0,
 ) -> pd.DataFrame:
     """
     全表同步向参考记录靠近一步，生成下一代 S_{t+1}。
@@ -75,6 +85,12 @@ def evolve_step(
         变异概率 μ_t，参与更新的记录以此概率变异一个块
     rng : np.random.Generator or None
         随机数生成器。推荐显式传入 np.random.default_rng(seed) 保证复现
+    copy_direction_scores : np.ndarray or None, shape (N, A), default None
+        每条记录、每个属性块的实际单块复制方向量。None 表示使用历史固定 η。
+        提供时只连续倾斜复制概率，不执行正负阈值筛选。
+    copy_direction_strength : float, default 0.0
+        非负有限方向强度。0 精确退化到历史固定 η 路径；正值越大，复制概率对
+        方向量越敏感。有限强度下负方向仍保留非零复制概率。
 
     Returns
     -------
@@ -117,11 +133,46 @@ def evolve_step(
             f"current 行数 ({len(current)}) 与 donors 行数 ({len(donors)}) 不一致"
         )
 
+    if (
+        isinstance(copy_direction_strength, (bool, np.bool_))
+        or not isinstance(
+            copy_direction_strength,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(copy_direction_strength)
+        or copy_direction_strength < 0.0
+    ):
+        raise ValueError(
+            "copy_direction_strength 必须是非负有限数值，"
+            f"得到 {copy_direction_strength!r}"
+        )
+    copy_direction_strength = float(copy_direction_strength)
+
     if rng is None:
         rng = np.random.default_rng()
 
     N = len(current)
     attr_names = schema.attribute_names()
+
+    if copy_direction_scores is None:
+        if copy_direction_strength != 0.0:
+            raise ValueError(
+                "copy_direction_strength 非零时必须提供 copy_direction_scores"
+            )
+        direction_scores = None
+    else:
+        direction_scores = np.asarray(copy_direction_scores)
+        expected_shape = (N, len(attr_names))
+        if direction_scores.shape != expected_shape:
+            raise ValueError(
+                "copy_direction_scores 必须是 shape (N, A) 的二维数组，"
+                f"得到 {direction_scores.shape}，期望 {expected_shape}"
+            )
+        if direction_scores.dtype.kind not in "iuf":
+            raise ValueError("copy_direction_scores 必须是数值数组")
+        direction_scores = direction_scores.astype(float, copy=False)
+        if not np.all(np.isfinite(direction_scores)):
+            raise ValueError("copy_direction_scores 必须全部为有限数值")
 
     # 以当前表为基础构造下一代（新对象，索引对齐 0..N-1）
     next_table = current.reset_index(drop=True).copy()
@@ -131,11 +182,20 @@ def evolve_step(
     participate = rng.random(N) < rho  # (N,) 布尔
 
     # 7.3 属性块复制：对每个块，参与且与参考不同的记录以概率 eta 复制
-    for attr in attr_names:
+    for attr_idx, attr in enumerate(attr_names):
         cur_col = current[attr].reset_index(drop=True).to_numpy()
         donor_col = donors[attr].to_numpy()
         differ = cur_col != donor_col  # (N,) 与参考记录不同的位置
-        copy_roll = rng.random(N) < eta  # (N,) 每条记录的复制骰子
+        if direction_scores is None or copy_direction_strength == 0.0:
+            # 默认和 strength=0 端点严格复用历史表达式与随机数消耗。
+            copy_roll = rng.random(N) < eta
+        else:
+            copy_probability = tilted_copy_probabilities(
+                eta,
+                direction_scores[:, attr_idx],
+                copy_direction_strength,
+            )
+            copy_roll = rng.random(N) < copy_probability
         copy_mask = participate & differ & copy_roll
         if copy_mask.any():
             new_col = next_table[attr].to_numpy().copy()
