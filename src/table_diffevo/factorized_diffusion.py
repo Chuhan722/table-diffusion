@@ -7,10 +7,12 @@ mask 分布。它不执行正收益门槛、方向 argmax、top-k 或整代 prop
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import time
 
 import numpy as np
 import pandas as pd
 
+from table_diffevo.directional_diffusion import tilted_copy_probabilities
 from table_diffevo.joint_diffusion import enumerate_copy_masks
 from table_diffevo.queries import eval_condition
 from table_diffevo.schema import Schema
@@ -533,3 +535,187 @@ def propagate_random_scan_distribution(
         probabilities = next_probabilities
         probabilities /= probabilities.sum()
     return probabilities
+
+
+def evolve_step_factorized_gibbs(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    residual: np.ndarray,
+    *,
+    rho: float = 0.1,
+    eta: float = 0.5,
+    mu: float = 0.01,
+    copy_direction_scores: np.ndarray,
+    copy_direction_strength: float,
+    n_sweeps: int,
+    rng: np.random.Generator,
+    gibbs_rng: Optional[np.random.Generator] = None,
+    weights: Optional[np.ndarray] = None,
+    max_factor_order: int = 3,
+) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
+
+    主 ``rng`` 的抽取顺序与 :func:`table_diffevo.update.evolve_step` 保持一致：
+    participation、逐属性独立复制初值和 mutation 都从该流抽取。额外 Gibbs 微步只
+    使用独立的 ``gibbs_rng``，因此增加 sweep 不会错位后续 donor、复制或变异随机
+    流。``n_sweeps=0`` 不构造因子、不消费 ``gibbs_rng``，并精确退化到现有定向
+    ``evolve_step``。
+
+    返回的诊断只记录公开生成过程的工作量和墙钟，不评价 loss，也不参与更新决策。
+    """
+    for value, name in ((rho, "rho"), (eta, "eta"), (mu, "mu")):
+        if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            or not np.isfinite(value)
+            or not 0.0 <= value <= 1.0
+        ):
+            raise ValueError(
+                f"{name} 必须是 [0, 1] 内的有限数值，得到 {value!r}"
+            )
+    rho = float(rho)
+    eta = float(eta)
+    mu = float(mu)
+    strength = _validate_strength(copy_direction_strength)
+    sweeps = _validate_nonnegative_integer(n_sweeps, "n_sweeps")
+    maximum_order = _validate_nonnegative_integer(
+        max_factor_order, "max_factor_order"
+    )
+    if maximum_order > 8:
+        raise ValueError("max_factor_order 不得超过绝对护栏 8")
+    if len(current) != len(donors):
+        raise ValueError(
+            f"current 行数 ({len(current)}) 与 donors 行数 "
+            f"({len(donors)}) 不一致"
+        )
+    if not isinstance(rng, np.random.Generator):
+        raise ValueError("rng 必须是 np.random.Generator")
+    if sweeps > 0:
+        _validate_open_probability(eta, "eta")
+        if not isinstance(gibbs_rng, np.random.Generator):
+            raise ValueError(
+                "n_sweeps 非零时 gibbs_rng 必须是 np.random.Generator"
+            )
+
+    attr_names = schema.attribute_names()
+    n_records = len(current)
+    raw_scores = np.asarray(copy_direction_scores)
+    expected_shape = (n_records, len(attr_names))
+    if raw_scores.shape != expected_shape:
+        raise ValueError(
+            "copy_direction_scores 必须是 shape (N, A) 的二维数组，"
+            f"得到 {raw_scores.shape}，期望 {expected_shape}"
+        )
+    if raw_scores.dtype.kind not in "iuf":
+        raise ValueError("copy_direction_scores 必须是有限数值数组")
+    direction_scores = raw_scores.astype(float, copy=False)
+    if not np.all(np.isfinite(direction_scores)):
+        raise ValueError("copy_direction_scores 必须是有限数值数组")
+
+    current_reset = current.reset_index(drop=True)
+    donors_reset = donors.reset_index(drop=True)
+    proposal = current_reset.copy()
+    participate = rng.random(n_records) < rho
+    differs = np.zeros((n_records, len(attr_names)), dtype=bool)
+    copy_masks = np.zeros_like(differs)
+
+    # 保留既有 evolve_step 的“每个属性抽 N 个 roll”顺序，0 sweep 可逐随机位对拍。
+    for attr_index, attr in enumerate(attr_names):
+        current_values = current_reset[attr].to_numpy()
+        donor_values = donors_reset[attr].to_numpy()
+        differs[:, attr_index] = current_values != donor_values
+        if strength == 0.0:
+            copy_probabilities = eta
+        else:
+            copy_probabilities = tilted_copy_probabilities(
+                eta,
+                direction_scores[:, attr_index],
+                strength,
+            )
+        copy_masks[:, attr_index] = (
+            rng.random(n_records) < copy_probabilities
+        )
+    copy_masks &= differs
+
+    factor_build_elapsed = 0.0
+    gibbs_sample_elapsed = 0.0
+    active_gibbs_rows = 0
+    active_blocks = 0
+    factor_count = 0
+    factor_table_entries = 0
+    gibbs_microsteps = 0
+    if sweeps > 0:
+        for row_index in np.flatnonzero(participate):
+            active_indices = np.flatnonzero(differs[row_index])
+            n_active = len(active_indices)
+            if n_active == 0:
+                continue
+            build_start = time.perf_counter()
+            model = build_sparse_mask_energy(
+                current_reset.iloc[[row_index]],
+                donors_reset.iloc[[row_index]],
+                schema,
+                queries,
+                residual,
+                weights=weights,
+                max_factor_order=maximum_order,
+            )
+            factor_build_elapsed += time.perf_counter() - build_start
+            if not np.array_equal(
+                model.active_attribute_indices, active_indices
+            ):
+                raise RuntimeError("因子模型的活跃属性顺序与更新 mask 不一致")
+            sample_start = time.perf_counter()
+            copy_masks[row_index, active_indices] = random_scan_gibbs_mask(
+                model,
+                copy_masks[row_index, active_indices],
+                eta,
+                strength,
+                sweeps * n_active,
+                gibbs_rng,
+            )
+            gibbs_sample_elapsed += time.perf_counter() - sample_start
+            active_gibbs_rows += 1
+            active_blocks += n_active
+            factor_count += len(model.factors)
+            factor_table_entries += sum(
+                len(factor.values) for factor in model.factors
+            )
+            gibbs_microsteps += sweeps * n_active
+
+    for attr_index, attr in enumerate(attr_names):
+        selected = participate & copy_masks[:, attr_index]
+        if np.any(selected):
+            new_values = proposal[attr].to_numpy().copy()
+            donor_values = donors_reset[attr].to_numpy()
+            new_values[selected] = donor_values[selected]
+            proposal[attr] = new_values
+
+    # 与 evolve_step 相同：每条参与记录至多变异一个属性，且发生在复制之后。
+    mutate_rows = np.flatnonzero(
+        participate & (rng.random(n_records) < mu)
+    )
+    for row_index in mutate_rows:
+        block_index = int(rng.integers(0, len(attr_names)))
+        block = schema.get_block(attr_names[block_index])
+        if block.is_numeric():
+            low, high = block.range
+            value = int(rng.integers(int(low), int(high) + 1))
+        else:
+            value_index = int(rng.integers(0, len(block.values)))
+            value = block.values[value_index]
+        proposal.at[row_index, block.name] = value
+
+    diagnostics = {
+        "participating_rows": int(participate.sum()),
+        "active_gibbs_rows": active_gibbs_rows,
+        "active_blocks": active_blocks,
+        "factor_count": factor_count,
+        "factor_table_entries": factor_table_entries,
+        "gibbs_microsteps": gibbs_microsteps,
+        "factor_build_elapsed_sec": factor_build_elapsed,
+        "gibbs_sample_elapsed_sec": gibbs_sample_elapsed,
+    }
+    return proposal, diagnostics

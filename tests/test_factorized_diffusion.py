@@ -8,6 +8,7 @@ from table_diffevo.factorized_diffusion import (
     build_sparse_mask_energy,
     conditional_copy_probability,
     conditional_energy_difference,
+    evolve_step_factorized_gibbs,
     evaluate_sparse_mask_energies,
     evaluate_sparse_mask_energy,
     propagate_random_scan_distribution,
@@ -24,6 +25,7 @@ from table_diffevo.joint_diffusion import (
 )
 from table_diffevo.queries import load_queries
 from table_diffevo.schema import AttributeBlock, Schema, load_schema
+from table_diffevo.update import evolve_step
 
 
 def _three_bit_schema():
@@ -430,4 +432,147 @@ class TestRandomScanGibbs:
                 eta=0.5,
                 strength=0.7,
                 **kwargs,
+            )
+
+
+class TestFactorizedGibbsEvolutionStep:
+    @staticmethod
+    def _tables():
+        current = pd.DataFrame({
+            "a": [0, 0, 1, 1],
+            "b": [0, 1, 0, 1],
+            "c": [1, 0, 1, 0],
+        })
+        donors = current.iloc[[3, 2, 1, 0]].reset_index(drop=True)
+        return current, donors
+
+    def test_zero_sweeps_matches_existing_directional_step_and_rng(self):
+        current, donors = self._tables()
+        scores = np.random.default_rng(8).normal(size=(4, 3))
+        existing_rng = np.random.default_rng(2026)
+        factorized_rng = np.random.default_rng(2026)
+
+        expected = evolve_step(
+            current,
+            donors,
+            _three_bit_schema(),
+            rho=0.75,
+            eta=0.4,
+            mu=0.6,
+            rng=existing_rng,
+            copy_direction_scores=scores,
+            copy_direction_strength=0.7,
+        )
+        actual, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=0.75,
+            eta=0.4,
+            mu=0.6,
+            rng=factorized_rng,
+            copy_direction_scores=scores,
+            copy_direction_strength=0.7,
+            n_sweeps=0,
+        )
+
+        pd.testing.assert_frame_equal(actual, expected)
+        np.testing.assert_array_equal(
+            factorized_rng.random(20), existing_rng.random(20)
+        )
+        assert diagnostics["factor_count"] == 0
+        assert diagnostics["gibbs_microsteps"] == 0
+
+    def test_extra_sweeps_do_not_shift_primary_random_stream(self):
+        current, donors = self._tables()
+        scores = np.random.default_rng(9).normal(size=(4, 3))
+        zero_rng = np.random.default_rng(77)
+        candidate_rng = np.random.default_rng(77)
+
+        evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.5,
+            rng=zero_rng,
+            copy_direction_scores=scores,
+            copy_direction_strength=0.5,
+            n_sweeps=0,
+        )
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.5,
+            rng=candidate_rng,
+            gibbs_rng=np.random.default_rng(78),
+            copy_direction_scores=scores,
+            copy_direction_strength=0.5,
+            n_sweeps=3,
+        )
+
+        np.testing.assert_array_equal(
+            candidate_rng.random(20), zero_rng.random(20)
+        )
+        assert diagnostics["active_gibbs_rows"] == 4
+        assert diagnostics["gibbs_microsteps"] > 0
+
+    def test_same_primary_and_gibbs_seeds_are_reproducible(self):
+        current, donors = self._tables()
+        kwargs = dict(
+            current=current,
+            donors=donors,
+            schema=_three_bit_schema(),
+            queries=_three_bit_queries(),
+            residual=np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.ones((4, 3)),
+            copy_direction_strength=0.3,
+            n_sweeps=4,
+        )
+        first, first_diagnostics = evolve_step_factorized_gibbs(
+            **kwargs,
+            rng=np.random.default_rng(10),
+            gibbs_rng=np.random.default_rng(11),
+        )
+        second, second_diagnostics = evolve_step_factorized_gibbs(
+            **kwargs,
+            rng=np.random.default_rng(10),
+            gibbs_rng=np.random.default_rng(11),
+        )
+
+        pd.testing.assert_frame_equal(first, second)
+        assert first_diagnostics.keys() == second_diagnostics.keys()
+        for key in first_diagnostics:
+            if not key.endswith("elapsed_sec"):
+                assert first_diagnostics[key] == second_diagnostics[key]
+
+    @pytest.mark.parametrize("eta", [0.0, 1.0])
+    def test_nonzero_sweeps_require_open_eta(self, eta):
+        current, donors = self._tables()
+        with pytest.raises(ValueError, match="eta"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                _three_bit_schema(),
+                _three_bit_queries(),
+                np.ones(4),
+                eta=eta,
+                copy_direction_scores=np.zeros((4, 3)),
+                copy_direction_strength=0.0,
+                n_sweeps=1,
+                rng=np.random.default_rng(0),
+                gibbs_rng=np.random.default_rng(1),
             )
