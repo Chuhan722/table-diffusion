@@ -347,6 +347,344 @@ class TestIntegration:
         assert diag["best_loss"] <= diag["loss_history"][0]
 
 
+class TestFactorizedGibbsClosedLoop:
+    """低阶因子 Gibbs 接入标准接受闭环后的语义与随机流。"""
+
+    @staticmethod
+    def _schema_queries_target():
+        schema = Schema([
+            AttributeBlock(
+                name=name,
+                type="categorical",
+                description=name,
+                values=[0, 1],
+            )
+            for name in ("a", "b", "c")
+        ])
+        queries = [
+            {"conditions": [
+                {"attribute": "a", "operator": "==", "value": 1},
+            ]},
+            {"conditions": [
+                {"attribute": "b", "operator": "==", "value": 1},
+            ]},
+            {"conditions": [
+                {"attribute": "a", "operator": "==", "value": 1},
+                {"attribute": "b", "operator": "==", "value": 1},
+            ]},
+            {"conditions": [
+                {"attribute": "a", "operator": "==", "value": 0},
+                {"attribute": "b", "operator": "==", "value": 0},
+                {"attribute": "c", "operator": "==", "value": 1},
+            ]},
+        ]
+        # 半整数 target 不可能被整数计数精确命中，避免测试意外提前停止。
+        target = np.array([8.5, 10.5, 4.5, 2.5])
+        return schema, queries, target
+
+    @staticmethod
+    def _run_kwargs():
+        return {
+            "n_records": 20,
+            "n_rounds": 5,
+            "seed": 17,
+            "rho": 0.8,
+            "eta": 0.5,
+            "mu": 0.1,
+            "device": "numpy",
+            "distance_mode": "geometric",
+            "residual_directed_diffusion": True,
+            "diffusion_direction_strength": 2.0,
+            "diffusion_direction_normalization": "initial_rms",
+            "log_every": 100,
+        }
+
+    def test_zero_sweeps_matches_existing_closed_loop(self):
+        schema, queries, target = self._schema_queries_target()
+        implicit, implicit_diag = run_evolution(
+            target, queries, schema, **self._run_kwargs()
+        )
+        explicit, explicit_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=0,
+            **self._run_kwargs(),
+        )
+
+        pd.testing.assert_frame_equal(explicit, implicit)
+        for key in (
+            "loss_history",
+            "accept_history",
+            "donor_fitness_history",
+            "donor_distance_history",
+            "raw_proposal_gain_history",
+            "accepted_attempt_history",
+            "initial_table_sha256",
+            "primary_rng_post_initialization_state_sha256",
+            "primary_rng_state_sha256",
+        ):
+            assert explicit_diag[key] == implicit_diag[key]
+        assert explicit_diag[
+            "factorized_gibbs_attempt_diagnostics_history"
+        ] == [[] for _ in explicit_diag["accept_history"]]
+        assert explicit_diag["factorized_gibbs_microsteps"] == 0
+        assert explicit_diag["factorized_gibbs_rng_state_sha256"] is None
+
+    def test_nonzero_sweeps_are_reproducible_and_preserve_primary_rng(self):
+        schema, queries, target = self._schema_queries_target()
+        baseline, baseline_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=0,
+            **self._run_kwargs(),
+        )
+        candidate, candidate_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=2,
+            **self._run_kwargs(),
+        )
+        repeated, repeated_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=2,
+            **self._run_kwargs(),
+        )
+
+        assert len(baseline) == len(candidate)
+        pd.testing.assert_frame_equal(repeated, candidate)
+        assert candidate_diag["loss_history"] == repeated_diag["loss_history"]
+        assert (
+            candidate_diag["initial_table_sha256"]
+            == baseline_diag["initial_table_sha256"]
+        )
+        assert (
+            candidate_diag["primary_rng_post_initialization_state_sha256"]
+            == baseline_diag["primary_rng_post_initialization_state_sha256"]
+        )
+        assert (
+            candidate_diag["primary_rng_state_sha256"]
+            == baseline_diag["primary_rng_state_sha256"]
+        )
+        assert (
+            candidate_diag["factorized_gibbs_rng_state_sha256"]
+            == repeated_diag["factorized_gibbs_rng_state_sha256"]
+        )
+        assert (
+            candidate_diag["factorized_gibbs_initial_rng_state_sha256"]
+            != candidate_diag["factorized_gibbs_rng_state_sha256"]
+        )
+        assert candidate_diag["factorized_gibbs_active_rows"] > 0
+        assert candidate_diag["factorized_gibbs_factor_count"] > 0
+        assert candidate_diag["factorized_gibbs_microsteps"] > 0
+        assert len(candidate_diag[
+            "factorized_gibbs_attempt_diagnostics_history"
+        ]) == len(candidate_diag["accept_history"])
+        assert all(
+            len(attempts) == 1
+            for attempts in candidate_diag[
+                "factorized_gibbs_attempt_diagnostics_history"
+            ]
+        )
+
+    def test_factorized_retry_records_every_attempt(self, monkeypatch):
+        schema = Schema([
+            AttributeBlock(
+                name="x",
+                type="categorical",
+                description="x",
+                values=["a", "b"],
+            )
+        ])
+        queries = [
+            {"conditions": [
+                {"attribute": "x", "operator": "==", "value": "a"},
+            ]}
+        ]
+        initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
+        seen_rhos = []
+
+        monkeypatch.setattr(
+            evolution_module,
+            "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        def fake_factorized(
+            current, donors, schema, queries, residual, **kwargs
+        ):
+            seen_rhos.append(kwargs["rho"])
+            value = "a" if len(seen_rhos) == 1 else "b"
+            proposal = pd.DataFrame({"x": [value] * len(current)})
+            diagnostics = {
+                "participating_rows": 4,
+                "active_gibbs_rows": 3,
+                "active_blocks": 3,
+                "factor_count": 2,
+                "factor_table_entries": 4,
+                "gibbs_microsteps": 6,
+                "factor_build_elapsed_sec": 0.25,
+                "gibbs_sample_elapsed_sec": 0.125,
+            }
+            return proposal, diagnostics
+
+        monkeypatch.setattr(
+            evolution_module,
+            "evolve_step_factorized_gibbs",
+            fake_factorized,
+        )
+        _, diagnostics = run_evolution(
+            np.array([0]),
+            queries,
+            schema,
+            n_records=4,
+            n_rounds=1,
+            seed=0,
+            rho=0.2,
+            max_retries=1,
+            retry_rho_decay=0.25,
+            residual_directed_diffusion=True,
+            factorized_gibbs_sweeps=2,
+            device="numpy",
+            log_every=100,
+        )
+
+        assert seen_rhos == pytest.approx([0.2, 0.05])
+        assert diagnostics["proposal_attempts_history"] == [2]
+        assert diagnostics["accepted_attempt_history"] == [2]
+        attempts = diagnostics[
+            "factorized_gibbs_attempt_diagnostics_history"
+        ]
+        assert len(attempts) == 1
+        assert len(attempts[0]) == 2
+        assert diagnostics["factorized_gibbs_active_rows"] == 6
+        assert diagnostics["factorized_gibbs_factor_count"] == 4
+        assert diagnostics["factorized_gibbs_microsteps"] == 12
+        assert diagnostics[
+            "factorized_gibbs_factor_build_elapsed_sec"
+        ] == pytest.approx(0.5)
+
+    def test_zero_rounds_do_not_consume_factorized_rng(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=2,
+            **{**self._run_kwargs(), "n_rounds": 0},
+        )
+
+        assert diagnostics["rounds_run"] == 0
+        assert diagnostics[
+            "factorized_gibbs_attempt_diagnostics_history"
+        ] == []
+        assert diagnostics["factorized_gibbs_microsteps"] == 0
+        assert (
+            diagnostics["factorized_gibbs_initial_rng_state_sha256"]
+            == diagnostics["factorized_gibbs_rng_state_sha256"]
+        )
+
+    def test_initial_convergence_does_not_consume_factorized_rng(
+        self, monkeypatch
+    ):
+        schema, queries, _ = self._schema_queries_target()
+        initial = pd.DataFrame({
+            "a": [1, 0, 1, 0],
+            "b": [1, 1, 0, 0],
+            "c": [1, 0, 1, 1],
+        })
+        target = np.asarray([
+            2.0,
+            2.0,
+            1.0,
+            1.0,
+        ])
+        monkeypatch.setattr(
+            evolution_module,
+            "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+
+        result, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            n_records=4,
+            n_rounds=5,
+            seed=17,
+            rho=0.8,
+            eta=0.5,
+            mu=0.1,
+            device="numpy",
+            residual_directed_diffusion=True,
+            diffusion_direction_strength=2.0,
+            factorized_gibbs_sweeps=2,
+            log_every=100,
+        )
+
+        pd.testing.assert_frame_equal(result, initial)
+        assert diagnostics["rounds_run"] == 1
+        assert diagnostics["stopped_early"] is True
+        assert diagnostics["accept_history"] == []
+        assert diagnostics[
+            "factorized_gibbs_attempt_diagnostics_history"
+        ] == []
+        assert (
+            diagnostics["factorized_gibbs_initial_rng_state_sha256"]
+            == diagnostics["factorized_gibbs_rng_state_sha256"]
+        )
+
+    @pytest.mark.parametrize(
+        "kwargs,message",
+        [
+            ({"factorized_gibbs_sweeps": -1}, "sweeps"),
+            ({"factorized_gibbs_sweeps": 1.5}, "sweeps"),
+            ({"factorized_gibbs_sweeps": True}, "sweeps"),
+            ({"factorized_gibbs_max_order": -1}, "max_order"),
+            ({"factorized_gibbs_max_order": 1.5}, "max_order"),
+            ({"factorized_gibbs_max_order": 9}, "max_order"),
+            (
+                {"factorized_gibbs_sweeps": 1,
+                 "residual_directed_diffusion": False},
+                "residual_directed_diffusion",
+            ),
+            ({"factorized_gibbs_sweeps": 1, "eta": 0.0}, "eta"),
+            ({"factorized_gibbs_sweeps": 1, "eta": 1.0}, "eta"),
+            ({"factorized_gibbs_sweeps": 1, "seed": None}, "seed"),
+        ],
+    )
+    def test_rejects_invalid_factorized_parameters(self, kwargs, message):
+        schema, queries, target = self._schema_queries_target()
+        parameters = self._run_kwargs()
+        parameters.update(kwargs)
+        with pytest.raises(ValueError, match=message):
+            run_evolution(target, queries, schema, **parameters)
+
+    def test_cuda_smoke(self):
+        torch = pytest.importorskip("torch")
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA 不可用")
+        schema, queries, target = self._schema_queries_target()
+        result, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_sweeps=1,
+            **{
+                **self._run_kwargs(),
+                "device": "cuda",
+                "n_rounds": 2,
+            },
+        )
+
+        assert result.shape == (20, 3)
+        assert diagnostics["factorized_gibbs_microsteps"] > 0
+
+
 class TestExcludeSelf:
     """对角线屏蔽在主循环层面的行为 + 自身抽样率诊断字段"""
 
