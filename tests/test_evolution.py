@@ -627,3 +627,92 @@ class TestSingleBlockDirectionGuard:
         )
         entropy_hist = diag["copy_probability_entropy_history"]
         assert all(e is not None for e in entropy_hist)
+
+
+class TestSingleBlockEmptyCopySetRetrySemantics:
+    """empty_copy_set_count_history 口径：每轮只记被接受 / 最后一次失败尝试。
+
+    坐实 PROJECT_STATUS 的口径说明——max_retries>0 时该历史不含被丢弃的中间尝试。
+    用 monkeypatch 控制每次 attempt 的 proposal 与 empty_copy_set_count。
+    """
+
+    def _schema_queries(self):
+        schema = Schema([
+            AttributeBlock(
+                name="x", type="categorical", description="x", values=["a", "b"]
+            )
+        ])
+        queries = [
+            {"conditions": [{"attribute": "x", "operator": "==", "value": "a"}]}
+        ]
+        return schema, queries
+
+    def test_first_rejected_second_accepted_records_accepted_attempt(self):
+        """首试拒、二试接受：历史只记被接受那次的 empty_copy_set_count。"""
+        schema, queries = self._schema_queries()
+        # target=0 个 "a"。首试全 "a"(count_a=20，loss 变差被拒，empty=7)，
+        # 二试全 "b"(count_a=0 命中 target 被接受，empty=2)。
+        attempts = [("a", 7), ("b", 2)]
+        calls = {"i": 0}
+
+        def fake(current, donors, schema, rho, epsilon, rng):
+            value, empty = attempts[calls["i"]]
+            calls["i"] += 1
+            proposal = pd.DataFrame({"x": [value] * len(current)})
+            return proposal, {
+                "participation_rate": 1.0, "copy_attempt_rate": 1.0,
+                "mutation_attempt_rate": 0.0, "accepted_change_rate": 1.0,
+                "empty_copy_set_count": empty,
+            }
+
+        orig = evolution_module.evolve_step_single_block
+        evolution_module.evolve_step_single_block = fake
+        try:
+            _, diag = run_evolution(
+                np.array([0]), queries, schema,
+                n_records=20, n_rounds=1, seed=0,
+                rho=0.5, max_retries=1, retry_rho_decay=0.5,
+                update_mode="single_block", epsilon=0.0,
+            )
+        finally:
+            evolution_module.evolve_step_single_block = orig
+
+        assert diag["accept_history"] == [True]
+        assert diag["accepted_attempt_history"] == [2]  # 第 2 次尝试被接受
+        # 只记被接受那次(2)，不是两次相加(9)也不是首次(7)
+        assert diag["empty_copy_set_count_history"] == [2]
+
+    def test_all_rejected_records_last_attempt(self):
+        """全部拒绝：历史记最后一次失败尝试的 empty_copy_set_count。"""
+        schema, queries = self._schema_queries()
+        # target=20 个 "a"，但每次都产出全 "b"(count_a=0) → 恒不改善被拒。
+        empties = [5, 4, 3]  # 三次尝试(初试+2重试)各自的 empty_copy_set_count
+        calls = {"i": 0}
+
+        def fake(current, donors, schema, rho, epsilon, rng):
+            empty = empties[calls["i"]]
+            calls["i"] += 1
+            proposal = pd.DataFrame({"x": ["b"] * len(current)})
+            return proposal, {
+                "participation_rate": 1.0, "copy_attempt_rate": 1.0,
+                "mutation_attempt_rate": 0.0, "accepted_change_rate": 1.0,
+                "empty_copy_set_count": empty,
+            }
+
+        orig = evolution_module.evolve_step_single_block
+        evolution_module.evolve_step_single_block = fake
+        try:
+            _, diag = run_evolution(
+                np.array([20]), queries, schema,
+                n_records=20, n_rounds=1, seed=0,
+                rho=0.5, max_retries=2, retry_rho_decay=0.5,
+                update_mode="single_block", epsilon=0.0,
+            )
+        finally:
+            evolution_module.evolve_step_single_block = orig
+
+        assert diag["accept_history"] == [False]
+        assert diag["accepted_attempt_history"] == [0]  # 全拒
+        assert diag["proposal_attempts_history"] == [3]
+        # 记最后一次失败尝试(3)，不是首次(5)也不是三次相加(12)
+        assert diag["empty_copy_set_count_history"] == [3]
