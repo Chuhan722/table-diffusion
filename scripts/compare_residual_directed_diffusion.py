@@ -163,6 +163,26 @@ def _run_one(
         for value in diagnostics["copy_probability_entropy_history"]
         if value is not None
     ]
+    copy_probability_kl = [
+        value
+        for value in diagnostics["copy_probability_kl_history"]
+        if value is not None
+    ]
+    drift_improvement = [
+        value
+        for value in diagnostics[
+            "additive_copy_drift_improvement_history"
+        ]
+        if value is not None
+    ]
+    drift_headroom = [
+        value
+        for value in diagnostics[
+            "available_additive_copy_drift_improvement_history"
+        ]
+        if value is not None
+    ]
+    total_drift_headroom = float(np.sum(drift_headroom))
     result = {
         "seed": int(seed),
         "enabled": bool(enabled),
@@ -192,6 +212,11 @@ def _run_one(
         ),
         "copy_probability_entropy": _mean_or_zero(
             copy_probability_entropy
+        ),
+        "copy_probability_kl": _mean_or_zero(copy_probability_kl),
+        "additive_copy_drift_utilization": (
+            float(np.sum(drift_improvement)) / total_drift_headroom
+            if total_drift_headroom > 0.0 else 0.0
         ),
         "elapsed_sec": float(diagnostics["elapsed_sec"]),
         "direction_evaluation_elapsed_sec": float(
@@ -309,6 +334,8 @@ def main():
         "negative_direction_copy_probability",
         "positive_direction_copy_probability",
         "copy_probability_entropy",
+        "copy_probability_kl",
+        "additive_copy_drift_utilization",
         "elapsed_sec",
         "direction_evaluation_elapsed_sec",
         "direction_reference_scale",
