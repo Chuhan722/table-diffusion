@@ -95,12 +95,7 @@ def tilted_copy_probabilities(
     return probs
 
 
-def bernoulli_entropy(probabilities: np.ndarray) -> np.ndarray:
-    """返回 Bernoulli 转移概率的逐元素熵（自然对数，单位 nat）。
-
-    ``p=0/1`` 的熵按连续极限定义为 0；``p=0.5`` 达到最大值 ``log(2)``。
-    本函数只提供诊断，不参与方向核的采样或接受决策。
-    """
+def _validate_probability_array(probabilities: np.ndarray) -> np.ndarray:
     raw_probabilities = np.asarray(probabilities)
     if raw_probabilities.dtype.kind not in "iuf":
         raise ValueError("probabilities 必须是 [0, 1] 内的有限数值数组")
@@ -111,6 +106,29 @@ def bernoulli_entropy(probabilities: np.ndarray) -> np.ndarray:
         or np.any(probs > 1.0)
     ):
         raise ValueError("probabilities 必须是 [0, 1] 内的有限数值数组")
+    return probs
+
+
+def _validate_probability_scalar(value: float, name: str) -> float:
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not np.isfinite(value)
+        or not 0.0 <= value <= 1.0
+    ):
+        raise ValueError(
+            f"{name} 必须是 [0, 1] 内的有限数值，得到 {value!r}"
+        )
+    return float(value)
+
+
+def bernoulli_entropy(probabilities: np.ndarray) -> np.ndarray:
+    """返回 Bernoulli 转移概率的逐元素熵（自然对数，单位 nat）。
+
+    ``p=0/1`` 的熵按连续极限定义为 0；``p=0.5`` 达到最大值 ``log(2)``。
+    本函数只提供诊断，不参与方向核的采样或接受决策。
+    """
+    probs = _validate_probability_array(probabilities)
 
     entropy = np.zeros_like(probs, dtype=float)
     interior = (probs > 0.0) & (probs < 1.0)
@@ -120,6 +138,98 @@ def bernoulli_entropy(probabilities: np.ndarray) -> np.ndarray:
         + (1.0 - interior_probs) * np.log1p(-interior_probs)
     )
     return entropy
+
+
+def bernoulli_kl(
+    probabilities: np.ndarray,
+    reference_probability: float,
+) -> np.ndarray:
+    """返回逐元素 ``KL(Ber(p) || Ber(reference_probability))``。
+
+    参考概率允许取 0/1；此时不在参考分布支持集内的 ``p`` 返回正无穷。
+    本函数只提供扩散核相对历史 Bernoulli 核的诊断，不参与采样或接受决策。
+    """
+    reference = _validate_probability_scalar(
+        reference_probability, "reference_probability"
+    )
+    probs = _validate_probability_array(probabilities)
+    divergence = np.zeros_like(probs, dtype=float)
+
+    if reference == 0.0:
+        divergence[probs > 0.0] = np.inf
+        return divergence
+    if reference == 1.0:
+        divergence[probs < 1.0] = np.inf
+        return divergence
+
+    positive = probs > 0.0
+    below_one = probs < 1.0
+    divergence[positive] += probs[positive] * (
+        np.log(probs[positive]) - np.log(reference)
+    )
+    divergence[below_one] += (1.0 - probs[below_one]) * (
+        np.log1p(-probs[below_one]) - np.log1p(-reference)
+    )
+    # KL 理论上非负；消除 p 极接近 reference 时抵消产生的负零/舍入微差。
+    np.maximum(divergence, 0.0, out=divergence)
+    return divergence
+
+
+def additive_copy_drift_diagnostics(
+    direction_scores: np.ndarray,
+    copy_probabilities: np.ndarray,
+    baseline_probability: float,
+) -> Dict[str, Optional[float]]:
+    """汇总独立单块近似下的复制漂移及其符号极限利用率。
+
+    对 active 单块方向 ``d_i``，历史核的加性一阶漂移是
+    ``sum(eta * d_i)``，当前核是 ``sum(p_i * d_i)``。允许每个正方向必复制、
+    每个负方向不复制时，符号极限为 ``sum(max(d_i, 0))``。利用率定义为当前核
+    相对历史核取得的漂移改善，除以历史核到符号极限的全部可用改善。
+
+    该量只评价条件于参与记录的独立复制决策；不含记录参与率、变异、多块合取
+    交互或二次步幅项，因此不是原始 proposal 精确收益的上界。空数组或全部方向
+    为零时，利用率没有定义并返回 ``None``。当 baseline_probability 为 0/1 时，
+    符号极限只是外部参照，并非保持端点支持集的指数倾斜核可达状态。
+    """
+    raw_scores = np.asarray(direction_scores)
+    if raw_scores.dtype.kind not in "iuf":
+        raise ValueError("direction_scores 必须是有限数值数组")
+    scores = raw_scores.astype(float, copy=False)
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("direction_scores 必须是有限数值数组")
+
+    probabilities = _validate_probability_array(copy_probabilities)
+    if probabilities.shape != scores.shape:
+        raise ValueError(
+            "copy_probabilities 必须与 direction_scores 形状一致，"
+            f"得到 {probabilities.shape} 与 {scores.shape}"
+        )
+
+    eta = _validate_probability_scalar(
+        baseline_probability, "reference_probability"
+    )
+    positive_scores = np.maximum(scores, 0.0)
+    negative_scores = np.minimum(scores, 0.0)
+    baseline_drift = float(np.sum(eta * scores))
+    expected_drift = float(np.sum(probabilities * scores))
+    sign_limit_drift = float(np.sum(positive_scores))
+    available_improvement = float(np.sum(
+        (1.0 - eta) * positive_scores - eta * negative_scores
+    ))
+    improvement = float(np.sum((probabilities - eta) * scores))
+    utilization = (
+        float(improvement / available_improvement)
+        if available_improvement > 0.0 else None
+    )
+    return {
+        "baseline_additive_drift": baseline_drift,
+        "expected_additive_drift": expected_drift,
+        "sign_limit_additive_drift": sign_limit_drift,
+        "additive_drift_improvement": improvement,
+        "available_additive_drift_improvement": available_improvement,
+        "additive_drift_utilization": utilization,
+    }
 
 
 def compute_copy_direction_scores(

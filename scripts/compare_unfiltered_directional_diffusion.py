@@ -17,7 +17,9 @@ import numpy as np
 from scipy import stats
 
 from table_diffevo.directional_diffusion import (
+    additive_copy_drift_diagnostics,
     bernoulli_entropy,
+    bernoulli_kl,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -37,6 +39,7 @@ SCHEMA_PATH = "configs/test_300x10/schema.yaml"
 QUERY_PATH = "configs/test_300x10/measured_50query.json"
 MARGINALS_PATH = "configs/test_300x10/init_marginals.json"
 N_RECORDS = 300
+ETA = 0.5
 
 
 def _name(strength):
@@ -59,6 +62,9 @@ def _run_one(
     negative_copy_probability_history = []
     positive_copy_probability_history = []
     copy_probability_entropy_history = []
+    copy_probability_kl_history = []
+    additive_drift_improvement_history = []
+    available_additive_drift_improvement_history = []
     direction_reference_scale = None
     start = time.perf_counter()
 
@@ -135,11 +141,29 @@ def _run_one(
                 else (0.0 if normalization == "initial_rms" else strength)
             )
             copy_probabilities = tilted_copy_probabilities(
-                0.5, active_directions, effective_strength
+                ETA, active_directions, effective_strength
             )
             if len(copy_probabilities):
                 copy_probability_entropy_history.append(
                     float(np.mean(bernoulli_entropy(copy_probabilities)))
+                )
+                copy_probability_kl_history.append(
+                    float(np.mean(
+                        bernoulli_kl(copy_probabilities, ETA)
+                    ))
+                )
+                drift_diagnostics = additive_copy_drift_diagnostics(
+                    active_directions,
+                    copy_probabilities,
+                    ETA,
+                )
+                additive_drift_improvement_history.append(
+                    drift_diagnostics["additive_drift_improvement"]
+                )
+                available_additive_drift_improvement_history.append(
+                    drift_diagnostics[
+                        "available_additive_drift_improvement"
+                    ]
                 )
             negative = active_directions < 0.0
             positive = active_directions > 0.0
@@ -161,7 +185,7 @@ def _run_one(
             donors,
             schema,
             rho=0.01,
-            eta=0.5,
+            eta=ETA,
             mu=0.01,
             rng=rng,
             **direction_kwargs,
@@ -197,6 +221,9 @@ def _run_one(
     gains = np.asarray(gain_history, dtype=float)
     positive_gains = gains[gains > 0.0]
     negative_gains = gains[gains < 0.0]
+    total_available_drift = float(np.sum(
+        available_additive_drift_improvement_history
+    ))
     label = _name(strength)
     result = {
         "seed": int(seed),
@@ -227,6 +254,16 @@ def _run_one(
         "copy_probability_entropy": (
             float(np.mean(copy_probability_entropy_history))
             if copy_probability_entropy_history else None
+        ),
+        "copy_probability_kl": (
+            float(np.mean(copy_probability_kl_history))
+            if copy_probability_kl_history else None
+        ),
+        "additive_copy_drift_utilization": (
+            float(np.sum(additive_drift_improvement_history))
+            / total_available_drift
+            if total_available_drift > 0.0
+            else None
         ),
         "direction_reference_scale": direction_reference_scale,
         "mean_changed_cells": (

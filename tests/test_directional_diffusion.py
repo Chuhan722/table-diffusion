@@ -5,7 +5,9 @@ import pandas as pd
 import pytest
 
 from table_diffevo.directional_diffusion import (
+    additive_copy_drift_diagnostics,
     bernoulli_entropy,
+    bernoulli_kl,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -250,6 +252,111 @@ class TestContinuousCopyKernel:
         with pytest.raises(ValueError, match="probabilities"):
             bernoulli_entropy(probabilities)
 
+    def test_bernoulli_kl_matches_entropy_identity_at_half_reference(self):
+        probabilities = np.array([0.0, 0.2, 0.5, 0.8, 1.0])
+
+        divergence = bernoulli_kl(probabilities, 0.5)
+
+        np.testing.assert_allclose(
+            divergence,
+            np.log(2.0) - bernoulli_entropy(probabilities),
+        )
+        assert divergence[2] == pytest.approx(0.0)
+
+    def test_bernoulli_kl_handles_reference_support_endpoints(self):
+        probabilities = np.array([0.0, 0.25, 1.0])
+
+        zero_reference = bernoulli_kl(probabilities, 0.0)
+        one_reference = bernoulli_kl(probabilities, 1.0)
+
+        assert zero_reference[0] == 0.0
+        assert np.all(np.isinf(zero_reference[1:]))
+        assert one_reference[-1] == 0.0
+        assert np.all(np.isinf(one_reference[:-1]))
+
+    @pytest.mark.parametrize(
+        "probabilities,reference,match",
+        [
+            (np.array([-0.1]), 0.5, "probabilities"),
+            (np.array([0.5]), -0.1, "reference_probability"),
+            (np.array([0.5]), np.nan, "reference_probability"),
+            (np.array([0.5]), True, "reference_probability"),
+        ],
+    )
+    def test_bernoulli_kl_rejects_invalid_inputs(
+        self, probabilities, reference, match
+    ):
+        with pytest.raises(ValueError, match=match):
+            bernoulli_kl(probabilities, reference)
+
+    def test_additive_drift_utilization_runs_from_baseline_to_sign_limit(self):
+        scores = np.array([-2.0, 0.0, 1.0, 3.0])
+        baseline = tilted_copy_probabilities(0.5, scores, strength=0.0)
+        finite = tilted_copy_probabilities(0.5, scores, strength=1.0)
+        near_limit = tilted_copy_probabilities(0.5, scores, strength=100.0)
+
+        baseline_diag = additive_copy_drift_diagnostics(
+            scores, baseline, 0.5
+        )
+        finite_diag = additive_copy_drift_diagnostics(scores, finite, 0.5)
+        limit_diag = additive_copy_drift_diagnostics(
+            scores, near_limit, 0.5
+        )
+
+        assert baseline_diag["baseline_additive_drift"] == pytest.approx(1.0)
+        assert baseline_diag["sign_limit_additive_drift"] == pytest.approx(4.0)
+        assert baseline_diag["additive_drift_utilization"] == pytest.approx(0.0)
+        assert finite_diag["additive_drift_improvement"] == pytest.approx(
+            finite_diag["expected_additive_drift"]
+            - finite_diag["baseline_additive_drift"]
+        )
+        assert 0.0 < finite_diag["additive_drift_utilization"] < 1.0
+        assert limit_diag["additive_drift_utilization"] == pytest.approx(1.0)
+
+    def test_logistic_path_has_monotone_drift_and_kl_frontiers(self):
+        scores = np.array([-3.0, -0.4, 0.2, 1.5, 4.0])
+        strengths = (0.0, 0.25, 1.0, 4.0, 16.0)
+        probabilities = [
+            tilted_copy_probabilities(0.3, scores, strength)
+            for strength in strengths
+        ]
+        drifts = [
+            additive_copy_drift_diagnostics(scores, values, 0.3)[
+                "expected_additive_drift"
+            ]
+            for values in probabilities
+        ]
+        divergences = [
+            float(np.mean(bernoulli_kl(values, 0.3)))
+            for values in probabilities
+        ]
+
+        assert np.all(np.diff(drifts) > 0.0)
+        assert np.all(np.diff(divergences) > 0.0)
+
+    def test_additive_drift_utilization_is_undefined_without_headroom(self):
+        diagnostics = additive_copy_drift_diagnostics(
+            np.zeros(3), np.full(3, 0.5), 0.5
+        )
+
+        assert diagnostics["available_additive_drift_improvement"] == 0.0
+        assert diagnostics["additive_drift_utilization"] is None
+
+    @pytest.mark.parametrize(
+        "scores,probabilities,eta,match",
+        [
+            (np.array([1.0]), np.array([0.5, 0.5]), 0.5, "形状"),
+            (np.array([np.nan]), np.array([0.5]), 0.5, "direction_scores"),
+            (np.array([1.0]), np.array([1.1]), 0.5, "probabilities"),
+            (np.array([1.0]), np.array([0.5]), 1.1, "reference_probability"),
+        ],
+    )
+    def test_additive_drift_diagnostics_rejects_invalid_inputs(
+        self, scores, probabilities, eta, match
+    ):
+        with pytest.raises(ValueError, match=match):
+            additive_copy_drift_diagnostics(scores, probabilities, eta)
+
     def test_rms_scale_is_stable_for_empty_zero_and_extreme_values(self):
         assert direction_rms_scale(np.array([])) == 0.0
         assert direction_rms_scale(np.zeros((2, 3))) == 0.0
@@ -482,6 +589,23 @@ class TestEvolutionIntegration:
             endpoint_diag["copy_probability_entropy_history"]
             == baseline_diag["copy_probability_entropy_history"]
         )
+        assert endpoint_diag["copy_probability_kl_history"] == (
+            baseline_diag["copy_probability_kl_history"]
+        )
+        assert all(
+            value == 0.0
+            for value in endpoint_diag[
+                "additive_copy_drift_improvement_history"
+            ]
+            if value is not None
+        )
+        assert all(
+            value == 0.0
+            for value in endpoint_diag[
+                "additive_copy_drift_utilization_history"
+            ]
+            if value is not None
+        )
 
     def test_initial_rms_scale_is_fixed_after_first_nonzero_round(self):
         schema = load_schema("configs/test_300x10/schema.yaml")
@@ -525,6 +649,26 @@ class TestEvolutionIntegration:
         ]
         assert entropy
         assert all(0.0 < value <= np.log(2.0) for value in entropy)
+        divergence = [
+            value
+            for value in diagnostics["copy_probability_kl_history"]
+            if value is not None
+        ]
+        assert divergence
+        assert all(value > 0.0 for value in divergence)
+        np.testing.assert_allclose(
+            divergence,
+            np.log(2.0) - np.asarray(entropy),
+        )
+        utilization = [
+            value
+            for value in diagnostics[
+                "additive_copy_drift_utilization_history"
+            ]
+            if value is not None
+        ]
+        assert utilization
+        assert all(0.0 < value < 1.0 for value in utilization)
 
     def test_raw_proposal_gain_decomposition_is_exact(self):
         schema = load_schema("configs/test_300x10/schema.yaml")
@@ -619,6 +763,8 @@ class TestEvolutionIntegration:
         assert diagnostics["direction_evaluation_count"] == 0
         assert diagnostics["direction_reference_scale"] is None
         assert diagnostics["copy_probability_entropy_history"] == []
+        assert diagnostics["copy_probability_kl_history"] == []
+        assert diagnostics["additive_copy_drift_utilization_history"] == []
 
     def test_retry_reuses_same_direction_matrix(self, monkeypatch):
         schema = Schema([

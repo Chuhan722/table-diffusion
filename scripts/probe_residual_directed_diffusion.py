@@ -16,7 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from table_diffevo.directional_diffusion import (
+    additive_copy_drift_diagnostics,
     bernoulli_entropy,
+    bernoulli_kl,
     compute_copy_direction_scores,
     direction_rms_scale,
     tilted_copy_probabilities,
@@ -96,6 +98,32 @@ def _paired_gain_summary(candidate_rows, baseline_rows):
         "losses": int(np.sum(differences < 0.0)),
         "values": differences.tolist(),
     }
+
+
+def _summarize_additive_drift(rows):
+    keys = (
+        "baseline_additive_drift",
+        "expected_additive_drift",
+        "sign_limit_additive_drift",
+        "additive_drift_improvement",
+        "available_additive_drift_improvement",
+    )
+    summary = {
+        key: float(np.mean([row[key] for row in rows]))
+        for key in keys
+    }
+    available = float(np.sum([
+        row["available_additive_drift_improvement"]
+        for row in rows
+    ]))
+    improvement = float(np.sum([
+        row["additive_drift_improvement"]
+        for row in rows
+    ]))
+    summary["additive_drift_utilization"] = (
+        improvement / available if available > 0.0 else None
+    )
+    return summary
 
 
 def _make_baseline_state(
@@ -200,6 +228,12 @@ def _probe_state(
     direction_entropy = {
         _strength_name(value): [] for value in strengths
     }
+    direction_kl = {
+        _strength_name(value): [] for value in strengths
+    }
+    additive_drift = {
+        _strength_name(value): [] for value in strengths
+    }
 
     for proposal_index in range(proposals):
         donor_rng = np.random.default_rng(
@@ -269,6 +303,14 @@ def _probe_state(
             if len(probabilities):
                 direction_entropy[name].append(
                     float(np.mean(bernoulli_entropy(probabilities)))
+                )
+                direction_kl[name].append(
+                    float(np.mean(bernoulli_kl(probabilities, ETA)))
+                )
+                additive_drift[name].append(
+                    additive_copy_drift_diagnostics(
+                        active, probabilities, ETA
+                    )
                 )
             for label, mask in (
                 ("negative_probability", active < 0.0),
@@ -343,6 +385,14 @@ def _probe_state(
         "mean_copy_entropy": {
             name: (float(np.mean(values)) if values else None)
             for name, values in direction_entropy.items()
+        },
+        "mean_copy_kl_to_baseline": {
+            name: (float(np.mean(values)) if values else None)
+            for name, values in direction_kl.items()
+        },
+        "additive_copy_drift_frontier": {
+            name: (_summarize_additive_drift(values) if values else None)
+            for name, values in additive_drift.items()
         },
     }
     print(
