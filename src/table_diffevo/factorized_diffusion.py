@@ -5,6 +5,7 @@
 mask 分布。它不执行正收益门槛、方向 argmax、top-k 或整代 proposal 接受检查。
 """
 
+import copy
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,7 +15,7 @@ import pandas as pd
 
 from table_diffevo.directional_diffusion import tilted_copy_probabilities
 from table_diffevo.joint_diffusion import enumerate_copy_masks
-from table_diffevo.queries import eval_condition
+from table_diffevo.queries import _coerce_to_column_type, eval_condition
 from table_diffevo.schema import Schema
 
 
@@ -44,6 +45,56 @@ class SparseMaskEnergy:
     @property
     def n_active_attributes(self) -> int:
         return len(self.active_attributes)
+
+
+@dataclass(frozen=True)
+class _CompiledMaskCondition:
+    """一个已解析且可在整批 recipient-donor 上评价的查询条件。"""
+
+    attribute_index: int
+    attribute: str
+    operator: str
+    value: Any = None
+    lower: Any = None
+    upper: Any = None
+
+
+@dataclass(frozen=True)
+class _CompiledMaskQuery:
+    """一个查询的条件索引和去重属性索引，均保持原始查询语义。"""
+
+    condition_indices: Tuple[int, ...]
+    attribute_indices: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CompiledMaskWorkload:
+    """只包含公开 schema/workload 静态结构的显式编译对象。
+
+    该对象不缓存 target、residual、recipient、donor 或查询结果。调用方负责它的
+    生命周期，并可在多轮更新间显式复用；更新入口会拒绝 schema、查询或最高阶数
+    不一致的对象。
+    """
+
+    attribute_names: Tuple[str, ...]
+    max_factor_order: int
+    n_queries: int
+    n_unique_conditions: int
+    _query_signature: Tuple[Any, ...]
+    _conditions: Tuple[_CompiledMaskCondition, ...]
+    _queries: Tuple[_CompiledMaskQuery, ...]
+    _local_masks: Tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True)
+class _PreparedMaskEnergyBatch:
+    """一次更新中批量评价后的动态条件真值与残差。"""
+
+    compiled_workload: CompiledMaskWorkload
+    active_attribute_indices: Tuple[np.ndarray, ...]
+    recipient_condition_truth: np.ndarray
+    donor_condition_truth: np.ndarray
+    weighted_residual: np.ndarray
 
 
 def _validate_nonnegative_integer(value: int, name: str) -> int:
@@ -147,6 +198,462 @@ def _stable_sigmoid(logits: np.ndarray) -> np.ndarray:
     exponential = np.exp(values[~positive])
     result[~positive] = exponential / (1.0 + exponential)
     return result
+
+
+def _freeze_signature_value(value: Any) -> Any:
+    """把查询操作数转成稳定、可比较且保留类型的结构签名。"""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None:
+        return ("none",)
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float):
+        if np.isnan(value):
+            return ("float", "nan")
+        if np.isposinf(value):
+            return ("float", "+inf")
+        if np.isneginf(value):
+            return ("float", "-inf")
+        return ("float", value.hex())
+    if isinstance(value, str):
+        return ("str", value)
+    if isinstance(value, (list, tuple)):
+        return (
+            type(value).__name__,
+            tuple(_freeze_signature_value(item) for item in value),
+        )
+    if isinstance(value, dict):
+        items = [
+            (
+                _freeze_signature_value(key),
+                _freeze_signature_value(item),
+            )
+            for key, item in value.items()
+        ]
+        return ("dict", tuple(sorted(items, key=repr)))
+    return (
+        type(value).__module__,
+        type(value).__qualname__,
+        repr(value),
+    )
+
+
+def _condition_structure(
+    condition: Dict[str, Any],
+    *,
+    query_index: int,
+    condition_index: int,
+    attribute_position: Dict[str, int],
+) -> Tuple[int, str, str, Any, Any, Any, Tuple[Any, ...]]:
+    """校验并解析一个受支持条件，同时生成兼容性签名。"""
+    if not isinstance(condition, dict):
+        raise ValueError(
+            f"queries[{query_index}].conditions[{condition_index}] "
+            "必须是字典"
+        )
+    attr = condition.get("attribute")
+    try:
+        attr_index = attribute_position[attr]
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"queries[{query_index}] 包含未知属性 {attr!r}"
+        ) from None
+    operator = condition.get("operator")
+    if operator in ("==", ">="):
+        if "value" not in condition:
+            raise ValueError(
+                f"queries[{query_index}].conditions[{condition_index}] "
+                f"的 {operator!r} 算子缺少 value"
+            )
+        value = condition["value"]
+        lower = None
+        upper = None
+        operands = (_freeze_signature_value(value),)
+    elif operator == "between":
+        missing = [
+            name for name in ("lower", "upper") if name not in condition
+        ]
+        if missing:
+            raise ValueError(
+                f"queries[{query_index}].conditions[{condition_index}] "
+                f"的 'between' 算子缺少 {missing}"
+            )
+        value = None
+        lower = condition["lower"]
+        upper = condition["upper"]
+        operands = (
+            _freeze_signature_value(lower),
+            _freeze_signature_value(upper),
+        )
+    else:
+        raise ValueError(
+            f"queries[{query_index}].conditions[{condition_index}] "
+            f"包含不支持的操作符 {operator!r}"
+        )
+    signature = (attr_index, operator, *operands)
+    return attr_index, attr, operator, value, lower, upper, signature
+
+
+def _mask_workload_signature(
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    maximum_order: int,
+) -> Tuple[Tuple[str, ...], Tuple[Any, ...]]:
+    """生成编译对象的 schema/workload 兼容性签名。"""
+    attr_names = tuple(schema.attribute_names())
+    if len(set(attr_names)) != len(attr_names):
+        raise ValueError("schema 属性名不得重复")
+    attribute_position = {
+        attr: index for index, attr in enumerate(attr_names)
+    }
+    query_signatures = []
+    for query_index, query in enumerate(queries):
+        if not isinstance(query, dict):
+            raise ValueError(f"queries[{query_index}] 必须是字典")
+        conditions = query.get("conditions")
+        if not isinstance(conditions, list):
+            raise ValueError(
+                f"queries[{query_index}].conditions 必须是列表"
+            )
+        signatures = []
+        for condition_index, condition in enumerate(conditions):
+            *_, signature = _condition_structure(
+                condition,
+                query_index=query_index,
+                condition_index=condition_index,
+                attribute_position=attribute_position,
+            )
+            signatures.append(signature)
+        query_signatures.append(tuple(signatures))
+    return attr_names, (maximum_order, tuple(query_signatures))
+
+
+def compile_mask_workload(
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    *,
+    max_factor_order: int = 3,
+) -> CompiledMaskWorkload:
+    """预编译只依赖公开 schema 和固定查询 workload 的静态结构。"""
+    maximum_order = _validate_nonnegative_integer(
+        max_factor_order, "max_factor_order"
+    )
+    if maximum_order > 8:
+        raise ValueError("max_factor_order 不得超过绝对护栏 8")
+    attr_names, query_signature = _mask_workload_signature(
+        schema, queries, maximum_order
+    )
+    attribute_position = {
+        attr: index for index, attr in enumerate(attr_names)
+    }
+    compiled_conditions = []
+    condition_lookup = {}
+    compiled_queries = []
+    for query_index, query in enumerate(queries):
+        condition_indices = []
+        query_attributes = []
+        for condition_index, condition in enumerate(query["conditions"]):
+            (
+                attr_index,
+                attr,
+                operator,
+                value,
+                lower,
+                upper,
+                condition_signature,
+            ) = _condition_structure(
+                condition,
+                query_index=query_index,
+                condition_index=condition_index,
+                attribute_position=attribute_position,
+            )
+            compiled_index = condition_lookup.get(condition_signature)
+            if compiled_index is None:
+                compiled_index = len(compiled_conditions)
+                condition_lookup[condition_signature] = compiled_index
+                compiled_conditions.append(_CompiledMaskCondition(
+                    attribute_index=attr_index,
+                    attribute=attr,
+                    operator=operator,
+                    value=copy.deepcopy(value),
+                    lower=copy.deepcopy(lower),
+                    upper=copy.deepcopy(upper),
+                ))
+            condition_indices.append(compiled_index)
+            if attr_index not in query_attributes:
+                query_attributes.append(attr_index)
+        compiled_queries.append(_CompiledMaskQuery(
+            condition_indices=tuple(condition_indices),
+            attribute_indices=tuple(query_attributes),
+        ))
+
+    local_masks = []
+    for order in range(maximum_order + 1):
+        masks = enumerate_copy_masks(
+            order, max_active_attributes=maximum_order
+        )
+        masks.setflags(write=False)
+        local_masks.append(masks)
+    return CompiledMaskWorkload(
+        attribute_names=attr_names,
+        max_factor_order=maximum_order,
+        n_queries=len(queries),
+        n_unique_conditions=len(compiled_conditions),
+        _query_signature=query_signature,
+        _conditions=tuple(compiled_conditions),
+        _queries=tuple(compiled_queries),
+        _local_masks=tuple(local_masks),
+    )
+
+
+def _validate_compiled_workload_match(
+    compiled_workload: CompiledMaskWorkload,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    maximum_order: int,
+) -> None:
+    if not isinstance(compiled_workload, CompiledMaskWorkload):
+        raise ValueError(
+            "compiled_workload 必须由 compile_mask_workload 创建"
+        )
+    attr_names, query_signature = _mask_workload_signature(
+        schema, queries, maximum_order
+    )
+    if (
+        compiled_workload.attribute_names != attr_names
+        or compiled_workload.max_factor_order != maximum_order
+        or compiled_workload._query_signature != query_signature
+    ):
+        raise ValueError(
+            "compiled_workload 与当前 schema、queries 或 "
+            "max_factor_order 不匹配"
+        )
+
+
+def _evaluate_compiled_condition(
+    pair: pd.DataFrame,
+    condition: _CompiledMaskCondition,
+) -> np.ndarray:
+    """用与 ``eval_condition`` 相同的类型对齐语义批量评价一个条件。"""
+    column = pair[condition.attribute]
+    if condition.operator == "==":
+        value = _coerce_to_column_type(column, condition.value)
+        truth = column == value
+    elif condition.operator == ">=":
+        truth = column >= condition.value
+    else:
+        truth = (
+            (column >= condition.lower)
+            & (column <= condition.upper)
+        )
+    return truth.to_numpy(dtype=bool)
+
+
+def _prepare_sparse_mask_energy_batch(
+    recipients: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    compiled_workload: CompiledMaskWorkload,
+    residual: np.ndarray,
+    *,
+    weights: Optional[np.ndarray] = None,
+) -> _PreparedMaskEnergyBatch:
+    """一次批量评价动态条件真值，不保留输入表或跨轮状态。"""
+    if not isinstance(compiled_workload, CompiledMaskWorkload):
+        raise ValueError(
+            "compiled_workload 必须由 compile_mask_workload 创建"
+        )
+    if len(recipients) != len(donors):
+        raise ValueError(
+            f"recipients 行数 ({len(recipients)}) 与 donors 行数 "
+            f"({len(donors)}) 不一致"
+        )
+    attr_names = tuple(schema.attribute_names())
+    if compiled_workload.attribute_names != attr_names:
+        raise ValueError("compiled_workload 与当前 schema 不匹配")
+    missing_recipients = [
+        name for name in attr_names if name not in recipients.columns
+    ]
+    missing_donors = [
+        name for name in attr_names if name not in donors.columns
+    ]
+    if missing_recipients or missing_donors:
+        raise ValueError(
+            "recipients/donors 缺少 schema 属性列："
+            f"recipients={missing_recipients}, donors={missing_donors}"
+        )
+
+    residual_values = _validate_numeric_vector(
+        residual, compiled_workload.n_queries, "residual"
+    )
+    if weights is None:
+        weight_values = np.ones(compiled_workload.n_queries, dtype=float)
+    else:
+        weight_values = _validate_numeric_vector(
+            weights, compiled_workload.n_queries, "weights"
+        )
+    with np.errstate(over="ignore", invalid="ignore"):
+        weighted_residual = residual_values * weight_values
+    if not np.all(np.isfinite(weighted_residual)):
+        raise ValueError("residual * weights 超出 float64 可表示范围")
+
+    recipients_reset = recipients.reset_index(drop=True)
+    donors_reset = donors.reset_index(drop=True)
+    selected_columns = list(attr_names)
+    recipient_values = recipients_reset.loc[:, selected_columns].to_numpy()
+    donor_values = donors_reset.loc[:, selected_columns].to_numpy()
+    differs = recipient_values != donor_values
+    active_attribute_indices = tuple(
+        np.flatnonzero(differs[row_index]).astype(np.intp, copy=False)
+        for row_index in range(len(recipients_reset))
+    )
+
+    n_rows = len(recipients_reset)
+    n_conditions = compiled_workload.n_unique_conditions
+    condition_truth = np.empty((2 * n_rows, n_conditions), dtype=bool)
+    if n_rows > 0 and n_conditions > 0:
+        pair = pd.concat(
+            [recipients_reset, donors_reset], ignore_index=True
+        )
+        for condition_index, condition in enumerate(
+            compiled_workload._conditions
+        ):
+            condition_truth[:, condition_index] = (
+                _evaluate_compiled_condition(pair, condition)
+            )
+    condition_truth.setflags(write=False)
+    weighted_residual.setflags(write=False)
+    for indices in active_attribute_indices:
+        indices.setflags(write=False)
+    return _PreparedMaskEnergyBatch(
+        compiled_workload=compiled_workload,
+        active_attribute_indices=active_attribute_indices,
+        recipient_condition_truth=condition_truth[:n_rows],
+        donor_condition_truth=condition_truth[n_rows:],
+        weighted_residual=weighted_residual,
+    )
+
+
+def _build_sparse_mask_energy_from_batch(
+    prepared: _PreparedMaskEnergyBatch,
+    row_index: int,
+) -> SparseMaskEnergy:
+    """从已批量评价的条件真值构造一条记录的稀疏能量。"""
+    compiled = prepared.compiled_workload
+    active_attribute_indices = prepared.active_attribute_indices[row_index]
+    active_attributes = tuple(
+        compiled.attribute_names[index]
+        for index in active_attribute_indices
+    )
+    active_position = {
+        int(attribute_index): position
+        for position, attribute_index in enumerate(active_attribute_indices)
+    }
+    aggregated = {}
+    n_active_queries = 0
+    max_active_query_order = 0
+    for query_index, query in enumerate(compiled._queries):
+        scope = tuple(sorted(
+            active_position[attribute_index]
+            for attribute_index in query.attribute_indices
+            if attribute_index in active_position
+        ))
+        order = len(scope)
+        if order == 0:
+            continue
+        if order > compiled.max_factor_order:
+            raise ValueError(
+                f"queries[{query_index}] 的活跃因子阶数 {order} "
+                f"超过 max_factor_order={compiled.max_factor_order}"
+            )
+        n_active_queries += 1
+        max_active_query_order = max(max_active_query_order, order)
+
+        local_masks = compiled._local_masks[order]
+        local_scope_position = {
+            active_index: position
+            for position, active_index in enumerate(scope)
+        }
+        query_mask = np.ones(len(local_masks), dtype=bool)
+        for condition_index in query.condition_indices:
+            condition = compiled._conditions[condition_index]
+            active_index = active_position.get(condition.attribute_index)
+            if active_index is None:
+                query_mask &= prepared.recipient_condition_truth[
+                    row_index, condition_index
+                ]
+            else:
+                selected = local_masks[
+                    :, local_scope_position[active_index]
+                ]
+                query_mask &= np.where(
+                    selected,
+                    prepared.donor_condition_truth[
+                        row_index, condition_index
+                    ],
+                    prepared.recipient_condition_truth[
+                        row_index, condition_index
+                    ],
+                )
+        values = (
+            query_mask.astype(float)
+            * prepared.weighted_residual[query_index]
+        )
+        values -= values[0]
+        if scope in aggregated:
+            aggregated[scope] += values
+        else:
+            aggregated[scope] = values
+
+    factors = []
+    for scope in sorted(aggregated, key=lambda item: (len(item), item)):
+        values = np.asarray(aggregated[scope], dtype=float)
+        if not np.all(np.isfinite(values)):
+            raise ValueError("聚合后的因子能量超出 float64 可表示范围")
+        values[0] = 0.0
+        if np.any(values != 0.0):
+            factors.append(MaskEnergyFactor(scope=scope, values=values))
+    factors_tuple = tuple(factors)
+    adjacency = [[] for _ in active_attributes]
+    for factor_index, factor in enumerate(factors_tuple):
+        for variable in factor.scope:
+            adjacency[variable].append(factor_index)
+    return SparseMaskEnergy(
+        active_attribute_indices=active_attribute_indices,
+        active_attributes=active_attributes,
+        factors=factors_tuple,
+        factors_by_variable=tuple(tuple(values) for values in adjacency),
+        n_queries=compiled.n_queries,
+        n_active_queries=n_active_queries,
+        max_active_query_order=max_active_query_order,
+    )
+
+
+def build_sparse_mask_energies_batch(
+    recipients: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    compiled_workload: CompiledMaskWorkload,
+    residual: np.ndarray,
+    *,
+    weights: Optional[np.ndarray] = None,
+) -> Tuple[SparseMaskEnergy, ...]:
+    """用显式编译对象批量评价条件并构造多条稀疏 mask 能量。"""
+    prepared = _prepare_sparse_mask_energy_batch(
+        recipients,
+        donors,
+        schema,
+        compiled_workload,
+        residual,
+        weights=weights,
+    )
+    return tuple(
+        _build_sparse_mask_energy_from_batch(prepared, row_index)
+        for row_index in range(len(recipients))
+    )
 
 
 def build_sparse_mask_energy(
@@ -609,6 +1116,7 @@ def evolve_step_factorized_gibbs(
     weights: Optional[np.ndarray] = None,
     max_factor_order: int = 3,
     gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    compiled_workload: Optional[CompiledMaskWorkload] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
 
@@ -617,7 +1125,9 @@ def evolve_step_factorized_gibbs(
     使用独立的 ``gibbs_rng``，因此增加 sweep 不会错位后续 donor、复制或变异随机
     流。``n_sweeps=0`` 不构造因子、不消费 ``gibbs_rng``，并精确退化到现有定向
     ``evolve_step``。非零 sweep 默认使用与现有方向核一致的 ``[-30, 30]`` 条件
-    logit 数值护栏；可通过 ``gibbs_logit_clip=None`` 显式关闭。
+    logit 数值护栏；可通过 ``gibbs_logit_clip=None`` 显式关闭。显式传入由
+    :func:`compile_mask_workload` 创建的 ``compiled_workload`` 时，只对参与且
+    recipient/donor 不同的记录批量评价查询条件；不传则保留旧逐行构造路径。
 
     返回的诊断只记录公开生成过程的工作量和墙钟，不评价 loss，也不参与更新决策。
     """
@@ -641,6 +1151,7 @@ def evolve_step_factorized_gibbs(
     )
     if maximum_order > 8:
         raise ValueError("max_factor_order 不得超过绝对护栏 8")
+    compiled_validation_elapsed = 0.0
     if len(current) != len(donors):
         raise ValueError(
             f"current 行数 ({len(current)}) 与 donors 行数 "
@@ -663,6 +1174,17 @@ def evolve_step_factorized_gibbs(
             if weights is None
             else _validate_numeric_vector(weights, len(queries), "weights")
         )
+        if compiled_workload is not None:
+            validation_start = time.perf_counter()
+            _validate_compiled_workload_match(
+                compiled_workload,
+                schema,
+                queries,
+                maximum_order,
+            )
+            compiled_validation_elapsed = (
+                time.perf_counter() - validation_start
+            )
     else:
         # 0 sweep 不使用查询或残差，保留与既有 evolve_step 相同的最小依赖边界。
         residual_values = residual
@@ -716,23 +1238,47 @@ def evolve_step_factorized_gibbs(
     factor_count = 0
     factor_table_entries = 0
     gibbs_microsteps = 0
+    factor_model_builds = 0
+    condition_evaluation_batches = 0
     if sweeps > 0:
-        for row_index in np.flatnonzero(participate):
-            active_indices = np.flatnonzero(differs[row_index])
-            n_active = len(active_indices)
-            if n_active == 0:
-                continue
+        gibbs_rows = np.flatnonzero(
+            participate & np.any(differs, axis=1)
+        )
+        if compiled_workload is not None and len(gibbs_rows) > 0:
             build_start = time.perf_counter()
-            model = build_sparse_mask_energy(
-                current_reset.iloc[[row_index]],
-                donors_reset.iloc[[row_index]],
+            prepared = _prepare_sparse_mask_energy_batch(
+                current_reset.iloc[gibbs_rows],
+                donors_reset.iloc[gibbs_rows],
                 schema,
-                queries,
+                compiled_workload,
                 residual_values,
                 weights=weight_values,
-                max_factor_order=maximum_order,
             )
             factor_build_elapsed += time.perf_counter() - build_start
+            condition_evaluation_batches = 1
+        else:
+            prepared = None
+
+        for batch_index, row_index in enumerate(gibbs_rows):
+            active_indices = np.flatnonzero(differs[row_index])
+            n_active = len(active_indices)
+            build_start = time.perf_counter()
+            if prepared is None:
+                model = build_sparse_mask_energy(
+                    current_reset.iloc[[row_index]],
+                    donors_reset.iloc[[row_index]],
+                    schema,
+                    queries,
+                    residual_values,
+                    weights=weight_values,
+                    max_factor_order=maximum_order,
+                )
+            else:
+                model = _build_sparse_mask_energy_from_batch(
+                    prepared, batch_index
+                )
+            factor_build_elapsed += time.perf_counter() - build_start
+            factor_model_builds += 1
             if not np.array_equal(
                 model.active_attribute_indices, active_indices
             ):
@@ -786,6 +1332,23 @@ def evolve_step_factorized_gibbs(
         "factor_count": factor_count,
         "factor_table_entries": factor_table_entries,
         "gibbs_microsteps": gibbs_microsteps,
+        "factor_builder": (
+            "not_used"
+            if sweeps == 0
+            else (
+                "compiled_batch"
+                if compiled_workload is not None
+                else "legacy_rowwise"
+            )
+        ),
+        "factor_model_builds": factor_model_builds,
+        "condition_evaluation_batches": condition_evaluation_batches,
+        "compiled_unique_conditions": (
+            compiled_workload.n_unique_conditions
+            if sweeps > 0 and compiled_workload is not None
+            else 0
+        ),
+        "compiled_validation_elapsed_sec": compiled_validation_elapsed,
         "factor_build_elapsed_sec": factor_build_elapsed,
         "gibbs_sample_elapsed_sec": gibbs_sample_elapsed,
     }
