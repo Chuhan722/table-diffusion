@@ -60,8 +60,11 @@ q_\beta(M)\propto q_0(M)\exp\{\beta U(M)\}.
 然后执行给定 sweep 数。于是：
 
 - 0 sweep 精确等于现有独立核，是明确 baseline；
-- 有限 `beta` 下每个 bit 的条件概率严格位于 `(0, 1)`，保留完整支持集；
-- 不截断 logit 时，随机扫描链以精确联合 `q_beta` 为平稳分布并满足细致平衡；
+- 实数数学中，有限 `beta` 下每个 bit 的条件概率严格位于 `(0, 1)`；
+- float64 实现默认沿用现有方向核的 `[-30, 30]` logit 护栏，避免有限输入因舍入或
+  中间乘法溢出变成精确 0/1；显式传入 `None` 才关闭该护栏；
+- 护栏未触发时，随机扫描链以精确联合 `q_beta` 为平稳分布并满足细致平衡；护栏
+  触发时应把它理解为保留数值支持的受控近似，不能继续声称目标分布逐项精确；
 - 该更新不要求每一步方向为正，也不保证单次 proposal 降低 loss；方向性来自连续
   Gibbs 倾斜，而不是接受筛选；
 - sweep 数控制计算量和对联合核的逼近程度，不应在生成时用真实数据或 loss 自适应
@@ -157,7 +160,9 @@ seed-state 共 1200 个冻结 proposal、3568 条活跃参与记录。稀疏因�
 
 正式原始输出：
 `outputs/factorized_gibbs/frozen_3seed_2state_200p_tau1_2_sweep0_8_a1681e7.json`。
-输出不提交 Git。
+其 SHA-256 为
+`c12f0741c8410983775ca6c9e199518f3f46eb7c65c91fbc3babfb26ad882334`；输出不提交
+Git。
 
 ## 5. 阶段 B：关闭整代接受的动力学
 
@@ -183,6 +188,8 @@ proposal 都无条件成为下一状态，最终当前表而非历史 best 表�
 - 设备：`gsd` Conda 环境、CUDA 卡 0；
 - 主 RNG 在两侧保持现有抽取顺序，额外 Gibbs 微步使用独立 RNG。逐种子记录主 RNG
   端点，要求全部一致；
+- 主随机流对齐不表示轨迹分叉后的 donor 下标仍相同：donor 概率依赖各自当前状态，
+  下标变化是候选动力学的下游结果；固定的是 donor 机制和随机流，不是实际样本；
 - 主终点：1000 轮后的最终当前 loss；同时报告 best 仅作诊断、每轮 gain 正负幅度、
   支持集唯一状态数、改变单元格、方向/因子/Gibbs 墙钟和因子工作量；
 - 相同轮数回答算法动力学，不冒充相同墙钟比较。
@@ -332,11 +339,24 @@ PYTHONPATH=src conda run -n qdte python \
 筛种子。冻结实验与动力学分别对应算法 commit `a1681e7` 和 `e586d62`；追加运行只在
 `102aa24` 增加预注册说明和只读报告字段，没有改变更新算法。
 
+四份正式输出按“冻结、首批、追加、顺序汇总”的 SHA-256 依次为：
+
+- `c12f0741c8410983775ca6c9e199518f3f46eb7c65c91fbc3babfb26ad882334`
+- `a6bb3e1a6500e830b53e47827a2ce1686c003a9f720f9eafb12c2eeb3b893b82`
+- `dc1b28611cd16728fdefe844745403fb338f9dfb777d3ac3dc65419001869227`
+- `c3ee5c155cebaaa458e72e00fd5b72694512067453596febfa42d719e866ee37`
+
+这些输出生成时尚未设置默认 logit 护栏。合入前用新分支重放并审计：冻结协议评价
+8,158,064 个条件 logit，最大绝对值为 `10.41860`；30 个 candidate 轨迹实际执行
+3,902,224 个 Gibbs 微步，最大绝对值为 `10.65131`。两侧都没有超过 30；冻结结果
+去除计时和元数据后逐项相同，30 个最终 CSV 哈希和完整 loss 轨迹逐种子相同。因此
+新护栏修复极端输入的数值支持，但没有改变上述正式实验的任何决策或质量数字。
+
 最终深审门禁结果：
 
-- `tests/test_factorized_diffusion.py`：34 passed；
-- 因子、联合 oracle、方向、更新和集成相关测试：181 passed, 1 skipped；
-- `gsd` 环境完整 CPU/torch/CUDA 测试：418 passed；
+- `tests/test_factorized_diffusion.py`：41 passed；
+- 因子、联合 oracle、方向、更新和演化相关测试：183 passed；
+- `gsd` 环境完整 CPU/torch/CUDA 测试：425 passed；
 - `qdte` 环境既有演化测试：25 passed, 1 skipped；
 - 三个本阶段实验/分析脚本及核心模块均通过 `py_compile`，`git diff --check` 通过；
 - 正式配置 10 轮 endpoint 回归中，0 sweep 与历史 baseline 的最终表哈希均为

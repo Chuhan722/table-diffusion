@@ -76,6 +76,12 @@ def _validate_and_extract(data, source_name):
             raise ValueError(
                 f"{source_name} 的 {key}={data.get(key)!r}，期望 {expected!r}"
             )
+    logit_clip = data.get("gibbs_logit_clip")
+    if logit_clip not in (None, 30.0):
+        raise ValueError(
+            f"{source_name} 的 gibbs_logit_clip={logit_clip!r}，"
+            "只接受历史未截断输出或当前 30.0 数值护栏"
+        )
     if not data.get("primary_rng_aligned_all_seeds"):
         raise ValueError(f"{source_name} 的主 RNG 未全部对齐")
 
@@ -250,12 +256,16 @@ def main():
                 "sha256": initial_sha256,
                 "git_commit": initial_data["git_commit"],
                 "seeds": initial_data["seeds"],
+                "gibbs_logit_clip": initial_data.get("gibbs_logit_clip"),
             },
             "extension": {
                 "path": str(args.extension),
                 "sha256": extension_sha256,
                 "git_commit": extension_data["git_commit"],
                 "seeds": extension_data["seeds"],
+                "gibbs_logit_clip": extension_data.get(
+                    "gibbs_logit_clip"
+                ),
             },
         },
         "cohorts": {

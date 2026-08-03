@@ -26,6 +26,7 @@ from table_diffevo.directional_diffusion import (
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.evolution import run_evolution
 from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
     build_sparse_mask_energy,
     evaluate_sparse_mask_energies,
     propagate_random_scan_distribution,
@@ -52,6 +53,7 @@ MARGINALS_PATH = "configs/test_300x10/init_marginals.json"
 N_RECORDS = 300
 RHO = 0.01
 ETA = 0.5
+GIBBS_LOGIT_CLIP = DEFAULT_LOGIT_CLIP
 
 
 def _git_commit():
@@ -523,6 +525,7 @@ def _probe_state(
                             strength,
                             (sweep - previous_sweep) * n_active,
                             max_active_attributes=max_active_attributes,
+                            logit_clip=GIBBS_LOGIT_CLIP,
                         )
                         exact_propagation_elapsed += (
                             time.perf_counter() - propagation_start
@@ -780,6 +783,7 @@ def main():
             "platform": platform.platform(),
         },
         "max_active_attributes": args.max_active_attributes,
+        "gibbs_logit_clip": GIBBS_LOGIT_CLIP,
         "states": states,
         "elapsed_sec": time.perf_counter() - experiment_start,
     }

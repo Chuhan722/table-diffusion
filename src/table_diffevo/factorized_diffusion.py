@@ -18,6 +18,9 @@ from table_diffevo.queries import eval_condition
 from table_diffevo.schema import Schema
 
 
+DEFAULT_LOGIT_CLIP = 30.0
+
+
 @dataclass(frozen=True)
 class MaskEnergyFactor:
     """一个只依赖少量活跃 mask bit 的中心化能量表。"""
@@ -316,7 +319,10 @@ def evaluate_sparse_mask_energies(
         scope = np.asarray(factor.scope, dtype=np.intp)
         powers = 1 << np.arange(len(scope), dtype=np.intp)
         indices = checked[:, scope].astype(np.intp) @ powers
-        energies += factor.values[indices]
+        with np.errstate(over="ignore", invalid="ignore"):
+            energies += factor.values[indices]
+    if not np.all(np.isfinite(energies)):
+        raise ValueError("稀疏 mask 能量超出 float64 可表示范围")
     return energies
 
 
@@ -355,7 +361,12 @@ def conditional_energy_difference(
             f"得到 {variable!r}"
         )
     variable = int(variable)
-    return _conditional_energy_difference_unchecked(model, checked, variable)
+    difference = _conditional_energy_difference_unchecked(
+        model, checked, variable
+    )
+    if not np.isfinite(difference):
+        raise ValueError("条件能量差超出 float64 可表示范围")
+    return difference
 
 
 def _conditional_energy_difference_unchecked(
@@ -373,9 +384,10 @@ def _conditional_energy_difference_unchecked(
             if scoped_variable != variable and mask[scoped_variable]:
                 lower_index |= 1 << position
         upper_index = lower_index | (1 << local_position)
-        difference += (
-            factor.values[upper_index] - factor.values[lower_index]
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            difference += (
+                factor.values[upper_index] - factor.values[lower_index]
+            )
     return float(difference)
 
 
@@ -383,6 +395,7 @@ def _conditional_copy_probability_unchecked(
     model: SparseMaskEnergy,
     mask: np.ndarray,
     variable: int,
+    baseline_probability: float,
     base_logit: float,
     strength: float,
     logit_clip: Optional[float],
@@ -390,10 +403,16 @@ def _conditional_copy_probability_unchecked(
     difference = _conditional_energy_difference_unchecked(
         model, mask, variable
     )
-    logit = base_logit + strength * difference
-    if not np.isfinite(logit):
-        raise ValueError("条件 logit 超出 float64 可表示范围")
-    if logit_clip is not None:
+    if strength == 0.0 or difference == 0.0:
+        return baseline_probability
+    with np.errstate(over="ignore", invalid="ignore"):
+        logit = base_logit + strength * difference
+    if np.isnan(logit):
+        raise ValueError("条件 logit 无法由有限输入稳定计算")
+    if logit_clip is None:
+        if not np.isfinite(logit):
+            raise ValueError("条件 logit 超出 float64 可表示范围")
+    else:
         logit = float(np.clip(logit, -logit_clip, logit_clip))
     if logit >= 0.0:
         return float(1.0 / (1.0 + np.exp(-logit)))
@@ -408,9 +427,14 @@ def conditional_copy_probability(
     eta: float,
     strength: float,
     *,
-    logit_clip: Optional[float] = None,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> float:
-    """返回联合 Gibbs 核的单 bit 精确条件复制概率。"""
+    """返回联合 Gibbs 核的单 bit 条件复制概率。
+
+    默认沿用现有方向核的 ``[-30, 30]`` 数值护栏，使有限输入在 float64 中仍保留
+    双向支持。显式传入 ``None`` 可关闭护栏，用于理论目标的精确条件式；极端
+    logit 此时可能舍入到 0/1，超出 float64 时会明确报错。
+    """
     baseline = _validate_open_probability(eta, "eta")
     beta = _validate_strength(strength)
     clip = _validate_logit_clip(logit_clip)
@@ -429,6 +453,7 @@ def conditional_copy_probability(
         model,
         checked,
         int(variable),
+        baseline,
         base_logit,
         beta,
         clip,
@@ -443,12 +468,14 @@ def random_scan_gibbs_mask(
     n_steps: int,
     rng: np.random.Generator,
     *,
-    logit_clip: Optional[float] = None,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> np.ndarray:
     """从显式初始 mask 做随机坐标、带放回的 Gibbs 微步。
 
     每个微步均匀选择一个活跃 bit，并按其完整条件分布重采样。``n_steps=0``
     精确返回初始 mask 且不消耗 RNG；空活跃集合也不消耗 RNG。
+    默认把条件 logit 截到 ``[-30, 30]``，避免有限输入在 float64 中丢失双向支持；
+    ``logit_clip=None`` 只用于显式请求未截断的理论条件式。
     """
     mask = _validate_mask(
         initial_mask, model.n_active_attributes, "initial_mask"
@@ -469,6 +496,7 @@ def random_scan_gibbs_mask(
             model,
             mask,
             variable,
+            baseline,
             base_logit,
             beta,
             clip,
@@ -485,12 +513,14 @@ def propagate_random_scan_distribution(
     n_steps: int,
     *,
     max_active_attributes: int = 12,
-    logit_clip: Optional[float] = None,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> np.ndarray:
     """在小状态空间精确传播随机扫描 Gibbs 分布，用于混合诊断。
 
     该函数枚举全部 mask，复杂度仍为 ``O(n_steps*k*2^k)``，不得用于宽表生产
-    路径。它与 :func:`random_scan_gibbs_mask` 使用相同的随机坐标带放回语义。
+    路径。它精确传播由 ``logit_clip`` 定义的随机坐标转移核，并与
+    :func:`random_scan_gibbs_mask` 使用相同语义；关闭护栏且 logit 可表示时才是
+    未截断理论 Gibbs 核的精确传播。
     """
     baseline = _validate_open_probability(eta, "eta")
     beta = _validate_strength(strength)
@@ -529,12 +559,21 @@ def propagate_random_scan_distribution(
     for variable in range(model.n_active_attributes):
         lower = state_indices[~masks[:, variable]]
         upper = lower | (1 << variable)
-        logits = base_logit + beta * (energies[upper] - energies[lower])
-        if not np.all(np.isfinite(logits)):
-            raise ValueError("条件 logit 超出 float64 可表示范围")
-        if clip is not None:
+        with np.errstate(over="ignore", invalid="ignore"):
+            differences = energies[upper] - energies[lower]
+            logits = base_logit + beta * (
+                differences
+            )
+        if np.any(np.isnan(logits)):
+            raise ValueError("条件 logit 无法由有限输入稳定计算")
+        if clip is None:
+            if not np.all(np.isfinite(logits)):
+                raise ValueError("条件 logit 超出 float64 可表示范围")
+        else:
             logits = np.clip(logits, -clip, clip)
-        pair_data.append((lower, upper, _stable_sigmoid(logits)))
+        copy_probabilities = _stable_sigmoid(logits)
+        copy_probabilities[(beta == 0.0) | (differences == 0.0)] = baseline
+        pair_data.append((lower, upper, copy_probabilities))
 
     inverse_width = 1.0 / model.n_active_attributes
     for _ in range(steps):
@@ -569,6 +608,7 @@ def evolve_step_factorized_gibbs(
     gibbs_rng: Optional[np.random.Generator] = None,
     weights: Optional[np.ndarray] = None,
     max_factor_order: int = 3,
+    gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
 
@@ -576,7 +616,8 @@ def evolve_step_factorized_gibbs(
     participation、逐属性独立复制初值和 mutation 都从该流抽取。额外 Gibbs 微步只
     使用独立的 ``gibbs_rng``，因此增加 sweep 不会错位后续 donor、复制或变异随机
     流。``n_sweeps=0`` 不构造因子、不消费 ``gibbs_rng``，并精确退化到现有定向
-    ``evolve_step``。
+    ``evolve_step``。非零 sweep 默认使用与现有方向核一致的 ``[-30, 30]`` 条件
+    logit 数值护栏；可通过 ``gibbs_logit_clip=None`` 显式关闭。
 
     返回的诊断只记录公开生成过程的工作量和墙钟，不评价 loss，也不参与更新决策。
     """
@@ -609,6 +650,7 @@ def evolve_step_factorized_gibbs(
         raise ValueError("rng 必须是 np.random.Generator")
     if sweeps > 0:
         _validate_open_probability(eta, "eta")
+        clip = _validate_logit_clip(gibbs_logit_clip)
         if not isinstance(gibbs_rng, np.random.Generator):
             raise ValueError(
                 "n_sweeps 非零时 gibbs_rng 必须是 np.random.Generator"
@@ -625,6 +667,7 @@ def evolve_step_factorized_gibbs(
         # 0 sweep 不使用查询或残差，保留与既有 evolve_step 相同的最小依赖边界。
         residual_values = residual
         weight_values = weights
+        clip = gibbs_logit_clip
 
     attr_names = schema.attribute_names()
     n_records = len(current)
@@ -702,6 +745,7 @@ def evolve_step_factorized_gibbs(
                 strength,
                 sweeps * n_active,
                 gibbs_rng,
+                logit_clip=clip,
             )
             gibbs_sample_elapsed += time.perf_counter() - sample_start
             active_gibbs_rows += 1

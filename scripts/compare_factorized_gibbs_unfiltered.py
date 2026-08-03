@@ -23,7 +23,10 @@ from table_diffevo.directional_diffusion import (
     direction_rms_scale,
 )
 from table_diffevo.distance import pairwise_block_distance
-from table_diffevo.factorized_diffusion import evolve_step_factorized_gibbs
+from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
+    evolve_step_factorized_gibbs,
+)
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.marginals import load_marginals
 from table_diffevo.objective import compute_loss
@@ -40,6 +43,7 @@ N_RECORDS = 300
 RHO = 0.01
 ETA = 0.5
 MU = 0.01
+GIBBS_LOGIT_CLIP = DEFAULT_LOGIT_CLIP
 
 
 def _git_commit():
@@ -209,6 +213,7 @@ def _run_one(
             rng=rng,
             gibbs_rng=gibbs_rng,
             max_factor_order=3,
+            gibbs_logit_clip=GIBBS_LOGIT_CLIP,
         )
         proposal_q, proposal_residual, proposal_fitness = evaluate_vectorized(
             proposal,
@@ -529,6 +534,7 @@ def main():
         "rho": RHO,
         "eta": ETA,
         "mu": MU,
+        "gibbs_logit_clip": GIBBS_LOGIT_CLIP,
         "device": args.device,
         "git_commit": _git_commit(),
         "command_argv": sys.argv,

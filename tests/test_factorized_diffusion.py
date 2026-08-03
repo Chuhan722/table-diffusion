@@ -70,6 +70,29 @@ def _three_bit_model():
     )
 
 
+def _one_bit_model(residual):
+    schema = Schema([
+        AttributeBlock(
+            name="a",
+            type="categorical",
+            description="a",
+            values=[0, 1],
+        )
+    ])
+    return build_sparse_mask_energy(
+        pd.DataFrame({"a": [0]}),
+        pd.DataFrame({"a": [1]}),
+        schema,
+        [{
+            "conditions": [{
+                "attribute": "a", "operator": "==", "value": 1
+            }]
+        }],
+        np.array([residual]),
+        max_factor_order=1,
+    )
+
+
 def _target_and_independent_distributions(model, eta=0.5, strength=0.7):
     masks = enumerate_copy_masks(model.n_active_attributes)
     reference = baseline_mask_log_probabilities(masks, eta)
@@ -284,6 +307,34 @@ class TestSparseMaskEnergy:
                 weights=np.array([2.0]),
             )
 
+    def test_rejects_energy_overflow_across_distinct_factors(self):
+        schema = Schema([
+            AttributeBlock(
+                name=name,
+                type="categorical",
+                description=name,
+                values=[0, 1],
+            )
+            for name in ("a", "b")
+        ])
+        queries = [
+            {"conditions": [{
+                "attribute": name, "operator": "==", "value": 1
+            }]}
+            for name in ("a", "b")
+        ]
+        model = build_sparse_mask_energy(
+            pd.DataFrame({"a": [0], "b": [0]}),
+            pd.DataFrame({"a": [1], "b": [1]}),
+            schema,
+            queries,
+            np.full(2, np.finfo(float).max),
+            max_factor_order=1,
+        )
+
+        with pytest.raises(ValueError, match="稀疏 mask 能量"):
+            evaluate_sparse_mask_energy(model, np.ones(2))
+
 
 class TestRandomScanGibbs:
     def test_conditional_probability_matches_joint_distribution(self):
@@ -345,6 +396,56 @@ class TestRandomScanGibbs:
 
         assert np.all(np.diff(total_variations) <= 1e-14)
         assert total_variations[-1] < 1e-5
+
+    def test_random_scan_distribution_is_equivariant_to_schema_order(self):
+        base_model = _three_bit_model()
+        permuted_names = ("c", "a", "b")
+        permuted_schema = Schema([
+            AttributeBlock(
+                name=name,
+                type="categorical",
+                description=name,
+                values=[0, 1],
+            )
+            for name in permuted_names
+        ])
+        permuted_model = build_sparse_mask_energy(
+            pd.DataFrame({name: [0] for name in permuted_names}),
+            pd.DataFrame({name: [1] for name in permuted_names}),
+            permuted_schema,
+            _three_bit_queries(),
+            np.array([1.0, 2.0, 4.0, 8.0]),
+        )
+
+        base_masks, _, base_initial = _target_and_independent_distributions(
+            base_model
+        )
+        permuted_masks, _, permuted_initial = (
+            _target_and_independent_distributions(permuted_model)
+        )
+        base_result = propagate_random_scan_distribution(
+            base_model, base_initial, eta=0.5, strength=0.7, n_steps=7
+        )
+        permuted_result = propagate_random_scan_distribution(
+            permuted_model,
+            permuted_initial,
+            eta=0.5,
+            strength=0.7,
+            n_steps=7,
+        )
+        base_probabilities = {
+            tuple(bool(value) for value in mask): probability
+            for mask, probability in zip(base_masks, base_result)
+        }
+        for mask, probability in zip(permuted_masks, permuted_result):
+            assignment = dict(zip(permuted_model.active_attributes, mask))
+            base_assignment = tuple(
+                bool(assignment[attr])
+                for attr in base_model.active_attributes
+            )
+            assert probability == pytest.approx(
+                base_probabilities[base_assignment], rel=0.0, abs=1e-14
+            )
 
     def test_zero_steps_preserve_distribution_and_rng(self):
         model = _three_bit_model()
@@ -433,6 +534,71 @@ class TestRandomScanGibbs:
 
         assert np.all(propagated > 0.0)
         assert propagated.sum() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("residual", [1.0e3, -1.0e3])
+    def test_default_logit_guard_keeps_extreme_finite_support(self, residual):
+        model = _one_bit_model(residual)
+
+        probability = conditional_copy_probability(
+            model,
+            np.array([0]),
+            variable=0,
+            eta=0.5,
+            strength=1.0,
+        )
+        propagated = propagate_random_scan_distribution(
+            model,
+            np.array([0.5, 0.5]),
+            eta=0.5,
+            strength=1.0,
+            n_steps=1,
+        )
+
+        assert 0.0 < probability < 1.0
+        assert np.all(propagated > 0.0)
+        np.testing.assert_allclose(propagated, [1.0 - probability, probability])
+
+    def test_neutral_condition_preserves_extreme_baseline_exactly(self):
+        eta = np.nextafter(1.0, 0.0)
+        model = build_sparse_mask_energy(
+            pd.DataFrame({"a": [0], "b": [0], "c": [0]}),
+            pd.DataFrame({"a": [1], "b": [1], "c": [1]}),
+            _three_bit_schema(),
+            [],
+            np.zeros(0),
+        )
+
+        probability = conditional_copy_probability(
+            model,
+            np.zeros(3),
+            variable=0,
+            eta=eta,
+            strength=np.finfo(float).max,
+        )
+
+        assert probability == eta
+
+    def test_unclipped_overflow_is_rejected_explicitly(self):
+        model = _one_bit_model(np.finfo(float).max)
+
+        guarded = conditional_copy_probability(
+            model,
+            np.array([0]),
+            variable=0,
+            eta=0.5,
+            strength=2.0,
+        )
+        assert 0.0 < guarded < 1.0
+
+        with pytest.raises(ValueError, match="float64"):
+            conditional_copy_probability(
+                model,
+                np.array([0]),
+                variable=0,
+                eta=0.5,
+                strength=2.0,
+                logit_clip=None,
+            )
 
     def test_rejects_probability_sum_overflow(self):
         with pytest.raises(ValueError, match="总和为正"):
@@ -683,6 +849,24 @@ class TestFactorizedGibbsEvolutionStep:
                 n_sweeps=1,
                 rng=np.random.default_rng(0),
                 gibbs_rng=np.random.default_rng(1),
+            )
+
+    def test_nonzero_sweeps_validate_gibbs_logit_clip(self):
+        current, donors = self._tables()
+        with pytest.raises(ValueError, match="logit_clip"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                _three_bit_schema(),
+                _three_bit_queries(),
+                np.ones(4),
+                eta=0.5,
+                copy_direction_scores=np.zeros((4, 3)),
+                copy_direction_strength=0.0,
+                n_sweeps=1,
+                rng=np.random.default_rng(0),
+                gibbs_rng=np.random.default_rng(1),
+                gibbs_logit_clip=0.0,
             )
 
     @pytest.mark.parametrize("eta", [0.0, 1.0])
