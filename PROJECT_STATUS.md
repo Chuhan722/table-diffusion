@@ -97,10 +97,11 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
 完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
-护栏。正式 6,877,120 字节 JSON 的
+护栏。同步最新主分支并收紧正式元数据门禁后的重跑与上一版非决策字段精确
+一致。正式 6,876,791 字节 JSON 的
 SHA-256 为
-`44884133f2fbfc272ac70560aec53982d1a0d55ce9b4474ee8c2e0153e0f801d`，位于
-`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_2441933.json`。
+`b3b13c448e3b7ed27405f4ad73a74d56e6bb54d6d227a8a37ddaf723709e1a67`，位于
+`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_3fe91b7.json`。
 完整公式和逐状态结果见 `docs/设计/联合扩散整代步幅诊断.md`，关联 Issue #17。
 
 ### 因子 Gibbs 标准接受闭环——平均训练目标改善，但未通过预注册胜种子门槛
