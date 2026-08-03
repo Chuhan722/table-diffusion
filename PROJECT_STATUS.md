@@ -114,8 +114,8 @@ seed 独立重放全部随机
 已经改善最终生成器。
 
 **验证与输出：** 深审修复提交 `743c8d5` 取代证据门禁不完整的旧输出；新旧
-非计时算法结果独立对拍精确一致。专项测试 41 项、相关 gsd 测试 155 项、完整 gsd
-CPU/torch/CUDA 519 项；qdte 相关 153 项通过、2 项跳过。正式 JSON 位于
+非计时算法结果独立对拍精确一致。专项测试 52 项、相关 gsd 测试 176 项、完整 gsd
+CPU/torch/CUDA 541 项；qdte 相关 174 项通过、2 项跳过。正式 JSON 位于
 `outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_743c8d5.json`，
 大小 11,326,999 字节，SHA-256 为
 `054849b56705e171d4c529db3651b4b721cd91ccf73ad7607268b8080a504111`。完整公式、

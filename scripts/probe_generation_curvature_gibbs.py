@@ -236,6 +236,65 @@ def _make_state(
     }
 
 
+def _resolve_seed_state_controls(prepared_states, *, require_complete):
+    """解析同一 seed 的冻结状态对齐信息，并在正式协议下拒绝缺项。"""
+    initial_state_hashes = [
+        _frame_sha256(state)
+        for _, state_rounds, state, _ in prepared_states
+        if state_rounds == 0
+    ]
+    generated_state_rows = [
+        generation
+        for _, state_rounds, _, generation in prepared_states
+        if state_rounds > 0
+    ]
+    generated_initial_hashes = [
+        generation.get("initial_table_sha256")
+        for generation in generated_state_rows
+        if generation.get("initial_table_sha256") is not None
+    ]
+    generated_reference_scales = [
+        generation.get("direction_reference_scale")
+        for generation in generated_state_rows
+        if generation.get("direction_reference_scale") is not None
+    ]
+
+    if require_complete and (
+        len(initial_state_hashes) != 1
+        or len(generated_state_rows) != 1
+        or len(generated_initial_hashes) != 1
+        or len(generated_reference_scales) != 1
+    ):
+        raise RuntimeError(
+            "正式协议要求每个 seed 恰有一个直接初始态、一个闭环状态，"
+            "且闭环必须提供初始表哈希和方向参考尺度"
+        )
+
+    for scale in generated_reference_scales:
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise RuntimeError("标准闭环方向参考尺度必须是正有限数值")
+    if generated_reference_scales and not all(
+        scale == generated_reference_scales[0]
+        for scale in generated_reference_scales[1:]
+    ):
+        raise RuntimeError("同一 seed 的标准闭环方向参考尺度不一致")
+
+    initialization_aligned = True
+    if initial_state_hashes and generated_initial_hashes:
+        initialization_aligned = all(
+            value == initial_state_hashes[0]
+            for value in generated_initial_hashes
+        )
+        if not initialization_aligned:
+            raise RuntimeError("直接 marginal 状态与标准闭环初始表不一致")
+
+    reference_scale = (
+        generated_reference_scales[0]
+        if generated_reference_scales else None
+    )
+    return reference_scale, initialization_aligned
+
+
 def _copy_masks(current, proposal, donors, participate, attr_names):
     current_values = current[attr_names].reset_index(drop=True).to_numpy()
     proposal_values = proposal[attr_names].reset_index(drop=True).to_numpy()
@@ -1260,35 +1319,11 @@ def main():
                 (state_index, state_rounds, state, generation)
             )
 
-        fixed_reference_scale = next(
-            (
-                generation.get("direction_reference_scale")
-                for _, _, _, generation in prepared_states
-                if generation.get("direction_reference_scale") is not None
-            ),
-            None,
+        fixed_reference_scale, aligned = _resolve_seed_state_controls(
+            prepared_states,
+            require_complete=formal_protocol_matches,
         )
-        initial_state_hashes = [
-            _frame_sha256(state)
-            for _, state_rounds, state, _ in prepared_states
-            if state_rounds == 0
-        ]
-        generated_initial_hashes = [
-            generation.get("initial_table_sha256")
-            for _, state_rounds, _, generation in prepared_states
-            if state_rounds > 0
-            and generation.get("initial_table_sha256") is not None
-        ]
-        if initial_state_hashes and generated_initial_hashes:
-            aligned = all(
-                value == initial_state_hashes[0]
-                for value in generated_initial_hashes
-            )
-            if not aligned:
-                raise RuntimeError(
-                    "直接 marginal 状态与标准闭环初始表不一致"
-                )
-            state_initialization_aligned &= aligned
+        state_initialization_aligned &= aligned
 
         for state_index, state_rounds, state, generation in prepared_states:
             result = _probe_state(

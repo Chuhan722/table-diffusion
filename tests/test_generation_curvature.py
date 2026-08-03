@@ -298,6 +298,7 @@ class TestGenerationEnergy:
     "rho,mu,strength,sweeps",
     [
         (0.0, 0.0, 0.0, 0),
+        (0.75, 0.2, 1.7, 0),
         (0.75, 0.2, 0.0, 3),
         (0.75, 0.0, 1.7, 3),
         (0.75, 0.0, 1000.0, 3),
@@ -382,6 +383,18 @@ def test_gamma_zero_exactly_matches_existing_factorized_step(
                 "gamma_zero_reference_probability_max_error"
             ] == 0.0
         )
+    else:
+        for key in (
+            "initial_query_delta",
+            "final_query_delta",
+            "initial_linear_energy",
+            "final_linear_energy",
+            "initial_quadratic_energy",
+            "final_quadratic_energy",
+            "initial_generation_energy",
+            "final_generation_energy",
+        ):
+            assert new_diagnostics[key] is None
     assert new_diagnostics["linear_query_consistency_max_error"] <= 1e-15
 
 
