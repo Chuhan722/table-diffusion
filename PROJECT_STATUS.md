@@ -74,7 +74,7 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 惩罚增加得更多。为避免事后挑小 `rho`，先固定 3 个 seed、marginal 初始态与
 标准 0-sweep 闭环 500 轮 best 态、每状态 200 个冻结 proposal，只比较
 `tau=2` 下 0/8 sweep，`rho=0.01`、`mu=0`。两个状态复用同 seed 标准运行的
-首轮 RMS；冻结 proposal 不执行接受，也没有真实数据路径。
+首个非零方向 RMS；冻结 proposal 不执行接受，也没有真实数据路径。
 
 **精确门禁：** 1200 对 donor、参与和主 RNG 全部对齐；直接初始化表与标准运行
 初始哈希 3/3 一致。初始 mask 不再从落地 proposal 反推，而是从配对 seed 重放
@@ -94,8 +94,8 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
-定义有限温度、反向支持和退化性质。诊断测试 27 项、加因子和演化相关测试 114 项、
-完整 CPU/torch/CUDA 478 项通过；qdte 相关 71 项通过（另 2 项跳过）。完整协议
+定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
+完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
 护栏。正式 6,877,120 字节 JSON 的
 SHA-256 为

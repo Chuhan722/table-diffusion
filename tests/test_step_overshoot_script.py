@@ -139,6 +139,74 @@ def test_replayed_initial_mask_matches_zero_sweep_update(monkeypatch):
     assert endpoint == probe._rng_state_sha256(update_rng)
 
 
+def _prepared_states(*, initial_hash=None, scale=0.25):
+    initial = pd.DataFrame({"a": [0, 1]})
+    generated = initial.copy()
+    generation = {
+        "initial_table_sha256": (
+            probe._frame_sha256(initial)
+            if initial_hash is None else initial_hash
+        ),
+        "direction_reference_scale": scale,
+    }
+    return [
+        (0, 0, initial, {}),
+        (1, 500, generated, generation),
+    ]
+
+
+def test_resolve_seed_state_controls_requires_complete_formal_metadata():
+    states = _prepared_states()
+
+    scale, aligned = probe._resolve_seed_state_controls(
+        states, require_complete=True
+    )
+
+    assert scale == 0.25
+    assert aligned is True
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    ["initial_table_sha256", "direction_reference_scale"],
+)
+def test_resolve_seed_state_controls_rejects_missing_formal_metadata(
+    missing_key,
+):
+    states = _prepared_states()
+    states[1][3].pop(missing_key)
+
+    with pytest.raises(RuntimeError, match="正式协议"):
+        probe._resolve_seed_state_controls(states, require_complete=True)
+
+
+@pytest.mark.parametrize("kept_index", [0, 1])
+def test_resolve_seed_state_controls_rejects_missing_formal_state(
+    kept_index,
+):
+    states = _prepared_states()
+
+    with pytest.raises(RuntimeError, match="正式协议"):
+        probe._resolve_seed_state_controls(
+            [states[kept_index]], require_complete=True
+        )
+
+
+def test_resolve_seed_state_controls_rejects_initialization_mismatch():
+    states = _prepared_states(initial_hash="mismatched")
+
+    with pytest.raises(RuntimeError, match="初始表不一致"):
+        probe._resolve_seed_state_controls(states, require_complete=True)
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, np.nan, np.inf])
+def test_resolve_seed_state_controls_rejects_invalid_scale(scale):
+    states = _prepared_states(scale=scale)
+
+    with pytest.raises(RuntimeError, match="正有限"):
+        probe._resolve_seed_state_controls(states, require_complete=True)
+
+
 def _comparison(mean):
     return {"difference": {"mean": float(mean)}}
 
