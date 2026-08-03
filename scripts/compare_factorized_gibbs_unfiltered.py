@@ -438,7 +438,7 @@ def main():
     parser.add_argument(
         "--factor-builder",
         choices=["legacy_rowwise", "compiled_batch"],
-        default="compiled_batch",
+        default="legacy_rowwise",
     )
     parser.add_argument("--record-state-hashes", action="store_true")
     parser.add_argument(
