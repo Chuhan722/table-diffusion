@@ -117,3 +117,15 @@ def test_compute_row_query_deltas_rejects_mismatched_frames(
 def test_decomposition_rejects_invalid_arrays(deltas, residual):
     with pytest.raises(ValueError):
         decompose_query_step(deltas, residual)
+
+
+@pytest.mark.parametrize(
+    "deltas,residual",
+    [
+        (np.asarray([[1e308]]), np.asarray([1.0])),
+        (np.asarray([[2.0]]), np.asarray([1e308])),
+    ],
+)
+def test_decomposition_rejects_float64_overflow(deltas, residual):
+    with pytest.raises(ValueError, match="float64"):
+        decompose_query_step(deltas, residual)

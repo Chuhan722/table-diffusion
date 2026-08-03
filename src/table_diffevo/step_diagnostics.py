@@ -84,12 +84,24 @@ def decompose_query_step(
             "count_residual 必须是长度与查询数一致的有限数值一维数组"
         )
 
-    delta_q = deltas.sum(axis=0, dtype=float)
-    linear_gain = float(np.dot(residual, delta_q))
-    self_penalty = float(0.5 * np.einsum("ij,ij->", deltas, deltas))
-    quadratic_penalty = float(0.5 * np.dot(delta_q, delta_q))
+    with np.errstate(over="ignore", invalid="ignore"):
+        delta_q = deltas.sum(axis=0, dtype=float)
+        linear_gain = float(np.dot(residual, delta_q))
+        self_penalty = float(
+            0.5 * np.einsum("ij,ij->", deltas, deltas)
+        )
+        quadratic_penalty = float(0.5 * np.dot(delta_q, delta_q))
+    if (
+        not np.all(np.isfinite(delta_q))
+        or not np.isfinite(linear_gain)
+        or not np.isfinite(self_penalty)
+        or not np.isfinite(quadratic_penalty)
+    ):
+        raise ValueError("查询步幅分解超出 float64 可表示范围")
     cross_penalty = float(quadratic_penalty - self_penalty)
     net_gain = float(linear_gain - quadratic_penalty)
+    if not np.isfinite(cross_penalty) or not np.isfinite(net_gain):
+        raise ValueError("查询步幅分解超出 float64 可表示范围")
     return {
         "delta_q": delta_q,
         "linear_gain": linear_gain,

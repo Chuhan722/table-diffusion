@@ -83,6 +83,62 @@ def test_copy_masks_rejects_unexplained_edits(
         )
 
 
+def test_replayed_initial_mask_matches_zero_sweep_update(monkeypatch):
+    schema, queries = _schema_queries()
+    current = pd.DataFrame({
+        "a": [0, 0, 0, 1, 1, 1],
+        "b": [0, 1, 0, 1, 0, 1],
+        "c": [0, 0, 1, 1, 1, 0],
+    })
+    donors = 1 - current
+    scores = np.zeros((len(current), 3), dtype=float)
+    differs = np.ones_like(scores, dtype=bool)
+    update_seed = 137
+    monkeypatch.setattr(probe, "N_RECORDS", len(current))
+    monkeypatch.setattr(probe, "RHO", 0.5)
+
+    update_rng = np.random.default_rng(update_seed)
+    proposal, _ = probe.evolve_step_factorized_gibbs(
+        current,
+        donors,
+        schema,
+        queries,
+        np.zeros(len(queries), dtype=float),
+        rho=probe.RHO,
+        eta=probe.ETA,
+        mu=0.0,
+        copy_direction_scores=scores,
+        copy_direction_strength=0.0,
+        n_sweeps=0,
+        rng=update_rng,
+        max_factor_order=3,
+        gibbs_logit_clip=probe.DEFAULT_LOGIT_CLIP,
+    )
+    participate, initial_mask, endpoint = (
+        probe._replay_independent_initial_mask(
+            update_seed,
+            differs,
+            scores,
+            0.0,
+        )
+    )
+    _, applied_mask = probe._copy_masks(
+        current,
+        proposal,
+        donors,
+        participate,
+        schema.attribute_names(),
+    )
+
+    assert np.any(participate)
+    assert np.any(~participate)
+    np.testing.assert_array_equal(
+        applied_mask,
+        initial_mask & participate[:, None],
+    )
+    assert endpoint == probe._rng_state_sha256(update_rng)
+
+
 def _comparison(mean):
     return {"difference": {"mean": float(mean)}}
 
@@ -154,6 +210,10 @@ def test_probe_state_pairs_primary_rng_and_step_identities(monkeypatch):
     assert result["gates"]["donor_aligned"] is True
     assert result["gates"]["participation_aligned"] is True
     assert result["gates"]["initial_mask_aligned"] is True
+    assert result["gates"]["initial_mask_replay_rng_aligned"] is True
+    assert result["gates"][
+        "baseline_applied_initial_mask_aligned"
+    ] is True
     assert result["gates"]["row_delta_sum_max_error"] == 0.0
     assert result["gates"]["quadratic_identity_max_error"] == 0.0
     assert result["gates"]["gain_identity_max_error"] == 0.0

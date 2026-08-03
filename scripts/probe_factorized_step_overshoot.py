@@ -23,10 +23,14 @@ import pandas as pd
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
     direction_rms_scale,
+    tilted_copy_probabilities,
 )
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.evolution import run_evolution
-from table_diffevo.factorized_diffusion import evolve_step_factorized_gibbs
+from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
+    evolve_step_factorized_gibbs,
+)
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.marginals import load_marginals
 from table_diffevo.objective import compute_loss
@@ -238,6 +242,52 @@ def _copy_masks(current, proposal, donors, participate, attr_names):
     if np.any(changed & ~participate[:, None]):
         raise RuntimeError("未参与记录发生了变化")
     return differs, changed
+
+
+def _replay_independent_initial_mask(
+    update_seed,
+    differs,
+    direction_scores,
+    strength,
+):
+    """从配对 update seed 重放参与量、独立初始 mask 和主 RNG 端点。"""
+    differs = np.asarray(differs, dtype=bool)
+    scores = np.asarray(direction_scores, dtype=float)
+    if differs.ndim != 2 or scores.ndim != 2:
+        raise ValueError("differs/direction_scores 必须是二维数组")
+    expected_shape = (N_RECORDS, differs.shape[1])
+    if differs.shape != expected_shape or scores.shape != expected_shape:
+        raise ValueError(
+            "differs/direction_scores 必须与公开记录数和属性数一致"
+        )
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("direction_scores 必须全部有限")
+    if not np.isfinite(strength) or strength < 0.0:
+        raise ValueError("strength 必须是非负有限数值")
+
+    replay_rng = np.random.default_rng(update_seed)
+    participate = replay_rng.random(N_RECORDS) < RHO
+    initial_mask = np.zeros_like(differs)
+    for attribute_index in range(differs.shape[1]):
+        probabilities = (
+            ETA
+            if strength == 0.0
+            else tilted_copy_probabilities(
+                ETA,
+                scores[:, attribute_index],
+                strength,
+            )
+        )
+        initial_mask[:, attribute_index] = (
+            replay_rng.random(N_RECORDS) < probabilities
+        )
+    initial_mask &= differs
+    # 正式诊断 mu=0，但核心仍为 mutation 抽一次 N 维随机量；重放这次消耗后，
+    # RNG 端点应与两侧更新完全一致，且不会产生后续属性/取值抽样。
+    mutation_rows = participate & (replay_rng.random(N_RECORDS) < 0.0)
+    if np.any(mutation_rows):
+        raise RuntimeError("mu=0 重放不应产生变异行")
+    return participate, initial_mask, _rng_state_sha256(replay_rng)
 
 
 def _measure_proposal(
@@ -561,6 +611,7 @@ def _probe_state(
             n_sweeps=0,
             rng=baseline_rng,
             max_factor_order=max_factor_order,
+            gibbs_logit_clip=DEFAULT_LOGIT_CLIP,
         )
         candidate, candidate_diagnostics = evolve_step_factorized_gibbs(
             state,
@@ -577,14 +628,23 @@ def _probe_state(
             rng=candidate_rng,
             gibbs_rng=candidate_gibbs_rng,
             max_factor_order=max_factor_order,
+            gibbs_logit_clip=DEFAULT_LOGIT_CLIP,
         )
         baseline_rng_hash = _rng_state_sha256(baseline_rng)
         candidate_rng_hash = _rng_state_sha256(candidate_rng)
         if baseline_rng_hash != candidate_rng_hash:
             raise RuntimeError("0/8 sweep 的主 RNG 端点不一致")
 
-        participation_rng = np.random.default_rng(update_seed)
-        participate = participation_rng.random(N_RECORDS) < RHO
+        participate, replayed_initial_mask, replayed_rng_hash = (
+            _replay_independent_initial_mask(
+                update_seed,
+                differs,
+                direction_scores,
+                strength,
+            )
+        )
+        if replayed_rng_hash != baseline_rng_hash:
+            raise RuntimeError("独立初始 mask 重放与主 RNG 端点不一致")
         expected_participating = int(participate.sum())
         if (
             baseline_diagnostics["participating_rows"]
@@ -594,14 +654,25 @@ def _probe_state(
         ):
             raise RuntimeError("参与行重建与更新诊断不一致")
 
-        baseline_differs, initial_mask = _copy_masks(
+        baseline_differs, baseline_applied_mask = _copy_masks(
             state, baseline, donors, participate, attr_names
         )
-        candidate_differs, final_mask = _copy_masks(
+        candidate_differs, candidate_applied_mask = _copy_masks(
             state, candidate, donors, participate, attr_names
         )
         if not np.array_equal(baseline_differs, candidate_differs):
             raise RuntimeError("两侧 active block 不一致")
+        expected_applied_initial_mask = (
+            replayed_initial_mask & participate[:, None]
+        )
+        if not np.array_equal(
+            baseline_applied_mask, expected_applied_initial_mask
+        ):
+            raise RuntimeError("baseline 落地编辑与重放的独立初始 mask 不一致")
+        candidate_final_mask = replayed_initial_mask.copy()
+        candidate_final_mask[participate] = candidate_applied_mask[
+            participate
+        ]
 
         baseline_measurement = _measure_proposal(
             state,
@@ -624,7 +695,10 @@ def _probe_state(
             device=device,
         )
         mask_metrics = _mask_metrics(
-            differs, initial_mask, final_mask, participate
+            differs,
+            replayed_initial_mask,
+            candidate_final_mask,
+            participate,
         )
         baseline_measurement.update({
             "seed": int(seed),
@@ -636,13 +710,18 @@ def _probe_state(
                 donor_idx.astype(np.int64)
             ),
             "participation_sha256": _array_sha256(participate),
-            "initial_mask_sha256": _array_sha256(initial_mask),
-            "final_mask_sha256": _array_sha256(initial_mask),
+            "initial_mask_sha256": _array_sha256(replayed_initial_mask),
+            "final_mask_sha256": _array_sha256(replayed_initial_mask),
+            "applied_mask_sha256": _array_sha256(
+                baseline_applied_mask
+            ),
             "primary_rng_state_sha256": baseline_rng_hash,
             "gibbs_initial_rng_state_sha256": None,
             "gibbs_final_rng_state_sha256": None,
-            "copied_cells": int(initial_mask.sum()),
-            "changed_rows": int(np.any(initial_mask, axis=1).sum()),
+            "copied_cells": int(baseline_applied_mask.sum()),
+            "changed_rows": int(
+                np.any(baseline_applied_mask, axis=1).sum()
+            ),
             "mean_copy_blocks_per_participant": (
                 mask_metrics[
                     "mean_initial_copy_blocks_per_participant"
@@ -664,15 +743,20 @@ def _probe_state(
                 donor_idx.astype(np.int64)
             ),
             "participation_sha256": _array_sha256(participate),
-            "initial_mask_sha256": _array_sha256(initial_mask),
-            "final_mask_sha256": _array_sha256(final_mask),
+            "initial_mask_sha256": _array_sha256(replayed_initial_mask),
+            "final_mask_sha256": _array_sha256(candidate_final_mask),
+            "applied_mask_sha256": _array_sha256(
+                candidate_applied_mask
+            ),
             "primary_rng_state_sha256": candidate_rng_hash,
             "gibbs_initial_rng_state_sha256": gibbs_initial_state,
             "gibbs_final_rng_state_sha256": _rng_state_sha256(
                 candidate_gibbs_rng
             ),
-            "copied_cells": int(final_mask.sum()),
-            "changed_rows": int(np.any(final_mask, axis=1).sum()),
+            "copied_cells": int(candidate_applied_mask.sum()),
+            "changed_rows": int(
+                np.any(candidate_applied_mask, axis=1).sum()
+            ),
             "mean_copy_blocks_per_participant": (
                 mask_metrics[
                     "mean_final_copy_blocks_per_participant"
@@ -718,6 +802,13 @@ def _probe_state(
                 baseline_measurement["final_mask_sha256"]
                 == candidate_measurement["initial_mask_sha256"]
             ),
+            "initial_mask_replay_rng_aligned": (
+                replayed_rng_hash == baseline_rng_hash
+            ),
+            "baseline_applied_initial_mask_aligned": np.array_equal(
+                baseline_applied_mask,
+                expected_applied_initial_mask,
+            ),
         })
 
     metrics = (
@@ -751,6 +842,13 @@ def _probe_state(
         ),
         "initial_mask_aligned": all(
             row["initial_mask_aligned"] for row in pair_rows
+        ),
+        "initial_mask_replay_rng_aligned": all(
+            row["initial_mask_replay_rng_aligned"] for row in pair_rows
+        ),
+        "baseline_applied_initial_mask_aligned": all(
+            row["baseline_applied_initial_mask_aligned"]
+            for row in pair_rows
         ),
         "row_delta_sum_max_error": max(
             row["row_delta_sum_max_error"]
@@ -830,8 +928,8 @@ def main():
         parser.error("--temperature 必须是非负有限数值")
     if args.sweeps <= 0:
         parser.error("--sweeps 必须为正整数")
-    if not 0 <= args.max_factor_order <= 8:
-        parser.error("--max-factor-order 必须在 0..8 内")
+    if not 1 <= args.max_factor_order <= 8:
+        parser.error("--max-factor-order 必须在 1..8 内")
 
     formal_protocol_matches = (
         args.seeds == FORMAL_SEEDS
@@ -987,6 +1085,14 @@ def main():
         "all_initial_masks_aligned": all(
             state["gates"]["initial_mask_aligned"] for state in states
         ),
+        "all_initial_mask_replay_rng_aligned": all(
+            state["gates"]["initial_mask_replay_rng_aligned"]
+            for state in states
+        ),
+        "all_baseline_applied_initial_masks_aligned": all(
+            state["gates"]["baseline_applied_initial_mask_aligned"]
+            for state in states
+        ),
         "row_delta_sum_max_error": max(
             state["gates"]["row_delta_sum_max_error"] for state in states
         ),
@@ -1004,6 +1110,8 @@ def main():
         and gates["all_donors_aligned"]
         and gates["all_participation_aligned"]
         and gates["all_initial_masks_aligned"]
+        and gates["all_initial_mask_replay_rng_aligned"]
+        and gates["all_baseline_applied_initial_masks_aligned"]
         and gates["row_delta_sum_max_error"] <= 1e-10
         and gates["quadratic_identity_max_error"] <= 1e-10
         and gates["gain_identity_max_error"] <= 1e-10
@@ -1038,6 +1146,7 @@ def main():
         "baseline_sweeps": 0,
         "candidate_sweeps": args.sweeps,
         "max_factor_order": args.max_factor_order,
+        "gibbs_logit_clip": float(DEFAULT_LOGIT_CLIP),
         "rho": RHO,
         "eta": ETA,
         "mu": 0.0,
