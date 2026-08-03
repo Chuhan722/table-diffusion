@@ -107,6 +107,18 @@ def _environment_snapshot(device):
     return snapshot
 
 
+def _prepare_output_directory(output_dir):
+    """创建空输出目录；拒绝覆盖文件或混入旧实验产物。"""
+    output_dir = Path(output_dir)
+    if output_dir.exists():
+        if not output_dir.is_dir() or any(output_dir.iterdir()):
+            raise FileExistsError(
+                f"输出路径已存在且不是空目录，不覆盖：{output_dir}"
+            )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
 def _mean_or_zero(values):
     return float(np.mean(values)) if len(values) else 0.0
 
@@ -635,7 +647,6 @@ def main():
         "--output-dir",
         default="outputs/factorized_gibbs_closed_loop/formal",
     )
-    parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
     if args.rounds <= 0:
@@ -662,15 +673,7 @@ def main():
         and args.device == "cuda"
     )
 
-    output_dir = Path(args.output_dir)
-    output_has_contents = (
-        output_dir.exists() and any(output_dir.iterdir())
-    )
-    if output_has_contents and (
-        formal_protocol_matches or not args.overwrite
-    ):
-        raise FileExistsError(f"输出目录已存在且非空，不覆盖：{output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _prepare_output_directory(args.output_dir)
 
     environment = _environment_snapshot(args.device)
     if formal_protocol_matches and not environment["git_worktree_clean"]:

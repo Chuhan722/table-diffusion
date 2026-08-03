@@ -68,8 +68,9 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 迁移深审从当前父提交重放了全部 20 个 0-sweep baseline、每个 500 轮；初始表、
 初始化后主 RNG、最终主 RNG、最终表和全部共享非计时 diagnostics 逐种子精确一致。
 附加 Gibbs 使用独立派生 RNG，20 个正式种子的初始表、初始化后主 RNG、方向尺度与
-最终主 RNG 全部对齐。条件 logit 护栏固定为 `[-30,30]` 并写入运行参数；全部生成
-完成后才读取真实参考表。
+最终主 RNG 全部对齐。冻结正式提交尚未启用条件 logit 截断；当前实现固定使用
+`[-30,30]` 护栏并写入运行参数，事后逐种子审计证明该护栏在正式轨迹上从未触发。
+全部生成完成后才读取真实参考表。
 
 **预注册结果：** `test_300x10`、精确 50-query target、marginal 初始化、
 `tau=2`、`rho=0.01`、20 配对种子、500 轮。baseline 0 sweep 与 candidate
@@ -89,13 +90,14 @@ normalized L1 为 `0.0030167→0.0027767`（-7.96%），只作次要描述。
 问题应聚焦于保留联合结构的扩散时间步或查询变化预算归一化，不事后挑更小
 `rho`，也不回到方向门槛。
 
-**验证与输出：** 闭环针对性测试 52 项、加因子模块共 93 项、完整
-CPU/torch/CUDA 451 项、qdte 演化 44 项通过（另 2 项按环境跳过）。正式输出包含
+**验证与输出：** 闭环针对性测试 53 项、加因子模块共 94 项、完整
+CPU/torch/CUDA 452 项、qdte 相关测试 92 项通过（另 2 项按环境跳过）。正式输出包含
 40 张 300×10 合成表、81 份 JSON；
 数值有限性、文件数、参数、哈希、配对差和 5051/30450 个离线高阶单元格均已独立
 复核。迁移到数值护栏后的 20 种子 candidate 重放又审计了 1,311,408 次条件更新，
-最大原始 `|logit|=10.6513`、零次触发护栏；最终表和全部非计时 diagnostics 精确
-一致。正式 `summary.json` SHA-256 为
+最大原始 `|logit|=10.6513`、零次触发护栏；最终表，以及除墙钟和当前实现新增的
+`params.factorized_gibbs_logit_clip` 字段外的全部共同 diagnostics，均精确一致。
+正式 `summary.json` SHA-256 为
 `bd6884d9747ad9d8b62a0d1edc84521bac1c2925cb77e3cd945ff40c1254c7e8`。输出位于
 `outputs/factorized_gibbs_closed_loop/formal_20seed_500r_tau2_sweep8_8431146/`，
 完整协议与边界见 `docs/设计/因子Gibbs标准接受闭环.md`，关联 Issue #16。
