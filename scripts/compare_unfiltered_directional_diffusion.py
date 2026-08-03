@@ -39,6 +39,7 @@ SCHEMA_PATH = "configs/test_300x10/schema.yaml"
 QUERY_PATH = "configs/test_300x10/measured_50query.json"
 MARGINALS_PATH = "configs/test_300x10/init_marginals.json"
 N_RECORDS = 300
+ETA = 0.5
 
 
 def _name(strength):
@@ -140,7 +141,7 @@ def _run_one(
                 else (0.0 if normalization == "initial_rms" else strength)
             )
             copy_probabilities = tilted_copy_probabilities(
-                0.5, active_directions, effective_strength
+                ETA, active_directions, effective_strength
             )
             if len(copy_probabilities):
                 copy_probability_entropy_history.append(
@@ -148,13 +149,13 @@ def _run_one(
                 )
                 copy_probability_kl_history.append(
                     float(np.mean(
-                        bernoulli_kl(copy_probabilities, 0.5)
+                        bernoulli_kl(copy_probabilities, ETA)
                     ))
                 )
                 drift_diagnostics = additive_copy_drift_diagnostics(
                     active_directions,
                     copy_probabilities,
-                    0.5,
+                    ETA,
                 )
                 additive_drift_improvement_history.append(
                     drift_diagnostics["additive_drift_improvement"]
@@ -184,7 +185,7 @@ def _run_one(
             donors,
             schema,
             rho=0.01,
-            eta=0.5,
+            eta=ETA,
             mu=0.01,
             rng=rng,
             **direction_kwargs,
