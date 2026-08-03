@@ -76,9 +76,11 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 `tau=2` 下 0/8 sweep，`rho=0.01`、`mu=0`。两个状态复用同 seed 标准运行的
 首轮 RMS；冻结 proposal 不执行接受，也没有真实数据路径。
 
-**精确门禁：** 1200 对 donor、参与、初始 mask 和主 RNG 全部对齐；直接初始化表
-与标准运行初始哈希 3/3 一致。逐行查询变化之和、`Q_self+Q_cross` 和
-`gain=linear-Q` 三个恒等式最大误差均为 0。
+**精确门禁：** 1200 对 donor、参与和主 RNG 全部对齐；直接初始化表与标准运行
+初始哈希 3/3 一致。初始 mask 不再从落地 proposal 反推，而是从配对 seed 重放
+全体 Bernoulli mask 和 `mu=0` 随机消耗；重放 RNG 端点及 baseline 参与行落地编辑
+均 1200/1200 对齐。逐行查询变化之和、`Q_self+Q_cross` 和 `gain=linear-Q`
+三个恒等式最大误差均为 0。
 
 **全局分解：** 一阶方向收益 `31.8783→45.5250`（差 +13.6467）；自身项
 `8.8963→9.7338`（差 +0.8375）；交叉项 `0.7300→1.2583`（差 +0.5283）；
@@ -92,11 +94,13 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
-定义有限温度、反向支持和退化性质。新增诊断测试 24 项，完整 CPU/torch/CUDA
-464 项，qdte 相关 64 项通过（另 2 项跳过）。正式 6,505,185 字节 JSON 的
+定义有限温度、反向支持和退化性质。诊断测试 27 项、加因子和演化相关测试 114 项、
+完整 CPU/torch/CUDA 478 项通过；qdte 相关 71 项通过（另 2 项跳过）。完整协议
+审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
+护栏。正式 6,877,120 字节 JSON 的
 SHA-256 为
-`af868bbb6eca529412109ad5a995ccc1aaf9c2953f109a7661a9e7b931b27dae`，位于
-`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_4c1e82d.json`。
+`44884133f2fbfc272ac70560aec53982d1a0d55ce9b4474ee8c2e0153e0f801d`，位于
+`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_2441933.json`。
 完整公式和逐状态结果见 `docs/设计/联合扩散整代步幅诊断.md`，关联 Issue #17。
 
 ### 因子 Gibbs 标准接受闭环——平均训练目标改善，但未通过预注册胜种子门槛
