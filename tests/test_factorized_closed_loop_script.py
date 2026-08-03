@@ -99,3 +99,22 @@ def test_paired_summary_serializes_constant_nonzero_difference():
 def test_aggregate_rejects_empty_rows():
     with pytest.raises(ValueError, match="没有可汇总记录"):
         experiment._aggregate([], "metric")
+
+
+def test_output_directory_must_be_new_or_empty(tmp_path):
+    new_directory = tmp_path / "new"
+    assert experiment._prepare_output_directory(new_directory) == new_directory
+    assert new_directory.is_dir()
+
+    empty_directory = tmp_path / "empty"
+    empty_directory.mkdir()
+    assert experiment._prepare_output_directory(empty_directory) == empty_directory
+
+    (empty_directory / "old.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="不是空目录"):
+        experiment._prepare_output_directory(empty_directory)
+
+    existing_file = tmp_path / "file"
+    existing_file.write_text("old", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="不是空目录"):
+        experiment._prepare_output_directory(existing_file)
