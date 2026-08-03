@@ -149,6 +149,62 @@ def test_conditional_summary_handles_empty_and_weights_microsteps():
     assert result["all_bidirectional"] is True
 
 
+def test_replayed_initial_mask_matches_zero_sweep_update(monkeypatch):
+    schema, queries = _schema_queries()
+    current = pd.DataFrame({
+        "a": [0, 0, 0, 1, 1, 1],
+        "b": [0, 1, 0, 1, 0, 1],
+        "c": [0, 0, 1, 1, 1, 0],
+    })
+    donors = 1 - current
+    scores = np.zeros((len(current), 3), dtype=float)
+    differs = np.ones_like(scores, dtype=bool)
+    update_seed = 137
+    monkeypatch.setattr(probe, "N_RECORDS", len(current))
+    monkeypatch.setattr(probe, "RHO", 0.5)
+
+    update_rng = np.random.default_rng(update_seed)
+    proposal, _ = probe.evolve_step_factorized_gibbs(
+        current,
+        donors,
+        schema,
+        queries,
+        np.zeros(len(queries), dtype=float),
+        rho=probe.RHO,
+        eta=probe.ETA,
+        mu=0.0,
+        copy_direction_scores=scores,
+        copy_direction_strength=0.0,
+        n_sweeps=0,
+        rng=update_rng,
+        max_factor_order=3,
+        gibbs_logit_clip=probe.FORMAL_LOGIT_CLIP,
+    )
+    participate, initial_mask, endpoint = (
+        probe._replay_independent_initial_mask(
+            update_seed,
+            differs,
+            scores,
+            0.0,
+        )
+    )
+    _, applied_mask = probe._copy_masks(
+        current,
+        proposal,
+        donors,
+        participate,
+        schema.attribute_names(),
+    )
+
+    assert np.any(participate)
+    assert np.any(~participate)
+    np.testing.assert_array_equal(
+        applied_mask,
+        initial_mask & participate[:, None],
+    )
+    assert endpoint == probe._rng_state_sha256(update_rng)
+
+
 def test_probe_state_passes_exact_regression_and_energy_gates(monkeypatch):
     schema, queries = _schema_queries()
     state = pd.DataFrame({
@@ -183,6 +239,14 @@ def test_probe_state_passes_exact_regression_and_energy_gates(monkeypatch):
     assert result["gates"]["gamma_zero_mask_exact"] is True
     assert result["gates"]["gamma_zero_diagnostics_exact"] is True
     assert result["gates"]["internal_initial_masks_aligned"] is True
+    assert result["gates"]["initial_mask_replay_exact"] is True
+    assert (
+        result["gates"][
+            "gamma_zero_conditional_probability_max_error"
+        ] == 0.0
+    )
+    assert result["gates"]["logit_clip_not_hit"] is True
+    assert result["gates"]["conditional_logit_abs_max"] < 30.0
     assert result["gates"]["initial_query_delta_max_error"] == 0.0
     assert result["gates"]["final_query_delta_max_error"] == 0.0
     assert result["gates"]["candidate_energy_identity_max_error"] <= 1e-10
@@ -219,3 +283,40 @@ def test_probe_state_rejects_invalid_fixed_scale(scale, monkeypatch):
             device="numpy",
             fixed_reference_scale=scale,
         )
+
+
+@pytest.mark.parametrize("clip", [0.0, -1.0, np.nan, np.inf, True])
+def test_probe_state_rejects_invalid_logit_clip(clip, monkeypatch):
+    schema, queries = _schema_queries()
+    state = pd.DataFrame({
+        "a": [0, 1],
+        "b": [0, 1],
+        "c": [0, 1],
+    })
+    monkeypatch.setattr(probe, "N_RECORDS", len(state))
+    with pytest.raises(ValueError, match="logit_clip"):
+        probe._probe_state(
+            state,
+            np.asarray([1.0, 1.0, 1.0]),
+            queries,
+            schema,
+            seed=0,
+            state_index=0,
+            state_rounds=0,
+            proposals=1,
+            temperature=2.0,
+            sweeps=2,
+            max_factor_order=3,
+            device="numpy",
+            logit_clip=clip,
+        )
+
+
+def test_main_rejects_zero_factor_order(monkeypatch):
+    monkeypatch.setattr(
+        probe.sys,
+        "argv",
+        ["probe_generation_curvature_gibbs.py", "--max-factor-order", "0"],
+    )
+    with pytest.raises(SystemExit, match="2"):
+        probe.main()

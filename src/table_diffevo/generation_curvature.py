@@ -17,8 +17,10 @@ import pandas as pd
 
 from table_diffevo.directional_diffusion import tilted_copy_probabilities
 from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
     SparseMaskEnergy,
     build_sparse_mask_energy,
+    conditional_copy_probability,
     conditional_energy_difference,
 )
 from table_diffevo.joint_diffusion import enumerate_copy_masks
@@ -94,6 +96,26 @@ def _validate_unit_probability(value: float, name: str) -> float:
     return float(value)
 
 
+def _validate_logit_clip(
+    logit_clip: Optional[float],
+) -> Optional[float]:
+    if logit_clip is None:
+        return None
+    if (
+        isinstance(logit_clip, (bool, np.bool_))
+        or not isinstance(
+            logit_clip, (int, float, np.integer, np.floating)
+        )
+        or not np.isfinite(logit_clip)
+        or logit_clip <= 0.0
+    ):
+        raise ValueError(
+            f"gibbs_logit_clip 必须是正有限数值或 None，"
+            f"得到 {logit_clip!r}"
+        )
+    return float(logit_clip)
+
+
 def _validate_numeric_vector(
     values: np.ndarray,
     expected_length: int,
@@ -130,6 +152,21 @@ def _stable_sigmoid_scalar(logit: float) -> float:
         return float(1.0 / (1.0 + np.exp(-logit)))
     exponential = float(np.exp(logit))
     return exponential / (1.0 + exponential)
+
+
+def _effective_logit_scalar(
+    raw_logit: float,
+    logit_clip: Optional[float],
+) -> Tuple[float, bool]:
+    """应用显式 logit 护栏，并返回是否实际截断。"""
+    if np.isnan(raw_logit):
+        raise ValueError("条件 logit 无法由有限输入稳定计算")
+    if logit_clip is None:
+        if not np.isfinite(raw_logit):
+            raise ValueError("条件 logit 超出 float64 可表示范围")
+        return float(raw_logit), False
+    effective = float(np.clip(raw_logit, -logit_clip, logit_clip))
+    return effective, bool(effective != raw_logit)
 
 
 def _bernoulli_entropy_scalar(probability: float) -> float:
@@ -441,10 +478,13 @@ def conditional_generation_copy_probability(
     curvature_weight: float,
     eta: float,
     strength: float,
+    *,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> Dict[str, Any]:
     """返回整代曲率 Gibbs 的单 bit 条件概率及分解。"""
     baseline = _validate_open_probability(eta, "eta")
     beta = _validate_nonnegative_finite(strength, "strength")
+    clip = _validate_logit_clip(logit_clip)
     result = conditional_generation_energy_difference(
         linear_model,
         query_model,
@@ -455,11 +495,21 @@ def conditional_generation_copy_probability(
         curvature_weight,
     )
     base_logit = float(np.log(baseline) - np.log1p(-baseline))
-    logit = base_logit + beta * result["energy_difference"]
-    probability = _stable_sigmoid_scalar(logit)
+    if beta == 0.0 or result["energy_difference"] == 0.0:
+        raw_logit = base_logit
+        logit = base_logit
+        logit_clipped = False
+        probability = baseline
+    else:
+        with np.errstate(over="ignore", invalid="ignore"):
+            raw_logit = base_logit + beta * result["energy_difference"]
+        logit, logit_clipped = _effective_logit_scalar(raw_logit, clip)
+        probability = _stable_sigmoid_scalar(logit)
     return {
         **result,
+        "raw_logit": float(raw_logit),
         "logit": float(logit),
+        "logit_clipped": logit_clipped,
         "probability": probability,
     }
 
@@ -481,6 +531,7 @@ def evolve_step_generation_curvature_gibbs(
     rng: np.random.Generator,
     gibbs_rng: Optional[np.random.Generator] = None,
     max_factor_order: int = 3,
+    gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮整代曲率感知的有限步 Gibbs 复制更新。
 
@@ -490,7 +541,8 @@ def evolve_step_generation_curvature_gibbs(
     只提供二次项所需的公开查询变化，不消费随机数。
 
     曲率能量只描述 donor-copy mask。非零 ``mu`` 的变异仍发生在 Gibbs 之后，因此
-    正式的精确 loss 恒等式实验固定 ``mu=0``。
+    正式的精确 loss 恒等式实验固定 ``mu=0``。非零 sweep 默认沿用因子 Gibbs 的
+    ``[-30, 30]`` 条件 logit 数值护栏；显式传入 ``None`` 才关闭。
     """
     rho = _validate_unit_probability(rho, "rho")
     eta = _validate_unit_probability(eta, "eta")
@@ -522,6 +574,7 @@ def evolve_step_generation_curvature_gibbs(
         raise ValueError("rng 必须是 np.random.Generator")
     if sweeps > 0:
         _validate_open_probability(eta, "eta")
+        clip = _validate_logit_clip(gibbs_logit_clip)
         if not isinstance(gibbs_rng, np.random.Generator):
             raise ValueError(
                 "n_sweeps 非零时 gibbs_rng 必须是 np.random.Generator"
@@ -531,6 +584,7 @@ def evolve_step_generation_curvature_gibbs(
         )
     else:
         residual_values = residual
+        clip = gibbs_logit_clip
 
     attr_names = schema.attribute_names()
     n_records = len(current)
@@ -569,6 +623,7 @@ def evolve_step_generation_curvature_gibbs(
             rng.random(n_records) < copy_probabilities
         )
     copy_masks &= differs
+    raw_initial_copy_masks = copy_masks.copy()
     initial_effective_copy_masks = copy_masks & participate[:, None]
 
     factor_build_start = time.perf_counter()
@@ -635,10 +690,12 @@ def evolve_step_generation_curvature_gibbs(
     conditional_probability_max = None
     conditional_entropy_sum = 0.0
     conditional_probability_count = 0
+    conditional_logit_abs_max = None
+    conditional_logit_clipped_count = 0
+    gamma_zero_reference_probability_max_error = 0.0
     linear_query_consistency_max_error = 0.0
     gibbs_microsteps = 0
     if sweeps > 0:
-        base_logit = float(np.log(eta) - np.log1p(-eta))
         for row_index in np.flatnonzero(participate):
             models = row_models.get(int(row_index))
             if models is None:
@@ -648,7 +705,7 @@ def evolve_step_generation_curvature_gibbs(
             n_active = len(active_indices)
             for _ in range(sweeps * n_active):
                 variable = int(gibbs_rng.integers(0, n_active))
-                conditional = conditional_generation_energy_difference(
+                conditional = conditional_generation_copy_probability(
                     linear_model,
                     query_model,
                     local_mask,
@@ -656,6 +713,9 @@ def evolve_step_generation_curvature_gibbs(
                     total_query_delta,
                     n_records,
                     gamma,
+                    eta,
+                    strength,
+                    logit_clip=clip,
                 )
                 query_linear = float(np.dot(
                     residual_values,
@@ -665,11 +725,29 @@ def evolve_step_generation_curvature_gibbs(
                     linear_query_consistency_max_error,
                     abs(query_linear - conditional["linear_difference"]),
                 )
-                logit = (
-                    base_logit
-                    + strength * conditional["energy_difference"]
+                logit = conditional["logit"]
+                probability = conditional["probability"]
+                conditional_logit_abs_max = (
+                    abs(logit)
+                    if conditional_logit_abs_max is None
+                    else max(conditional_logit_abs_max, abs(logit))
                 )
-                probability = _stable_sigmoid_scalar(logit)
+                conditional_logit_clipped_count += int(
+                    conditional["logit_clipped"]
+                )
+                if gamma == 0.0:
+                    reference_probability = conditional_copy_probability(
+                        linear_model,
+                        local_mask,
+                        variable,
+                        eta,
+                        strength,
+                        logit_clip=clip,
+                    )
+                    gamma_zero_reference_probability_max_error = max(
+                        gamma_zero_reference_probability_max_error,
+                        abs(probability - reference_probability),
+                    )
                 conditional_probability_min = (
                     probability
                     if conditional_probability_min is None
@@ -750,6 +828,10 @@ def evolve_step_generation_curvature_gibbs(
         "factor_build_elapsed_sec": float(factor_build_elapsed),
         "gibbs_sample_elapsed_sec": float(gibbs_sample_elapsed),
         "curvature_weight": gamma,
+        "gibbs_logit_clip": clip,
+        "raw_initial_copy_mask_sha256": _array_sha256(
+            raw_initial_copy_masks
+        ),
         "initial_copy_mask_sha256": _array_sha256(
             initial_effective_copy_masks
         ),
@@ -769,6 +851,10 @@ def evolve_step_generation_curvature_gibbs(
             final_linear - gamma * final_quadratic
         ),
         "conditional_probability_count": conditional_probability_count,
+        "conditional_logit_abs_max": conditional_logit_abs_max,
+        "conditional_logit_clipped_count": int(
+            conditional_logit_clipped_count
+        ),
         "conditional_probability_min": conditional_probability_min,
         "conditional_probability_max": conditional_probability_max,
         "conditional_entropy_mean": (
@@ -784,6 +870,10 @@ def evolve_step_generation_curvature_gibbs(
         ),
         "linear_query_consistency_max_error": float(
             linear_query_consistency_max_error
+        ),
+        "gamma_zero_reference_probability_max_error": (
+            float(gamma_zero_reference_probability_max_error)
+            if gamma == 0.0 else None
         ),
     }
     return proposal, diagnostics

@@ -275,6 +275,24 @@ class TestGenerationEnergy:
         )
         assert result["probability"] == eta
 
+    def test_default_logit_guard_preserves_bidirectional_support(self):
+        linear_model, query_model = _row_models([1.0, 1.0, 1.0, 1.0])
+        result = conditional_generation_copy_probability(
+            linear_model,
+            query_model,
+            np.asarray([False, False, False]),
+            0,
+            np.zeros(4),
+            5,
+            1.0,
+            0.5,
+            1e308,
+        )
+
+        assert result["logit"] == 30.0
+        assert result["logit_clipped"] is True
+        assert 0.0 < result["probability"] < 1.0
+
 
 @pytest.mark.parametrize(
     "rho,mu,strength,sweeps",
@@ -282,6 +300,7 @@ class TestGenerationEnergy:
         (0.0, 0.0, 0.0, 0),
         (0.75, 0.2, 0.0, 3),
         (0.75, 0.0, 1.7, 3),
+        (0.75, 0.0, 1000.0, 3),
     ],
 )
 def test_gamma_zero_exactly_matches_existing_factorized_step(
@@ -356,7 +375,13 @@ def test_gamma_zero_exactly_matches_existing_factorized_step(
         assert new_diagnostics[key] == old_diagnostics[key]
     if sweeps:
         assert new_diagnostics["initial_copy_mask_sha256"]
+        assert new_diagnostics["raw_initial_copy_mask_sha256"]
         assert new_diagnostics["final_copy_mask_sha256"]
+        assert (
+            new_diagnostics[
+                "gamma_zero_reference_probability_max_error"
+            ] == 0.0
+        )
     assert new_diagnostics["linear_query_consistency_max_error"] <= 1e-15
 
 
@@ -458,6 +483,8 @@ def test_query_delta_rejects_active_query_above_order_guard():
         ({"curvature_weight": np.nan}, "curvature_weight"),
         ({"eta": 0.0, "n_sweeps": 1}, "eta"),
         ({"max_factor_order": 9}, "绝对护栏"),
+        ({"gibbs_logit_clip": 0.0}, "gibbs_logit_clip"),
+        ({"gibbs_logit_clip": np.inf}, "gibbs_logit_clip"),
     ],
 )
 def test_curvature_step_rejects_invalid_inputs(kwargs, match):

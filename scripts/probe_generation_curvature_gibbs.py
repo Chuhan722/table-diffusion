@@ -24,10 +24,14 @@ import pandas as pd
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
     direction_rms_scale,
+    tilted_copy_probabilities,
 )
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.evolution import run_evolution
-from table_diffevo.factorized_diffusion import evolve_step_factorized_gibbs
+from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
+    evolve_step_factorized_gibbs,
+)
 from table_diffevo.generation_curvature import (
     evolve_step_generation_curvature_gibbs,
 )
@@ -53,6 +57,7 @@ FORMAL_STATE_ROUNDS = [0, 500]
 FORMAL_PROPOSALS = 200
 FORMAL_TEMPERATURE = 2.0
 FORMAL_SWEEPS = 8
+FORMAL_LOGIT_CLIP = float(DEFAULT_LOGIT_CLIP)
 BASELINE_CURVATURE = 0.0
 CANDIDATE_CURVATURE = 1.0
 RHO = 0.01
@@ -213,6 +218,7 @@ def _make_state(
             diffusion_direction_normalization="initial_rms",
             factorized_gibbs_sweeps=0,
             factorized_gibbs_max_order=3,
+            factorized_gibbs_logit_clip=FORMAL_LOGIT_CLIP,
         )
     return state, {
         "method": "standard_closed_loop_best",
@@ -244,6 +250,50 @@ def _copy_masks(current, proposal, donors, participate, attr_names):
     if np.any(changed & ~participate[:, None]):
         raise RuntimeError("未参与记录发生了变化")
     return differs, changed
+
+
+def _replay_independent_initial_mask(
+    update_seed,
+    differs,
+    direction_scores,
+    strength,
+):
+    """从 update seed 独立重放参与量、完整初始 mask 与主 RNG 端点。"""
+    differs = np.asarray(differs, dtype=bool)
+    scores = np.asarray(direction_scores, dtype=float)
+    if differs.ndim != 2 or scores.ndim != 2:
+        raise ValueError("differs/direction_scores 必须是二维数组")
+    expected_shape = (N_RECORDS, differs.shape[1])
+    if differs.shape != expected_shape or scores.shape != expected_shape:
+        raise ValueError(
+            "differs/direction_scores 必须与公开记录数和属性数一致"
+        )
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("direction_scores 必须全部有限")
+    if not np.isfinite(strength) or strength < 0.0:
+        raise ValueError("strength 必须是非负有限数值")
+
+    replay_rng = np.random.default_rng(update_seed)
+    participate = replay_rng.random(N_RECORDS) < RHO
+    initial_mask = np.zeros_like(differs)
+    for attribute_index in range(differs.shape[1]):
+        probabilities = (
+            ETA
+            if strength == 0.0
+            else tilted_copy_probabilities(
+                ETA,
+                scores[:, attribute_index],
+                strength,
+            )
+        )
+        initial_mask[:, attribute_index] = (
+            replay_rng.random(N_RECORDS) < probabilities
+        )
+    initial_mask &= differs
+    mutation_rows = participate & (replay_rng.random(N_RECORDS) < 0.0)
+    if np.any(mutation_rows):
+        raise RuntimeError("mu=0 重放不应产生变异行")
+    return participate, initial_mask, _rng_state_sha256(replay_rng)
 
 
 def _measure_proposal(
@@ -502,6 +552,7 @@ def _probe_state(
     max_factor_order,
     device,
     fixed_reference_scale=None,
+    logit_clip=FORMAL_LOGIT_CLIP,
 ):
     if (
         fixed_reference_scale is not None
@@ -511,6 +562,16 @@ def _probe_state(
         )
     ):
         raise ValueError("fixed_reference_scale 必须是正有限数值或 None")
+    if (
+        isinstance(logit_clip, (bool, np.bool_))
+        or not isinstance(
+            logit_clip, (int, float, np.integer, np.floating)
+        )
+        or not np.isfinite(logit_clip)
+        or logit_clip <= 0.0
+    ):
+        raise ValueError("logit_clip 必须是正有限数值")
+    logit_clip = float(logit_clip)
     q, residual, fitness = evaluate_vectorized(
         state,
         queries,
@@ -611,6 +672,7 @@ def _probe_state(
             n_sweeps=0,
             rng=initial_rng,
             max_factor_order=max_factor_order,
+            gibbs_logit_clip=logit_clip,
         )
         reference, reference_diagnostics = evolve_step_factorized_gibbs(
             state,
@@ -627,6 +689,7 @@ def _probe_state(
             rng=reference_rng,
             gibbs_rng=reference_gibbs_rng,
             max_factor_order=max_factor_order,
+            gibbs_logit_clip=logit_clip,
         )
         baseline, baseline_diagnostics = (
             evolve_step_generation_curvature_gibbs(
@@ -645,6 +708,7 @@ def _probe_state(
                 rng=baseline_rng,
                 gibbs_rng=baseline_gibbs_rng,
                 max_factor_order=max_factor_order,
+                gibbs_logit_clip=logit_clip,
             )
         )
         candidate, candidate_diagnostics = (
@@ -664,6 +728,7 @@ def _probe_state(
                 rng=candidate_rng,
                 gibbs_rng=candidate_gibbs_rng,
                 max_factor_order=max_factor_order,
+                gibbs_logit_clip=logit_clip,
             )
         )
 
@@ -684,8 +749,14 @@ def _probe_state(
                 candidate_gibbs_rng,
             )
         }
-        participation_rng = np.random.default_rng(update_seed)
-        participate = participation_rng.random(N_RECORDS) < RHO
+        participate, replayed_initial_mask, replayed_rng_hash = (
+            _replay_independent_initial_mask(
+                update_seed,
+                differs,
+                direction_scores,
+                strength,
+            )
+        )
         expected_participating = int(participate.sum())
         if any(
             diagnostics["participating_rows"] != expected_participating
@@ -716,6 +787,16 @@ def _probe_state(
             and np.array_equal(initial_differs, candidate_differs)
         ):
             raise RuntimeError("各变体 active block 不一致")
+        expected_initial_applied_mask = (
+            replayed_initial_mask & participate[:, None]
+        )
+        initial_mask_replay_exact = np.array_equal(
+            initial_mask, expected_initial_applied_mask
+        )
+        baseline_full_final_mask = replayed_initial_mask.copy()
+        candidate_full_final_mask = replayed_initial_mask.copy()
+        baseline_full_final_mask[participate] = baseline_mask[participate]
+        candidate_full_final_mask[participate] = candidate_mask[participate]
 
         initial_measurement = _measure_proposal(
             state, initial, q, loss, target, queries, schema, device=device
@@ -727,13 +808,19 @@ def _probe_state(
             state, candidate, q, loss, target, queries, schema, device=device
         )
         baseline_mask_metrics = _mask_metrics(
-            differs, initial_mask, baseline_mask, participate
+            differs,
+            replayed_initial_mask,
+            baseline_full_final_mask,
+            participate,
         )
         candidate_mask_metrics = _mask_metrics(
-            differs, initial_mask, candidate_mask, participate
+            differs,
+            replayed_initial_mask,
+            candidate_full_final_mask,
+            participate,
         )
         baseline_candidate_hamming = int(np.logical_xor(
-            baseline_mask, candidate_mask
+            baseline_full_final_mask, candidate_full_final_mask
         ).sum())
         common_keys = (
             "participating_rows",
@@ -788,18 +875,33 @@ def _probe_state(
             N_RECORDS * candidate_diagnostics["final_generation_energy"]
             - candidate_measurement["net_gain"]
         )
-        initial_mask_hash = _array_sha256(initial_mask)
+        raw_initial_mask_hash = _array_sha256(replayed_initial_mask)
+        applied_initial_mask_hash = _array_sha256(
+            expected_initial_applied_mask
+        )
         internal_initial_masks_aligned = (
-            baseline_diagnostics["initial_copy_mask_sha256"]
-            == initial_mask_hash
+            baseline_diagnostics["raw_initial_copy_mask_sha256"]
+            == raw_initial_mask_hash
+            == candidate_diagnostics["raw_initial_copy_mask_sha256"]
+            and baseline_diagnostics["initial_copy_mask_sha256"]
+            == applied_initial_mask_hash
             == candidate_diagnostics["initial_copy_mask_sha256"]
+            and initial_mask_replay_exact
         )
 
-        for measurement, diagnostics, mask_metrics, final_mask, variant in (
+        for (
+            measurement,
+            diagnostics,
+            mask_metrics,
+            final_mask,
+            applied_mask,
+            variant,
+        ) in (
             (
                 baseline_measurement,
                 baseline_diagnostics,
                 baseline_mask_metrics,
+                baseline_full_final_mask,
                 baseline_mask,
                 "generation_linear_gamma0",
             ),
@@ -807,6 +909,7 @@ def _probe_state(
                 candidate_measurement,
                 candidate_diagnostics,
                 candidate_mask_metrics,
+                candidate_full_final_mask,
                 candidate_mask,
                 "generation_curvature_gamma1",
             ),
@@ -827,8 +930,10 @@ def _probe_state(
                     donor_idx.astype(np.int64)
                 ),
                 "participation_sha256": _array_sha256(participate),
-                "initial_mask_sha256": _array_sha256(initial_mask),
+                "initial_mask_sha256": raw_initial_mask_hash,
+                "initial_applied_mask_sha256": applied_initial_mask_hash,
                 "final_mask_sha256": _array_sha256(final_mask),
+                "applied_mask_sha256": _array_sha256(applied_mask),
                 "initial_query_delta_sha256": _array_sha256(
                     internal_initial_delta
                 ),
@@ -864,6 +969,12 @@ def _probe_state(
                 "conditional_probability_count": diagnostics[
                     "conditional_probability_count"
                 ],
+                "conditional_logit_abs_max": diagnostics[
+                    "conditional_logit_abs_max"
+                ],
+                "conditional_logit_clipped_count": diagnostics[
+                    "conditional_logit_clipped_count"
+                ],
                 "conditional_probability_min": diagnostics[
                     "conditional_probability_min"
                 ],
@@ -877,6 +988,7 @@ def _probe_state(
                     "all_conditionals_bidirectional"
                 ],
                 "curvature_weight": diagnostics["curvature_weight"],
+                "gibbs_logit_clip": diagnostics["gibbs_logit_clip"],
                 "initial_generation_energy": diagnostics[
                     "initial_generation_energy"
                 ],
@@ -897,7 +1009,10 @@ def _probe_state(
             "update_seed": int(update_seed),
             "gibbs_seed": int(gibbs_seed),
             "direction_strength": float(strength),
-            "primary_rng_aligned": len(primary_hashes) == 1,
+            "primary_rng_aligned": (
+                len(primary_hashes) == 1
+                and replayed_rng_hash == next(iter(primary_hashes))
+            ),
             "gibbs_rng_aligned": len(gibbs_hashes) == 1,
             "gamma_zero_frame_exact": baseline.equals(reference),
             "gamma_zero_mask_exact": np.array_equal(
@@ -906,6 +1021,18 @@ def _probe_state(
             "gamma_zero_diagnostics_exact": gamma_zero_diagnostics_equal,
             "internal_initial_masks_aligned": (
                 internal_initial_masks_aligned
+            ),
+            "initial_mask_replay_exact": initial_mask_replay_exact,
+            "gamma_zero_conditional_probability_max_error": (
+                baseline_diagnostics[
+                    "gamma_zero_reference_probability_max_error"
+                ]
+            ),
+            "logit_clip_not_hit": (
+                baseline_diagnostics["conditional_logit_clipped_count"] == 0
+                and candidate_diagnostics[
+                    "conditional_logit_clipped_count"
+                ] == 0
             ),
             "initial_query_delta_max_error": initial_delta_error,
             "final_query_delta_max_error": final_delta_error,
@@ -957,6 +1084,24 @@ def _probe_state(
         ),
         "internal_initial_masks_aligned": all(
             row["internal_initial_masks_aligned"] for row in pair_rows
+        ),
+        "initial_mask_replay_exact": all(
+            row["initial_mask_replay_exact"] for row in pair_rows
+        ),
+        "gamma_zero_conditional_probability_max_error": max(
+            row["gamma_zero_conditional_probability_max_error"]
+            for row in pair_rows
+        ),
+        "logit_clip_not_hit": all(
+            row["logit_clip_not_hit"] for row in pair_rows
+        ),
+        "conditional_logit_abs_max": max(
+            (
+                row["conditional_logit_abs_max"]
+                for row in all_measurements
+                if row["conditional_logit_abs_max"] is not None
+            ),
+            default=0.0,
         ),
         "initial_query_delta_max_error": max(
             row["initial_query_delta_max_error"] for row in pair_rows
@@ -1022,6 +1167,9 @@ def main():
     parser.add_argument("--sweeps", type=int, default=FORMAL_SWEEPS)
     parser.add_argument("--max-factor-order", type=int, default=3)
     parser.add_argument(
+        "--logit-clip", type=float, default=FORMAL_LOGIT_CLIP
+    )
+    parser.add_argument(
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
     )
     parser.add_argument(
@@ -1049,8 +1197,10 @@ def main():
         parser.error("--temperature 必须是非负有限数值")
     if args.sweeps <= 0:
         parser.error("--sweeps 必须为正整数")
-    if not 0 <= args.max_factor_order <= 8:
-        parser.error("--max-factor-order 必须在 0..8 内")
+    if not 1 <= args.max_factor_order <= 8:
+        parser.error("--max-factor-order 必须在 1..8 内")
+    if not np.isfinite(args.logit_clip) or args.logit_clip <= 0.0:
+        parser.error("--logit-clip 必须是正有限数值")
 
     formal_protocol_matches = (
         args.seeds == FORMAL_SEEDS
@@ -1059,6 +1209,7 @@ def main():
         and args.temperature == FORMAL_TEMPERATURE
         and args.sweeps == FORMAL_SWEEPS
         and args.max_factor_order == 3
+        and args.logit_clip == FORMAL_LOGIT_CLIP
         and args.device == "cuda"
     )
     output_path = Path(args.output)
@@ -1154,6 +1305,7 @@ def main():
                 max_factor_order=args.max_factor_order,
                 device=args.device,
                 fixed_reference_scale=fixed_reference_scale,
+                logit_clip=args.logit_clip,
             )
             result["state_generation"] = generation
             states.append(result)
@@ -1255,6 +1407,24 @@ def main():
             state["gates"]["internal_initial_masks_aligned"]
             for state in states
         ),
+        "initial_mask_replay_exact": all(
+            state["gates"]["initial_mask_replay_exact"]
+            for state in states
+        ),
+        "gamma_zero_conditional_probability_max_error": max(
+            state["gates"][
+                "gamma_zero_conditional_probability_max_error"
+            ]
+            for state in states
+        ),
+        "logit_clip_not_hit": all(
+            state["gates"]["logit_clip_not_hit"]
+            for state in states
+        ),
+        "conditional_logit_abs_max": max(
+            state["gates"]["conditional_logit_abs_max"]
+            for state in states
+        ),
         "initial_query_delta_max_error": max(
             state["gates"]["initial_query_delta_max_error"]
             for state in states
@@ -1296,6 +1466,11 @@ def main():
         and gates["gamma_zero_mask_exact"]
         and gates["gamma_zero_diagnostics_exact"]
         and gates["internal_initial_masks_aligned"]
+        and gates["initial_mask_replay_exact"]
+        and gates[
+            "gamma_zero_conditional_probability_max_error"
+        ] == 0.0
+        and gates["logit_clip_not_hit"]
         and gates["initial_query_delta_max_error"] <= 1e-10
         and gates["final_query_delta_max_error"] <= 1e-10
         and gates["candidate_energy_identity_max_error"] <= 1e-10
@@ -1332,6 +1507,7 @@ def main():
         "baseline_curvature_weight": BASELINE_CURVATURE,
         "candidate_curvature_weight": CANDIDATE_CURVATURE,
         "max_factor_order": args.max_factor_order,
+        "gibbs_logit_clip": float(args.logit_clip),
         "rho": RHO,
         "eta": ETA,
         "mu": 0.0,
