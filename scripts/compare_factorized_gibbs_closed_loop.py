@@ -24,6 +24,7 @@ import pandas as pd
 from scipy import stats
 
 from table_diffevo.evolution import run_evolution
+from table_diffevo.factorized_diffusion import DEFAULT_LOGIT_CLIP
 from table_diffevo.io import save_run
 from table_diffevo.marginals import load_marginals
 from table_diffevo.queries import load_queries
@@ -166,6 +167,7 @@ def _run_one(
             diffusion_direction_normalization="initial_rms",
             factorized_gibbs_sweeps=sweeps,
             factorized_gibbs_max_order=max_factor_order,
+            factorized_gibbs_logit_clip=DEFAULT_LOGIT_CLIP,
         )
     generation_call_wall_sec = time.perf_counter() - call_start
 
@@ -187,6 +189,7 @@ def _run_one(
         "variant": variant,
         "temperature": float(temperature),
         "sweeps": int(sweeps),
+        "gibbs_logit_clip": float(DEFAULT_LOGIT_CLIP),
         "rounds_run": int(diagnostics["rounds_run"]),
         "stopped_early": bool(diagnostics["stopped_early"]),
         "initial_loss": float(losses[0]),
@@ -647,8 +650,8 @@ def main():
         parser.error("--temperature 必须是非负有限数值")
     if isinstance(args.sweeps, bool) or args.sweeps <= 0:
         parser.error("--sweeps 必须是正整数")
-    if not 0 <= args.max_factor_order <= 8:
-        parser.error("--max-factor-order 必须在 0..8 内")
+    if not 1 <= args.max_factor_order <= 8:
+        parser.error("--max-factor-order 必须在 1..8 内")
 
     formal_protocol_matches = (
         args.seeds == FORMAL_SEEDS
@@ -930,6 +933,7 @@ def main():
         "temperature": args.temperature,
         "candidate_sweeps": args.sweeps,
         "max_factor_order": args.max_factor_order,
+        "gibbs_logit_clip": float(DEFAULT_LOGIT_CLIP),
         "device": args.device,
         "generation_order": (
             "even seeds baseline first; odd seeds candidate first"

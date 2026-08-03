@@ -56,7 +56,10 @@ from table_diffevo.directional_diffusion import (
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
-from table_diffevo.factorized_diffusion import evolve_step_factorized_gibbs
+from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
+    evolve_step_factorized_gibbs,
+)
 
 
 def _rng_state_sha256(rng: np.random.Generator) -> str:
@@ -137,6 +140,7 @@ def run_evolution(
     diffusion_direction_normalization: str = "initial_rms",
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
+    factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -239,6 +243,9 @@ def run_evolution(
     factorized_gibbs_max_order : int, default 3
         查询局部因子的最高允许属性阶数。仅在 factorized_gibbs_sweeps > 0 时使用，
         超出时明确报错，不静默截断交互。
+    factorized_gibbs_logit_clip : float or None, default 30
+        Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
+        float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
 
     Returns
     -------
@@ -369,11 +376,33 @@ def run_evolution(
     factorized_gibbs_max_order = int(factorized_gibbs_max_order)
     if factorized_gibbs_max_order > 8:
         raise ValueError("factorized_gibbs_max_order 不得超过绝对护栏 8")
+    if factorized_gibbs_logit_clip is not None:
+        if (
+            isinstance(factorized_gibbs_logit_clip, (bool, np.bool_))
+            or not isinstance(
+                factorized_gibbs_logit_clip,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(factorized_gibbs_logit_clip)
+            or factorized_gibbs_logit_clip <= 0.0
+        ):
+            raise ValueError(
+                "factorized_gibbs_logit_clip 必须是正有限数值或 None，"
+                f"得到 {factorized_gibbs_logit_clip!r}"
+            )
+        factorized_gibbs_logit_clip = float(
+            factorized_gibbs_logit_clip
+        )
     if factorized_gibbs_sweeps > 0:
         if not residual_directed_diffusion:
             raise ValueError(
                 "factorized_gibbs_sweeps > 0 要求启用 "
                 "residual_directed_diffusion"
+            )
+        if factorized_gibbs_max_order == 0:
+            raise ValueError(
+                "factorized_gibbs_sweeps > 0 时 "
+                "factorized_gibbs_max_order 必须至少为 1"
             )
         if (
             isinstance(seed, (bool, np.bool_))
@@ -773,6 +802,7 @@ def run_evolution(
                         rng=rng,
                         gibbs_rng=factorized_gibbs_rng,
                         max_factor_order=factorized_gibbs_max_order,
+                        gibbs_logit_clip=factorized_gibbs_logit_clip,
                     )
                 )
                 attempt_factorized_gibbs_diagnostics.append(
@@ -1005,6 +1035,7 @@ def run_evolution(
             ),
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
+            "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
         },
     }
 

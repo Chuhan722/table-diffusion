@@ -507,6 +507,7 @@ class TestFactorizedGibbsClosedLoop:
         ]
         initial = pd.DataFrame({"x": ["a", "b", "b", "b"]})
         seen_rhos = []
+        seen_logit_clips = []
 
         monkeypatch.setattr(
             evolution_module,
@@ -518,6 +519,7 @@ class TestFactorizedGibbsClosedLoop:
             current, donors, schema, queries, residual, **kwargs
         ):
             seen_rhos.append(kwargs["rho"])
+            seen_logit_clips.append(kwargs["gibbs_logit_clip"])
             value = "a" if len(seen_rhos) == 1 else "b"
             proposal = pd.DataFrame({"x": [value] * len(current)})
             diagnostics = {
@@ -549,11 +551,13 @@ class TestFactorizedGibbsClosedLoop:
             retry_rho_decay=0.25,
             residual_directed_diffusion=True,
             factorized_gibbs_sweeps=2,
+            factorized_gibbs_logit_clip=17.0,
             device="numpy",
             log_every=100,
         )
 
         assert seen_rhos == pytest.approx([0.2, 0.05])
+        assert seen_logit_clips == [17.0, 17.0]
         assert diagnostics["proposal_attempts_history"] == [2]
         assert diagnostics["accepted_attempt_history"] == [2]
         attempts = diagnostics[
@@ -645,6 +649,11 @@ class TestFactorizedGibbsClosedLoop:
             ({"factorized_gibbs_sweeps": 1.5}, "sweeps"),
             ({"factorized_gibbs_sweeps": True}, "sweeps"),
             ({"factorized_gibbs_max_order": -1}, "max_order"),
+            (
+                {"factorized_gibbs_sweeps": 1,
+                 "factorized_gibbs_max_order": 0},
+                "max_order",
+            ),
             ({"factorized_gibbs_max_order": 1.5}, "max_order"),
             ({"factorized_gibbs_max_order": 9}, "max_order"),
             (
@@ -655,6 +664,9 @@ class TestFactorizedGibbsClosedLoop:
             ({"factorized_gibbs_sweeps": 1, "eta": 0.0}, "eta"),
             ({"factorized_gibbs_sweeps": 1, "eta": 1.0}, "eta"),
             ({"factorized_gibbs_sweeps": 1, "seed": None}, "seed"),
+            ({"factorized_gibbs_logit_clip": 0.0}, "logit_clip"),
+            ({"factorized_gibbs_logit_clip": np.inf}, "logit_clip"),
+            ({"factorized_gibbs_logit_clip": True}, "logit_clip"),
         ],
     )
     def test_rejects_invalid_factorized_parameters(self, kwargs, message):

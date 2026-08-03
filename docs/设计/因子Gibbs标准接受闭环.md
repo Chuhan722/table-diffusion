@@ -39,7 +39,7 @@ mask：
   `(0.01, 0.99)`、排除自身；
 - 接受：现有 `proposal_loss <= current_loss + 1e-9`；`max_retries=0`；
 - 方向：`residual_directed_diffusion=True`、`initial_rms`、`tau=2`；
-- candidate：8 sweep、最高因子阶数 3；
+- candidate：8 sweep、最高因子阶数 3、条件 logit 数值护栏 `[-30,30]`；
 - 设备：Conda `gsd`、CUDA 卡 0；正式运行前确认设备空闲；
 - 顺序：偶数 seed 先 baseline、奇数 seed 先 candidate，减轻固定热身顺序对墙钟的
   系统影响；算法输出不应受运行先后影响；
@@ -113,6 +113,18 @@ workload 优化改善”，不能称为完整生成质量改善。5% 只作为�
 记录 SHA-256。baseline/candidate 的初始表、初始化后主 RNG、首轮方向尺度和
 500 轮后主 RNG 均在 20 个种子上逐一对齐。
 
+迁移深审还从当前 Issue #14 父提交独立重放了全部 20 个 0-sweep baseline、每个
+500 轮。每个种子的初始表、初始化后主 RNG、最终主 RNG、最终表和父实现具备的
+全部非计时 diagnostics 都与正式 baseline 精确一致，证明接线默认关闭时没有改变
+既有生成轨迹。
+
+正式运行发生在 Issue #14 的有限温度数值护栏加入之前，因此原始 JSON 没有单独
+记录 `gibbs_logit_clip`。迁移深审在护栏默认值 30 的当前父提交上重放了全部 20 个
+candidate 种子：共审计 1,311,408 次 Gibbs 条件更新，最大原始 `|logit|` 为
+`10.651307713606187`，没有一次触发护栏；20 张最终表和除墙钟外的完整 diagnostics
+均与正式输出精确一致。因此旧结果仍适用于当前数值护栏，主循环与新输出现已显式
+记录该参数；这项事后等价审计不改变预注册结论。
+
 ### 7.1 预注册主终点
 
 | 指标 | baseline | candidate | 平均差 `candidate-baseline` | 95% 配对 t 区间 | 胜/平/负 |
@@ -175,4 +187,10 @@ baseline 和唯一变量。不能在本次输出上直接事后挑一个更小 `
 正式输出位于
 `outputs/factorized_gibbs_closed_loop/formal_20seed_500r_tau2_sweep8_8431146/`。该目录包含
 40 张合成表、80 份运行/离线 JSON 与总汇总，全部 JSON 已使用禁止非有限常量的
-解析器重读，表尺寸、参数、哈希、配对差和评价查询数量均已独立复核。
+解析器重读，表尺寸、参数、哈希、配对差和评价查询数量均已独立复核；总汇总
+`summary.json` 的 SHA-256 为
+`bd6884d9747ad9d8b62a0d1edc84521bac1c2925cb77e3cd945ff40c1254c7e8`。
+
+当前父提交迁移与数值边界修复后的最终门禁为：闭环针对性测试 52 项、加因子模块
+共 93 项、完整 CPU/torch/CUDA 451 项全部通过；qdte 环境演化测试 44 项通过、
+2 项按环境跳过。修改模块和脚本通过 `py_compile` 与 `git diff --check`。
