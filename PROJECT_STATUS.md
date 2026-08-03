@@ -6,7 +6,7 @@ workload；2-way 最大熵初始化保留为辅助消融，不再作为本阶段
 
 当前 baseline 使用 1-way `marginal` 初始化、精确 target、geometric donor 抽样和
 固定 workload；真实 train/test 只在生成完成后离线评价。当前方法是残差驱动的
-连续扩散核：不筛掉反向编辑，而是用实际单块方向连续倾斜复制概率，并用首轮 RMS
+连续扩散核：不筛掉反向编辑，而是用实际单块方向连续倾斜复制概率，并用首个非零方向 RMS
 固定定标。已合入的 `tau=1` 在 nltcs 三种子 1500 轮中把 best loss 从 720.96 万
 降到 333.21 万，训练/测试联合 TVD 从 `0.3147/0.3957` 降到
 `0.2838/0.3680`。后续小表温度前沿表明 `tau=1` 尚未达到核内极限：`tau=8`
@@ -114,11 +114,13 @@ seed 独立重放全部随机
 已经改善最终生成器。
 
 **验证与输出：** 深审修复提交 `743c8d5` 取代证据门禁不完整的旧输出；新旧
-非计时算法结果独立对拍精确一致。专项测试 52 项、相关 gsd 测试 176 项、完整 gsd
-CPU/torch/CUDA 541 项；qdte 相关 174 项通过、2 项跳过。正式 JSON 位于
-`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_743c8d5.json`，
-大小 11,326,999 字节，SHA-256 为
-`054849b56705e171d4c529db3651b4b721cd91ccf73ad7607268b8080a504111`。完整公式、
+非计时算法结果独立对拍精确一致。同步 PR #22 父 HEAD 并收紧正式元数据/零扫描
+诊断边界后，最新重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。专项测试
+52 项、相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项
+通过、2 项跳过。正式 JSON 位于
+`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_991d039.json`，
+大小 11,327,222 字节，SHA-256 为
+`4eff32e21cc99a6fc4874cb8cd89f131c11c84cd346baa445b740576f134d16f`。完整公式、
 逐状态结果、审计边界和旧证据修正见 `docs/设计/整代曲率感知Gibbs扩散.md`，关联
 Issue #18。
 
