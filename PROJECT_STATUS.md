@@ -80,6 +80,7 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
 ## 最近变更（2026-08-03）
+
 ### 整代曲率感知 Gibbs——晚期同时压低自身与交叉二次项
 
 **问题与分布：** Issue #17 排除了自身项或交叉项单独主导后，本阶段没有事后缩小
@@ -90,11 +91,14 @@ workload proposal 收益除以公开 `N`。单 bit 条件式同时包含当前�
 有限强度下不设置收益门槛、argmax、top-k 或 generation acceptance。
 
 **协议与门禁：** 一次性固定 `test_300x10`、seed 0/1/2、marginal 初始态与标准
-0-sweep 闭环 500 轮 best 态、每状态 200 proposal、`tau=2`、8 sweep、
-`rho=0.01`、`eta=0.5`、`mu=0`，唯一变量为 `gamma=0/1`。1200 对 donor、参与、
-初始 mask、主/Gibbs RNG 全部对齐；`gamma=0` 与既有因子 Gibbs 的表、mask、诊断
-和 RNG 端点 1200/1200 精确相同。查询变化误差为 0，`N*V_1` 与直接 loss 收益
-最大误差 `5.68e-14`，所有正式条件概率保持双向支持。脚本没有真实参考表路径。
+0-sweep 闭环 500 轮 best 态、每状态 200 proposal、`tau=2`、8 sweep、条件
+`logit` 护栏 30、`rho=0.01`、`eta=0.5`、`mu=0`，唯一变量为 `gamma=0/1`。
+1200 对 donor、参与、初始 mask、主/Gibbs RNG 全部对齐；初始 mask 从 update
+seed 独立重放全部随机
+消耗，`gamma=0` 与既有因子 Gibbs 的表、mask、诊断、RNG 端点及条件概率精确
+相同。查询变化误差为 0，`N*V_1` 与直接 loss 收益最大误差 `5.68e-14`；最大
+有效 `|logit|=9.70686`，护栏零命中，所有正式条件概率保持双向支持。脚本没有
+真实参考表路径。
 
 **预注册晚期结果：** 500 轮状态的一阶收益 `3.8233→3.3250`（-0.4983），自身
 二次项 `8.1967→7.2742`（-0.9225），交叉项 `0.7183→0.0283`（-0.6900），总
@@ -109,12 +113,14 @@ workload proposal 收益除以公开 `N`。单 bit 条件式同时包含当前�
 更重要的是，两侧晚期平均净收益仍为负；本结论支持进入独立动力学验证，不等于
 已经改善最终生成器。
 
-**验证与输出：** 新增测试 30 项、相关测试 164 项、完整 gsd CPU/torch/CUDA
-494 项；qdte 相关 160 项通过、2 项跳过。正式 JSON 位于
-`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_959f93e.json`，
-大小 10,305,911 字节，SHA-256 为
-`6ebf8787461e4bfd98444c5853c868468bde7d2c051596da7a367792012fc793`。完整公式、
-逐状态结果和边界见 `docs/设计/整代曲率感知Gibbs扩散.md`，关联 Issue #18。
+**验证与输出：** 深审修复提交 `743c8d5` 取代证据门禁不完整的旧输出；新旧
+非计时算法结果独立对拍精确一致。专项测试 41 项、相关 gsd 测试 155 项、完整 gsd
+CPU/torch/CUDA 519 项；qdte 相关 153 项通过、2 项跳过。正式 JSON 位于
+`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_743c8d5.json`，
+大小 11,326,999 字节，SHA-256 为
+`054849b56705e171d4c529db3651b4b721cd91ccf73ad7607268b8080a504111`。完整公式、
+逐状态结果、审计边界和旧证据修正见 `docs/设计/整代曲率感知Gibbs扩散.md`，关联
+Issue #18。
 
 ### 联合扩散整代步幅诊断——过冲是逐行自身项与跨行交叉项的混合来源
 
