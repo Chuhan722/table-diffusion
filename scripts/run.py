@@ -74,6 +74,10 @@ WINSORIZE = (0.01, 0.99)  # 稳健归一化分位点
 BETA = 1.0             # 选择强度（固定值）
 H = 0.8                # 邻域尺度（固定值）
 RHO = 0.01             # 记录参与率（固定值）
+# rho 衰减调度（默认关闭，None=固定 RHO；启用时设 'linear' 或 'exponential'）
+RHO_SCHEDULE = None    # None / 'linear' / 'exponential'
+RHO_MAX = 0.01         # 衰减起点（第 0 轮）
+RHO_MIN = 0.01         # 衰减终点（末轮）
 ETA = 0.5              # 块复制率（固定值）
 MU = 0.01              # 变异率（固定值）
 
@@ -110,7 +114,11 @@ def _run_params():
         "alpha_max": ALPHA_MAX,
         "delta": DELTA,
         "winsorize": WINSORIZE,
-        "beta": BETA, "h": H, "rho": RHO, "eta": ETA, "mu": MU,
+        "beta": BETA, "h": H, "rho": RHO,
+        "rho_schedule": RHO_SCHEDULE,
+        "rho_max": RHO_MAX,
+        "rho_min": RHO_MIN,
+        "eta": ETA, "mu": MU,
         "max_retries": MAX_RETRIES,
         "retry_rho_decay": RETRY_RHO_DECAY,
         "residual_directed_diffusion": RESIDUAL_DIRECTED_DIFFUSION,
@@ -169,6 +177,9 @@ def main():
             winsorize_quantiles=WINSORIZE,
             max_retries=MAX_RETRIES,
             retry_rho_decay=RETRY_RHO_DECAY,
+            rho_schedule=RHO_SCHEDULE,
+            rho_max=RHO_MAX,
+            rho_min=RHO_MIN,
             maxent_max_states=MAXENT_MAX_STATES,
             maxent_max_sweeps=MAXENT_MAX_SWEEPS,
             maxent_tol=MAXENT_TOL,

@@ -66,6 +66,51 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-08-04）
+
+### Issue #29：记录参与率 ρ 衰减调度——实现完成，待实验验证
+
+**实现内容：**
+- `src/table_diffevo/evolution.py`：新增 `_compute_rho_t` helper 函数；
+  `run_evolution` 追加三个参数 `rho_schedule`（None/'linear'/'exponential'）、
+  `rho_max`、`rho_min`；主循环每轮计算 `rho_t` 并替换原固定 `rho`；diagnostics
+  新增 `rho_t_history` 列表及 `params` 中对应字段。
+- `scripts/run.py`：新增 `RHO_SCHEDULE = None`、`RHO_MAX = 0.01`、`RHO_MIN = 0.01`
+  常量，并同步写入 `_run_params()` 和 `run_evolution()` 调用。
+- `tests/test_rho_schedule.py`：24 项测试，覆盖等价门（位级 SHA-256 + 帧比对）、
+  线性/指数公式边界值与中间值、`rho_t_history` 逐轮对照公式、参数验证。
+  全量 513 项测试通过。
+
+**等价保证：** `rho_schedule=None`（默认）时代码路径与合入前位级等价——
+SHA-256、loss 轨迹、pd.DataFrame 三重验证均通过。
+
+**当前状态：** 代码在 `feat/rho-decay-schedule` 分支，仅修改本地，未推送。
+
+**nltcs 三臂正式实验（2026-08-04，负结果）：**
+- 配置：`scripts/exp_rho_schedule.py`，nltcs 16181 记录、500 轮、seed 0..9、
+  CUDA、geometric（α 2→10，λ=0.5）、marginal 初始化。三臂预算对齐（rho_t 均值
+  均为 0.01000）：fixed（None，恒 0.01）/ linear（0.015→0.005）/
+  exponential（0.0165→0.0055）。结果目录
+  `outputs/rho_sched_moderate_2026-08-04_1434/`。
+- 结论：**关键产出指标上调度全线落败，且方向与"平均指标"相反。**
+
+  | 指标 | fixed | linear | exponential | 胜 fixed |
+  |---|---:|---:|---:|---|
+  | best_loss（最终产出表） | **1.037e8** | 1.350e8 | 1.377e8 | linear 0/10，exp 0/10 |
+  | normalized_l1_error | **0.0219** | 0.0251 | 0.0254 | 0/10，0/10 |
+  | tail250_mean_loss | 2.343e8 | **2.285e8** | 2.341e8 | linear 9/10，exp 6/10 |
+  | traj_mean_loss（全程均值） | 3.828e8 | **3.656e8** | 3.668e8 | 10/10，10/10 |
+
+- 机制解读：调度臂后期 rho 降低、改动温和，使**过程平均 loss**（tail250/traj）
+  更低更平滑；但正因后期太保守，冲不到 fixed 那样的最低点，**best_loss 反而差
+  约 30%**。best_loss / L1 才是真正想要的产出质量指标。
+- 对上一假设的否定：先前认为 test_300x10 无效是因数据太小、后期参与记录太少；
+  换到 nltcs（后期仍约 89 条参与）后 best_loss 依旧变差，**数据量不是主因**。
+  当前证据下，"前多后少"的参与率调度未能改善产出质量。
+
+**下一步（待用户决策）：** 该负结果不建议继续沿"温和衰减"方向调参。若仍要探索，
+需重新想机制（如仅在收敛后期做局部精炼、或换 best 保留策略），另立设计再验证。
+
 ## 最近变更（2026-08-03）
 
 ### 联合扩散整代步幅诊断——过冲是逐行自身项与跨行交叉项的混合来源
