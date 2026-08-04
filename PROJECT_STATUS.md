@@ -115,12 +115,14 @@ seed 独立重放全部随机
 
 **验证与输出：** 深审修复提交 `743c8d5` 取代证据门禁不完整的旧输出；新旧
 非计时算法结果独立对拍精确一致。同步 PR #22 父 HEAD 并收紧正式元数据/零扫描
-诊断边界后，最新重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。专项测试
-52 项、相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项
-通过、2 项跳过。正式 JSON 位于
-`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_991d039.json`，
-大小 11,327,222 字节，SHA-256 为
-`4eff32e21cc99a6fc4874cb8cd89f131c11c84cd346baa445b740576f134d16f`。完整公式、
+诊断边界后，重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。PR #22 合入后，
+本分支又以普通 merge 同步 `master=eac317b`；父 HEAD 与合并后主分支代码树相同，
+最新正式重跑去除环境和计时字段后与上一版整份 JSON 精确一致。专项测试 52 项、
+相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项通过、
+2 项跳过。最新正式 JSON 位于
+`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`，
+大小 11,326,345 字节，SHA-256 为
+`43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。完整公式、
 逐状态结果、审计边界和旧证据修正见 `docs/设计/整代曲率感知Gibbs扩散.md`，关联
 Issue #18。
 

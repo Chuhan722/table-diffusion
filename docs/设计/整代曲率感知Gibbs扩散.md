@@ -248,10 +248,15 @@ seed-state；初始三个状态只作预先声明的阶段安全检查。200 个
 同步 PR #22 最新父 HEAD 后的深审又收紧了正式状态元数据门禁：缺少任一直接
 初始态、闭环初始表哈希或正有限方向尺度时立即失败；同时把 0-sweep 未计算的
 查询/能量诊断从误导的零改为 `None`。两项均不改变正式 8-sweep 路径。以下
-结果在干净提交 `991d039`、Conda `gsd` 和 RTX 4090 上重跑
+结果先在干净提交 `991d039`、Conda `gsd` 和 RTX 4090 上重跑
 （`CUDA_VISIBLE_DEVICES=1`，进程内逻辑设备 0）。固定的
 3 seed × 初始/500 轮状态 × 200 proposal 共 1200 对全部完成；没有删除、替换或
 追加状态，也没有真实参考表输入路径。
+
+PR #22 后续以 `eac317b` 合入主分支；其合并树与父 HEAD `f4ccf22` 逐字节相同。
+本分支用普通 merge 同步后，又在干净合并提交 `1b18d13` 按相同协议完整重跑。
+下面的算法结果、门禁与判断均不变；最新输出去除环境、命令/路径和全部计时字段后，
+与 `991d039` 输出的整份 JSON 精确一致。
 
 ### 9.1 语义与恒等式门禁
 
@@ -337,10 +342,10 @@ CPU/torch/CUDA 541 项；qdte 环境相关测试 174 项通过、2 项按环境�
 脚本和测试通过
 `py_compile` 与 `git diff --check`，另完成 CUDA 冒烟。
 
-正式输出：
-`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_991d039.json`。
-文件大小 11,327,222 字节，SHA-256 为
-`4eff32e21cc99a6fc4874cb8cd89f131c11c84cd346baa445b740576f134d16f`。6 个状态、
+最新正式输出：
+`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`。
+文件大小 11,326,345 字节，SHA-256 为
+`43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。6 个状态、
 1200 对原始记录、公开输入哈希、配对汇总、风险规则与全部恒等式已独立复算。
 
 阶段结论只支持“曲率感知有限温 Gibbs 改善当前小表晚期冻结 proposal 的相对
