@@ -31,6 +31,8 @@
 - 全表同步：一轮内所有记录基于同一份 S_t 和同一份残差生成下一状态
 - 固定种子可复现：seed → np.random.default_rng
 """
+import hashlib
+import json
 import time
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
@@ -54,6 +56,32 @@ from table_diffevo.directional_diffusion import (
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
+from table_diffevo.factorized_diffusion import (
+    DEFAULT_LOGIT_CLIP,
+    evolve_step_factorized_gibbs,
+)
+
+
+def _rng_state_sha256(rng: np.random.Generator) -> str:
+    """返回 RNG 状态的稳定摘要，只用于等价性诊断。"""
+    serialized = json.dumps(
+        rng.bit_generator.state,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _table_sha256(frame: pd.DataFrame) -> str:
+    """返回合成表 CSV 表示的摘要，只用于复现诊断。"""
+    serialized = frame.to_csv(index=False).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
+
+
+def _factorized_gibbs_seed(seed: int) -> int:
+    """从公开主 seed 派生与主随机流独立的 Gibbs seed。"""
+    sequence = np.random.SeedSequence([int(seed), 0x4749424253])
+    return int(sequence.generate_state(1, dtype=np.uint64)[0])
 
 
 def _mean_selected_distance(distances, donor_idx, use_torch: bool = False) -> float:
@@ -110,6 +138,9 @@ def run_evolution(
     residual_directed_diffusion: bool = False,
     diffusion_direction_strength: float = 1.0,
     diffusion_direction_normalization: str = "initial_rms",
+    factorized_gibbs_sweeps: int = 0,
+    factorized_gibbs_max_order: int = 3,
+    factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -205,6 +236,16 @@ def run_evolution(
         - 'initial_rms'：用本次运行首个非零方向矩阵的 RMS 固定定标。此时
           diffusion_direction_strength 是无量纲初始温度，后续残差变小时倾斜自然
           冷却，不逐轮重新标准化。
+    factorized_gibbs_sweeps : int, default 0
+        每条参与记录在独立定向初始 mask 后执行的随机扫描 Gibbs sweep 数。0 完全
+        保留既有独立单块更新；正数只允许与 residual_directed_diffusion 一起启用。
+        附加 Gibbs 使用从公开 seed 派生的独立随机流，不消费主随机流。
+    factorized_gibbs_max_order : int, default 3
+        查询局部因子的最高允许属性阶数。仅在 factorized_gibbs_sweeps > 0 时使用，
+        超出时明确报错，不静默截断交互。
+    factorized_gibbs_logit_clip : float or None, default 30
+        Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
+        float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
 
     Returns
     -------
@@ -229,6 +270,10 @@ def run_evolution(
         - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
         - direction_evaluation_count: int，实际计算局部方向矩阵的次数
+        - factorized_gibbs_attempt_diagnostics_history: 每轮每次尝试的因子构造、
+          Gibbs 微步和墙钟诊断；不参与接受或早停
+        - primary_rng_state_sha256/factorized_gibbs_rng_state_sha256:
+          主随机流与附加随机流最终状态摘要
 
     Raises
     ------
@@ -317,8 +362,76 @@ def run_evolution(
             "diffusion_direction_normalization 必须是 'none' 或 "
             f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
         )
+    for value, name in (
+        (factorized_gibbs_sweeps, "factorized_gibbs_sweeps"),
+        (factorized_gibbs_max_order, "factorized_gibbs_max_order"),
+    ):
+        if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            or value < 0
+        ):
+            raise ValueError(f"{name} 必须是非负整数，得到 {value!r}")
+    factorized_gibbs_sweeps = int(factorized_gibbs_sweeps)
+    factorized_gibbs_max_order = int(factorized_gibbs_max_order)
+    if factorized_gibbs_max_order > 8:
+        raise ValueError("factorized_gibbs_max_order 不得超过绝对护栏 8")
+    if factorized_gibbs_logit_clip is not None:
+        if (
+            isinstance(factorized_gibbs_logit_clip, (bool, np.bool_))
+            or not isinstance(
+                factorized_gibbs_logit_clip,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(factorized_gibbs_logit_clip)
+            or factorized_gibbs_logit_clip <= 0.0
+        ):
+            raise ValueError(
+                "factorized_gibbs_logit_clip 必须是正有限数值或 None，"
+                f"得到 {factorized_gibbs_logit_clip!r}"
+            )
+        factorized_gibbs_logit_clip = float(
+            factorized_gibbs_logit_clip
+        )
+    if factorized_gibbs_sweeps > 0:
+        if not residual_directed_diffusion:
+            raise ValueError(
+                "factorized_gibbs_sweeps > 0 要求启用 "
+                "residual_directed_diffusion"
+            )
+        if factorized_gibbs_max_order == 0:
+            raise ValueError(
+                "factorized_gibbs_sweeps > 0 时 "
+                "factorized_gibbs_max_order 必须至少为 1"
+            )
+        if (
+            isinstance(seed, (bool, np.bool_))
+            or not isinstance(seed, (int, np.integer))
+        ):
+            raise ValueError(
+                "factorized Gibbs 要求 seed 是整数，"
+                f"得到 {seed!r}"
+            )
+        if (
+            isinstance(eta, (bool, np.bool_))
+            or not isinstance(eta, (int, float, np.integer, np.floating))
+            or not np.isfinite(eta)
+            or not 0.0 < eta < 1.0
+        ):
+            raise ValueError(
+                "factorized Gibbs 要求 eta 是 (0, 1) 内的有限数值，"
+                f"得到 {eta!r}"
+            )
 
     rng = np.random.default_rng(seed)
+    factorized_gibbs_rng = (
+        np.random.default_rng(_factorized_gibbs_seed(seed))
+        if factorized_gibbs_sweeps > 0 else None
+    )
+    factorized_gibbs_initial_rng_state_sha256 = (
+        _rng_state_sha256(factorized_gibbs_rng)
+        if factorized_gibbs_rng is not None else None
+    )
 
     # ---- 查询评价分派：按 eval_method 选择向量化快路径或旧逐查询路径 ----
     # 两条路径结果一致（numpy 逐位相同），仅实现与速度不同。旧路径保留作对拍/应急。
@@ -369,6 +482,10 @@ def run_evolution(
     else:
         S = init_synthetic_table(n_records, schema, rng)
         initialization_diagnostics = {"method": "random"}
+    initial_table_sha256 = (
+        _table_sha256(S) if residual_directed_diffusion else None
+    )
+    primary_rng_post_initialization_state_sha256 = _rng_state_sha256(rng)
 
     loss_history: List[float] = []
     accept_history: List[bool] = []
@@ -396,6 +513,9 @@ def run_evolution(
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    factorized_gibbs_attempt_diagnostics_history: List[
+        List[Dict[str, Any]]
+    ] = []
     stopped_early = False
     rounds_run = 0
     state_evaluation_count = 0
@@ -403,6 +523,13 @@ def run_evolution(
     direction_evaluation_count = 0
     direction_evaluation_elapsed_sec = 0.0
     direction_reference_scale: Optional[float] = None
+    factorized_gibbs_factor_build_elapsed_sec = 0.0
+    factorized_gibbs_sample_elapsed_sec = 0.0
+    factorized_gibbs_active_rows = 0
+    factorized_gibbs_active_blocks = 0
+    factorized_gibbs_factor_count = 0
+    factorized_gibbs_factor_table_entries = 0
+    factorized_gibbs_microsteps = 0
 
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
@@ -647,6 +774,7 @@ def run_evolution(
         attempt_gains: List[float] = []
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
+        attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
             {
@@ -657,10 +785,61 @@ def run_evolution(
         )
         for attempt in range(max_retries + 1):
             attempt_rho = rho * (retry_rho_decay ** attempt)
-            proposal = evolve_step(
-                S, donors, schema, rho=attempt_rho, eta=eta, mu=mu, rng=rng,
-                **direction_kwargs,
-            )
+            if factorized_gibbs_sweeps > 0:
+                proposal, factorized_diagnostics = (
+                    evolve_step_factorized_gibbs(
+                        S,
+                        donors,
+                        schema,
+                        queries,
+                        residual,
+                        rho=attempt_rho,
+                        eta=eta,
+                        mu=mu,
+                        copy_direction_scores=copy_direction_scores,
+                        copy_direction_strength=effective_direction_strength,
+                        n_sweeps=factorized_gibbs_sweeps,
+                        rng=rng,
+                        gibbs_rng=factorized_gibbs_rng,
+                        max_factor_order=factorized_gibbs_max_order,
+                        gibbs_logit_clip=factorized_gibbs_logit_clip,
+                    )
+                )
+                attempt_factorized_gibbs_diagnostics.append(
+                    factorized_diagnostics
+                )
+                factorized_gibbs_factor_build_elapsed_sec += (
+                    factorized_diagnostics["factor_build_elapsed_sec"]
+                )
+                factorized_gibbs_sample_elapsed_sec += (
+                    factorized_diagnostics["gibbs_sample_elapsed_sec"]
+                )
+                factorized_gibbs_active_rows += factorized_diagnostics[
+                    "active_gibbs_rows"
+                ]
+                factorized_gibbs_active_blocks += factorized_diagnostics[
+                    "active_blocks"
+                ]
+                factorized_gibbs_factor_count += factorized_diagnostics[
+                    "factor_count"
+                ]
+                factorized_gibbs_factor_table_entries += (
+                    factorized_diagnostics["factor_table_entries"]
+                )
+                factorized_gibbs_microsteps += factorized_diagnostics[
+                    "gibbs_microsteps"
+                ]
+            else:
+                proposal = evolve_step(
+                    S,
+                    donors,
+                    schema,
+                    rho=attempt_rho,
+                    eta=eta,
+                    mu=mu,
+                    rng=rng,
+                    **direction_kwargs,
+                )
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
@@ -688,6 +867,9 @@ def run_evolution(
         raw_proposal_linear_gain_history.append(attempt_linear_gains)
         raw_proposal_quadratic_penalty_history.append(
             attempt_quadratic_penalties
+        )
+        factorized_gibbs_attempt_diagnostics_history.append(
+            attempt_factorized_gibbs_diagnostics
         )
 
         if accepted:
@@ -777,11 +959,39 @@ def run_evolution(
         "raw_proposal_quadratic_penalty_history": (
             raw_proposal_quadratic_penalty_history
         ),
+        "factorized_gibbs_attempt_diagnostics_history": (
+            factorized_gibbs_attempt_diagnostics_history
+        ),
         "state_evaluation_count": state_evaluation_count,
         "distance_evaluation_count": distance_evaluation_count,
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
         "direction_reference_scale": direction_reference_scale,
+        "factorized_gibbs_factor_build_elapsed_sec": (
+            factorized_gibbs_factor_build_elapsed_sec
+        ),
+        "factorized_gibbs_sample_elapsed_sec": (
+            factorized_gibbs_sample_elapsed_sec
+        ),
+        "factorized_gibbs_active_rows": factorized_gibbs_active_rows,
+        "factorized_gibbs_active_blocks": factorized_gibbs_active_blocks,
+        "factorized_gibbs_factor_count": factorized_gibbs_factor_count,
+        "factorized_gibbs_factor_table_entries": (
+            factorized_gibbs_factor_table_entries
+        ),
+        "factorized_gibbs_microsteps": factorized_gibbs_microsteps,
+        "initial_table_sha256": initial_table_sha256,
+        "primary_rng_post_initialization_state_sha256": (
+            primary_rng_post_initialization_state_sha256
+        ),
+        "primary_rng_state_sha256": _rng_state_sha256(rng),
+        "factorized_gibbs_initial_rng_state_sha256": (
+            factorized_gibbs_initial_rng_state_sha256
+        ),
+        "factorized_gibbs_rng_state_sha256": (
+            _rng_state_sha256(factorized_gibbs_rng)
+            if factorized_gibbs_rng is not None else None
+        ),
         "initialization": initialization_diagnostics,
         "normalized_l1_error": normalized_l1_error,
         "normalized_l1_median": normalized_l1_median,
@@ -823,6 +1033,9 @@ def run_evolution(
             "diffusion_direction_normalization": (
                 diffusion_direction_normalization
             ),
+            "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
+            "factorized_gibbs_max_order": factorized_gibbs_max_order,
+            "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
         },
     }
 
