@@ -11,6 +11,7 @@ from pathlib import Path
 import resource
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -48,6 +49,38 @@ EQUIVALENCE_EXCLUDED_KEYS = {
     "cuda_peak_allocated_mib",
     "cuda_peak_reserved_mib",
 }
+
+
+def _write_json_atomically(output, payload, *, overwrite):
+    """完整序列化后再发布 JSON，失败时不留下半写入的目标文件。"""
+    output = Path(output)
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"输出文件已存在，不覆盖：{output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(
+                payload,
+                handle,
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            )
+        if output.exists() and not overwrite:
+            raise FileExistsError(f"输出文件已存在，不覆盖：{output}")
+        temporary.replace(output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _metric_summary(values):
@@ -269,9 +302,7 @@ def _run_worker(args):
         "environment": _environment(args.device),
         "run": run,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
+    _write_json_atomically(output, payload, overwrite=args.overwrite)
 
 
 def _worker_command(args, seed, builder, output):
@@ -298,11 +329,41 @@ def _worker_command(args, seed, builder, output):
     return command
 
 
+def _worker_execution_plan(args, worker_dir):
+    plan = []
+    for seed in args.seeds:
+        order = BUILDERS if seed % 2 == 0 else tuple(reversed(BUILDERS))
+        for builder in order:
+            plan.append((
+                seed,
+                builder,
+                worker_dir / f"seed{seed}_{builder}.json",
+            ))
+    return plan
+
+
+def _preflight_output_collisions(output, worker_plan, overwrite):
+    if overwrite:
+        return
+    collisions = [output] if output.exists() else []
+    collisions.extend(
+        worker_output
+        for _, _, worker_output in worker_plan
+        if worker_output.exists()
+    )
+    if collisions:
+        formatted = "\n".join(f"- {path}" for path in collisions)
+        raise FileExistsError(
+            "实验输出已存在，不覆盖；尚未启动任何 worker：\n"
+            f"{formatted}"
+        )
+
+
 def _run_driver(args):
     output = Path(args.output).resolve()
-    if output.exists() and not args.overwrite:
-        raise FileExistsError(f"输出文件已存在，不覆盖：{output}")
     worker_dir = output.parent / f"{output.stem}_workers"
+    worker_plan = _worker_execution_plan(args, worker_dir)
+    _preflight_output_collisions(output, worker_plan, args.overwrite)
     worker_dir.mkdir(parents=True, exist_ok=True)
     runs = {builder: [] for builder in BUILDERS}
     execution_order = []
@@ -311,23 +372,20 @@ def _run_driver(args):
     worker_environment = None
     repository_root = Path(__file__).resolve().parents[1]
     experiment_start = time.perf_counter()
-    for seed in args.seeds:
-        order = BUILDERS if seed % 2 == 0 else tuple(reversed(BUILDERS))
-        for builder in order:
-            worker_output = worker_dir / f"seed{seed}_{builder}.json"
-            command = _worker_command(args, seed, builder, worker_output)
-            print(
-                f"运行 seed={seed} builder={builder}", flush=True
-            )
-            subprocess.run(command, check=True, cwd=repository_root)
-            with worker_output.open(encoding="utf-8") as handle:
-                payload = json.load(handle)
-            runs[builder].append(payload["run"])
-            worker_commits.append(payload["git_commit"])
-            if worker_environment is None:
-                worker_environment = payload["environment"]
-            execution_order.append({"seed": seed, "builder": builder})
-            commands.append(command)
+    for seed, builder, worker_output in worker_plan:
+        command = _worker_command(args, seed, builder, worker_output)
+        print(
+            f"运行 seed={seed} builder={builder}", flush=True
+        )
+        subprocess.run(command, check=True, cwd=repository_root)
+        with worker_output.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        runs[builder].append(payload["run"])
+        worker_commits.append(payload["git_commit"])
+        if worker_environment is None:
+            worker_environment = payload["environment"]
+        execution_order.append({"seed": seed, "builder": builder})
+        commands.append(command)
 
     for builder in BUILDERS:
         runs[builder].sort(key=lambda row: row["seed"])
@@ -408,9 +466,7 @@ def _run_driver(args):
         "runs": runs,
         "elapsed_sec": time.perf_counter() - experiment_start,
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8") as handle:
-        json.dump(summary, handle, ensure_ascii=False, indent=2, allow_nan=False)
+    _write_json_atomically(output, summary, overwrite=args.overwrite)
     output_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
     print(f"逐步等价门禁：{equivalence['passed']}")
     print(f"因子管线中位降幅：{factor_reduction:.2f}%")
