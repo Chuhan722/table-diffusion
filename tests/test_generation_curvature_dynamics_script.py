@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import scripts.compare_generation_curvature_unfiltered as experiment
+import scripts.diagnose_curvature_multistep_drift as drift_diagnostic
 from table_diffevo.marginals import load_marginals
 from table_diffevo.queries import load_queries
 from table_diffevo.schema import load_schema
@@ -276,6 +277,7 @@ def test_two_variants_run_full_unfiltered_trajectory_with_aligned_primary_rng():
         "temperature": 2.0,
         "sweeps": 2,
         "device": "numpy",
+        "record_query_clock": True,
     }
 
     baseline = experiment._run_one(
@@ -300,6 +302,36 @@ def test_two_variants_run_full_unfiltered_trajectory_with_aligned_primary_rng():
     assert len(candidate["loss_history"]) == 13
     assert len(baseline["gain_history"]) == 12
     assert len(candidate["gain_history"]) == 12
+    assert len(baseline["query_state_sha256_history"]) == 13
+    assert len(candidate["query_state_sha256_history"]) == 13
+    assert len(baseline["query_count_history"]) == 13
+    assert len(candidate["query_count_history"]) == 13
+    assert len(baseline["query_delta_l2_squared_history"]) == 12
+    assert len(candidate["query_delta_l2_squared_history"]) == 12
+    assert len(
+        baseline["cumulative_query_quadratic_variation_history"]
+    ) == 13
+    assert len(
+        candidate["cumulative_query_quadratic_variation_history"]
+    ) == 13
+    assert baseline["gain_identity_max_abs_error"] == 0.0
+    assert candidate["gain_identity_max_abs_error"] == 0.0
+    np.testing.assert_array_equal(
+        np.asarray(baseline["count_residual_l2_squared_history"]),
+        2.0 * np.asarray(baseline["loss_history"]),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(candidate["count_residual_l2_squared_history"]),
+        2.0 * np.asarray(candidate["loss_history"]),
+    )
+    query_clock_gate = drift_diagnostic._query_clock_gate(
+        {"baseline": [baseline], "candidate": [candidate]},
+        12,
+        target,
+    )
+    assert query_clock_gate["passed"] is True
+    assert query_clock_gate["checked_query_vectors"] == 26
+    assert query_clock_gate["checked_transitions"] == 24
     assert len(baseline["conditional_probability_count_history"]) == 12
     assert len(candidate["conditional_probability_count_history"]) == 12
     baseline_tail = experiment._aggregate_tail_conditional([baseline])
