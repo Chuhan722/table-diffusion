@@ -6,7 +6,7 @@ workload；2-way 最大熵初始化保留为辅助消融，不再作为本阶段
 
 当前 baseline 使用 1-way `marginal` 初始化、精确 target、geometric donor 抽样和
 固定 workload；真实 train/test 只在生成完成后离线评价。当前方法是残差驱动的
-连续扩散核：不筛掉反向编辑，而是用实际单块方向连续倾斜复制概率，并用首轮 RMS
+连续扩散核：不筛掉反向编辑，而是用实际单块方向连续倾斜复制概率，并用首个非零方向 RMS
 固定定标。已合入的 `tau=1` 在 nltcs 三种子 1500 轮中把 best loss 从 720.96 万
 降到 333.21 万，训练/测试联合 TVD 从 `0.3147/0.3957` 降到
 `0.2838/0.3680`。后续小表温度前沿表明 `tau=1` 尚未达到核内极限：`tau=8`
@@ -155,11 +155,15 @@ seed 独立重放全部随机
 已经改善最终生成器。
 
 **验证与输出：** 深审修复提交 `743c8d5` 取代证据门禁不完整的旧输出；新旧
-非计时算法结果独立对拍精确一致。专项测试 41 项、相关 gsd 测试 155 项、完整 gsd
-CPU/torch/CUDA 519 项；qdte 相关 153 项通过、2 项跳过。正式 JSON 位于
-`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_743c8d5.json`，
-大小 11,326,999 字节，SHA-256 为
-`054849b56705e171d4c529db3651b4b721cd91ccf73ad7607268b8080a504111`。完整公式、
+非计时算法结果独立对拍精确一致。同步 PR #22 父 HEAD 并收紧正式元数据/零扫描
+诊断边界后，重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。PR #22 合入后，
+本分支又以普通 merge 同步 `master=eac317b`；父 HEAD 与合并后主分支代码树相同，
+最新正式重跑去除环境和计时字段后与上一版整份 JSON 精确一致。专项测试 52 项、
+相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项通过、
+2 项跳过。最新正式 JSON 位于
+`outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`，
+大小 11,326,345 字节，SHA-256 为
+`43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。完整公式、
 逐状态结果、审计边界和旧证据修正见 `docs/设计/整代曲率感知Gibbs扩散.md`，关联
 Issue #18。
 
@@ -169,7 +173,7 @@ Issue #18。
 惩罚增加得更多。为避免事后挑小 `rho`，先固定 3 个 seed、marginal 初始态与
 标准 0-sweep 闭环 500 轮 best 态、每状态 200 个冻结 proposal，只比较
 `tau=2` 下 0/8 sweep，`rho=0.01`、`mu=0`。两个状态复用同 seed 标准运行的
-首轮 RMS；冻结 proposal 不执行接受，也没有真实数据路径。
+首个非零方向 RMS；冻结 proposal 不执行接受，也没有真实数据路径。
 
 **精确门禁：** 1200 对 donor、参与和主 RNG 全部对齐；直接初始化表与标准运行
 初始哈希 3/3 一致。初始 mask 不再从落地 proposal 反推，而是从配对 seed 重放
@@ -189,13 +193,14 @@ Issue #18。
 
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
-定义有限温度、反向支持和退化性质。诊断测试 27 项、加因子和演化相关测试 114 项、
-完整 CPU/torch/CUDA 478 项通过；qdte 相关 71 项通过（另 2 项跳过）。完整协议
+定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
+完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
-护栏。正式 6,877,120 字节 JSON 的
+护栏。同步最新主分支并收紧正式元数据门禁后的重跑与上一版非决策字段精确
+一致。正式 6,876,791 字节 JSON 的
 SHA-256 为
-`44884133f2fbfc272ac70560aec53982d1a0d55ce9b4474ee8c2e0153e0f801d`，位于
-`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_2441933.json`。
+`b3b13c448e3b7ed27405f4ad73a74d56e6bb54d6d227a8a37ddaf723709e1a67`，位于
+`outputs/factorized_step_overshoot/formal_3seed_2state_200p_tau2_sweep8_3fe91b7.json`。
 完整公式和逐状态结果见 `docs/设计/联合扩散整代步幅诊断.md`，关联 Issue #17。
 
 ### 因子 Gibbs 标准接受闭环——平均训练目标改善，但未通过预注册胜种子门槛
@@ -205,8 +210,9 @@ SHA-256 为
 迁移深审从当前父提交重放了全部 20 个 0-sweep baseline、每个 500 轮；初始表、
 初始化后主 RNG、最终主 RNG、最终表和全部共享非计时 diagnostics 逐种子精确一致。
 附加 Gibbs 使用独立派生 RNG，20 个正式种子的初始表、初始化后主 RNG、方向尺度与
-最终主 RNG 全部对齐。条件 logit 护栏固定为 `[-30,30]` 并写入运行参数；全部生成
-完成后才读取真实参考表。
+最终主 RNG 全部对齐。冻结正式提交尚未启用条件 logit 截断；当前实现固定使用
+`[-30,30]` 护栏并写入运行参数，事后逐种子审计证明该护栏在正式轨迹上从未触发。
+全部生成完成后才读取真实参考表。
 
 **预注册结果：** `test_300x10`、精确 50-query target、marginal 初始化、
 `tau=2`、`rho=0.01`、20 配对种子、500 轮。baseline 0 sweep 与 candidate
@@ -226,13 +232,14 @@ normalized L1 为 `0.0030167→0.0027767`（-7.96%），只作次要描述。
 问题应聚焦于保留联合结构的扩散时间步或查询变化预算归一化，不事后挑更小
 `rho`，也不回到方向门槛。
 
-**验证与输出：** 闭环针对性测试 52 项、加因子模块共 93 项、完整
-CPU/torch/CUDA 451 项、qdte 演化 44 项通过（另 2 项按环境跳过）。正式输出包含
+**验证与输出：** 闭环针对性测试 53 项、加因子模块共 94 项、完整
+CPU/torch/CUDA 452 项、qdte 相关测试 92 项通过（另 2 项按环境跳过）。正式输出包含
 40 张 300×10 合成表、81 份 JSON；
 数值有限性、文件数、参数、哈希、配对差和 5051/30450 个离线高阶单元格均已独立
 复核。迁移到数值护栏后的 20 种子 candidate 重放又审计了 1,311,408 次条件更新，
-最大原始 `|logit|=10.6513`、零次触发护栏；最终表和全部非计时 diagnostics 精确
-一致。正式 `summary.json` SHA-256 为
+最大原始 `|logit|=10.6513`、零次触发护栏；最终表，以及除墙钟和当前实现新增的
+`params.factorized_gibbs_logit_clip` 字段外的全部共同 diagnostics，均精确一致。
+正式 `summary.json` SHA-256 为
 `bd6884d9747ad9d8b62a0d1edc84521bac1c2925cb77e3cd945ff40c1254c7e8`。输出位于
 `outputs/factorized_gibbs_closed_loop/formal_20seed_500r_tau2_sweep8_8431146/`，
 完整协议与边界见 `docs/设计/因子Gibbs标准接受闭环.md`，关联 Issue #16。

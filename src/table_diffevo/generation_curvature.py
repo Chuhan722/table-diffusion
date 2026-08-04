@@ -800,22 +800,31 @@ def evolve_step_generation_curvature_gibbs(
             value = block.values[value_index]
         proposal.at[row_index, block.name] = value
 
-    initial_linear = (
-        float(np.dot(residual_values, initial_query_delta))
-        if sweeps > 0 else 0.0
-    )
-    final_linear = (
-        float(np.dot(residual_values, total_query_delta))
-        if sweeps > 0 else 0.0
-    )
-    initial_quadratic = (
-        float(0.5 * np.dot(initial_query_delta, initial_query_delta) / n_records)
-        if sweeps > 0 else 0.0
-    )
-    final_quadratic = (
-        float(0.5 * np.dot(total_query_delta, total_query_delta) / n_records)
-        if sweeps > 0 else 0.0
-    )
+    if sweeps > 0:
+        initial_linear = float(np.dot(residual_values, initial_query_delta))
+        final_linear = float(np.dot(residual_values, total_query_delta))
+        initial_quadratic = float(
+            0.5 * np.dot(initial_query_delta, initial_query_delta) / n_records
+        )
+        final_quadratic = float(
+            0.5 * np.dot(total_query_delta, total_query_delta) / n_records
+        )
+        initial_query_delta_output = initial_query_delta.tolist()
+        final_query_delta_output = total_query_delta.tolist()
+        initial_generation_energy = initial_linear - gamma * initial_quadratic
+        final_generation_energy = final_linear - gamma * final_quadratic
+    else:
+        # 0 sweep 为了精确保留历史独立更新的最小依赖边界，不构造
+        # 查询因子。proposal 可仍有复制/变异，因此不能把未计算的查询变化
+        # 或能量误报为零。
+        initial_linear = None
+        final_linear = None
+        initial_quadratic = None
+        final_quadratic = None
+        initial_query_delta_output = None
+        final_query_delta_output = None
+        initial_generation_energy = None
+        final_generation_energy = None
     diagnostics = {
         "participating_rows": int(participate.sum()),
         "active_gibbs_rows": len(row_models),
@@ -838,18 +847,14 @@ def evolve_step_generation_curvature_gibbs(
         "final_copy_mask_sha256": _array_sha256(
             copy_masks & participate[:, None]
         ),
-        "initial_query_delta": initial_query_delta.tolist(),
-        "final_query_delta": total_query_delta.tolist(),
+        "initial_query_delta": initial_query_delta_output,
+        "final_query_delta": final_query_delta_output,
         "initial_linear_energy": initial_linear,
         "final_linear_energy": final_linear,
         "initial_quadratic_energy": initial_quadratic,
         "final_quadratic_energy": final_quadratic,
-        "initial_generation_energy": (
-            initial_linear - gamma * initial_quadratic
-        ),
-        "final_generation_energy": (
-            final_linear - gamma * final_quadratic
-        ),
+        "initial_generation_energy": initial_generation_energy,
+        "final_generation_energy": final_generation_energy,
         "conditional_probability_count": conditional_probability_count,
         "conditional_logit_abs_max": conditional_logit_abs_max,
         "conditional_logit_clipped_count": int(
