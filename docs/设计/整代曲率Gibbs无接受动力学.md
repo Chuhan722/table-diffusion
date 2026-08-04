@@ -212,6 +212,8 @@ Issue #18 比较的是同一冻结状态、donor 和随机源下的一步局部�
 PR #23 深审完成后，本分支以普通 merge 同步其最新 HEAD。父分支对
 `evolve_step_generation_curvature_gibbs` 的唯一新增代码行为是：0-sweep 时把未计算
 的查询变化和能量诊断从误导的零改为 `None`；本实验固定 8 sweep，不经过该分支。
+PR #23 随后以 `8b6eaf6` 合入；合并树与已同步的父 HEAD `3465405` 逐字节相同，
+本分支再以普通 merge 同步最新 `master`，隔离 diff 仍只有本阶段 4 个主题文件。
 在干净合并提交 `fe99279`、Conda `gsd`、RTX 4090 上重新执行 seed 0 的 baseline/
 candidate 各 1000 轮（`CUDA_VISIBLE_DEVICES=1`，进程内逻辑设备 0）。短轨迹预检、
 baseline 与 candidate 去除方向、因子构造、Gibbs 和总墙钟字段后，分别与原正式
