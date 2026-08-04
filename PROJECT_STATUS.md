@@ -117,10 +117,9 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 `performance_not_supported`，本阶段不把批量路径设为默认。
 
 **内存与验证：** RSS 平均只增加 0.043%、逐 seed 最大 +0.142%；CUDA allocated
-和 reserved 峰值保持 11.575/24 MiB。针对性测试 56 项、完整 gsd 440 项通过；
-不含 torch 的 CPU-only 环境排除未按依赖缺失跳过的既有单项后为 392 项通过、
-27 项跳过。正式
-JSON 位于
+和 reserved 峰值保持 11.575/24 MiB。普通 merge 同步
+`origin/master=c3b3e89` 后，针对性测试 56 项、完整 gsd CPU/torch/CUDA 574 项、
+语法和差异检查通过；隔离 diff 仍只有本性能工作的 7 个文件。正式 JSON 位于
 `outputs/factorized_workload/formal_10seed_1000r_tau2_sweep8_71a1954.json`，
 SHA-256 为
 `6c374164b3f87b3ed97e9e9f046f5c57c92ece6a0439c46181996b77552a6e42`。完整协议、
