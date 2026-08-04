@@ -75,6 +75,18 @@ def _frame_sha256(frame):
     return _sha256_bytes(frame.to_csv(index=False).encode("utf-8"))
 
 
+def _query_vector_sha256(values):
+    array = np.asarray(values)
+    if array.ndim != 1 or array.dtype.kind not in "iu":
+        raise ValueError("查询向量必须是一维整数数组")
+    canonical = np.ascontiguousarray(array, dtype="<i8")
+    payload = (
+        np.asarray(canonical.shape, dtype="<i8").tobytes()
+        + canonical.tobytes()
+    )
+    return _sha256_bytes(payload)
+
+
 def _rng_state_json(rng):
     return json.dumps(
         rng.bit_generator.state,
@@ -480,7 +492,10 @@ def _run_one(
     sweeps,
     curvature_weight,
     device,
+    record_query_clock=False,
 ):
+    if not isinstance(record_query_clock, (bool, np.bool_)):
+        raise ValueError("record_query_clock 必须是布尔值")
     rng = np.random.default_rng(seed)
     state = init_synthetic_table(
         N_RECORDS, schema, rng, marginals=marginals
@@ -523,6 +538,20 @@ def _run_one(
     conditional_logit_abs_max_history = []
     conditional_logit_clipped_count_history = []
     conditional_bidirectional_history = []
+    if record_query_clock:
+        count_residual = target.astype(float, copy=False) - q
+        count_residual_l2_squared_history = [float(
+            np.dot(count_residual, count_residual)
+        )]
+        query_count_history = [
+            q.astype(np.int64, copy=False).tolist()
+        ]
+        query_state_sha256_history = [_query_vector_sha256(q)]
+        query_delta_l2_squared_history = []
+        linear_gain_history = []
+        quadratic_cost_history = []
+        gain_identity_error_history = []
+        cumulative_query_quadratic_variation_history = [0.0]
     gibbs_seed_digest = hashlib.sha256()
     gibbs_endpoint_digest = hashlib.sha256()
     start = time.perf_counter()
@@ -587,7 +616,47 @@ def _run_one(
             proposal, target, queries, schema, device
         )
         proposal_loss = float(compute_loss(target, proposal_q))
-        gain_history.append(loss_history[-1] - proposal_loss)
+        actual_gain = loss_history[-1] - proposal_loss
+        gain_history.append(actual_gain)
+        if record_query_clock:
+            query_delta = (
+                proposal_q.astype(float, copy=False)
+                - q.astype(float, copy=False)
+            )
+            count_residual = target.astype(float, copy=False) - q
+            query_delta_l2_squared = float(
+                np.dot(query_delta, query_delta)
+            )
+            linear_gain = float(np.dot(count_residual, query_delta))
+            quadratic_cost = 0.5 * query_delta_l2_squared
+            identity_error = float(
+                actual_gain - (linear_gain - quadratic_cost)
+            )
+            query_delta_l2_squared_history.append(
+                query_delta_l2_squared
+            )
+            linear_gain_history.append(linear_gain)
+            quadratic_cost_history.append(quadratic_cost)
+            gain_identity_error_history.append(identity_error)
+            cumulative_query_quadratic_variation_history.append(float(
+                cumulative_query_quadratic_variation_history[-1]
+                + query_delta_l2_squared
+            ))
+            proposal_count_residual = (
+                target.astype(float, copy=False) - proposal_q
+            )
+            count_residual_l2_squared_history.append(float(
+                np.dot(
+                    proposal_count_residual,
+                    proposal_count_residual,
+                )
+            ))
+            query_state_sha256_history.append(
+                _query_vector_sha256(proposal_q)
+            )
+            query_count_history.append(
+                proposal_q.astype(np.int64, copy=False).tolist()
+            )
         changed_cells_history.append(int(
             (
                 proposal.reset_index(drop=True)
@@ -800,6 +869,30 @@ def _run_one(
             conditional_bidirectional_history
         ),
     }
+    if record_query_clock:
+        result.update({
+            "query_clock_recorded": True,
+            "query_count_history": query_count_history,
+            "query_state_sha256_history": query_state_sha256_history,
+            "count_residual_l2_squared_history": (
+                count_residual_l2_squared_history
+            ),
+            "query_delta_l2_squared_history": (
+                query_delta_l2_squared_history
+            ),
+            "linear_gain_history": linear_gain_history,
+            "quadratic_cost_history": quadratic_cost_history,
+            "gain_identity_error_history": (
+                gain_identity_error_history
+            ),
+            "gain_identity_max_abs_error": float(max(
+                (abs(value) for value in gain_identity_error_history),
+                default=0.0,
+            )),
+            "cumulative_query_quadratic_variation_history": (
+                cumulative_query_quadratic_variation_history
+            ),
+        })
     print(
         f"seed={seed:02d} {label:<28} "
         f"tail250={result['late_250_mean_loss']:.3f} "
