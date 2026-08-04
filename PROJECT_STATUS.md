@@ -113,10 +113,18 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 晚期正收益率相同而两类步幅同时收缩。固定状态局部过冲改善不保证轨迹分叉后的状态
 分布与多步漂移改善，当前不进入默认接入或标准接受闭环。
 
-**验证与输出：** 动力学专项 18 项、相关 qdte `217 passed, 2 skipped`、相关 gsd
-225 项、完整 gsd CPU/torch/CUDA 537 项通过。qdte 全量唯一失败是该环境未安装
-torch 而对应测试未按能力跳过；排除该不适用用例后 `488 passed, 28 skipped,
-1 deselected`。9,047,096 字节正式 JSON 的 SHA-256 为
+**验证与输出：** 同步 PR #23 最新 HEAD 后，隔离 diff 仍只有本阶段 4 个主题
+文件；父分支对曲率更新器的代码变化仅修正 0-sweep 未计算诊断，不经过本实验固定的
+8-sweep 路径。当前干净合并提交 `fe99279` 上完整重放 seed 0 的两条 1000 轮轨迹，
+预检、baseline 和 candidate 去除方向/因子/Gibbs/总墙钟四个计时字段后，分别与
+原正式输出精确一致。动力学专项 18 项、相关 qdte `222 passed, 2 skipped`、相关
+gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。qdte 全量唯一失败是该环境未安装
+torch 而对应测试未按能力跳过；排除该不适用用例后 `510 passed, 28 skipped,
+1 deselected`。重放 JSON 位于
+`outputs/generation_curvature_dynamics/replay_seed0_1000r_tau2_sweep8_fe99279.json`，
+大小 477,479 字节，SHA-256 为
+`d0a2873dbdd3e986e4ffb005fea619be411aab0822d9ee344591c47c9ea3b02e`。原 20 种子
+9,047,096 字节正式 JSON 的 SHA-256 仍为
 `3a6d185b9522550ce0807069b03a087780aefc0696da84a4c630339e10076234`，路径为
 `outputs/generation_curvature_dynamics/formal_20seed_1000r_tau2_sweep8_ecf072c.json`。
 独立审计重算 40,000 次转移、窗口、条件诊断、配对汇总、风险和输入哈希均一致；

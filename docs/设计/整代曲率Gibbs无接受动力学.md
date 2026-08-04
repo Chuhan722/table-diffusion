@@ -209,6 +209,22 @@ Issue #18 比较的是同一冻结状态、donor 和随机源下的一步局部�
 1000 轮固定协议；不等价于证明任意曲率权重、调度、workload 或无限时间极限均无效。
 本实验没有真实表离线评价，也不是 DP。
 
+PR #23 深审完成后，本分支以普通 merge 同步其最新 HEAD。父分支对
+`evolve_step_generation_curvature_gibbs` 的唯一新增代码行为是：0-sweep 时把未计算
+的查询变化和能量诊断从误导的零改为 `None`；本实验固定 8 sweep，不经过该分支。
+在干净合并提交 `fe99279`、Conda `gsd`、RTX 4090 上重新执行 seed 0 的 baseline/
+candidate 各 1000 轮（`CUDA_VISIBLE_DEVICES=1`，进程内逻辑设备 0）。短轨迹预检、
+baseline 与 candidate 去除方向、因子构造、Gibbs 和总墙钟字段后，分别与原正式
+20 种子文件中的 seed 0 记录逐字段精确一致。该重放是父 HEAD 回归证据，不替代、
+删减或重新挑选原正式 20 种子结果。
+
+同步后的门禁为：动力学专项 18 项、相关 gsd 230 项、完整 gsd CPU/torch/CUDA
+559 项；qdte 相关 222 项通过、2 项跳过。qdte 全量仍只有既有的缺 torch 用例失败，
+排除该不适用用例后为 510 项通过、28 项跳过、1 项取消选择。重放 JSON 为
+`outputs/generation_curvature_dynamics/replay_seed0_1000r_tau2_sweep8_fe99279.json`，
+大小 477,479 字节，SHA-256 为
+`d0a2873dbdd3e986e4ffb005fea619be411aab0822d9ee344591c47c9ea3b02e`。
+
 正式 JSON 位于
 `outputs/generation_curvature_dynamics/formal_20seed_1000r_tau2_sweep8_ecf072c.json`，
 大小 9,047,096 字节，SHA-256 为
