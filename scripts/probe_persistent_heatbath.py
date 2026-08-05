@@ -108,6 +108,7 @@ def _environment_snapshot(device):
             full_status_code == 0 and full_status == ""
         ),
         "conda_default_env": os.environ.get("CONDA_DEFAULT_ENV"),
+        "pythonpath": os.environ.get("PYTHONPATH"),
         "python": platform.python_version(),
         "platform": platform.platform(),
         "processor": platform.processor(),
