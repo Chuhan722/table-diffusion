@@ -15,8 +15,12 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from scripts import compare_factorized_gibbs_closed_loop as offline_metrics
-from scripts import probe_persistent_heatbath as experiment
+if __package__:
+    from scripts import compare_factorized_gibbs_closed_loop as offline_metrics
+    from scripts import probe_persistent_heatbath as experiment
+else:
+    import compare_factorized_gibbs_closed_loop as offline_metrics
+    import probe_persistent_heatbath as experiment
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.marginals import load_marginals
 from table_diffevo.objective import compute_loss
