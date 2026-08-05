@@ -103,6 +103,40 @@ def _mean_selected_distance(distances, donor_idx, use_torch: bool = False) -> fl
     return float(distances_array[np.arange(n_rows), donor_idx].mean())
 
 
+def _compute_rho_t(
+    t: int,
+    n_rounds: int,
+    rho: float,
+    rho_schedule: Optional[str],
+    rho_max: float,
+    rho_min: float,
+) -> float:
+    """计算第 t 轮的动态参与率 ρ_t。
+
+    Parameters
+    ----------
+    t : int
+        当前轮序号（0-indexed）。
+    n_rounds : int
+        总轮数。
+    rho : float
+        固定参与率（rho_schedule=None 时直接返回此值）。
+    rho_schedule : str or None
+        调度类型：None=固定，'linear'=线性衰减，'exponential'=指数衰减。
+    rho_max : float
+        衰减起点（第 0 轮）；仅在 rho_schedule 非 None 时使用。
+    rho_min : float
+        衰减终点（第 n_rounds-1 轮）；仅在 rho_schedule 非 None 时使用。
+    """
+    if rho_schedule is None:
+        return rho
+    progress = t / (n_rounds - 1) if n_rounds > 1 else 1.0
+    if rho_schedule == 'linear':
+        return rho_max * (1.0 - progress) + rho_min * progress
+    # 'exponential'
+    return rho_max * (rho_min / rho_max) ** progress
+
+
 def run_evolution(
     target: np.ndarray,
     queries: List[Dict[str, Any]],
@@ -141,6 +175,9 @@ def run_evolution(
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    rho_schedule: Optional[str] = None,
+    rho_max: float = 0.01,
+    rho_min: float = 0.01,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -163,6 +200,14 @@ def run_evolution(
         抽样参数：选择强度、邻域尺度（固定值，不衰减）
     rho, eta, mu : float
         更新参数：记录参与率、块复制率、变异率（固定值，不衰减）
+    rho_schedule : str or None, default None
+        记录参与率 ρ 的衰减调度：
+        - None（默认）：全程固定 ρ=rho，rho_max/rho_min 被忽略
+        - 'linear'：ρ_t 从 rho_max 线性衰减到 rho_min
+        - 'exponential'：ρ_t 从 rho_max 指数衰减到 rho_min
+    rho_max, rho_min : float, default 0.01
+        调度起点（第 0 轮）与终点（第 n_rounds-1 轮）的参与率；仅在
+        rho_schedule 非 None 时生效，要求 0 < rho_min <= rho_max <= 1.0。
     tol : float, default 1e-9
         整代检查的数值容差：loss(proposal) ≤ loss(S) + tol 时接受
     device : str, default 'numpy'
@@ -258,6 +303,8 @@ def run_evolution(
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
+        - rho_t_history: List[float]，每轮实际使用的参与率 ρ_t；
+          rho_schedule=None 时恒等于 rho，否则按调度逐轮衰减
         - proposal_attempts_history: List[int]，每轮评估的提案数
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
         - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
@@ -362,6 +409,31 @@ def run_evolution(
             "diffusion_direction_normalization 必须是 'none' 或 "
             f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
         )
+    if rho_schedule not in (None, 'linear', 'exponential'):
+        raise ValueError(
+            "rho_schedule 必须是 None、'linear' 或 'exponential'，"
+            f"得到 {rho_schedule!r}"
+        )
+    if rho_schedule is not None:
+        for val, name in ((rho_max, "rho_max"), (rho_min, "rho_min")):
+            if (
+                isinstance(val, (bool, np.bool_))
+                or not isinstance(val, (int, float, np.integer, np.floating))
+                or not np.isfinite(val)
+                or val <= 0.0
+            ):
+                raise ValueError(
+                    f"{name} 必须是正有限数值，得到 {val!r}"
+                )
+        if not (rho_min <= rho_max <= 1.0):
+            raise ValueError(
+                f"需要 0 < rho_min <= rho_max <= 1.0，"
+                f"实际 rho_min={rho_min}, rho_max={rho_max}"
+            )
+        if rho_schedule == 'exponential' and rho_max == rho_min:
+            raise ValueError(
+                "exponential 调度要求 rho_max != rho_min"
+            )
     for value, name in (
         (factorized_gibbs_sweeps, "factorized_gibbs_sweeps"),
         (factorized_gibbs_max_order, "factorized_gibbs_max_order"),
@@ -493,6 +565,7 @@ def run_evolution(
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
     donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
+    rho_t_history: List[float] = []             # 每轮实际使用的参与率 ρ_t
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
@@ -562,6 +635,8 @@ def run_evolution(
             progress = 1.0
         alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
+        rho_t = _compute_rho_t(t, n_rounds, rho, rho_schedule, rho_max, rho_min)
+        rho_t_history.append(rho_t)
 
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
@@ -784,7 +859,7 @@ def run_evolution(
             if residual_directed_diffusion else {}
         )
         for attempt in range(max_retries + 1):
-            attempt_rho = rho * (retry_rho_decay ** attempt)
+            attempt_rho = rho_t * (retry_rho_decay ** attempt)
             if factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
                     evolve_step_factorized_gibbs(
@@ -919,6 +994,7 @@ def run_evolution(
         "donor_distance_history": donor_distance_history,
         "donor_self_rate_history": donor_self_rate_history,
         "alpha_history": alpha_history,
+        "rho_t_history": rho_t_history,
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
@@ -1006,6 +1082,9 @@ def run_evolution(
             "beta": beta,
             "h": h,
             "rho": rho,
+            "rho_schedule": rho_schedule,
+            "rho_max": rho_max if rho_schedule is not None else None,
+            "rho_min": rho_min if rho_schedule is not None else None,
             "eta": eta,
             "mu": mu,
             "tol": tol,
