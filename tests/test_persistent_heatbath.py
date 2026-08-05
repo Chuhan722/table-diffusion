@@ -258,6 +258,38 @@ def test_beta_zero_is_exact_uniform_and_conditional_arrays_are_read_only():
             array.flat[0] = 7
 
 
+def test_reference_expectation_gate_uses_offset_stable_difference():
+    schema = Schema([
+        AttributeBlock(
+            name="x", type="numeric", description="", range=[0, 82]
+        )
+    ])
+    queries = [{"conditions": [
+        {"attribute": "x", "operator": ">=", "value": 1}
+    ]}]
+    target = np.asarray([93.0])
+    state = initialize_persistent_heatbath_state(
+        pd.DataFrame({"x": [0]}), schema, queries, target
+    )
+
+    conditional = build_persistent_heatbath_conditional(
+        state,
+        schema,
+        queries,
+        target,
+        row_index=0,
+        attribute_index=0,
+        inverse_temperature=0.0,
+    )
+
+    naive_difference = float(
+        np.dot(conditional.probabilities, conditional.candidate_losses)
+        - np.mean(conditional.candidate_losses)
+    )
+    assert naive_difference > 1e-12
+    assert conditional.expected_gain_over_reference >= -1e-12
+
+
 def test_inactive_attribute_stays_uniform_at_positive_temperature():
     schema = _binary_schema()
     queries = _binary_queries()[:1]

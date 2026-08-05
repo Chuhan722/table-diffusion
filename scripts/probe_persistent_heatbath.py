@@ -664,8 +664,7 @@ def run_seed(
             )
             expectation_violation_max = max(
                 expectation_violation_max,
-                diagnostics["expected_loss"]
-                - diagnostics["reference_expected_loss"],
+                -diagnostics["expected_gain_over_reference"],
             )
         if step % verify_every == 0 or step == steps:
             baseline["full_state_audits"].append(

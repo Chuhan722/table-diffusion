@@ -59,6 +59,7 @@ class HeatbathConditional:
     probabilities: np.ndarray
     expected_loss: float
     reference_expected_loss: float
+    expected_gain_over_reference: float
     entropy: float
     maximum_entropy: float
     normalized_entropy: float
@@ -509,13 +510,18 @@ def build_persistent_heatbath_conditional(
     probabilities, centered = heatbath_probabilities(
         candidate_losses, len(state.table), beta
     )
-    expected_loss = float(np.dot(probabilities, candidate_losses))
-    reference_expected_loss = float(np.mean(candidate_losses))
+    minimum_loss = float(np.min(candidate_losses))
+    loss_offsets = candidate_losses - minimum_loss
+    expected_offset = float(np.dot(probabilities, loss_offsets))
+    reference_offset = float(np.mean(loss_offsets))
+    expected_gain_over_reference = reference_offset - expected_offset
+    expected_loss = minimum_loss + expected_offset
+    reference_expected_loss = minimum_loss + reference_offset
     if not np.isfinite(expected_loss) or not np.isfinite(
         reference_expected_loss
     ):
         raise ValueError("条件期望 loss 超出 float64 可表示范围")
-    if expected_loss > reference_expected_loss + IDENTITY_TOLERANCE:
+    if expected_gain_over_reference < -IDENTITY_TOLERANCE:
         raise RuntimeError("有限温条件期望 loss 高于 beta=0 参考扩散")
     entropy = float(-np.dot(probabilities, np.log(probabilities)))
     maximum_entropy = float(np.log(len(values)))
@@ -550,6 +556,7 @@ def build_persistent_heatbath_conditional(
         probabilities=probabilities,
         expected_loss=expected_loss,
         reference_expected_loss=reference_expected_loss,
+        expected_gain_over_reference=float(expected_gain_over_reference),
         entropy=entropy,
         maximum_entropy=maximum_entropy,
         normalized_entropy=float(normalized_entropy),
@@ -650,8 +657,8 @@ def apply_heatbath_choice(
         "gain": float(before_loss - state.loss),
         "expected_loss": conditional.expected_loss,
         "reference_expected_loss": conditional.reference_expected_loss,
-        "expected_gain_over_reference": float(
-            conditional.reference_expected_loss - conditional.expected_loss
+        "expected_gain_over_reference": (
+            conditional.expected_gain_over_reference
         ),
         "conditional_entropy": conditional.entropy,
         "conditional_maximum_entropy": conditional.maximum_entropy,
