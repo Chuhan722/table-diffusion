@@ -16,6 +16,7 @@ import sys
 import time
 
 import numpy as np
+import pandas as pd
 from scipy import stats
 
 from table_diffevo.directional_diffusion import (
@@ -25,6 +26,7 @@ from table_diffevo.directional_diffusion import (
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
+    compile_mask_workload,
     evolve_step_factorized_gibbs,
 )
 from table_diffevo.generator import init_synthetic_table
@@ -61,6 +63,7 @@ def _environment(device):
         "conda_default_env": os.environ.get("CONDA_DEFAULT_ENV"),
         "python": platform.python_version(),
         "numpy": np.__version__,
+        "pandas": pd.__version__,
         "platform": platform.platform(),
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     }
@@ -102,7 +105,11 @@ def _run_one(
     temperature,
     sweeps,
     device,
+    factor_builder="legacy_rowwise",
+    record_state_hashes=False,
 ):
+    if factor_builder not in ("legacy_rowwise", "compiled_batch"):
+        raise ValueError(f"未知因子构造器：{factor_builder!r}")
     rng = np.random.default_rng(seed)
     gibbs_rng = (
         np.random.default_rng(_gibbs_seed(seed)) if sweeps > 0 else None
@@ -122,6 +129,9 @@ def _run_one(
         verbose=False,
     )
     initial_loss = float(compute_loss(target, q))
+    initial_csv_sha256 = hashlib.sha256(
+        state.to_csv(index=False).encode("utf-8")
+    ).hexdigest()
     best_loss = initial_loss
     direction_reference_scale = None
     loss_history = []
@@ -135,8 +145,21 @@ def _run_one(
     factor_count = 0
     factor_table_entries = 0
     gibbs_microsteps = 0
+    factor_model_builds = 0
+    condition_evaluation_batches = 0
+    compiled_validation_elapsed = 0.0
     direction_elapsed = 0.0
+    state_sha256_history = []
+    trajectory_audit_elapsed = 0.0
     start = time.perf_counter()
+    workload_compile_elapsed = 0.0
+    compiled_workload = None
+    if sweeps > 0 and factor_builder == "compiled_batch":
+        compile_start = time.perf_counter()
+        compiled_workload = compile_mask_workload(
+            schema, queries, max_factor_order=3
+        )
+        workload_compile_elapsed = time.perf_counter() - compile_start
 
     for round_index in range(rounds):
         current_loss = float(compute_loss(target, q))
@@ -214,6 +237,7 @@ def _run_one(
             gibbs_rng=gibbs_rng,
             max_factor_order=3,
             gibbs_logit_clip=GIBBS_LOGIT_CLIP,
+            compiled_workload=compiled_workload,
         )
         proposal_q, proposal_residual, proposal_fitness = evaluate_vectorized(
             proposal,
@@ -246,15 +270,29 @@ def _run_one(
         factor_count += update_diagnostics["factor_count"]
         factor_table_entries += update_diagnostics["factor_table_entries"]
         gibbs_microsteps += update_diagnostics["gibbs_microsteps"]
+        factor_model_builds += update_diagnostics["factor_model_builds"]
+        condition_evaluation_batches += update_diagnostics[
+            "condition_evaluation_batches"
+        ]
+        compiled_validation_elapsed += update_diagnostics[
+            "compiled_validation_elapsed_sec"
+        ]
 
         # 核心条件：不检查 proposal_loss，不重试，不回滚，无条件进入下一状态。
         state = proposal
         q = proposal_q
         residual = proposal_residual
         fitness = proposal_fitness
+        if record_state_hashes:
+            audit_start = time.perf_counter()
+            state_sha256_history.append(hashlib.sha256(
+                state.to_csv(index=False).encode("utf-8")
+            ).hexdigest())
+            trajectory_audit_elapsed += time.perf_counter() - audit_start
 
     final_loss = float(compute_loss(target, q))
-    elapsed = time.perf_counter() - start
+    raw_elapsed = time.perf_counter() - start
+    elapsed = raw_elapsed - trajectory_audit_elapsed
     gains = np.asarray(gain_history, dtype=float)
     losses = np.asarray(loss_history, dtype=float)
     positive_gains = gains[gains > 0.0]
@@ -263,6 +301,9 @@ def _run_one(
     result = {
         "seed": int(seed),
         "name": label,
+        "factor_builder": (
+            factor_builder if sweeps > 0 else "not_used"
+        ),
         "temperature": float(temperature),
         "sweeps": int(sweeps),
         "rounds_run": len(gain_history),
@@ -302,23 +343,44 @@ def _run_one(
         "direction_reference_scale": direction_reference_scale,
         "direction_elapsed_sec": direction_elapsed,
         "factor_build_elapsed_sec": factor_build_elapsed,
+        "compiled_validation_elapsed_sec": compiled_validation_elapsed,
+        "workload_compile_elapsed_sec": workload_compile_elapsed,
+        "factor_pipeline_elapsed_sec": (
+            workload_compile_elapsed
+            + compiled_validation_elapsed
+            + factor_build_elapsed
+        ),
         "gibbs_sample_elapsed_sec": gibbs_sample_elapsed,
         "active_gibbs_rows": active_gibbs_rows,
         "active_blocks": active_blocks,
         "factor_count": factor_count,
         "factor_table_entries": factor_table_entries,
         "gibbs_microsteps": gibbs_microsteps,
+        "factor_model_builds": factor_model_builds,
+        "condition_evaluation_batches": condition_evaluation_batches,
+        "compiled_unique_conditions": (
+            compiled_workload.n_unique_conditions
+            if compiled_workload is not None else 0
+        ),
         "elapsed_sec": elapsed,
+        "raw_elapsed_sec": raw_elapsed,
+        "trajectory_audit_elapsed_sec": trajectory_audit_elapsed,
         "primary_rng_state_sha256": _rng_state_sha256(rng),
+        "gibbs_rng_state_sha256": (
+            _rng_state_sha256(gibbs_rng) if gibbs_rng is not None else None
+        ),
+        "initial_csv_sha256": initial_csv_sha256,
         "final_csv_sha256": hashlib.sha256(
             state.to_csv(index=False).encode("utf-8")
         ).hexdigest(),
+        "state_sha256_history": state_sha256_history,
         "loss_history": loss_history,
         "gain_history": gain_history,
         "changed_cells_history": changed_cells_history,
     }
     print(
         f"seed={seed:02d} {label:<16} "
+        f"{result['factor_builder']:<16} "
         f"loss={initial_loss:.1f}->{final_loss:.1f} "
         f"({result['final_change_pct']:+.1f}%) "
         f"raw_pos={result['positive_gain_rate']:.1%} "
@@ -374,6 +436,12 @@ def main():
     parser.add_argument("--temperature", type=float, default=2.0)
     parser.add_argument("--sweeps", type=int, default=8)
     parser.add_argument(
+        "--factor-builder",
+        choices=["legacy_rowwise", "compiled_batch"],
+        default="legacy_rowwise",
+    )
+    parser.add_argument("--record-state-hashes", action="store_true")
+    parser.add_argument(
         "--device", choices=["cuda", "cpu", "numpy"], default="cuda"
     )
     parser.add_argument(
@@ -413,6 +481,8 @@ def main():
             temperature=args.temperature,
             sweeps=0,
             device=args.device,
+            factor_builder=args.factor_builder,
+            record_state_hashes=args.record_state_hashes,
         ))
         runs[f"gibbs_{args.sweeps}_sweeps"].append(_run_one(
             target,
@@ -424,6 +494,8 @@ def main():
             temperature=args.temperature,
             sweeps=args.sweeps,
             device=args.device,
+            factor_builder=args.factor_builder,
+            record_state_hashes=args.record_state_hashes,
         ))
 
     metrics = (
@@ -445,13 +517,20 @@ def main():
         "mean_unique_states",
         "direction_elapsed_sec",
         "factor_build_elapsed_sec",
+        "compiled_validation_elapsed_sec",
+        "workload_compile_elapsed_sec",
+        "factor_pipeline_elapsed_sec",
         "gibbs_sample_elapsed_sec",
         "active_gibbs_rows",
         "active_blocks",
         "factor_count",
         "factor_table_entries",
         "gibbs_microsteps",
+        "factor_model_builds",
+        "condition_evaluation_batches",
         "elapsed_sec",
+        "raw_elapsed_sec",
+        "trajectory_audit_elapsed_sec",
     )
     aggregate = {
         name: {key: _aggregate(rows, key) for key in metrics}
@@ -531,6 +610,8 @@ def main():
         "seeds": args.seeds,
         "temperature": args.temperature,
         "candidate_sweeps": args.sweeps,
+        "factor_builder": args.factor_builder,
+        "record_state_hashes": args.record_state_hashes,
         "rho": RHO,
         "eta": ETA,
         "mu": MU,

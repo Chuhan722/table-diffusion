@@ -4,8 +4,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import table_diffevo.factorized_diffusion as factorized_diffusion
 from table_diffevo.factorized_diffusion import (
+    build_sparse_mask_energies_batch,
     build_sparse_mask_energy,
+    compile_mask_workload,
     conditional_copy_probability,
     conditional_energy_difference,
     evolve_step_factorized_gibbs,
@@ -107,6 +110,26 @@ def _target_and_independent_distributions(model, eta=0.5, strength=0.7):
         reference, additive, strength
     ))
     return masks, target, independent
+
+
+def _assert_sparse_models_equal(actual, expected):
+    np.testing.assert_array_equal(
+        actual.active_attribute_indices,
+        expected.active_attribute_indices,
+    )
+    assert actual.active_attributes == expected.active_attributes
+    assert actual.factors_by_variable == expected.factors_by_variable
+    assert actual.n_queries == expected.n_queries
+    assert actual.n_active_queries == expected.n_active_queries
+    assert actual.max_active_query_order == expected.max_active_query_order
+    assert len(actual.factors) == len(expected.factors)
+    for actual_factor, expected_factor in zip(
+        actual.factors, expected.factors
+    ):
+        assert actual_factor.scope == expected_factor.scope
+        np.testing.assert_array_equal(
+            actual_factor.values, expected_factor.values
+        )
 
 
 class TestSparseMaskEnergy:
@@ -334,6 +357,177 @@ class TestSparseMaskEnergy:
 
         with pytest.raises(ValueError, match="稀疏 mask 能量"):
             evaluate_sparse_mask_energy(model, np.ones(2))
+
+
+class TestCompiledMaskWorkload:
+    def test_compilation_deduplicates_conditions_and_freezes_templates(self):
+        compiled = compile_mask_workload(
+            _three_bit_schema(), _three_bit_queries()
+        )
+
+        assert compiled.attribute_names == ("a", "b", "c")
+        assert compiled.n_queries == 4
+        assert compiled.n_unique_conditions == 3
+        assert compiled.max_factor_order == 3
+        assert all(not masks.flags.writeable for masks in compiled._local_masks)
+        with pytest.raises(ValueError, match="read-only"):
+            compiled._local_masks[1][0, 0] = True
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_real_workload_batch_is_exactly_equal_to_rowwise_across_rounds(
+        self, weighted
+    ):
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries(
+            "configs/test_300x10/measured_50query.json"
+        )
+        compiled = compile_mask_workload(schema, queries)
+        rng = np.random.default_rng(20260803)
+        current = init_synthetic_table(12, schema, rng)
+        donors = current.iloc[
+            rng.permutation(len(current))
+        ].reset_index(drop=True)
+        weights = (
+            rng.uniform(0.1, 2.0, size=len(queries))
+            if weighted else None
+        )
+
+        assert compiled.n_unique_conditions == 35
+        for _ in range(3):
+            residual = rng.normal(size=len(queries))
+            batched = build_sparse_mask_energies_batch(
+                current,
+                donors,
+                schema,
+                compiled,
+                residual,
+                weights=weights,
+            )
+            assert len(batched) == len(current)
+            for row_index, actual in enumerate(batched):
+                expected = build_sparse_mask_energy(
+                    current.iloc[[row_index]],
+                    donors.iloc[[row_index]],
+                    schema,
+                    queries,
+                    residual,
+                    weights=weights,
+                )
+                _assert_sparse_models_equal(actual, expected)
+                masks = enumerate_copy_masks(
+                    actual.n_active_attributes,
+                    max_active_attributes=12,
+                )
+                np.testing.assert_array_equal(
+                    evaluate_sparse_mask_energies(actual, masks),
+                    evaluate_sparse_mask_energies(expected, masks),
+                )
+
+    def test_compiled_operands_do_not_alias_source_queries(self):
+        queries = _three_bit_queries()
+        compiled = compile_mask_workload(_three_bit_schema(), queries)
+        queries[0]["conditions"][0]["value"] = 0
+
+        model = build_sparse_mask_energies_batch(
+            pd.DataFrame({"a": [0], "b": [0], "c": [0]}),
+            pd.DataFrame({"a": [1], "b": [1], "c": [1]}),
+            _three_bit_schema(),
+            compiled,
+            np.array([1.0, 2.0, 4.0, 8.0]),
+        )[0]
+
+        np.testing.assert_array_equal(
+            evaluate_sparse_mask_energies(
+                model, enumerate_copy_masks(3)
+            ),
+            evaluate_sparse_mask_energies(
+                _three_bit_model(), enumerate_copy_masks(3)
+            ),
+        )
+
+    def test_empty_batch_does_not_evaluate_conditions(self, monkeypatch):
+        compiled = compile_mask_workload(
+            _three_bit_schema(), _three_bit_queries()
+        )
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError("空批次不应评价查询条件")
+
+        monkeypatch.setattr(
+            factorized_diffusion,
+            "_evaluate_compiled_condition",
+            fail_if_called,
+        )
+        empty = pd.DataFrame(columns=["a", "b", "c"])
+        models = build_sparse_mask_energies_batch(
+            empty,
+            empty.copy(),
+            _three_bit_schema(),
+            compiled,
+            np.ones(4),
+        )
+
+        assert models == ()
+
+    @pytest.mark.parametrize(
+        "queries,match",
+        [
+            (
+                [{"conditions": [{
+                    "attribute": "a", "operator": "!=", "value": 0
+                }]}],
+                "不支持的操作符",
+            ),
+            (
+                [{"conditions": [{
+                    "attribute": "a", "operator": "=="
+                }]}],
+                "缺少 value",
+            ),
+            (
+                [{"conditions": [{
+                    "attribute": "a", "operator": "between", "lower": 0
+                }]}],
+                "缺少",
+            ),
+        ],
+    )
+    def test_compile_rejects_invalid_conditions(self, queries, match):
+        with pytest.raises(ValueError, match=match):
+            compile_mask_workload(_three_bit_schema(), queries)
+
+    def test_batch_rejects_row_count_and_schema_mismatch(self):
+        compiled = compile_mask_workload(
+            _three_bit_schema(), _three_bit_queries()
+        )
+        one = pd.DataFrame({"a": [0], "b": [0], "c": [0]})
+        two = pd.concat([one, one], ignore_index=True)
+        with pytest.raises(ValueError, match="行数"):
+            build_sparse_mask_energies_batch(
+                one,
+                two,
+                _three_bit_schema(),
+                compiled,
+                np.ones(4),
+            )
+
+        reordered = Schema([
+            AttributeBlock(
+                name=name,
+                type="categorical",
+                description=name,
+                values=[0, 1],
+            )
+            for name in ("b", "a", "c")
+        ])
+        with pytest.raises(ValueError, match="schema"):
+            build_sparse_mask_energies_batch(
+                one,
+                one.copy(),
+                reordered,
+                compiled,
+                np.ones(4),
+            )
 
 
 class TestRandomScanGibbs:
@@ -775,6 +969,213 @@ class TestFactorizedGibbsEvolutionStep:
         for key in first_diagnostics:
             if not key.endswith("elapsed_sec"):
                 assert first_diagnostics[key] == second_diagnostics[key]
+
+    def test_compiled_builder_matches_rowwise_update_and_rng_across_rounds(
+        self,
+    ):
+        schema = _three_bit_schema()
+        queries = _three_bit_queries()
+        compiled = compile_mask_workload(schema, queries)
+        legacy_state, _ = self._tables()
+        compiled_state = legacy_state.copy()
+        control_rng = np.random.default_rng(20260803)
+        legacy_rng = np.random.default_rng(301)
+        compiled_rng = np.random.default_rng(301)
+        legacy_gibbs_rng = np.random.default_rng(302)
+        compiled_gibbs_rng = np.random.default_rng(302)
+
+        for _ in range(20):
+            permutation = control_rng.permutation(len(legacy_state))
+            legacy_donors = legacy_state.iloc[
+                permutation
+            ].reset_index(drop=True)
+            compiled_donors = compiled_state.iloc[
+                permutation
+            ].reset_index(drop=True)
+            residual = control_rng.normal(size=len(queries))
+            weights = control_rng.uniform(0.2, 1.7, size=len(queries))
+            scores = control_rng.normal(size=(len(legacy_state), 3))
+
+            legacy_state, legacy_diagnostics = (
+                evolve_step_factorized_gibbs(
+                    legacy_state,
+                    legacy_donors,
+                    schema,
+                    queries,
+                    residual,
+                    weights=weights,
+                    rho=0.75,
+                    eta=0.4,
+                    mu=0.25,
+                    copy_direction_scores=scores,
+                    copy_direction_strength=0.6,
+                    n_sweeps=4,
+                    rng=legacy_rng,
+                    gibbs_rng=legacy_gibbs_rng,
+                )
+            )
+            compiled_state, compiled_diagnostics = (
+                evolve_step_factorized_gibbs(
+                    compiled_state,
+                    compiled_donors,
+                    schema,
+                    queries,
+                    residual,
+                    weights=weights,
+                    rho=0.75,
+                    eta=0.4,
+                    mu=0.25,
+                    copy_direction_scores=scores,
+                    copy_direction_strength=0.6,
+                    n_sweeps=4,
+                    rng=compiled_rng,
+                    gibbs_rng=compiled_gibbs_rng,
+                    compiled_workload=compiled,
+                )
+            )
+
+            pd.testing.assert_frame_equal(compiled_state, legacy_state)
+            for key in (
+                "participating_rows",
+                "active_gibbs_rows",
+                "active_blocks",
+                "factor_count",
+                "factor_table_entries",
+                "gibbs_microsteps",
+                "factor_model_builds",
+            ):
+                assert compiled_diagnostics[key] == legacy_diagnostics[key]
+            assert legacy_diagnostics["factor_builder"] == "legacy_rowwise"
+            assert compiled_diagnostics["factor_builder"] == "compiled_batch"
+            assert legacy_diagnostics["condition_evaluation_batches"] == 0
+            assert compiled_diagnostics[
+                "condition_evaluation_batches"
+            ] in (0, 1)
+            assert compiled_diagnostics["compiled_unique_conditions"] == 3
+
+        np.testing.assert_array_equal(
+            compiled_rng.random(20), legacy_rng.random(20)
+        )
+        np.testing.assert_array_equal(
+            compiled_gibbs_rng.random(20), legacy_gibbs_rng.random(20)
+        )
+
+    @pytest.mark.parametrize("same_donors", [False, True])
+    def test_compiled_empty_active_set_skips_condition_evaluation_and_rng(
+        self, monkeypatch, same_donors
+    ):
+        current, donors = self._tables()
+        if same_donors:
+            donors = current.copy()
+            rho = 1.0
+        else:
+            rho = 0.0
+        compiled = compile_mask_workload(
+            _three_bit_schema(), _three_bit_queries()
+        )
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError("空活跃集不应评价条件")
+
+        monkeypatch.setattr(
+            factorized_diffusion,
+            "_evaluate_compiled_condition",
+            fail_if_called,
+        )
+        gibbs_rng = np.random.default_rng(401)
+        reference_gibbs_rng = np.random.default_rng(401)
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=rho,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.zeros((4, 3)),
+            copy_direction_strength=0.0,
+            n_sweeps=2,
+            rng=np.random.default_rng(400),
+            gibbs_rng=gibbs_rng,
+            compiled_workload=compiled,
+        )
+
+        assert diagnostics["condition_evaluation_batches"] == 0
+        assert diagnostics["factor_model_builds"] == 0
+        np.testing.assert_array_equal(
+            gibbs_rng.random(20), reference_gibbs_rng.random(20)
+        )
+
+    def test_zero_sweeps_ignore_invalid_compiled_workload(self):
+        current, donors = self._tables()
+        actual, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            [None],
+            "unused",
+            rho=1.0,
+            eta=0.0,
+            mu=0.0,
+            copy_direction_scores=np.zeros((4, 3)),
+            copy_direction_strength=0.0,
+            n_sweeps=0,
+            rng=np.random.default_rng(501),
+            compiled_workload=object(),
+        )
+        expected = evolve_step(
+            current,
+            donors,
+            _three_bit_schema(),
+            rho=1.0,
+            eta=0.0,
+            mu=0.0,
+            copy_direction_scores=np.zeros((4, 3)),
+            copy_direction_strength=0.0,
+            rng=np.random.default_rng(501),
+        )
+
+        pd.testing.assert_frame_equal(actual, expected)
+        assert diagnostics["factor_builder"] == "not_used"
+        assert diagnostics["compiled_unique_conditions"] == 0
+
+    def test_nonzero_sweeps_reject_mismatched_compiled_workload_before_rng(self):
+        current, donors = self._tables()
+        schema = _three_bit_schema()
+        queries = _three_bit_queries()
+        compiled = compile_mask_workload(schema, queries)
+        changed_queries = _three_bit_queries()
+        changed_queries[0]["conditions"][0]["value"] = 0
+        primary_rng = np.random.default_rng(601)
+        reference_primary_rng = np.random.default_rng(601)
+        gibbs_rng = np.random.default_rng(602)
+        reference_gibbs_rng = np.random.default_rng(602)
+
+        with pytest.raises(ValueError, match="不匹配"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                schema,
+                changed_queries,
+                np.ones(4),
+                rho=1.0,
+                eta=0.5,
+                mu=0.0,
+                copy_direction_scores=np.zeros((4, 3)),
+                copy_direction_strength=0.0,
+                n_sweeps=1,
+                rng=primary_rng,
+                gibbs_rng=gibbs_rng,
+                compiled_workload=compiled,
+            )
+
+        np.testing.assert_array_equal(
+            primary_rng.random(20), reference_primary_rng.random(20)
+        )
+        np.testing.assert_array_equal(
+            gibbs_rng.random(20), reference_gibbs_rng.random(20)
+        )
 
     def test_update_does_not_mutate_inputs(self):
         current, donors = self._tables()
