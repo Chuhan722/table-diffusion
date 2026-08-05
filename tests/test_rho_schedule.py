@@ -304,3 +304,30 @@ class TestValidation:
                 n_records=50, n_rounds=5, seed=0,
                 rho_schedule='exponential', rho_max=0.05, rho_min=0.05,
             )
+
+    def test_rho_max_less_than_min(self):
+        """rho_max < rho_min 违反 rho_min <= rho_max。"""
+        with pytest.raises(ValueError, match="rho_min <= rho_max"):
+            run_evolution(
+                np.array([20, 25]), make_queries(), make_schema(),
+                n_records=50, n_rounds=5, seed=0,
+                rho_schedule='linear', rho_max=0.02, rho_min=0.05,
+            )
+
+    def test_rho_max_exceeds_one(self):
+        """rho_max > 1.0 违反上界（参与率不能超过 1）。"""
+        with pytest.raises(ValueError, match="rho_max <= 1.0"):
+            run_evolution(
+                np.array([20, 25]), make_queries(), make_schema(),
+                n_records=50, n_rounds=5, seed=0,
+                rho_schedule='linear', rho_max=1.5, rho_min=0.01,
+            )
+
+    def test_rho_min_not_positive(self):
+        """rho_min=0 不合法（必须为正数）。"""
+        with pytest.raises(ValueError, match="rho_min"):
+            run_evolution(
+                np.array([20, 25]), make_queries(), make_schema(),
+                n_records=50, n_rounds=5, seed=0,
+                rho_schedule='linear', rho_max=0.1, rho_min=0.0,
+            )

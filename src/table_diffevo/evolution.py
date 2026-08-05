@@ -200,6 +200,14 @@ def run_evolution(
         抽样参数：选择强度、邻域尺度（固定值，不衰减）
     rho, eta, mu : float
         更新参数：记录参与率、块复制率、变异率（固定值，不衰减）
+    rho_schedule : str or None, default None
+        记录参与率 ρ 的衰减调度：
+        - None（默认）：全程固定 ρ=rho，rho_max/rho_min 被忽略
+        - 'linear'：ρ_t 从 rho_max 线性衰减到 rho_min
+        - 'exponential'：ρ_t 从 rho_max 指数衰减到 rho_min
+    rho_max, rho_min : float, default 0.01
+        调度起点（第 0 轮）与终点（第 n_rounds-1 轮）的参与率；仅在
+        rho_schedule 非 None 时生效，要求 0 < rho_min <= rho_max <= 1.0。
     tol : float, default 1e-9
         整代检查的数值容差：loss(proposal) ≤ loss(S) + tol 时接受
     device : str, default 'numpy'
@@ -295,6 +303,8 @@ def run_evolution(
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
+        - rho_t_history: List[float]，每轮实际使用的参与率 ρ_t；
+          rho_schedule=None 时恒等于 rho，否则按调度逐轮衰减
         - proposal_attempts_history: List[int]，每轮评估的提案数
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
         - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
@@ -415,6 +425,11 @@ def run_evolution(
                 raise ValueError(
                     f"{name} 必须是正有限数值，得到 {val!r}"
                 )
+        if not (rho_min <= rho_max <= 1.0):
+            raise ValueError(
+                f"需要 0 < rho_min <= rho_max <= 1.0，"
+                f"实际 rho_min={rho_min}, rho_max={rho_max}"
+            )
         if rho_schedule == 'exponential' and rho_max == rho_min:
             raise ValueError(
                 "exponential 调度要求 rho_max != rho_min"

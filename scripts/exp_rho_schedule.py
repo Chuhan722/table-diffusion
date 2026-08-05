@@ -1,19 +1,23 @@
 """
-Issue #29 快速探索实验：ρ 衰减调度 A/B/C 三臂对比（温和 s=0.005）
+Issue #29 探索实验：ρ 衰减调度三臂对比（温和 s=0.005）
 
-独立驱动，不改 run.py 默认常量。配置固定 test_300x10、精确 target、
-marginal 初始化、geometric 抽样，500 轮 × 3 seeds，CPU。
+独立驱动，不改 run.py 默认常量。配置固定 nltcs（16181 records）、精确 target、
+marginal 初始化、geometric 抽样，500 轮 × 10 seeds，device=cuda。
+
+注意：Issue #29 预注册要求 test_300x10（10 seeds × 500 轮）与 nltcs（3 seeds ×
+1500 轮）两套。本脚本实际只跑了 nltcs（10 seeds × 500 轮），属协议偏离，
+结果仅作探索性证据，不足以关闭 Issue #29。
 
 三臂（中心 c=0.01，预算对齐 mean(rho_t)≈c）：
-  A  rho_schedule=None         固定 ρ=c              （基线）
-  B  rho_schedule='linear'     [c+s, c-s] 对称线性     mean 天然=c
-  C  rho_schedule='exponential' 同端点比 r，rho_max 反解 mean=c
+  fixed        rho_schedule=None          固定 ρ=c              （基线）
+  linear       rho_schedule='linear'      [c+s, c-s] 对称线性     mean 天然=c
+  exponential  rho_schedule='exponential' 同端点比 r，rho_max 反解 mean=c
 
 跑法：
     conda run -p ./.conda python scripts/exp_rho_schedule.py
 
-产出：outputs/rho_sched_moderate_<时间>/{A,B,C}/{i-seed}/ + 各臂 summary.json
-     + 顶层 compare.json 汇总三臂配对对比。
+产出：outputs/rho_sched_moderate_<时间>/{fixed,linear,exponential}/{i-seed}/
+     + 各臂 summary.json + 顶层 summary.json 汇总三臂配对对比。
 """
 import os
 

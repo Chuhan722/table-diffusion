@@ -302,7 +302,12 @@ Issue #18。
 
 ## 最近变更（2026-08-05）
 
-### Issue #29：记录参与率 ρ 衰减调度——nltcs 三臂负结果
+### Issue #29：记录参与率 ρ 衰减调度——nltcs 三臂探索性负结果
+
+> **协议偏离警告：** Issue #29 预注册要求两套实验——test_300x10（10 seeds ×
+> 500 轮）与 nltcs（3 seeds × 1500 轮）。本次实际只跑了 nltcs（10 seeds ×
+> 500 轮），既未跑 test_300x10，nltcs 的种子数/轮数也与预注册不符。因此下述
+> 结果**仅作探索性证据，不足以关闭 Issue #29**，该 Issue 保持 open。
 
 **实现内容：**
 - `src/table_diffevo/evolution.py`：新增 `_compute_rho_t` helper 函数；
@@ -312,13 +317,14 @@ Issue #18。
 - `scripts/run.py`：新增 `RHO_SCHEDULE = None`、`RHO_MAX = 0.01`、`RHO_MIN = 0.01`
   常量，并同步写入 `_run_params()` 和 `run_evolution()` 调用。
 - `scripts/exp_rho_schedule.py`：fixed / linear / exponential 三臂预算对齐对比脚本。
-- `tests/test_rho_schedule.py`：24 项测试，覆盖等价门（位级 SHA-256 + 帧比对）、
-  线性/指数公式边界值与中间值、`rho_t_history` 逐轮对照公式、参数验证。
+- `tests/test_rho_schedule.py`：27 项测试，覆盖等价门（位级 SHA-256 + 帧比对）、
+  线性/指数公式边界值与中间值、`rho_t_history` 逐轮对照公式、参数验证
+  （含顺序 `rho_min <= rho_max`、上界 `<= 1.0`、正数下界三条边界）。
 
 **等价保证：** `rho_schedule=None`（默认）时代码路径与合入前位级等价——
 SHA-256、loss 轨迹、pd.DataFrame 三重验证均通过。
 
-**nltcs 三臂正式实验（负结果）：**
+**nltcs 三臂探索性实验（负结果，非预注册配置）：**
 - 配置：`scripts/exp_rho_schedule.py`，nltcs 16181 记录、500 轮、seed 0..9、
   CUDA、geometric（α 2→10，λ=0.5）、marginal 初始化。三臂预算对齐（rho_t 均值
   均为 0.01000）：fixed（None，恒 0.01）/ linear（0.015→0.005）/
@@ -340,8 +346,10 @@ SHA-256、loss 轨迹、pd.DataFrame 三重验证均通过。
   换到 nltcs（后期仍约 89 条参与）后 best_loss 依旧变差，**数据量不是主因**。
   当前证据下，"前多后少"的参与率调度未能改善产出质量。
 
-**正式判断：** ρ 衰减调度作为独立机制无效（best_loss 是评估标准）。后续若改变
-搜索节奏，应从调度信号源头重新设计（残差驱动），而不是在时间上做线性/指数衰减。
+**探索性判断（待预注册实验确认）：** 当前证据下 ρ 衰减调度作为独立机制未改善
+产出质量（best_loss 是评估标准）。但因未完成 Issue #29 预注册的完整配置，此判断
+仅为探索性倾向，不作定论。后续若改变搜索节奏，应从调度信号源头重新设计
+（残差驱动），而不是在时间上做线性/指数衰减。
 
 ### 联合扩散整代步幅诊断——过冲是逐行自身项与跨行交叉项的混合来源
 
