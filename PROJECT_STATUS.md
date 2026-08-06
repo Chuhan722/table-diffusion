@@ -121,6 +121,61 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-08-06）
+
+### #33 阶段 0：实验基础设施已完成（未推送 PR）
+
+**背景：** Issue #33 重构锐度调度为残差降速驱动，分 6 个阶段渐进实现。阶段 0 先搭建可复用的实验基础设施，确保后续所有实验（A0/A1 对照、固定 α 扫描、探测式调度）使用统一的度量、日志和配置管理。
+
+**已完成交付物：**
+
+1. **度量计算模块** (`src/table_diffevo/metrics.py`)
+   - `compute_normalized_l1`: 归一化 L1 误差，与 `evolution.py:904` 完全一致
+   - `compute_squared_loss`: 平方 loss Q，wrapper for `objective.compute_loss`
+   - `compute_all_metrics`: 一次性计算避免重复
+   - 验证脚本 `scripts/verify_metrics.py` 确认与现有实现完全一致（8 个测试用例全部通过）
+
+2. **实验日志模块** (`src/table_diffevo/experiment_logger.py`)
+   - 三层日志：`RoundLog`（每轮）、`BlockLog`（每块）、`ProbeLog`（探测分支）
+   - 输出 CSV（rounds/blocks/probes）+ JSON（summary）
+   - 自动处理 numpy 类型序列化
+
+3. **实验配置模块** (`src/table_diffevo/experiment_config.py`)
+   - 四部分配置：数据、接受规则、α 调度、实验参数
+   - 完整参数验证（A1/A2 需 eps_L1、fixed 需 alpha_value、probe 需 W 等）
+   - YAML 序列化/反序列化
+   - 示例配置 `experiments/configs/example_phase_a.yaml`
+
+4. **文档** (`docs/experiment_infrastructure.md`)
+   - 三个模块的详细使用指南
+   - 完整工作流示例
+   - 测试与验证方法
+
+5. **集成演示** (`scripts/demo_infrastructure.py`)
+   - 端到端展示三模块集成使用
+   - 简化模拟演化过程
+   - 生成完整日志文件
+
+**测试覆盖：**
+- 单元测试：31 个（metrics 11 + logger 9 + config 11）
+- 测试覆盖率：99%（metrics 92% + logger 100% + config 100%）
+- 全部测试通过
+
+**输出示例：**
+- `experiments/results/demo/rounds.csv`（100 行，每轮详细）
+- `experiments/results/demo/summary.json`（统计信息）
+
+**验证通过：**
+- 度量计算与 `evolution.py` 完全一致（4 个测试用例，数值误差 < 1e-12）
+- 配置验证规则覆盖所有预注册的约束
+- 日志格式符合后续分析需求（CSV 易于 pandas/R 处理）
+
+**状态：** 代码已完成并通过测试，尚未推送到远程或创建 PR（遵循协作规则：本地完成后等待用户确认）。
+
+**下一步：** 待用户确认阶段 0 交付质量后，进入阶段 1（实现 A0/A1 接受规则并集成到 `evolution.py`）。
+
+---
+
 ## 最近变更（2026-08-04）
 
 ### #33 重构：调度驱动量从"轮数"改为"残差降速"，分两步走（设计已冻结，未跑）

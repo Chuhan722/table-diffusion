@@ -1,0 +1,32 @@
+experiment_name: "phase_a_pilot_A0_vs_A1"
+
+data:
+  dataset_name: "nltcs"
+  target_path: "data/nltcs/measured_1000query.json"
+  measured_target_path: "data/nltcs/measured_1000query.json"
+  init_marginals_path: "data/nltcs/init_marginals.json"
+  n_records: 16181
+
+acceptance_rule:
+  rule: "A1"
+  eps_L1: 1.0e-5
+  eps_Q: 0.0
+
+alpha_schedule:
+  mode: "fixed"
+  alpha_value: 5.0
+  alpha_min: 2.0
+  alpha_max: 10.0
+
+seeds: [42, 43, 44]
+n_rounds: 200
+output_dir: "experiments/results/phase_a_pilot"
+
+# 演化参数（与 #29 正式实验一致）
+beta: 1.0
+eta: 0.5
+h: 0.8
+mu: 0.01
+lambda_: 0.5
+delta: 0.05
+winsorize_limits: [0.01, 0.99]
