@@ -2,6 +2,9 @@
 
 生成阶段只读取公开 schema、公开记录数、预定义查询、已发布 target 与 1-way
 marginal。脚本不接受真实训练/测试表路径，不执行接受、回滚、早停或 best 选择。
+
+预注册分类只检查有限温核是否按构造降低其直接定义的平方能量，不是方法有效性或
+相对完整生成器优势的分类；方法层解释必须结合生成后的独立质量评价。
 """
 
 import argparse
@@ -820,6 +823,8 @@ def aggregate_results(
         "all_run_semantic_gates_passed": bool(run_gates_passed),
     }
     all_gates_passed = all(diagnostic_gates.values())
+    # 保留运行前冻结的历史分类以便原始输出逐字段重放。由于分类指标正是核直接
+    # 优化的平方能量，它只属于实现一致性检查，不得解释为方法有效性证据。
     if not all_gates_passed:
         classification = "implementation_or_experiment_failure"
     elif not classify:
@@ -1620,8 +1625,9 @@ def main():
     payload = {
         "experiment": "persistent_workload_heatbath",
         "research_boundary": (
-            "operator smoke against beta=0 reference; not a comparison with "
-            "the full generator and not a DP claim"
+            "historical construction-aligned energy check against a degrading "
+            "beta=0 mechanism reference; not method-effectiveness evidence, "
+            "not a full-generator comparison, and not a DP claim"
         ),
         "formal_protocol": bool(formal),
         "protocol": {
@@ -1635,7 +1641,10 @@ def main():
             "tau": float(args.tau),
             "verify_every": int(args.verify_every),
             "device": args.device,
-            "baseline": "beta=0 uniform legal-value resampling",
+            "baseline": (
+                "beta=0 uniform legal-value mechanism reference; not an "
+                "effectiveness baseline"
+            ),
             "candidate": "beta=tau/initial_nonzero_gain_over_n_rms",
             "output_state": "current table after the final microstep",
             "acceptance_or_checkpoint_selection": False,
