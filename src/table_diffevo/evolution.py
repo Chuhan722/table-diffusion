@@ -60,6 +60,7 @@ from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     evolve_step_factorized_gibbs,
 )
+from table_diffevo.acceptance import check_acceptance
 
 
 def _rng_state_sha256(rng: np.random.Generator) -> str:
@@ -141,6 +142,9 @@ def run_evolution(
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    acceptance_rule: str = 'A0',
+    eps_L1: float = 1e-5,
+    eps_Q: float = 0.0,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -246,6 +250,14 @@ def run_evolution(
     factorized_gibbs_logit_clip : float or None, default 30
         Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
         float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
+    acceptance_rule : str, default 'A0'
+        接受规则：
+        - 'A0'：Q 主导（平方损失优先），保持历史行为
+        - 'A1'：L1 主导（归一化 L1 优先，Q 打平）
+    eps_L1 : float, default 1e-5
+        归一化 L1 的数值容差（单位：每记录平均绝对误差），用于 A1 规则的打平判断
+    eps_Q : float, default 0.0
+        平方损失的数值容差，用于 A0/A1 规则的 Q 接受判断
 
     Returns
     -------
@@ -262,6 +274,8 @@ def run_evolution(
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
         - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
           原始 proposal 精确收益
+        - delta_L1_history: List[List[float]]，每轮各次尝试的归一化 L1 变化
+        - delta_Q_history: List[List[float]]，每轮各次尝试的平方损失变化
         - copy_direction_*_history: 局部方向分布与正/反向实际复制概率
         - copy_probability_entropy_history: 每轮 active Bernoulli 复制核的平均熵
         - copy_probability_kl_history: 每轮复制核相对历史 Bernoulli(eta) 的平均 KL
@@ -513,6 +527,8 @@ def run_evolution(
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    delta_L1_history: List[List[float]] = []
+    delta_Q_history: List[List[float]] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
@@ -774,6 +790,8 @@ def run_evolution(
         attempt_gains: List[float] = []
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
+        attempt_delta_L1: List[float] = []
+        attempt_delta_Q: List[float] = []
         attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
@@ -841,7 +859,6 @@ def run_evolution(
                     **direction_kwargs,
                 )
             proposal_q = _eval_counts(proposal)
-            proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
 
             delta_q = proposal_q - q
@@ -849,9 +866,25 @@ def run_evolution(
             quadratic_penalty = float(0.5 * np.dot(delta_q, delta_q))
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
+
+            # 使用新的接受规则检查
+            accept, delta_L1, delta_Q = check_acceptance(
+                rule=acceptance_rule,
+                target=target,
+                current_q=q,
+                candidate_q=proposal_q,
+                n_records=n_records,
+                eps_L1=eps_L1,
+                eps_Q=eps_Q
+            )
+            attempt_delta_L1.append(delta_L1)
+            attempt_delta_Q.append(delta_Q)
+
+            # 为了向后兼容，继续计算 proposal_loss 用于 gain 记录
+            proposal_loss = compute_loss(target, proposal_q)
             attempt_gains.append(float(loss - proposal_loss))
 
-            if proposal_loss <= loss + tol:
+            if accept:
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
@@ -868,6 +901,8 @@ def run_evolution(
         raw_proposal_quadratic_penalty_history.append(
             attempt_quadratic_penalties
         )
+        delta_L1_history.append(attempt_delta_L1)
+        delta_Q_history.append(attempt_delta_Q)
         factorized_gibbs_attempt_diagnostics_history.append(
             attempt_factorized_gibbs_diagnostics
         )
@@ -959,6 +994,8 @@ def run_evolution(
         "raw_proposal_quadratic_penalty_history": (
             raw_proposal_quadratic_penalty_history
         ),
+        "delta_L1_history": delta_L1_history,
+        "delta_Q_history": delta_Q_history,
         "factorized_gibbs_attempt_diagnostics_history": (
             factorized_gibbs_attempt_diagnostics_history
         ),
@@ -1036,6 +1073,9 @@ def run_evolution(
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
+            "acceptance_rule": acceptance_rule,
+            "eps_L1": eps_L1,
+            "eps_Q": eps_Q,
         },
     }
 
