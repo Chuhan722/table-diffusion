@@ -12,8 +12,8 @@ from dataclasses import dataclass, asdict
 @dataclass
 class AcceptanceRuleConfig:
     """接受规则配置"""
-    rule: Literal["A0", "A1", "A2"]
-    eps_L1: Optional[float] = None  # A1/A2 需要
+    rule: Literal["A0", "A1"]
+    eps_L1: Optional[float] = None  # A1 需要
     eps_Q: float = 0.0  # 默认值，所有规则都用
 
 
@@ -66,7 +66,7 @@ class ExperimentConfig:
         errors = []
 
         # 验证接受规则
-        if self.acceptance_rule.rule in ["A1", "A2"]:
+        if self.acceptance_rule.rule in ["A1"]:
             if self.acceptance_rule.eps_L1 is None:
                 errors.append(f"{self.acceptance_rule.rule} 需要指定 eps_L1")
 
