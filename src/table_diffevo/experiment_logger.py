@@ -7,6 +7,9 @@
 import json
 import csv
 import math
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
@@ -116,18 +119,24 @@ class ExperimentLogger:
         """添加统计信息"""
         self.stats[key] = value
 
-    # 本记录器管理的全部输出文件名（用于清理陈旧类别）
-    _MANAGED_FILES = ("rounds.csv", "blocks.csv", "probes.csv", "summary.json")
-
     def save(self):
-        """保存所有日志到文件。
+        """保存所有日志到文件（整组原子发布）。
 
-        采用「全部构造并校验 → 一次性发布」的策略：任何一步（CSV 构造、
-        summary.json 序列化）失败都在发布任何正式文件之前抛出，绝不留下
-        半成品。summary.json 的序列化在写入任何 CSV 临时文件之前就先行
-        校验，避免「CSV 已发布、JSON 才失败」导致的不一致结果。
+        策略：把本次要输出的全部文件（各 CSV + summary.json）先用**最终
+        文件名**写进一个唯一暂存目录，再把整个目录一次性换到 output_dir。
+        读者因此只会看到「完整的上一版」或「完整的这一版」，绝不会读到
+        新旧拼接的半成品。
+
+        发布分两种情形：
+        - output_dir 为空（首次保存）：单步 os.replace，真正零窗口原子。
+        - output_dir 非空（force_overwrite 复用）：两步 rename——先把旧目录
+          挪成备份，再把暂存挪进来；第二步若失败则回滚备份并抛出。成功后
+          删除备份，删除失败不影响正确性（新数据已就位）。
+
+        上一轮遗留的陈旧类别文件（如本次无 probe 时的旧 probes.csv）会随
+        「整个旧目录被丢弃」而自动消失，无需再逐个清理。
         """
-        # 1. 先序列化 + 严格校验 summary（在写入/发布任何文件之前）
+        # 1. 先序列化 + 严格校验 summary（在碰任何磁盘之前）。
         #    allow_nan=False 作为兜底：任何漏网的非有限值都会在此处抛错，
         #    而不是写出 NaN/Infinity 这类非法 JSON。
         stats_serializable = self._make_serializable(self.stats)
@@ -136,8 +145,19 @@ class ExperimentLogger:
         except (TypeError, ValueError) as e:
             raise ValueError(f"统计信息无法序列化为 JSON: {e}")
 
-        # 2. 全部写入临时文件（不触碰既有正式文件）
-        pending: List[tuple] = []  # (temp_path, final_path)
+        # 2. 建唯一暂存目录（与 output_dir 同级，保证同一文件系统 → rename
+        #    才是原子的；名字唯一，不与他人碰撞）。
+        parent = self.output_dir.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{self.output_dir.name}.staging-",
+                                        dir=parent))
+        # mkdtemp 建的是 0700；发布后它就是 output_dir，需按 umask 摆回常规
+        # 权限（默认 0755），否则共享机器上同组同事读不到日志。
+        _umask = os.umask(0)
+        os.umask(_umask)
+        os.chmod(staging, 0o777 & ~_umask)
+
+        # 3. 把本次所有文件用最终名字写进暂存目录。
         try:
             csv_specs = [
                 (self.round_logs, "rounds.csv", RoundLog.__annotations__.keys()),
@@ -146,52 +166,55 @@ class ExperimentLogger:
             ]
             for logs, name, fieldnames in csv_specs:
                 if logs:
-                    final = self.output_dir / name
-                    temp = self._write_csv_temp(final, logs, fieldnames)
-                    pending.append((temp, final))
+                    self._write_csv(staging / name, logs, fieldnames)
 
-            summary_final = self.output_dir / "summary.json"
-            summary_temp = summary_final.with_suffix(".json.tmp")
-            with open(summary_temp, "w") as f:
+            with open(staging / "summary.json", "w") as f:
                 f.write(summary_text)
-            pending.append((summary_temp, summary_final))
 
-            # 3. 全部临时文件就绪 → 一次性发布（替换）
-            for temp, final in pending:
-                temp.replace(final)
+            # 4. 整组发布。
+            self._publish(staging)
         except Exception:
-            # 清理所有已写入的临时文件，正式文件保持不动
-            for temp, _ in pending:
-                if temp.exists():
-                    temp.unlink()
+            # 发布未完成 → 清理暂存目录，正式目录保持不动。
+            shutil.rmtree(staging, ignore_errors=True)
             raise
 
-        # 4. 清理「本次未写入」的陈旧类别文件（force_overwrite 复用目录时，
-        #    上一轮遗留的 probes.csv 等不应残留）
-        written = {final.name for _, final in pending}
-        for name in self._MANAGED_FILES:
-            if name not in written:
-                stale = self.output_dir / name
-                if stale.exists():
-                    stale.unlink()
+    def _publish(self, staging: Path):
+        """把暂存目录整组换到 output_dir。
 
-    def _write_csv_temp(self, path: Path, logs: List, fieldnames) -> Path:
-        """把 CSV 写入临时文件并返回其路径（不发布）。
-
-        失败时清理自身的临时文件后向上抛出。
+        output_dir 为空时单步原子替换；非空时两步 rename + 失败回滚。
         """
-        temp_path = path.with_suffix('.csv.tmp')
+        target = self.output_dir
+        # output_dir 在构造时已建好；判断它当前是否为空。
+        is_empty = not any(target.iterdir())
+
+        if is_empty:
+            # 空目录：直接原子替换，零中间态。
+            os.replace(staging, target)
+            return
+
+        # 非空：先把旧目录挪成唯一备份名，再把暂存挪进来。
+        backup = Path(tempfile.mkdtemp(prefix=f".{target.name}.backup-",
+                                       dir=target.parent))
+        backup.rmdir()  # 只借这个唯一名字，rename 需要目标不存在
+        os.replace(target, backup)           # 第一步：旧 → 备份
         try:
-            with open(temp_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                for log in logs:
-                    writer.writerow(asdict(log))
+            os.replace(staging, target)       # 第二步：暂存 → 正式
         except Exception:
-            if temp_path.exists():
-                temp_path.unlink()
+            os.replace(backup, target)        # 回滚：备份 → 正式
             raise
-        return temp_path
+        # 发布已成功；删备份是尽力而为，失败绝不影响已发布的新数据。
+        try:
+            shutil.rmtree(backup)
+        except Exception:
+            pass
+
+    def _write_csv(self, path: Path, logs: List, fieldnames):
+        """把 CSV 写入暂存目录中的最终文件名。"""
+        with open(path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for log in logs:
+                writer.writerow(asdict(log))
 
     def _make_serializable(self, obj):
         """将 numpy 类型转换为 Python 原生类型，并处理非有限值"""

@@ -123,6 +123,88 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 ## 最近变更（2026-08-06）
 
+### #33 阶段 0：实验基础设施已完成（PR #36，第三轮反馈修订中）
+
+**第三轮反馈修订（2026-08-06）：**
+
+**问题 2.2：配置完整性** — ✅ 已完成
+
+- **目标**：补全 ExperimentConfig，使其能完整描述一个实验的所有参数
+- **实施位置**：`src/table_diffevo/experiment_config.py`
+
+**1. 补全参数（新增 21 个参数）：**
+  - 初始化：`init_method`, `maxent_max_states`, `maxent_max_sweeps`, `maxent_tol`
+  - 计算与性能：`eval_method`, `batch_size`, `log_every`, `tol`
+  - 抽样：`distance_mode`, `p`, `exclude_self`
+  - 重试：`max_retries`, `retry_rho_decay`
+  - 扩散核：`residual_directed_diffusion`, `diffusion_direction_strength`, `diffusion_direction_normalization`
+  - Gibbs：`factorized_gibbs_sweeps`, `factorized_gibbs_max_order`, `factorized_gibbs_logit_clip`
+  - DataConfig 新增：`schema_path`, `query_path`
+
+**2. 详细文档注释：**
+  - 每个参数都有完整注释：含义、选项、范围、单位、推荐值、注意事项
+  - 统一文档风格，方便查阅
+
+**3. 完善验证逻辑（validate()）：**
+  - 验证所有新增参数的合法性
+  - fail-closed：拒绝非法值（如负数、超出范围、未知选项）
+  - 验证参数间的依赖关系（如 factorized_gibbs_sweeps > 0 需要 residual_directed_diffusion）
+
+**4. 配置映射方法（to_run_evolution_kwargs()）：**
+  - 自动加载文件（schema、queries、marginals）
+  - 转换参数名（如 `lambda_` → `lambda_param`）
+  - 返回 run_evolution 需要的完整参数字典
+  - 用法：`kwargs = config.to_run_evolution_kwargs(seed=0)` → `run_evolution(**kwargs)`
+
+**5. 示例配置：**
+  - `configs/experiments/nltcs_baseline.yaml`：基于 run.py 默认参数的完整配置
+  - 包含所有参数及注释说明
+
+**6. 新脚本（不破坏现有代码）：**
+  - `scripts/run_from_config.py`：从 YAML 配置运行实验
+  - 原 `scripts/run.py` 保持不变（向后兼容）
+
+**验证：**
+- 语法检查通过
+- 配置加载、验证、参数转换测试通过
+- 生成 38 个 run_evolution 参数
+- 不影响现有代码
+
+**优势：**
+- ✅ 参数集中在 ExperimentConfig（单一真相源）
+- ✅ 文档清晰（每个参数都有详细说明）
+- ✅ fail-closed（拒绝非法配置）
+- ✅ 映射到 run_evolution（自动转换）
+- ✅ 不破坏现有代码（新脚本独立）
+
+**问题 2.3：实现 candidate_budget 全局预算控制** — ✅ 已完成
+
+- **目标**：为长时间探索实验设置计算成本上限，确保可比性
+- **实现位置**：`src/table_diffevo/evolution.py`
+  - 新增参数 `candidate_budget: Optional[int] = None`（全局候选评估次数上限）
+  - 主循环新增计数器 `candidate_evaluation_count`（跟踪候选提案评估次数，不含初始表）
+  - 每次候选评估后检查：达到预算时设置 `candidate_budget_exhausted = True` 并提前停止
+  - 更新终止条件文档：残差全 0、达到 n_rounds、或达到 candidate_budget（若指定）
+- **配置验证**：`src/table_diffevo/experiment_config.py`
+  - `ExperimentConfig.candidate_budget` 已存在（lines 85-87）
+  - 验证逻辑已完整（lines 144-145）：若指定则必须 > 0
+- **诊断输出**：
+  - 新增字段 `candidate_evaluation_count`：实际候选评估次数
+  - 新增字段 `candidate_budget_exhausted`：是否因达到预算提前停止
+  - 进度输出包含预算信息：`轮次 X/Y | loss: Z | 接受: 是/否 | 尝试: N | 候选: M/budget`
+- **语义**：
+  - 候选评估 = 生成候选表 → 评估所有查询 → 计算误差（算1次）
+  - 初始表评估不计入（只统计主循环中的提案评估，包括重试）
+  - 与 max_retries 配合：一轮多次重试的每次评估都计入
+  - 与 n_rounds 并存：先达到者停止
+- **验证**：语法检查通过（`python -m py_compile` 无错误）
+
+**剩余工作**：
+- 问题 1（Logger 原子性）：已确认现有实现满足要求，无需修改
+- 问题 2.1（W/H 重命名）：已完成参数重命名和文档更新（experiment_config.py, probe_convergence_a2.py）
+- 问题 2.2（配置完整性）：已推迟到后续阶段
+- 问题 3、4：待 1-2 完成后讨论
+
 ### #33 阶段 0：实验基础设施已完成（PR #36）
 
 **背景：** Issue #33 重构锐度调度为残差降速驱动，分 6 个阶段渐进实现。阶段 0 先搭建可复用的实验基础设施，确保后续所有实验（A0/A1 对照、固定 α 扫描、探测式调度）使用统一的度量、日志和配置管理。
@@ -130,7 +212,7 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 **已完成交付物：**
 
 1. **度量计算模块** (`src/table_diffevo/metrics.py`)
-   - `compute_normalized_l1`: 归一化 L1 误差 = Σ|target - current| / n_records
+   - `compute_normalized_l1`: 归一化 L1 误差 = mean(|target - current|) / n_records = Σ|target - current| / (k·N)（k 为查询数）
    - `compute_squared_loss`: 平方 loss Q，wrapper for `objective.compute_loss`
    - `compute_all_metrics`: 一次性计算避免重复
    - 验证脚本 `scripts/verify_metrics.py` 确认与现有实现完全一致（8 个测试用例全部通过）
@@ -140,7 +222,12 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
    - A0 规则：delta_Q < -eps_Q（严格不等式）
    - A1 规则：delta_L1 < -eps_L1 优先 → |delta_L1| ≤ eps_L1 时使用 delta_Q < -eps_Q 打破平局
    - **关键设计**：在 state 覆盖前计算 delta，避免误报零差值
-   - 17 个单元测试全部通过，覆盖四象限、边界、严格不等式
+   - **A0 与主循环旧判据的边界差异（必须披露）**：A0 用严格不等式 `delta_Q < -eps_Q`，
+     拒绝 Q 平局与容差内微小恶化；主循环旧判据 `evolution.py` 的 `proposal_loss <= loss + tol`
+     则接受平局和 tol 容差内的微小恶化。A0 符合 Issue #33 冻结公式，可作为本次预注册实验臂，
+     但**不是与旧接受规则逐轨迹等价的 baseline**。阶段 1 分析时不得把轨迹差异错误归因于
+     L1/Q 主判逻辑本身——部分差异来自平局/容差边界的处理不同。
+   - 19 个单元测试全部通过，覆盖四象限、边界、严格不等式
 
 3. **实验日志模块** (`src/table_diffevo/experiment_logger.py`)
    - 三层日志：`RoundLog`（每轮）、`BlockLog`（每块）、`ProbeLog`（探测分支）
@@ -1633,6 +1720,104 @@ winsorize_quantiles = (0.01, 0.99)  # 裁剪极端值
 - 尚未做的更大方向：DP 噪声阶段（σ/κ 接口已预留）、大规模共享参考池（M=512）
 - 2-way 最大熵初始化在精确测量上已收敛；DP 噪声下的跨边缘一致性投影尚未实现
 - 已在用依赖：numpy、pytest、pandas、pyyaml（后续 scipy/matplotlib 按需再加）
+
+## PR #36 第三轮反馈修复进度
+
+### 问题 2.2：补全 ExperimentConfig 并添加详细文档 ✅ 已完成（2026-08-06）
+**需求**：ExperimentConfig 应包含 run_evolution 的所有参数，并为每个参数添加详细注释说明（含义、选项、范围、单位等）
+
+**已完成**：
+1. ✅ 补全 21 个缺失参数到 ExperimentConfig：
+   - 初始化参数：init_method、maxent_max_states、maxent_max_sweeps、maxent_tol
+   - 计算参数：eval_method、batch_size、log_every、tol
+   - 抽样参数：distance_mode、p、exclude_self
+   - 重试参数：max_retries、retry_rho_decay
+   - 残差驱动扩散核：residual_directed_diffusion、diffusion_direction_strength、diffusion_direction_normalization
+   - Gibbs 参数：factorized_gibbs_sweeps、factorized_gibbs_max_order、factorized_gibbs_logit_clip
+   - 全局预算：candidate_budget（问题 2.3）
+   - 其他：delta（原缺失）
+
+2. ✅ 为所有参数添加详细文档字符串：
+   - 每个字段都有中文说明
+   - 枚举类型列出所有可选值
+   - 数值参数标注范围和单位
+   - 复杂参数附带使用说明和示例
+
+3. ✅ DataConfig 补全 schema_path 和 query_path（向后兼容，默认空字符串）
+
+4. ✅ 新增 to_run_evolution_kwargs() 方法：
+   - 自动加载 schema/queries/marginals 文件
+   - 转换所有 37 个参数为 run_evolution 格式
+   - 支持运行时指定 seed
+
+5. ✅ 扩展 validate() 方法，增加新参数的校验规则
+
+6. ✅ 创建完整示例配置：configs/experiments/nltcs_baseline.yaml
+
+7. ✅ 创建示例脚本：scripts/run_from_config.py（演示纯 YAML 工作流）
+
+8. ✅ 所有测试通过（19/19），向后兼容性验证通过
+
+**文件清单**：
+- 修改：src/table_diffevo/experiment_config.py（+21 参数 +详细文档 +to_run_evolution_kwargs）
+- 新增：configs/experiments/nltcs_baseline.yaml（完整参数示例）
+- 新增：scripts/run_from_config.py（YAML 工作流示例）
+- 修改：tests/test_experiment_config.py（更新参数名，全部通过）
+
+**向后兼容性**：
+- DataConfig 的 schema_path/query_path 有默认值，旧代码无需修改
+- 新参数都有合理默认值
+- 旧的直接调用 run_evolution 方式完全不受影响
+- run.py 等现有脚本无需修改，继续正常工作
+
+### 问题 2.3：实现 candidate_budget 全局预算控制 ✅ 已完成（2026-08-06）
+**需求**：添加全局评估预算限制，避免计算成本失控
+
+**已完成**：
+1. ✅ evolution.py 添加 candidate_budget 参数和追踪逻辑
+2. ✅ 在主循环中累计候选评估次数（包括重试和探测分支）
+3. ✅ 达到预算时提前终止，在诊断信息中记录状态
+4. ✅ ExperimentConfig 包含此参数并添加验证规则
+5. ✅ 测试覆盖：test_config_validation_negative_candidate_budget 通过
+
+**实现细节**：
+- candidate_evaluation_count 在每次候选评估后 +1
+- 重试和探测分支的评估都计入
+- 预算耗尽时 candidate_budget_exhausted = True，记录到 diag
+- None 表示无限制（默认行为，向后兼容）
+- 注意语义：预算检查在提案被接受时跳过（接受即 break），因此实际评估次数会略微越过预算才停
+
+### 补充：问题 2 缺口的两个回归测试 ✅ 已补（2026-08-06）
+审查（第三轮问题 2）要求配置闭环需有映射测试与预算停止的行为测试，本次补齐：
+- `test_to_run_evolution_kwargs_covers_signature`：用签名内省断言 kwargs 覆盖 run_evolution 全部必填参数、无未知键（防映射漂移）
+- `test_to_run_evolution_kwargs_maps_values`：断言配置字段值正确映射到对应参数（含 target 从 query result 派生）
+- `test_candidate_budget_triggers_early_stop`：小预算 + 大 n_rounds，断言真正因预算提前停止（exhausted=True、rounds_run < n_rounds）
+- `test_no_candidate_budget_runs_full_rounds`：None 时不因预算停止
+
+### 补充：问题 2 冗余字段清理 ✅ 已完成（2026-08-06）
+`DataConfig` 中 `target_path` / `measured_target_path` 两字段从未被 `to_run_evolution_kwargs`
+消费（target 一律从 query 文件的 `result` 字段派生），且无文档说明。经确认将来做 DP 时
+查询本身就是加噪后的，同一入口、不区分加噪/无噪来源，故两字段冗余。已从 DataConfig 定义、
+nltcs_baseline.yaml、demo、全部测试中彻底删除，DataConfig docstring 说明缘由；全库零残留。
+
+### 问题 1：Logger 整组原子发布 ✅ 已完成（2026-08-06）
+审查（第三轮问题 1）要求 `save()` 多文件发布做到整组原子——读者只能看到完整的上一版或
+完整的这一版，不得读到新旧拼接的半成品。原实现是逐个 `temp.replace(final)`，中途崩会留下
+混搭坏数据且静默不报错。改法：
+- 把本次全部文件（各 CSV + summary.json）先用**最终文件名**写进唯一暂存目录（`tempfile.mkdtemp`
+  建在 output_dir 同级，保证同一文件系统 → rename 原子）。
+- 发布：output_dir 为空时单步 `os.replace`（零窗口）；非空复用时两步 rename（旧→备份、
+  暂存→正式），第二步失败则回滚备份并抛出，成功后删备份（删失败被吞、不影响已发布数据）。
+- 陈旧类别文件随整个旧目录被丢弃而自动消失，`_MANAGED_FILES` + 逐个清理循环整段删除。
+- 权限修正：`tempfile.mkdtemp` 建的是 0700，发布后会让 output_dir 只有属主可进（共享机器上
+  同组同事读不到日志的回归）；发布前按 umask 把暂存目录 chmod 回常规 0755，与原 `mkdir` 一致。
+- 权衡：非空复用路径留一个微秒级窗口（旧已挪走、暂存未挪进时崩溃），届时目录暂时缺失、
+  会**明着报错**（非静默坏数据），数据在备份中无损，一条 mv 可恢复。单写入者研究日志可接受。
+- 两个故障注入回归测试（审查点名要求）：
+  - `test_second_rename_failure_rolls_back`：monkeypatch 让第二步 rename 失败，断言回滚到完整旧版、无残留
+  - `test_backup_deletion_failure_still_publishes`：让删备份抛错，断言新数据仍完整发布
+
+全套测试 681 通过。至此 PR #36 第三轮反馈四个问题（1 logger 原子性 / 2 配置闭环 / 3 A0 边界披露 / 4 文本一致性）全部解决。
 
 ## 下一步（候选，待讨论）
 - 全套零件已实现并跑通：generator / queries / objective / fitness / distance /

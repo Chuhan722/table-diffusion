@@ -97,6 +97,40 @@ class TestTermination:
         )
         assert diag["rounds_run"] <= 10
 
+    def test_candidate_budget_triggers_early_stop(self):
+        """给一个远小于 n_rounds 所需评估数的预算，应在跑满 n_rounds 前提前停止。
+
+        锚定 candidate_budget 的实际停止行为（不只是配置校验）。
+        注意实现语义：预算检查在提案被接受时跳过（接受即 break），
+        因此实际评估次数会略微越过预算才停，这里断言 >= budget 而非精确相等。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        budget = 5
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=200, seed=0,
+            candidate_budget=budget,
+        )
+        assert diag["candidate_budget_exhausted"] is True
+        assert diag["candidate_evaluation_count"] >= budget
+        # 因预算而非 n_rounds 停止：轮数应远少于 n_rounds
+        assert diag["rounds_run"] < 200
+
+    def test_no_candidate_budget_runs_full_rounds(self):
+        """不设预算（None）时不应因预算提前停止。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=15, seed=0,
+            candidate_budget=None,
+        )
+        assert diag["candidate_budget_exhausted"] is False
+        # 未达标时应跑满（与 test_runs_full_rounds_when_not_converged 同前提）
+        if not diag["stopped_early"]:
+            assert diag["rounds_run"] == 15
+
 
 class TestReproducibility:
     """复现性"""

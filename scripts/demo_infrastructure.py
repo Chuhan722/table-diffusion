@@ -6,11 +6,12 @@
 
 注意：这里的候选生成是 `current + 高斯噪声` 的玩具模拟（simulate_evolution），
 不是 evolution.py 的真实演化逻辑，也不加载真实数据。它只用于验证基础设施接口
-能协同工作，产出的数字没有实验意义。输出统一写到被 gitignore 的
-`experiments/results/.demo/`，不进入版本库。
+能协同工作，产出的数字没有实验意义。每次运行输出到被 gitignore 的
+`experiments/results/.demo/<时间戳>/` 唯一目录，重复运行不会碰撞，也不进入版本库。
 """
 
 import sys
+import time
 from pathlib import Path
 import numpy as np
 
@@ -126,6 +127,10 @@ def main():
     print("=" * 70)
     print()
 
+    # 唯一时间戳输出目录，避免重复运行时与既有目录碰撞（ExperimentLogger 拒绝非空目录）
+    # 加 . 前缀避免进入 git（.gitignore 已忽略 experiments/results/）
+    demo_output_dir = f"experiments/results/.demo/{time.strftime('%Y%m%d_%H%M%S')}"
+
     # 步骤 1：加载配置
     print("步骤 1: 加载配置")
     config_path = Path(__file__).parent.parent / "experiments/configs/example_phase_a.yaml"
@@ -139,8 +144,6 @@ def main():
             experiment_name="demo_infrastructure",
             data=DataConfig(
                 dataset_name="demo",
-                target_path="",
-                measured_target_path="",
                 init_marginals_path="",
                 n_records=1000
             ),
@@ -157,7 +160,7 @@ def main():
             ),
             seeds=[42, 43],
             n_rounds=50,  # 演示用少量轮数
-            output_dir="experiments/results/.demo",  # 加 . 前缀避免进入 git
+            output_dir=demo_output_dir,
             beta=1.0,
             eta=0.5,
             h=0.8,
@@ -171,7 +174,7 @@ def main():
         # 演示用少量轮数
         config.n_rounds = 50
         config.seeds = config.seeds[:2]  # 只用前两个种子
-        config.output_dir = "experiments/results/.demo"  # 加 . 前缀避免进入 git
+        config.output_dir = demo_output_dir
 
     print(f"  ✓ 配置已加载: {config.experiment_name}")
     print(f"    接受规则: {config.acceptance_rule.rule}")

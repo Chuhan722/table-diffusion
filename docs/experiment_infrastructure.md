@@ -205,6 +205,12 @@ acceptance_rule:
   eps_Q: 0.0
 ```
 
+> **A0 与主循环旧判据的边界差异（阶段 1 分析须知）**：
+> `acceptance.py` 的 A0 用严格不等式 `delta_Q < -eps_Q`，**拒绝** Q 平局与容差内的微小恶化；
+> 而 `evolution.py` 主循环的旧判据是 `proposal_loss <= loss + tol`，会**接受**平局和 tol 容差内的微小恶化。
+> A0 符合 Issue #33 冻结公式，可作为本次预注册实验臂，但它**不是**与旧接受规则逐轨迹等价的 baseline。
+> 阶段 1 对照分析时，不能把观察到的轨迹差异全部归因于 L1/Q 主判逻辑——部分差异来自平局/容差边界的处理不同。
+
 #### 3. α 调度配置 (AlphaScheduleConfig)
 ```yaml
 alpha_schedule:
@@ -272,7 +278,7 @@ config.to_yaml(Path("experiments/results/actual_config.yaml"))
 
 2. **α 调度验证**：
    - `fixed` 模式必须指定 `alpha_value`
-   - `probe` 模式必须指定 `W`
+   - `probe` 模式必须指定 `probe_block_candidate_budget`（块大小，单位为候选评估次数）
    - `alpha_min` 必须小于 `alpha_max`
 
 3. **实验参数验证**：

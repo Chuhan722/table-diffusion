@@ -5,6 +5,7 @@ import pytest
 from pathlib import Path
 import json
 import csv
+import os
 import numpy as np
 from table_diffevo.experiment_logger import (
     ExperimentLogger,
@@ -461,6 +462,100 @@ def test_force_overwrite_clears_stale_category(tmp_path):
     assert (tmp_path / "rounds.csv").exists()
     with open(tmp_path / "summary.json") as f:
         assert json.load(f)["run"] == 2
+
+
+def test_second_rename_failure_rolls_back(tmp_path, monkeypatch):
+    """故障注入：发布第二步 rename（暂存→正式）失败时，须回滚到完整旧版。
+
+    save() 对非空目录采用两步 rename（旧→备份、暂存→正式）。若第二步崩，
+    必须把备份挪回正式位置，让读者仍看到**完整的上一次数据**，不留半成品。
+    """
+    out = tmp_path / "run"
+
+    # 第一次：正常发布一份完整数据。
+    logger1 = ExperimentLogger(out)
+    logger1.log_round(
+        seed=1, arm="A0", round=1, block=0,
+        alpha=2.0, u=0.0, L1_current=0.5, best_L1=0.5,
+        Q_current=100.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=10,
+    )
+    logger1.add_stat("run", 1)
+    logger1.save()
+    original_summary = (out / "summary.json").read_text()
+    original_rounds = (out / "rounds.csv").read_text()
+
+    # 第二次：复用同目录，但让「暂存→正式」这一步失败。
+    logger2 = ExperimentLogger(out, force_overwrite=True)
+    logger2.log_round(
+        seed=2, arm="A0", round=1, block=0,
+        alpha=3.0, u=1.0, L1_current=0.2, best_L1=0.2,
+        Q_current=50.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=20,
+    )
+    logger2.add_stat("run", 2)
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        # 第 1 次：旧→备份（放行）；第 2 次：暂存→正式（注入失败）；
+        # 第 3 次：回滚 备份→正式（放行）。
+        if calls["n"] == 2:
+            raise OSError("injected: second rename failed")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+
+    with pytest.raises(OSError, match="injected: second rename failed"):
+        logger2.save()
+
+    # 关键断言：目录仍是**完整的第一次数据**，回滚成功、无半成品。
+    assert (out / "summary.json").read_text() == original_summary
+    assert (out / "rounds.csv").read_text() == original_rounds
+    # 不残留暂存/备份目录。
+    leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".run.")]
+    assert leftovers == []
+
+
+def test_backup_deletion_failure_still_publishes(tmp_path, monkeypatch):
+    """故障注入：发布成功后「删旧备份」失败，不得影响已发布的新数据。
+
+    删备份只是清理垃圾；即便它抛错，新数据也已原子就位，save() 应正常
+    完成、正式目录为完整新版。
+    """
+    out = tmp_path / "run"
+
+    # 第一次：正常发布。
+    logger1 = ExperimentLogger(out)
+    logger1.add_stat("run", 1)
+    logger1.save()
+
+    # 第二次：复用同目录，让「删备份」那步抛错。
+    logger2 = ExperimentLogger(out, force_overwrite=True)
+    logger2.log_round(
+        seed=2, arm="A0", round=1, block=0,
+        alpha=3.0, u=1.0, L1_current=0.2, best_L1=0.2,
+        Q_current=50.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=20,
+    )
+    logger2.add_stat("run", 2)
+
+    import table_diffevo.experiment_logger as logger_mod
+
+    def boom(path, *args, **kwargs):
+        raise OSError("injected: rmtree failed")
+
+    monkeypatch.setattr(logger_mod.shutil, "rmtree", boom)
+
+    # 删备份失败应被吞掉，save() 正常完成。
+    logger2.save()
+
+    # 新数据完整发布。
+    with open(out / "summary.json") as f:
+        assert json.load(f)["run"] == 2
+    assert (out / "rounds.csv").exists()
 
 
 def test_array_with_non_finite_serialized(tmp_path):
