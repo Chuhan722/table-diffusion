@@ -6,6 +6,7 @@
 """
 import json
 import csv
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
@@ -65,14 +66,27 @@ class ProbeLog:
 class ExperimentLogger:
     """实验日志记录器"""
 
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, force_overwrite: bool = False):
         """
         Parameters
         ----------
         output_dir : Path
             日志输出目录
+        force_overwrite : bool, default=False
+            是否允许覆盖非空目录
         """
         self.output_dir = Path(output_dir)
+
+        # 检查目录是否非空
+        if self.output_dir.exists() and not force_overwrite:
+            existing_files = list(self.output_dir.iterdir())
+            if existing_files:
+                raise ValueError(
+                    f"输出目录非空: {self.output_dir}\n"
+                    f"包含 {len(existing_files)} 个文件/目录。\n"
+                    f"请使用不同的输出目录或传入 force_overwrite=True"
+                )
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # 三个日志缓冲区
@@ -107,46 +121,78 @@ class ExperimentLogger:
         # 保存每轮日志为 CSV
         if self.round_logs:
             round_csv = self.output_dir / "rounds.csv"
-            with open(round_csv, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=RoundLog.__annotations__.keys())
-                writer.writeheader()
-                for log in self.round_logs:
-                    writer.writerow(asdict(log))
+            self._write_csv_atomic(round_csv, self.round_logs, RoundLog.__annotations__.keys())
 
         # 保存每块日志为 CSV
         if self.block_logs:
             block_csv = self.output_dir / "blocks.csv"
-            with open(block_csv, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=BlockLog.__annotations__.keys())
-                writer.writeheader()
-                for log in self.block_logs:
-                    writer.writerow(asdict(log))
+            self._write_csv_atomic(block_csv, self.block_logs, BlockLog.__annotations__.keys())
 
         # 保存探测日志为 CSV
         if self.probe_logs:
             probe_csv = self.output_dir / "probes.csv"
-            with open(probe_csv, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=ProbeLog.__annotations__.keys())
-                writer.writeheader()
-                for log in self.probe_logs:
-                    writer.writerow(asdict(log))
+            self._write_csv_atomic(probe_csv, self.probe_logs, ProbeLog.__annotations__.keys())
 
         # 保存统计信息为 JSON
         stats_json = self.output_dir / "summary.json"
-        with open(stats_json, 'w') as f:
-            # 处理 numpy 类型
-            stats_serializable = self._make_serializable(self.stats)
-            json.dump(stats_serializable, f, indent=2)
+        stats_serializable = self._make_serializable(self.stats)
+        # 预校验 JSON 可序列化性
+        try:
+            json.dumps(stats_serializable)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"统计信息无法序列化为 JSON: {e}")
+        self._write_json_atomic(stats_json, stats_serializable)
+
+    def _write_csv_atomic(self, path: Path, logs: List, fieldnames):
+        """原子写入 CSV 文件"""
+        temp_path = path.with_suffix('.csv.tmp')
+        try:
+            with open(temp_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for log in logs:
+                    writer.writerow(asdict(log))
+            temp_path.replace(path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+    def _write_json_atomic(self, path: Path, data: dict):
+        """原子写入 JSON 文件"""
+        temp_path = path.with_suffix('.json.tmp')
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_path.replace(path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
 
     def _make_serializable(self, obj):
-        """将 numpy 类型转换为 Python 原生类型"""
+        """将 numpy 类型转换为 Python 原生类型，并处理非有限值"""
         if isinstance(obj, dict):
             return {k: self._make_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._make_serializable(v) for v in obj]
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
         elif isinstance(obj, (np.integer, np.floating)):
-            return obj.item()
+            val = obj.item()
+            # 处理非有限值
+            if isinstance(val, float):
+                if math.isnan(val):
+                    return None
+                elif math.isinf(val):
+                    return None
+            return val
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
+        elif isinstance(obj, float):
+            # 处理 Python 原生 float 的非有限值
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
         else:
             return obj

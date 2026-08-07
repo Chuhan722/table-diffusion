@@ -12,8 +12,8 @@ from dataclasses import dataclass, asdict
 @dataclass
 class AcceptanceRuleConfig:
     """接受规则配置"""
-    rule: Literal["A0", "A1", "A2"]
-    eps_L1: Optional[float] = None  # A1/A2 需要
+    rule: Literal["A0", "A1"]  # 移除 A2（已删除）
+    eps_L1: Optional[float] = None  # A1 需要
     eps_Q: float = 0.0  # 默认值，所有规则都用
 
 
@@ -40,6 +40,7 @@ class DataConfig:
     measured_target_path: str
     init_marginals_path: str
     n_records: int
+    device: str = "cpu"  # 运行设备
 
 
 @dataclass
@@ -53,6 +54,7 @@ class ExperimentConfig:
     n_rounds: int
     output_dir: str
     # 演化参数（从现有实验继承）
+    rho: float = 0.01  # 固定值（Issue #33 要求）
     beta: float = 1.0
     eta: float = 0.5
     h: float = 0.8
@@ -60,23 +62,53 @@ class ExperimentConfig:
     lambda_: float = 0.5
     delta: float = 0.05
     winsorize_limits: Tuple[float, float] = (0.01, 0.99)
+    candidate_budget: Optional[int] = None  # 总候选评估预算（可选，与 n_rounds 二选一）
 
     def validate(self):
         """验证配置的合理性"""
         errors = []
 
         # 验证接受规则
-        if self.acceptance_rule.rule in ["A1", "A2"]:
+        if self.acceptance_rule.rule not in ["A0", "A1"]:
+            errors.append(f"未知接受规则: {self.acceptance_rule.rule}，仅支持 A0 或 A1")
+
+        if self.acceptance_rule.rule == "A1":
             if self.acceptance_rule.eps_L1 is None:
-                errors.append(f"{self.acceptance_rule.rule} 需要指定 eps_L1")
+                errors.append("A1 需要指定 eps_L1")
+            elif self.acceptance_rule.eps_L1 < 0:
+                errors.append("eps_L1 必须 >= 0")
+
+        if self.acceptance_rule.eps_Q < 0:
+            errors.append("eps_Q 必须 >= 0")
 
         # 验证 α 调度
+        if self.alpha_schedule.mode not in ["fixed", "round_schedule", "probe"]:
+            errors.append(f"未知 alpha_schedule.mode: {self.alpha_schedule.mode}")
+
         if self.alpha_schedule.mode == "fixed":
             if self.alpha_schedule.alpha_value is None:
                 errors.append("fixed 模式需要指定 alpha_value")
+            elif not (self.alpha_schedule.alpha_min <= self.alpha_schedule.alpha_value <= self.alpha_schedule.alpha_max):
+                errors.append(f"alpha_value ({self.alpha_schedule.alpha_value}) 必须在 [{self.alpha_schedule.alpha_min}, {self.alpha_schedule.alpha_max}] 范围内")
+
         elif self.alpha_schedule.mode == "probe":
             if self.alpha_schedule.W is None:
                 errors.append("probe 模式需要指定 W（块大小）")
+            elif self.alpha_schedule.W <= 0:
+                errors.append("W 必须 > 0")
+
+            if self.alpha_schedule.P <= 0:
+                errors.append("P 必须 > 0")
+            if self.alpha_schedule.H <= 0:
+                errors.append("H 必须 > 0")
+            if self.alpha_schedule.C < 0:
+                errors.append("C 必须 >= 0")
+            if not (0 < self.alpha_schedule.s < 1):
+                errors.append("s 必须在 (0, 1) 范围内")
+
+        # 验证 alpha 范围
+        if self.alpha_schedule.alpha_min >= self.alpha_schedule.alpha_max:
+            errors.append("alpha_min 必须小于 alpha_max")
 
         # 验证种子数量
         if len(self.seeds) == 0:
@@ -84,11 +116,15 @@ class ExperimentConfig:
 
         # 验证轮数
         if self.n_rounds <= 0:
-            errors.append("n_rounds 必须为正数")
+            errors.append("n_rounds 必须 > 0")
 
-        # 验证 alpha 范围
-        if self.alpha_schedule.alpha_min >= self.alpha_schedule.alpha_max:
-            errors.append("alpha_min 必须小于 alpha_max")
+        # 验证数据配置
+        if self.data.n_records <= 0:
+            errors.append("n_records 必须 > 0")
+
+        # 验证 rho
+        if not (0 < self.rho <= 1):
+            errors.append("rho 必须在 (0, 1] 范围内")
 
         if errors:
             raise ValueError("配置验证失败:\n" + "\n".join(f"  - {e}" for e in errors))
@@ -98,6 +134,18 @@ class ExperimentConfig:
         """从 YAML 文件加载配置"""
         with open(path) as f:
             data = yaml.safe_load(f)
+
+        # 定义合法的顶层键
+        valid_keys = {
+            "experiment_name", "data", "acceptance_rule", "alpha_schedule",
+            "seeds", "n_rounds", "output_dir", "rho", "beta", "eta", "h",
+            "mu", "lambda_", "delta", "winsorize_limits", "candidate_budget"
+        }
+
+        # 检查未知键
+        unknown_keys = set(data.keys()) - valid_keys
+        if unknown_keys:
+            raise ValueError(f"配置文件包含未知键: {unknown_keys}")
 
         # 递归构建嵌套 dataclass
         config = cls(
@@ -109,7 +157,8 @@ class ExperimentConfig:
             n_rounds=data["n_rounds"],
             output_dir=data["output_dir"],
             **{k: v for k, v in data.items() if k in [
-                "beta", "eta", "h", "mu", "lambda_", "delta", "winsorize_limits"
+                "rho", "beta", "eta", "h", "mu", "lambda_", "delta",
+                "winsorize_limits", "candidate_budget"
             ]}
         )
 
@@ -127,6 +176,7 @@ class ExperimentConfig:
             "seeds": self.seeds,
             "n_rounds": self.n_rounds,
             "output_dir": self.output_dir,
+            "rho": self.rho,
             "beta": self.beta,
             "eta": self.eta,
             "h": self.h,
@@ -135,6 +185,9 @@ class ExperimentConfig:
             "delta": self.delta,
             "winsorize_limits": list(self.winsorize_limits)
         }
+
+        if self.candidate_budget is not None:
+            data["candidate_budget"] = self.candidate_budget
 
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f:

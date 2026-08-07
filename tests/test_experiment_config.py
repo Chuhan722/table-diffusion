@@ -161,7 +161,7 @@ def test_config_validation_invalid_n_rounds():
         output_dir="output"
     )
 
-    with pytest.raises(ValueError, match="n_rounds 必须为正数"):
+    with pytest.raises(ValueError, match="n_rounds 必须 > 0"):
         config.validate()
 
 
@@ -294,3 +294,161 @@ def test_config_default_evolution_params():
     assert config.lambda_ == 0.5
     assert config.delta == 0.05
     assert config.winsorize_limits == (0.01, 0.99)
+    assert config.rho == 0.01  # 新增默认值
+
+
+def test_config_validation_negative_epsilon():
+    """eps_L1 和 eps_Q 不能为负"""
+    # 负 eps_L1
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A1", eps_L1=-0.01, eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    with pytest.raises(ValueError, match="eps_L1 必须 >= 0"):
+        config.validate()
+
+    # 负 eps_Q
+    config2 = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=-1.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    with pytest.raises(ValueError, match="eps_Q 必须 >= 0"):
+        config2.validate()
+
+
+def test_config_validation_zero_n_records():
+    """n_records 必须 > 0"""
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=0  # 非法值
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    with pytest.raises(ValueError, match="n_records 必须 > 0"):
+        config.validate()
+
+
+def test_config_validation_probe_params():
+    """probe 模式参数校验"""
+    # W = 0
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="probe", W=0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    with pytest.raises(ValueError, match="W 必须 > 0"):
+        config.validate()
+
+    # s = 2.0（超出范围）
+    config2 = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="probe", W=20, s=2.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    with pytest.raises(ValueError, match="s 必须在 \\(0, 1\\) 范围内"):
+        config2.validate()
+
+
+def test_config_validation_unknown_rule():
+    """未知接受规则"""
+    # 注意：由于 Literal 类型，这个在运行时不会自动拒绝
+    # 但 validate() 应该能捕获
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output"
+    )
+    # 手动设置非法值（绕过类型检查）
+    config.acceptance_rule.rule = "A99"
+    with pytest.raises(ValueError, match="未知接受规则"):
+        config.validate()
+
+
+def test_config_yaml_unknown_key(tmp_path):
+    """YAML 包含未知键应拒绝"""
+    yaml_path = tmp_path / "bad_config.yaml"
+    with open(yaml_path, 'w') as f:
+        f.write("""
+experiment_name: test
+data:
+  dataset_name: nltcs
+  target_path: data/target.json
+  measured_target_path: data/measured.json
+  init_marginals_path: data/marginals.json
+  n_records: 16181
+acceptance_rule:
+  rule: A0
+  eps_Q: 0.0
+alpha_schedule:
+  mode: fixed
+  alpha_value: 5.0
+seeds: [42]
+n_rounds: 100
+output_dir: output
+unknown_field: 123  # 未知键
+""")
+
+    with pytest.raises(ValueError, match="配置文件包含未知键"):
+        ExperimentConfig.from_yaml(yaml_path)
+

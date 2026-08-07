@@ -310,10 +310,10 @@ for seed in config.seeds:
         # 演化一轮...
         target = ...  # 从配置加载
         current = ...  # 当前合成表的查询答案
-        
+
         # 计算度量
         l1, q, residual = compute_all_metrics(target, current, config.data.n_records)
-        
+
         # 记录日志
         logger.log_round(
             seed=seed,

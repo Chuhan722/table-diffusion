@@ -17,6 +17,7 @@ from table_diffevo.experiment_logger import ExperimentLogger
 from table_diffevo.experiment_config import (
     ExperimentConfig, DataConfig, AcceptanceRuleConfig, AlphaScheduleConfig
 )
+from table_diffevo.acceptance import check_acceptance
 
 
 def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLogger):
@@ -65,25 +66,25 @@ def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLo
         candidate = current + np.random.randn(n_queries) * 50
         candidate_evaluations += 1
 
-        # 计算度量
-        current_L1, current_Q, _ = compute_all_metrics(target, current, n_records)
-        candidate_L1, candidate_Q, _ = compute_all_metrics(target, candidate, n_records)
+        # 在覆盖前计算差值并判断接受（使用统一接口）
+        accepted, delta_L1, delta_Q = check_acceptance(
+            rule=rule,
+            target=target,
+            current=current,
+            candidate=candidate,
+            n_records=n_records,
+            eps_L1=eps_L1,
+            eps_Q=eps_Q
+        )
 
-        # 接受判断
-        if rule == "A0":
-            # Q 改善即接受
-            accepted = (candidate_Q <= current_Q + eps_Q)
-        elif rule == "A1":
-            # L1 改善或 Q 改善
-            accepted = (candidate_L1 <= current_L1 + eps_L1) or \
-                      (candidate_Q <= current_Q + eps_Q)
-        else:
-            raise ValueError(f"未知规则: {rule}")
+        # 计算当前度量（用于日志和最佳状态更新）
+        current_L1, current_Q, _ = compute_all_metrics(target, current, n_records)
 
         # 更新状态
         if accepted:
             current = candidate
-            current_L1, current_Q = candidate_L1, candidate_Q
+            # 重新计算 current_L1 和 current_Q（已被覆盖）
+            current_L1, current_Q, _ = compute_all_metrics(target, current, n_records)
 
         # 更新最佳
         if current_L1 < best_L1:
@@ -91,7 +92,7 @@ def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLo
             best_Q = current_Q
             best_current = current.copy()
 
-        # 记录日志
+        # 记录日志（差值无论接受与否都记录）
         logger.log_round(
             seed=seed,
             arm=rule,
@@ -103,8 +104,8 @@ def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLo
             best_L1=best_L1,
             Q_current=current_Q,
             accepted=accepted,
-            delta_L1=candidate_L1 - current_L1 if accepted else 0.0,
-            delta_Q=candidate_Q - current_Q if accepted else 0.0,
+            delta_L1=delta_L1,
+            delta_Q=delta_Q,
             candidate_evaluations=candidate_evaluations
         )
 
@@ -151,7 +152,7 @@ def main():
             ),
             seeds=[42, 43],
             n_rounds=50,  # 演示用少量轮数
-            output_dir="experiments/results/demo",
+            output_dir="experiments/results/.demo",  # 加 . 前缀避免进入 git
             beta=1.0,
             eta=0.5,
             h=0.8,
