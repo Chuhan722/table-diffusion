@@ -116,35 +116,70 @@ class ExperimentLogger:
         """添加统计信息"""
         self.stats[key] = value
 
+    # 本记录器管理的全部输出文件名（用于清理陈旧类别）
+    _MANAGED_FILES = ("rounds.csv", "blocks.csv", "probes.csv", "summary.json")
+
     def save(self):
-        """保存所有日志到文件"""
-        # 保存每轮日志为 CSV
-        if self.round_logs:
-            round_csv = self.output_dir / "rounds.csv"
-            self._write_csv_atomic(round_csv, self.round_logs, RoundLog.__annotations__.keys())
+        """保存所有日志到文件。
 
-        # 保存每块日志为 CSV
-        if self.block_logs:
-            block_csv = self.output_dir / "blocks.csv"
-            self._write_csv_atomic(block_csv, self.block_logs, BlockLog.__annotations__.keys())
-
-        # 保存探测日志为 CSV
-        if self.probe_logs:
-            probe_csv = self.output_dir / "probes.csv"
-            self._write_csv_atomic(probe_csv, self.probe_logs, ProbeLog.__annotations__.keys())
-
-        # 保存统计信息为 JSON
-        stats_json = self.output_dir / "summary.json"
+        采用「全部构造并校验 → 一次性发布」的策略：任何一步（CSV 构造、
+        summary.json 序列化）失败都在发布任何正式文件之前抛出，绝不留下
+        半成品。summary.json 的序列化在写入任何 CSV 临时文件之前就先行
+        校验，避免「CSV 已发布、JSON 才失败」导致的不一致结果。
+        """
+        # 1. 先序列化 + 严格校验 summary（在写入/发布任何文件之前）
+        #    allow_nan=False 作为兜底：任何漏网的非有限值都会在此处抛错，
+        #    而不是写出 NaN/Infinity 这类非法 JSON。
         stats_serializable = self._make_serializable(self.stats)
-        # 预校验 JSON 可序列化性
         try:
-            json.dumps(stats_serializable)
+            summary_text = json.dumps(stats_serializable, indent=2, allow_nan=False)
         except (TypeError, ValueError) as e:
             raise ValueError(f"统计信息无法序列化为 JSON: {e}")
-        self._write_json_atomic(stats_json, stats_serializable)
 
-    def _write_csv_atomic(self, path: Path, logs: List, fieldnames):
-        """原子写入 CSV 文件"""
+        # 2. 全部写入临时文件（不触碰既有正式文件）
+        pending: List[tuple] = []  # (temp_path, final_path)
+        try:
+            csv_specs = [
+                (self.round_logs, "rounds.csv", RoundLog.__annotations__.keys()),
+                (self.block_logs, "blocks.csv", BlockLog.__annotations__.keys()),
+                (self.probe_logs, "probes.csv", ProbeLog.__annotations__.keys()),
+            ]
+            for logs, name, fieldnames in csv_specs:
+                if logs:
+                    final = self.output_dir / name
+                    temp = self._write_csv_temp(final, logs, fieldnames)
+                    pending.append((temp, final))
+
+            summary_final = self.output_dir / "summary.json"
+            summary_temp = summary_final.with_suffix(".json.tmp")
+            with open(summary_temp, "w") as f:
+                f.write(summary_text)
+            pending.append((summary_temp, summary_final))
+
+            # 3. 全部临时文件就绪 → 一次性发布（替换）
+            for temp, final in pending:
+                temp.replace(final)
+        except Exception:
+            # 清理所有已写入的临时文件，正式文件保持不动
+            for temp, _ in pending:
+                if temp.exists():
+                    temp.unlink()
+            raise
+
+        # 4. 清理「本次未写入」的陈旧类别文件（force_overwrite 复用目录时，
+        #    上一轮遗留的 probes.csv 等不应残留）
+        written = {final.name for _, final in pending}
+        for name in self._MANAGED_FILES:
+            if name not in written:
+                stale = self.output_dir / name
+                if stale.exists():
+                    stale.unlink()
+
+    def _write_csv_temp(self, path: Path, logs: List, fieldnames) -> Path:
+        """把 CSV 写入临时文件并返回其路径（不发布）。
+
+        失败时清理自身的临时文件后向上抛出。
+        """
         temp_path = path.with_suffix('.csv.tmp')
         try:
             with open(temp_path, 'w', newline='') as f:
@@ -152,23 +187,11 @@ class ExperimentLogger:
                 writer.writeheader()
                 for log in logs:
                     writer.writerow(asdict(log))
-            temp_path.replace(path)
         except Exception:
             if temp_path.exists():
                 temp_path.unlink()
             raise
-
-    def _write_json_atomic(self, path: Path, data: dict):
-        """原子写入 JSON 文件"""
-        temp_path = path.with_suffix('.json.tmp')
-        try:
-            with open(temp_path, 'w') as f:
-                json.dump(data, f, indent=2)
-            temp_path.replace(path)
-        except Exception:
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
+        return temp_path
 
     def _make_serializable(self, obj):
         """将 numpy 类型转换为 Python 原生类型，并处理非有限值"""
@@ -188,7 +211,8 @@ class ExperimentLogger:
                     return None
             return val
         elif isinstance(obj, np.ndarray):
-            return obj.tolist()
+            # 递归处理，确保数组内的 NaN/Infinity 同样转为 None
+            return [self._make_serializable(v) for v in obj.tolist()]
         elif isinstance(obj, float):
             # 处理 Python 原生 float 的非有限值
             if math.isnan(obj) or math.isinf(obj):

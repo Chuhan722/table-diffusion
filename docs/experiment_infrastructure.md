@@ -191,17 +191,17 @@ seed,arm,round,block,alpha,u,L1_current,best_L1,Q_current,accepted,delta_L1,delt
 ```yaml
 data:
   dataset_name: "nltcs"
-  target_path: "data/nltcs/measured_1000query.json"
-  measured_target_path: "data/nltcs/measured_1000query.json"
-  init_marginals_path: "data/nltcs/init_marginals.json"
+  target_path: "configs/nltcs/measured_1000query.json"
+  measured_target_path: "configs/nltcs/measured_1000query.json"
+  init_marginals_path: "configs/nltcs/init_marginals.json"
   n_records: 16181
 ```
 
 #### 2. 接受规则配置 (AcceptanceRuleConfig)
 ```yaml
 acceptance_rule:
-  rule: "A1"  # "A0", "A1", "A2"
-  eps_L1: 1.0e-5  # A1/A2 需要
+  rule: "A1"  # "A0" 或 "A1"
+  eps_L1: 1.0e-5  # A1 需要
   eps_Q: 0.0
 ```
 
@@ -267,7 +267,7 @@ config.to_yaml(Path("experiments/results/actual_config.yaml"))
 配置加载时会自动验证以下规则：
 
 1. **接受规则验证**：
-   - A1/A2 必须指定 `eps_L1`
+   - A1 必须指定 `eps_L1`
    - A0 只需要 `eps_Q`
 
 2. **α 调度验证**：
@@ -363,7 +363,7 @@ python -m pytest tests/test_metrics.py tests/test_experiment_logger.py tests/tes
 
 阶段 0 完成后，后续阶段将使用这些基础设施：
 
-- **阶段 1**：实现 A0/A1 接受规则，集成到 `evolution.py`
+- **阶段 1**：把已实现的 A0/A1 接受规则（`acceptance.py`）集成到 `evolution.py`
 - **阶段 2**：运行 A0 vs A1 对照实验，使用 `ExperimentLogger` 记录结果
 - **阶段 3**：扫描固定 α，使用 `ExperimentConfig` 管理参数
 - **阶段 4**：实现探测式 α 控制器

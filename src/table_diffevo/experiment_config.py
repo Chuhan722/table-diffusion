@@ -25,7 +25,7 @@ class AlphaScheduleConfig:
     alpha_min: float = 2.0
     alpha_max: float = 10.0
     # probe 模式参数
-    W: Optional[int] = None  # 块大小（轮数）或 B_block（候选评估数）
+    W: Optional[int] = None  # 块大小，单位为轮数（每 W 轮结束时检测停滞）
     P: int = 3  # 停滞触发块数
     H: int = 2  # 探测分支块数
     s: float = 0.10  # 归一化步长
@@ -62,7 +62,9 @@ class ExperimentConfig:
     lambda_: float = 0.5
     delta: float = 0.05
     winsorize_limits: Tuple[float, float] = (0.01, 0.99)
-    candidate_budget: Optional[int] = None  # 总候选评估预算（可选，与 n_rounds 二选一）
+    # 可选的总候选评估预算上限。n_rounds 始终是主停止条件；candidate_budget
+    # 若给定，则作为额外的评估次数上限（先到者停止）。二者不是互斥关系。
+    candidate_budget: Optional[int] = None
 
     def validate(self):
         """验证配置的合理性"""
@@ -118,9 +120,20 @@ class ExperimentConfig:
         if self.n_rounds <= 0:
             errors.append("n_rounds 必须 > 0")
 
+        # 验证候选预算：给定时必须为正
+        if self.candidate_budget is not None and self.candidate_budget <= 0:
+            errors.append("candidate_budget 若指定则必须 > 0")
+
         # 验证数据配置
         if self.data.n_records <= 0:
             errors.append("n_records 必须 > 0")
+
+        # 验证设备白名单
+        valid_devices = {"cpu", "cuda", "numpy"}
+        if self.data.device not in valid_devices:
+            errors.append(
+                f"未知 device: {self.data.device}，仅支持 {sorted(valid_devices)}"
+            )
 
         # 验证 rho
         if not (0 < self.rho <= 1):

@@ -35,10 +35,12 @@ def compute_normalized_l1(
 
     Examples
     --------
+    误差为 (10 + 5 + 0) / 3 / 300：
+
     >>> target = np.array([180, 95, 42])
     >>> current = np.array([170, 100, 42])
     >>> compute_normalized_l1(target, current, 300)
-    0.016666666666666666  # (10 + 5 + 0) / 3 / 300
+    0.016666666666666666
     """
     target = np.asarray(target, dtype=float)
     current = np.asarray(current, dtype=float)

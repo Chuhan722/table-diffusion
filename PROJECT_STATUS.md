@@ -123,60 +123,6 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 ## 最近变更（2026-08-06）
 
-### #33 阶段 4：探测式 α 调度核心代码已完成（研究分支，未跑验证）
-
-**目标：** 实现基于残差降速的探测式 α 调度（probe 模式），通过三岔路探测（DOWN/HOLD/UP）自动寻找最优 α 轨迹，并通过"经验平台"（连续 2 次探测失败）自动检测收敛。
-
-**已完成交付物：**
-
-1. **Checkpoint 机制** (`src/table_diffevo/checkpoint.py`)
-   - 保存/恢复演化状态（syn_table, best_L1, rng_state, round_count, alpha）
-   - 支持 `np.random.Generator`（使用 `bit_generator.state`）
-   - 深拷贝确保三个探测分支互不干扰
-   - 5 个单元测试全部通过
-
-2. **ProbeController** (`src/table_diffevo/probe_controller.py`)
-   - 停滞检测：P 个连续块改进 ≤ eps_L1 触发探测
-   - 三岔路分支创建：DOWN/HOLD/UP（在归一化 α 空间 ±s 步长）
-   - 获胜者选择：L1 改进优先 → Q 平局打破 → HOLD 偏好
-   - 冷却期：探测后 C 个块内不再触发
-   - 经验平台检测：连续 2 次探测全部失败 → 收敛信号
-   - 13 个单元测试全部通过
-
-3. **evolution.py 集成**
-   - 新增 `alpha_schedule_mode='probe'` 模式
-   - 添加 6 个 probe 参数（probe_P/H/s/C/eps_L1/block_size）
-   - 块结束检查：每 W 轮检测停滞状态
-   - 三岔路探测：触发时从 checkpoint 分叉运行 H 轮，比较结果
-   - 探测历史记录：diagnostics["probe_history"] 包含每次探测的详细信息
-   - probe 模式下禁用"残差全 0"提前停止（由经验平台控制）
-   - 修复变量名冲突（循环变量 `h` → `probe_round`）
-
-4. **集成测试** (`tests/test_probe_integration.py`)
-   - 5 个端到端测试：基本运行、探测触发、经验平台、alpha 历史、可复现性
-   - 全部测试通过
-
-**技术要点：**
-- **RNG 状态管理**：使用 `rng.bit_generator.state` 保存/恢复 numpy Generator 状态
-- **三岔路隔离**：每个分支从 checkpoint 恢复独立状态，互不干扰
-- **归一化 α 空间**：u = (alpha - alpha_min) / (alpha_max - alpha_min)，步长 s 在 [0,1] 空间内语义一致
-- **获胜者选择规则**：
-  - 至少一个分支成功：按 L1 改进降序 → Q 升序 → HOLD 优先
-  - 全部失败：HOLD 优先 → Q 升序 → L1 改进降序
-- **经验平台**：`failed_probes >= 2` 触发提前停止
-
-**测试覆盖：**
-- checkpoint: 5 tests passed
-- probe_controller: 13 tests passed
-- probe_integration: 5 tests passed
-- 全部现有测试无回归
-
-**状态：** 代码已完成并通过测试，尚未在 nltcs 上运行验证实验。下一步需要创建验证脚本在 test_300x10 上验证探测触发和经验平台检测。
-
-**与阶段 3（固定 α 扫描）的关系：** 阶段 3 的固定 α 扫描结果显示"越贪越好"（α=10 最优），与"α 过早贪心"假设存在张力。探测式调度的价值需要通过实验验证——是否能在早期降低 α 广撒、后期提高 α 精挑，达到比固定最大 α 更好的效果。
-
----
-
 ### #33 阶段 0：实验基础设施已完成（PR #36）
 
 **背景：** Issue #33 重构锐度调度为残差降速驱动，分 6 个阶段渐进实现。阶段 0 先搭建可复用的实验基础设施，确保后续所有实验（A0/A1 对照、固定 α 扫描、探测式调度）使用统一的度量、日志和配置管理。
@@ -229,18 +175,17 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
    - 输出到 `experiments/results/.demo`（隐藏目录，不污染结果区）
 
 **测试覆盖：**
-- 单元测试：695 个全部通过（新增 acceptance 17 + logger 安全性 9 + config 验证增强 5）
-- 测试覆盖率：metrics 92% + logger 100% + config 100% + acceptance 100%
+- 阶段 0 四个模块：metrics 11 + acceptance 19 + experiment_logger 21 + experiment_config 19 = 70 项
+- 全套单元测试 675 项全部通过（阶段 0 相对基线净增 acceptance 19 + logger 安全性 12 + config 验证增强 8；均为按 PR #36 审查反馈补齐的回归用例）
 
 **验证通过：**
 - 度量计算与 `evolution.py` 完全一致（数值误差 < 1e-12）
 - 配置验证规则覆盖所有预注册的约束
-- 覆盖率验证命令：`python -m pytest tests/test_acceptance.py tests/test_experiment_config.py tests/test_experiment_logger.py tests/test_metrics.py --cov=src/table_diffevo --cov-report=term`
 - 日志格式符合后续分析需求（CSV 易于 pandas/R 处理）
 
-**状态：** 代码已完成并通过测试，尚未推送到远程或创建 PR（遵循协作规则：本地完成后等待用户确认）。
+**状态：** 阶段 0 已作为 PR #36 提交，正在按审查反馈迭代修订。仅包含实验基础设施四个模块（metrics/acceptance/experiment_logger/experiment_config）+ 文档 + 集成演示；不含 evolution.py 集成、固定 α 扫描或探测式调度（后续阶段单独成 PR）。
 
-**下一步：** 待用户确认阶段 0 交付质量后，进入阶段 1（实现 A0/A1 接受规则并集成到 `evolution.py`）。
+**下一步：** 阶段 0 合入后，进入阶段 1（把 A0/A1 接受规则集成到 `evolution.py`）。
 
 ---
 
@@ -278,75 +223,8 @@ https://github.com/Chuhan722/table-diffusion/issues/33 。#29 三臂负结果代
 另一分支 `feat/rho-decay-schedule`（commit aa01850，本地未推）。尚未写实验脚本、
 未跑。
 
-#### #33 阶段 3：固定 α 基线（B0）代码就绪，实验待跑（2026-08-06）
-
-**目标：** 在建自适应残差降速调度器（阶段 4）之前，先扫描一组固定 α 找出最优
-α*，用它在测试集上建立 B0 科学基线——代表"不自适应"的最优静态锐度策略。
-B1（旧轮数调度）/ B0（最优固定）/ B2（探测自适应）三臂对照的中间锚点。
-
-**已完成（代码 + 测试，无 GPU 实验）：**
-1. `src/table_diffevo/evolution.py`：`run_evolution` 新增 `alpha_schedule_mode`
-   （默认 `"round_schedule"` 保持旧行为）与 `alpha_value` 参数。
-   - `fixed` 模式：α_t 全程恒等于 `alpha_value`；未提供 `alpha_value` 显式报错。
-   - `round_schedule` 模式：保持 `α_min + (α_max−α_min)×t/(n_rounds−1)`。
-   - 未知模式显式报错；诊断 `params` 记录 `alpha_schedule_mode`/`alpha_value`。
-2. `tests/test_evolution.py`：新增 `TestAlphaSchedule`（5 项，全绿；全文件 51 项通过）。
-3. `experiments/phase_b_fixed_alpha_scan.py`：固定 α 扫描脚本（残差驱动扩散
-   strength=2.0，nltcs 开发种子 [42,43,44]，α∈{2,4,6,8,10}，除 α 调度外参数全部
-   冻结、与 `scripts/run_residual_directed_nltcs.py` 一致）。输出 `summary.csv`、
-   `loss_traces.json`（供 W 校准）、`meta.json`。已用 cpu/3 轮 smoke test 跑通。
-
-**扫描已跑（2026-08-06，卡 0，nltcs 开发种子 [42,43,44]，1000 轮，残差驱动 strength=2.0）：**
-
-| α | 平均 L1 | best_loss(Q) | 接受率 |
-|---|---------|-------------|--------|
-| 2 | 0.013247 | ~3.7e7 | 61.5% |
-| 4 | 0.007580 | ~1.3e7 | 59.9% |
-| 6 | 0.005111 | ~6.3e6 | 64.5% |
-| 8 | 0.003440 | ~3.1e6 | 65.8% |
-| 10 | **0.002438** | ~1.6e6 | 67.2% |
-
-结果目录 `experiments/results/phase_b_alpha_scan/`（summary.csv / loss_traces.json / meta.json）。
-**关键现象：L1 随 α 单调下降（2→10 降 82%），无拐点，最优落在扫描边界 α=10，
-接受率随 α 略升。3 种子标准差极小（trend 真实）。** 即"越贪越好"，固定最大锐度
-最佳、没看到高 α 停滞。这与 #33 前提（旧轮数调度"α 过早贪心"是 nltcs 负结果根因）
-存在张力：若固定最大贪心就是最优，则阶段 4 那种"降速快时降 α 广撒"的自适应调度
-可能反而更差。待与用户讨论后再定 α* 与是否重审阶段 4 假设。
-
-**未做（待用户定夺方向后进行）：**
-- α* 的确定（是否把扫描上探到 α>10 找真拐点，还是取边界 10 保持与原调度 α_max 可比）。
-- 步骤 3.3 分析脚本、3.4 W 校准、3.5 B0 基线（测试集 [0-9]）、3.6 文档冻结。
-
-#### #33 阶段 4：探测式 α 调度器实现完成（2026-08-06）
-
-**目标：** 实现基于残差停滞检测的三岔路探测调度器，通过"经验平台"（2 次连续探测失败）自动检测收敛，无需预设固定轮数。
-
-**已交付（代码 + 测试 + 验证 + 文档）：**
-
-1. **核心组件（3 个新文件，23 项测试全通过）：**
-   - `src/table_diffevo/checkpoint.py`：轻量级状态快照（表/L1/RNG/轮次/α），支持三岔路分支独立演化
-   - `src/table_diffevo/probe_controller.py`：探测逻辑核心（停滞检测/分支创建/获胜者选择/经验平台检测）
-   - `tests/test_checkpoint.py`（5 项）+ `tests/test_probe_controller.py`（13 项）+ `tests/test_probe_integration.py`（5 项）
-
-2. **主循环集成（`src/table_diffevo/evolution.py`）：**
-   - 新增 `alpha_schedule_mode="probe"` 模式（与 `fixed`/`round_schedule` 并列）
-   - 参数：`probe_P/H/s/C/eps_L1/block_size`（停滞阈值/探测轮数/步长/冷却期/改进阈值/块大小）
-   - 块结束检查 → 停滞判定 → 三分支探测（DOWN/HOLD/UP）→ 获胜者选择 → 经验平台检测
-   - 修复残差零早停与探测模式的冲突（probe 模式下禁用残差零早停，由经验平台控制）
-
-3. **验证实验（`experiments/validate_probe_scheduler.py` + test_300x10 数据集）：**
-   - 3 个种子（42/43/44），300 轮，n_rounds=300
-   - **结果**：2/3 种子触发探测（种子 42 和 44），探测均成功找到更优 α（UP 分支获胜，α 2.0→4.40）
-   - **L1 改善**：触发探测的种子 L1 降至 ~0.0093，未触发的为 0.0128
-   - **验证通过**：✅ 主要目标（探测触发机制有效）达成
-
-4. **技术文档（`docs/probe_scheduler.md`）：**
-   - 完整设计概述（动机/核心组件/算法细节）
-   - 参数说明与调优指南（P/H/s/C/eps_L1/block_size）
-   - 使用示例与诊断输出格式
-   - 验证结果总结与设计权衡讨论
-
-**状态：** 代码已完成并通过全部测试（checkpoint 5 + probe_controller 13 + probe_integration 5 = 23 项），验证实验证明探测机制有效。文档已归档。
+（注：固定 α 扫描与探测式调度的代码/实验属于阶段 3/4，在独立研究分支
+`research/probe-alpha-schedule` 上开发，不在 PR #36 树内；相关进度另行记录，不在此展开。）
 
 ### 共同状态曲率阶段交互——曲率相对收益在晚期稳定增强
 

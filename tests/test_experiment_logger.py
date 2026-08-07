@@ -389,3 +389,98 @@ def test_nested_numpy_types(tmp_path):
     assert data["nested"]["float"] == 3.14
     assert data["nested"]["list"] == [1, 2]
     assert data["nested"]["nan"] is None
+
+
+def test_bad_summary_leaves_no_half_baked_csv(tmp_path):
+    """回归：summary 序列化失败时，不得发布半成品 rounds.csv。
+
+    save() 必须先构造并校验 summary（在发布任何 CSV 之前），因此一个
+    无法序列化的 summary 应让整个 save() 失败且不留下任何正式文件。
+    """
+    logger = ExperimentLogger(tmp_path)
+
+    # 有正常的 round 日志（本应写成 rounds.csv）
+    logger.log_round(
+        seed=42, arm="A0", round=1, block=0,
+        alpha=2.0, u=0.0, L1_current=0.1, best_L1=0.1,
+        Q_current=5000.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=100,
+    )
+
+    # 但 summary 含不可序列化对象
+    class Unserializable:
+        pass
+    logger.stats["bad"] = Unserializable()
+
+    with pytest.raises(ValueError, match="统计信息无法序列化为 JSON"):
+        logger.save()
+
+    # 关键断言：不得留下半成品 rounds.csv，也不得留下 summary.json 或临时文件
+    assert not (tmp_path / "rounds.csv").exists()
+    assert not (tmp_path / "summary.json").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_force_overwrite_clears_stale_category(tmp_path):
+    """回归：force_overwrite 复用目录时，须清理本次未写入的陈旧类别文件。
+
+    第一次运行有 probe 日志（产出 probes.csv）；第二次运行没有 probe，
+    则旧的 probes.csv 不应残留，避免分析脚本读到过期数据。
+    """
+    # 第一次：含 probe 日志
+    logger1 = ExperimentLogger(tmp_path)
+    logger1.log_round(
+        seed=42, arm="B2", round=1, block=0,
+        alpha=2.0, u=0.0, L1_current=0.1, best_L1=0.1,
+        Q_current=5000.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=100,
+    )
+    logger1.log_probe(
+        seed=42, arm="B2", probe_id=0, checkpoint_block=1,
+        checkpoint_L1=0.1, direction="UP", branch_seed=None,
+        branch_budget=50, branch_final_L1=0.08, branch_final_Q=4000.0,
+        winner=True, winner_reason="l1_improvement",
+    )
+    logger1.add_stat("run", 1)
+    logger1.save()
+    assert (tmp_path / "probes.csv").exists()
+
+    # 第二次：复用同目录，但没有 probe 日志
+    logger2 = ExperimentLogger(tmp_path, force_overwrite=True)
+    logger2.log_round(
+        seed=43, arm="B2", round=1, block=0,
+        alpha=2.0, u=0.0, L1_current=0.1, best_L1=0.1,
+        Q_current=5000.0, accepted=True,
+        delta_L1=0.0, delta_Q=0.0, candidate_evaluations=100,
+    )
+    logger2.add_stat("run", 2)
+    logger2.save()
+
+    # 陈旧的 probes.csv 应被清理；rounds/summary 应为本次内容
+    assert not (tmp_path / "probes.csv").exists()
+    assert (tmp_path / "rounds.csv").exists()
+    with open(tmp_path / "summary.json") as f:
+        assert json.load(f)["run"] == 2
+
+
+def test_array_with_non_finite_serialized(tmp_path):
+    """回归：ndarray 内的 NaN/Infinity 也要转成 None（递归处理）。
+
+    此前 ndarray 分支直接 tolist() 未递归，导致数组内的非有限值写出
+    非法 JSON。现在应递归转换，且 allow_nan=False 兜底不会写出 NaN。
+    """
+    logger = ExperimentLogger(tmp_path)
+    logger.add_stat("arr", np.array([1.0, float('nan'), float('inf'), float('-inf'), 2.0]))
+    logger.add_stat("nested_arr", {"inner": np.array([float('nan'), 3.0])})
+    logger.save()
+
+    stats_file = tmp_path / "summary.json"
+    # 文件内容必须是合法 JSON（不含裸 NaN/Infinity）
+    raw = stats_file.read_text()
+    assert "NaN" not in raw
+    assert "Infinity" not in raw
+
+    with open(stats_file) as f:
+        data = json.load(f)
+    assert data["arr"] == [1.0, None, None, None, 2.0]
+    assert data["nested_arr"]["inner"] == [None, 3.0]

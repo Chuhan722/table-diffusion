@@ -159,56 +159,59 @@ class TestQuadrants:
         assert accept_a1 is True  # A1 接受
 
     def test_quadrant_2_l1_down_q_up(self):
-        """象限 2：L1↓ Q↑（A1 专属接受区）"""
-        target = np.array([100.0, 50.0])
-        current = np.array([110.0, 40.0])  # L1=0.075, Q=200
-        candidate = np.array([105.0, 48.0])  # L1=0.035, Q=29（构造：L1 改善但 Q 略微恶化）
+        """象限 2：L1↓ Q↑（A1 专属接受区，A0 应拒绝）
 
-        # 重新构造确保 Q 确实恶化
-        current = np.array([95.0, 52.0])  # Q = 25 + 4 = 29
-        candidate = np.array([98.0, 51.0])  # Q = 4 + 1 = 5, L1 更好
+        构造真正冲突：L1 是绝对值和（对误差如何分布无所谓），Q 是平方
+        （惩罚集中的大误差）。target=[0,0] 时，从集中误差 [6,1] 走向分散
+        误差 [4,4]：绝对值和 7→8 使 L1↑，但反过来 [4,4]→[6,1] 时
+        绝对值和 8→7 使 L1↓、平方和 32→37 使 Q↑，两者真正反向。
+        """
+        target = np.array([0.0, 0.0])
+        current = np.array([4.0, 4.0])   # L1∝8,  Q=0.5*(16+16)=16
+        candidate = np.array([6.0, 1.0])  # L1∝7,  Q=0.5*(36+1)=18.5
 
         accept_a0, delta_L1, delta_Q = check_acceptance(
-            "A0", target, current, candidate, n_records=200, eps_Q=0.0
+            "A0", target, current, candidate, n_records=100, eps_Q=0.0
         )
-        accept_a1, _, _ = check_acceptance(
-            "A1", target, current, candidate, n_records=200, eps_L1=1e-5, eps_Q=0.0
+        accept_a1, delta_L1_a1, delta_Q_a1 = check_acceptance(
+            "A1", target, current, candidate, n_records=100, eps_L1=1e-5, eps_Q=0.0
         )
 
-        assert delta_L1 < 0 and delta_Q < 0  # 实际这个例子也是 Q 改善
-        # 需要更精确的构造，这里先标记逻辑
+        # 断言真正处在象限 2：L1 改善、Q 恶化
+        assert delta_L1 < 0, f"期望 L1↓，实得 delta_L1={delta_L1}"
+        assert delta_Q > 0, f"期望 Q↑，实得 delta_Q={delta_Q}"
+        # 精确值：delta_L1 = (7-8)/2/100 = -0.005，delta_Q = 18.5-16 = +2.5
+        assert delta_L1 == pytest.approx(-0.005)
+        assert delta_Q == pytest.approx(2.5)
+        # A0 看 Q → 拒绝；A1 看 L1 → 接受。这是两规则的分歧点。
+        assert accept_a0 is False
+        assert accept_a1 is True
 
     def test_quadrant_3_l1_up_q_down(self):
-        """象限 3：L1↑ Q↓（A0 专属接受区）"""
-        # 构造：Q 改善但 L1 恶化
-        # current: Q = (5)^2 + (2)^2 = 29
-        # candidate: Q = (10)^2 + (0)^2 = 100，但让我们反过来构造
-        target = np.array([100.0, 50.0])
-        current = np.array([90.0, 52.0])  # Q = 100 + 4 = 104, L1 = (10+2)/2/200 = 0.03
-        candidate = np.array([85.0, 55.0])  # Q = 225 + 25 = 250 (worse), L1 = (15+5)/2/200 = 0.05 (worse)
+        """象限 3：L1↑ Q↓（A0 专属接受区，A1 应拒绝）
 
-        # 重新构造：需要 Q 改善但 L1 恶化
-        current = np.array([80.0, 60.0])  # Q = 400 + 100 = 500, L1 = (20+10)/2/200 = 0.075
-        candidate = np.array([95.0, 52.0])  # Q = 25 + 4 = 29 (better), L1 = (5+2)/2/200 = 0.0175 (better too)
+        与象限 2 完全对称：交换 current/candidate，从分散误差 [4,4]
+        走向集中误差 [6,1]，L1 恶化但 Q 改善。
+        """
+        target = np.array([0.0, 0.0])
+        current = np.array([6.0, 1.0])   # L1∝7,  Q=18.5
+        candidate = np.array([4.0, 4.0])  # L1∝8,  Q=16
 
-        # 再试：极端构造
-        current = np.array([105.0, 48.0])  # Q = 25 + 4 = 29, L1 = (5+2)/2/200 = 0.0175
-        candidate = np.array([102.0, 49.0])  # Q = 4 + 1 = 5 (better), L1 = (2+1)/2/200 = 0.0075 (better)
-
-        # 实际上在残差驱动的情况下，Q 和 L1 很难反向。这里用宽松的断言
         accept_a0, delta_L1, delta_Q = check_acceptance(
-            "A0", target, current, candidate, n_records=200, eps_Q=0.0
+            "A0", target, current, candidate, n_records=100, eps_Q=0.0
         )
         accept_a1, _, _ = check_acceptance(
-            "A1", target, current, candidate, n_records=200, eps_L1=1e-5, eps_Q=0.0
+            "A1", target, current, candidate, n_records=100, eps_L1=1e-5, eps_Q=0.0
         )
 
-        # 在残差驱动核下，Q↓ 通常伴随 L1↓，这个象限在实践中很少见
-        # 这里只验证 A0 和 A1 的决策逻辑，不强制要求特定象限
-        if delta_Q < 0:
-            assert accept_a0 is True  # A0 接受 Q 改善
-        if delta_L1 > 0:
-            assert accept_a1 is False  # A1 拒绝 L1 恶化
+        # 断言真正处在象限 3：L1 恶化、Q 改善
+        assert delta_L1 > 0, f"期望 L1↑，实得 delta_L1={delta_L1}"
+        assert delta_Q < 0, f"期望 Q↓，实得 delta_Q={delta_Q}"
+        assert delta_L1 == pytest.approx(0.005)
+        assert delta_Q == pytest.approx(-2.5)
+        # A0 看 Q → 接受；A1 看 L1 → 拒绝。
+        assert accept_a0 is True
+        assert accept_a1 is False
 
     def test_quadrant_4_l1_up_q_up(self):
         """象限 4：L1↑ Q↑（双输）"""
@@ -271,6 +274,52 @@ class TestEdgeCases:
             check_acceptance(
                 "A2", target, current, candidate, n_records=100
             )
+
+    def test_a0_delta_exactly_neg_epsilon_rejected(self):
+        """A0 恰好 delta_Q == -eps_Q 时应拒绝（严格 < 而非 <=）"""
+        target = np.array([100.0])
+        current = np.array([90.0])   # Q = 0.5*100 = 50
+        candidate = np.array([95.0])  # Q = 0.5*25 = 12.5，delta_Q = -37.5
+
+        # eps_Q = 37.5 → delta_Q(-37.5) < -37.5 为假 → 恰在边界，拒绝
+        accept_boundary, _, delta_Q = check_acceptance(
+            "A0", target, current, candidate, n_records=100, eps_Q=37.5
+        )
+        assert delta_Q == pytest.approx(-37.5)
+        assert accept_boundary is False  # 恰好等于 -eps_Q，严格不等号拒绝
+
+        # eps_Q 略小 → delta_Q < -eps_Q 成立 → 接受
+        accept_inside, _, _ = check_acceptance(
+            "A0", target, current, candidate, n_records=100, eps_Q=37.4
+        )
+        assert accept_inside is True
+
+    def test_a1_delta_l1_exactly_neg_epsilon_uses_q(self):
+        """A1 恰好 delta_L1 == -eps_L1 时落入平局分支，由 Q 裁决
+
+        _check_A1 分支：delta_L1 < -eps_L1 判负后，|delta_L1| <= eps_L1
+        为真（相等），进入 Q 平局判。验证边界归属平局区而非改善区。
+        """
+        target = np.array([100.0])
+        current = np.array([90.0])   # L1 = 10/100 = 0.10
+        candidate = np.array([95.0])  # L1 = 5/100 = 0.05，delta_L1 = -0.05
+
+        # eps_L1 = 0.05 → delta_L1(-0.05) < -0.05 为假，|−0.05| <= 0.05 为真 → 用 Q 裁决
+        # 此例 Q 改善（delta_Q<0）→ 平局分支接受
+        accept_q_good, delta_L1, delta_Q = check_acceptance(
+            "A1", target, current, candidate, n_records=100, eps_L1=0.05, eps_Q=0.0
+        )
+        assert delta_L1 == pytest.approx(-0.05)
+        assert delta_Q < 0
+        assert accept_q_good is True  # 边界归平局区，Q 改善 → 接受
+
+        # 同一边界，但把 Q 也卡在恰好相等 → 平局区内 Q 不满足严格改善 → 拒绝
+        # 构造 candidate 使 delta_Q == -eps_Q 恰好相等
+        accept_q_boundary = check_acceptance(
+            "A1", target, current, candidate, n_records=100,
+            eps_L1=0.05, eps_Q=abs(delta_Q),
+        )[0]
+        assert accept_q_boundary is False  # delta_Q == -eps_Q，严格不等号拒绝
 
 
 class TestDeltaCalculation:

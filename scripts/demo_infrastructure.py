@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""演示实验基础设施的集成使用。
+"""演示实验基础设施的集成使用（仅接线演示，非真实实验）。
 
-此脚本展示如何使用 metrics、experiment_logger 和 experiment_config 模块
-进行一个简化的演化实验。
+此脚本展示如何把 metrics、experiment_logger、experiment_config、acceptance
+四个模块接线到一起，跑通"配置→模拟循环→记录→汇总"的完整数据流。
+
+注意：这里的候选生成是 `current + 高斯噪声` 的玩具模拟（simulate_evolution），
+不是 evolution.py 的真实演化逻辑，也不加载真实数据。它只用于验证基础设施接口
+能协同工作，产出的数字没有实验意义。输出统一写到被 gitignore 的
+`experiments/results/.demo/`，不进入版本库。
 """
 
 import sys
@@ -166,7 +171,7 @@ def main():
         # 演示用少量轮数
         config.n_rounds = 50
         config.seeds = config.seeds[:2]  # 只用前两个种子
-        config.output_dir = "experiments/results/demo"
+        config.output_dir = "experiments/results/.demo"  # 加 . 前缀避免进入 git
 
     print(f"  ✓ 配置已加载: {config.experiment_name}")
     print(f"    接受规则: {config.acceptance_rule.rule}")

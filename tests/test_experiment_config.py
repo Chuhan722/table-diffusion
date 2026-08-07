@@ -452,3 +452,68 @@ unknown_field: 123  # 未知键
     with pytest.raises(ValueError, match="配置文件包含未知键"):
         ExperimentConfig.from_yaml(yaml_path)
 
+
+def test_config_validation_negative_candidate_budget():
+    """candidate_budget 若指定则必须 > 0"""
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output",
+        candidate_budget=-1,  # 非法值
+    )
+    with pytest.raises(ValueError, match="candidate_budget 若指定则必须 > 0"):
+        config.validate()
+
+
+def test_config_validation_unknown_device():
+    """device 必须在白名单内"""
+    config = ExperimentConfig(
+        experiment_name="test",
+        data=DataConfig(
+            dataset_name="nltcs",
+            target_path="data/target.json",
+            measured_target_path="data/measured.json",
+            init_marginals_path="data/marginals.json",
+            n_records=16181,
+            device="not-a-device",  # 非法值
+        ),
+        acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+        alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+        seeds=[42],
+        n_rounds=100,
+        output_dir="output",
+    )
+    with pytest.raises(ValueError, match="未知 device"):
+        config.validate()
+
+
+def test_config_validation_valid_devices():
+    """cpu/cuda/numpy 三个合法设备都应通过"""
+    for dev in ("cpu", "cuda", "numpy"):
+        config = ExperimentConfig(
+            experiment_name="test",
+            data=DataConfig(
+                dataset_name="nltcs",
+                target_path="data/target.json",
+                measured_target_path="data/measured.json",
+                init_marginals_path="data/marginals.json",
+                n_records=16181,
+                device=dev,
+            ),
+            acceptance_rule=AcceptanceRuleConfig(rule="A0", eps_Q=0.0),
+            alpha_schedule=AlphaScheduleConfig(mode="fixed", alpha_value=5.0),
+            seeds=[42],
+            n_rounds=100,
+            output_dir="output",
+        )
+        config.validate()  # 不应抛出

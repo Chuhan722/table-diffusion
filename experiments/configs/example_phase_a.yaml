@@ -2,9 +2,9 @@ experiment_name: "phase_a_pilot_A0_vs_A1"
 
 data:
   dataset_name: "nltcs"
-  target_path: "data/nltcs/measured_1000query.json"
-  measured_target_path: "data/nltcs/measured_1000query.json"
-  init_marginals_path: "data/nltcs/init_marginals.json"
+  target_path: "configs/nltcs/measured_1000query.json"
+  measured_target_path: "configs/nltcs/measured_1000query.json"
+  init_marginals_path: "configs/nltcs/init_marginals.json"
   n_records: 16181
 
 acceptance_rule:

@@ -6,7 +6,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.coverage
 
 # 实验输出（保留目录占位）
 outputs/*
 !outputs/.gitkeep
+
+# 演示脚本产物（玩具模拟，不入库）
+experiments/results/
