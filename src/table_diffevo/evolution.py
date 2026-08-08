@@ -870,17 +870,22 @@ def run_evolution(
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
 
+            # 候选预算是硬上限：本次候选已被评估并计入，若刚好触边，就先标记
+            # 耗尽。这必须在接受/拒绝分支之前判定——否则接受路径的 break 会绕过
+            # 检查，导致连续接受时评估次数无限超出预算（见 #36 复现）。
+            if (candidate_budget is not None
+                    and candidate_evaluation_count >= candidate_budget):
+                candidate_budget_exhausted = True
+
+            # 边界上这个已评估的候选仍可正常应用（接受即生效），但随后必须停止。
             if proposal_loss <= loss + tol:
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
                 current_loss = proposal_loss
                 S = proposal
-                break
 
-            # 检查候选预算：在每次候选评估后检查
-            if candidate_budget is not None and candidate_evaluation_count >= candidate_budget:
-                candidate_budget_exhausted = True
+            if accepted or candidate_budget_exhausted:
                 break
 
         accept_history.append(accepted)
@@ -1072,6 +1077,9 @@ def run_evolution(
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
+            "candidate_budget": (
+                int(candidate_budget) if candidate_budget is not None else None
+            ),
         },
     }
 

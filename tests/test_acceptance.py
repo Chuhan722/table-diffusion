@@ -36,7 +36,7 @@ class TestA0Rule:
         assert delta_Q > 0  # Q 恶化
 
     def test_a0_accepts_tie(self):
-        """Q 持平（delta_Q = 0）→ 拒绝（不满足严格不等号）"""
+        """Q 持平（delta_Q = 0）→ 拒绝（严格改善口径，不满足 < -eps_Q）"""
         target = np.array([100.0, 50.0])
         current = np.array([95.0, 55.0])
         candidate = np.array([95.0, 55.0])  # 完全相同
@@ -45,27 +45,27 @@ class TestA0Rule:
             "A0", target, current, candidate, n_records=200, eps_Q=0.0
         )
 
-        assert accept is False
+        assert accept is False  # delta_Q=0 不满足 < 0 → 拒绝平局
         assert delta_Q == 0.0
 
     def test_a0_epsilon_boundary(self):
-        """测试 eps_Q 边界"""
+        """测试 eps_Q 严格改善阈值：仅 Q 改善超过 eps_Q 才接受"""
         target = np.array([100.0])
-        current = np.array([95.0])  # Q = 25
-        candidate = np.array([94.0])  # Q = 36, delta_Q = 11
+        current = np.array([90.0])   # Q = 0.5*100 = 50
+        candidate = np.array([95.0])  # Q = 0.5*25 = 12.5，delta_Q = -37.5（改善）
 
-        # eps_Q=10 → delta_Q=11 > -(-10)=-10，不满足 < -10 → 拒绝
+        # eps_Q=30 → delta_Q=-37.5 < -30 → 改善超过阈值 → 接受
+        accept_loose, _, delta_Q = check_acceptance(
+            "A0", target, current, candidate, n_records=100, eps_Q=30.0
+        )
+        assert delta_Q == pytest.approx(-37.5)
+        assert accept_loose is True
+
+        # eps_Q=40 → delta_Q=-37.5 < -40 为假 → 改善不足阈值 → 拒绝
         accept_tight = check_acceptance(
-            "A0", target, current, candidate, n_records=100, eps_Q=10.0
+            "A0", target, current, candidate, n_records=100, eps_Q=40.0
         )[0]
-
-        # eps_Q=12 → delta_Q=11 < -(-12)=-12 → 接受
-        accept_loose = check_acceptance(
-            "A0", target, current, candidate, n_records=100, eps_Q=12.0
-        )[0]
-
-        assert accept_tight is False  # 刚好超过阈值
-        assert accept_loose is False  # eps_Q=12 时，要求 delta_Q < -12，但 11 > -12
+        assert accept_tight is False
 
 
 class TestA1Rule:
@@ -99,23 +99,26 @@ class TestA1Rule:
         assert delta_L1 > 0  # L1 恶化
 
     def test_a1_tie_uses_q(self):
-        """L1 打平 → 用 Q 裁决"""
-        target = np.array([100.0, 50.0, 30.0])
-        current = np.array([90.0, 60.0, 35.0])  # L1 = (10+10+5)/3/200
-        candidate = np.array([95.0, 55.0, 30.0])  # L1 = (5+5+0)/3/200，改变但在 eps_L1 内
+        """L1 严格打平（delta_L1=0）→ 落入平局带 → 由 Q 严格改善裁决"""
+        target = np.array([0.0, 0.0, 0.0])
+        # current 与 candidate 的 |偏差| 之和相等（均为 6）→ L1 完全相同
+        current = np.array([4.0, 1.0, 1.0])   # Q = 0.5*(16+1+1) = 9
+        candidate = np.array([2.0, 2.0, 2.0])  # Q = 0.5*(4+4+4) = 6，delta_Q = -3
 
-        # L1 轻微变化，在 eps_L1=0.01 内 → Q 改善 → 接受
-        accept_q_good = check_acceptance(
+        # delta_L1 = 0 落入平局带 → Q 严格改善（delta_Q=-3 < 0）→ 接受
+        accept_q_good, delta_L1, delta_Q = check_acceptance(
             "A1", target, current, candidate, n_records=200, eps_L1=0.01, eps_Q=0.0
-        )[0]
-
-        # L1 在阈值内，但 Q 恶化 → 拒绝
-        candidate_q_bad = np.array([85.0, 65.0, 40.0])  # L1 类似，Q 更差
-        accept_q_bad = check_acceptance(
-            "A1", target, current, candidate_q_bad, n_records=200, eps_L1=0.01, eps_Q=0.0
-        )[0]
-
+        )
+        assert delta_L1 == pytest.approx(0.0)
+        assert delta_Q == pytest.approx(-3.0)
         assert accept_q_good is True
+
+        # 反向：L1 仍打平，但 Q 恶化（delta_Q=+3，不满足 < 0）→ 拒绝
+        accept_q_bad, delta_L1_bad, delta_Q_bad = check_acceptance(
+            "A1", target, candidate, current, n_records=200, eps_L1=0.01, eps_Q=0.0
+        )
+        assert delta_L1_bad == pytest.approx(0.0)
+        assert delta_Q_bad == pytest.approx(3.0)
         assert accept_q_bad is False
 
     def test_a1_epsilon_l1_boundary(self):
@@ -124,17 +127,17 @@ class TestA1Rule:
         current = np.array([95.0])  # L1 = 5/100 = 0.05
         candidate = np.array([96.0])  # L1 = 4/100 = 0.04, delta_L1 = -0.01
 
-        # eps_L1=0.005 → delta_L1=-0.01 < -0.005 → L1 明显改善 → 接受
+        # eps_L1=0.005 → delta_L1=-0.01 < -0.005 → L1 严格改善 → 接受
         accept_tight = check_acceptance(
             "A1", target, current, candidate, n_records=100, eps_L1=0.005, eps_Q=0.0
         )[0]
 
-        # eps_L1=0.015 → |delta_L1|=0.01 < 0.015 → L1 打平 → 用 Q 裁决
+        # eps_L1=0.015 → |delta_L1|=0.01 <= 0.015 → L1 打平 → 用 Q 裁决（Q 改善）→ 接受
         accept_loose = check_acceptance(
             "A1", target, current, candidate, n_records=100, eps_L1=0.015, eps_Q=0.0
         )[0]
 
-        assert accept_tight is True  # L1 明显改善
+        assert accept_tight is True  # L1 严格改善
         assert accept_loose is True  # L1 打平但 Q 改善
 
 
@@ -249,14 +252,14 @@ class TestEdgeCases:
 
         assert delta_L1 == 0.0
         assert delta_Q == 0.0
-        assert accept_a0 is False  # 不满足严格改善
-        assert accept_a1 is False
+        assert accept_a0 is False  # delta_Q=0 不满足严格改善 → 拒绝
+        assert accept_a1 is False  # L1 平局，delta_Q=0 不满足 Q 严格改善 → 拒绝
 
     def test_strict_epsilon_zero(self):
-        """eps=0 时的严格不等号"""
+        """eps_Q=0 时的严格不等号：delta_Q=0 不满足 < 0 → 拒绝"""
         target = np.array([100.0])
-        current = np.array([99.0])  # Q=1
-        candidate = np.array([99.0])  # Q=1，完全相同
+        current = np.array([99.0])  # Q=0.5
+        candidate = np.array([99.0])  # Q=0.5，完全相同
 
         accept = check_acceptance(
             "A0", target, current, candidate, n_records=100, eps_Q=0.0
@@ -297,8 +300,9 @@ class TestEdgeCases:
     def test_a1_delta_l1_exactly_neg_epsilon_uses_q(self):
         """A1 恰好 delta_L1 == -eps_L1 时落入平局分支，由 Q 裁决
 
-        _check_A1 分支：delta_L1 < -eps_L1 判负后，|delta_L1| <= eps_L1
-        为真（相等），进入 Q 平局判。验证边界归属平局区而非改善区。
+        _check_A1 分支：delta_L1 < -eps_L1 判负后（相等不满足严格 <），
+        |delta_L1| <= eps_L1 为真（相等），进入 Q 平局判。验证边界归属平局区
+        而非改善区。
         """
         target = np.array([100.0])
         current = np.array([90.0])   # L1 = 10/100 = 0.10
@@ -311,7 +315,7 @@ class TestEdgeCases:
         )
         assert delta_L1 == pytest.approx(-0.05)
         assert delta_Q < 0
-        assert accept_q_good is True  # 边界归平局区，Q 改善 → 接受
+        assert accept_q_good is True  # 边界归平局区，Q 严格改善 → 接受
 
         # 同一边界，但把 Q 也卡在恰好相等 → 平局区内 Q 不满足严格改善 → 拒绝
         # 构造 candidate 使 delta_Q == -eps_Q 恰好相等

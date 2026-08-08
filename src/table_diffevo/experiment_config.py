@@ -7,15 +7,21 @@ import yaml
 import numpy as np
 from pathlib import Path
 from typing import Optional, Literal, List, Tuple, Dict, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 
 
 @dataclass
 class AcceptanceRuleConfig:
-    """接受规则配置"""
+    """接受规则配置
+
+    A0/A1 采用严格改善口径（Issue #33 预注册定义）：eps_Q 是"必须改善的最小
+    幅度"阈值，仅当 delta_Q < -eps_Q 才接受，Q 平局与恶化一律拒绝。A1 的 L1
+    主判同为严格。此口径与主循环 `proposal_loss <= loss + tol`（非严格）在边界
+    处理上不同，故 A0 非主循环逐轨迹等价 baseline。详见 acceptance.py。
+    """
     rule: Literal["A0", "A1"]  # 移除 A2（已删除）
-    eps_L1: Optional[float] = None  # A1 需要
-    eps_Q: float = 0.0  # 默认值，所有规则都用
+    eps_L1: Optional[float] = None  # A1 需要：L1 平局容差（平局带半宽，>=0）
+    eps_Q: float = 0.0  # Q 严格改善阈值（delta_Q < -eps_Q 才接受，>=0）
 
 
 @dataclass
@@ -33,7 +39,6 @@ class AlphaScheduleConfig:
     注意：单位是"候选评估次数"，不是"轮数"。
     - 候选评估 = 生成候选表 → 评估所有查询 → 计算误差（算1次）
     - 当 max_retries>0 时，一轮可能包含多次候选评估（初次+重试）
-    - 探测分支的评估也计入
     """
 
     probe_P: int = 3
@@ -434,10 +439,40 @@ class ExperimentConfig:
             "factorized_gibbs_logit_clip"
         }
 
-        # 检查未知键
+        # 检查顶层未知键
         unknown_keys = set(data.keys()) - valid_keys
         if unknown_keys:
-            raise ValueError(f"配置文件包含未知键: {unknown_keys}")
+            raise ValueError(f"配置文件包含未知键: {sorted(unknown_keys)}")
+
+        # 检查嵌套节的未知键。顶层护栏拦不住嵌套 dict 里的拼写错误——
+        # 那些键会被 DataConfig(**...) 等原样展开，抛出原始 TypeError（定位差、
+        # 不符合“拒绝未知 YAML 键”的契约）。这里对每个嵌套节按其 dataclass 字段
+        # 白名单校验，提前给出带节名定位的 ValueError。
+        _NESTED_SECTIONS = {
+            "data": DataConfig,
+            "acceptance_rule": AcceptanceRuleConfig,
+            "alpha_schedule": AlphaScheduleConfig,
+        }
+        for section, section_cls in _NESTED_SECTIONS.items():
+            # 三节均为必填。缺失或显式为空（`data:` / `data: null`）若放行，会落到
+            # 下方 DataConfig(**None) 抛晦涩的 TypeError——与“坏 YAML 给清晰错误”的
+            # 契约相悖。这里提前拦成带节名的 ValueError（与未知键/类型错误同一风格）。
+            if section not in data or data[section] is None:
+                raise ValueError(
+                    f"配置节 {section!r} 缺失或为空，必须提供键值映射"
+                )
+            section_data = data[section]
+            if not isinstance(section_data, dict):
+                raise ValueError(
+                    f"配置节 {section!r} 必须是键值映射，实际为 {type(section_data).__name__}"
+                )
+            allowed = {f.name for f in fields(section_cls)}
+            unknown_nested = set(section_data.keys()) - allowed
+            if unknown_nested:
+                raise ValueError(
+                    f"配置节 {section!r} 包含未知键: {sorted(unknown_nested)}"
+                    f"（合法键：{sorted(allowed)}）"
+                )
 
         # 递归构建嵌套 dataclass
         config = cls(
@@ -521,10 +556,18 @@ class ExperimentConfig:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     def to_run_evolution_kwargs(self, seed: Optional[int] = None) -> Dict[str, Any]:
-        """转换为 run_evolution 的参数字典
+        """转换为 run_evolution 的参数字典（仅覆盖阶段 0 已真实接入的口径）。
 
         此方法加载必要的文件（schema、queries）并将配置参数转换为
         run_evolution() 函数需要的格式。
+
+        **接入范围（fail-closed）**：阶段 0 只负责数据结构与接线骨架。当前
+        主循环 run_evolution 仅支持默认接受判据（proposal_loss <= loss + tol）
+        与线性轮数 α 调度（alpha_min→alpha_max），因此本方法只对这两种口径
+        做真实映射。配置里预注册的 A0/A1 接受规则、fixed/probe α 调度尚未接入
+        主循环——留待阶段 1（接受规则）及阶段 2-5（探测调度）。为避免"配置填了
+        却静默按另一套算法运行"，本方法对这些尚未接入的口径**直接报错**，而不是
+        悄悄丢弃或错误映射。
 
         Parameters
         ----------
@@ -534,7 +577,13 @@ class ExperimentConfig:
         Returns
         -------
         dict
-            包含所有 run_evolution 需要的参数的字典
+            包含 run_evolution 已接入参数的字典
+
+        Raises
+        ------
+        NotImplementedError
+            当配置使用尚未接入主循环的口径时（acceptance_rule 为 A0/A1，
+            或 alpha_schedule.mode 为 fixed/probe）。
 
         Usage
         -----
@@ -542,6 +591,33 @@ class ExperimentConfig:
         >>> kwargs = config.to_run_evolution_kwargs(seed=0)
         >>> best_S, diag = run_evolution(**kwargs)
         """
+        # Fail-closed：只放行主循环“已真正接入”的口径，其余一律报错——绝不
+        # 静默按默认算法运行。用白名单（而非黑名单）判定：拼错/新增的口径会落到
+        # 白名单之外而被挡下，不会 fail-open 溜进映射。
+        # 先查 α 模式，再查接受规则——这样 fixed/probe 配置能看到 α 模式的报错，
+        # round_schedule 配置则落到接受规则的报错，两道护栏都可观测、可测试。
+        #
+        # 阶段推进时放开对应白名单即可：
+        #   阶段 1 接入接受规则后，把 A0/A1 加入 _WIRED_ACCEPTANCE_RULES；
+        #   阶段 2-5 接入探测调度后，把 fixed/probe 加入 _WIRED_ALPHA_MODES。
+        _WIRED_ALPHA_MODES = {"round_schedule"}          # 阶段 0 只接了线性轮数调度
+        _WIRED_ACCEPTANCE_RULES = set()                  # 阶段 0 未接入任何接受规则
+
+        mode = self.alpha_schedule.mode
+        if mode not in _WIRED_ALPHA_MODES:
+            raise NotImplementedError(
+                f"alpha_schedule.mode={mode!r} 尚未接入主循环，留待阶段 2-5（探测调度）。"
+                f"当前 run_evolution 仅支持线性轮数调度（round_schedule，alpha_min→alpha_max）；"
+                f"fixed/probe 的语义（固定 α、停滞触发三岔路探测）需后续阶段实现。"
+            )
+        rule = self.acceptance_rule.rule
+        if rule not in _WIRED_ACCEPTANCE_RULES:
+            raise NotImplementedError(
+                f"acceptance_rule={rule!r} 尚未接入主循环，留待阶段 1（接受规则对照）。"
+                f"当前 run_evolution 仅支持默认判据 proposal_loss <= loss + tol；"
+                f"配置可记录该字段作为预注册意图，但阶段 0 不能据此运行。"
+            )
+
         from table_diffevo.schema import load_schema
         from table_diffevo.queries import load_queries
         from table_diffevo.marginals import load_marginals

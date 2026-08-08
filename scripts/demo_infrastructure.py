@@ -6,12 +6,12 @@
 
 注意：这里的候选生成是 `current + 高斯噪声` 的玩具模拟（simulate_evolution），
 不是 evolution.py 的真实演化逻辑，也不加载真实数据。它只用于验证基础设施接口
-能协同工作，产出的数字没有实验意义。每次运行输出到被 gitignore 的
-`experiments/results/.demo/<时间戳>/` 唯一目录，重复运行不会碰撞，也不进入版本库。
+能协同工作，产出的数字没有实验意义。每次运行用 mkdtemp 在被 gitignore 的
+`experiments/results/.demo/` 下建唯一目录，重复运行不会碰撞，也不进入版本库。
 """
 
 import sys
-import time
+import tempfile
 from pathlib import Path
 import numpy as np
 
@@ -49,13 +49,18 @@ def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLo
     best_current = current.copy()
 
     # 演化参数
-    alpha = config.alpha_schedule.alpha_value
     alpha_min = config.alpha_schedule.alpha_min
     alpha_max = config.alpha_schedule.alpha_max
-    u = (alpha - alpha_min) / (alpha_max - alpha_min)  # 归一化 α
 
     n_rounds = config.n_rounds
     n_records = config.data.n_records
+
+    # α 逐轮取值：与 evolution.py 的 round_schedule 一致（线性 alpha_min→alpha_max）。
+    # 本演示配置用 round_schedule（阶段 0 唯一已接入的模式），alpha_value 为 None，
+    # 因此不能读单一 alpha_value，须按轮次进度计算。
+    def _alpha_at(round_idx):
+        progress = round_idx / (n_rounds - 1) if n_rounds > 1 else 1.0
+        return alpha_min + (alpha_max - alpha_min) * progress
 
     # 接受规则参数
     eps_L1 = config.acceptance_rule.eps_L1
@@ -65,9 +70,14 @@ def simulate_evolution(config: ExperimentConfig, seed: int, logger: ExperimentLo
     candidate_evaluations = 0
 
     print(f"  种子 {seed}:")
-    print(f"    接受规则: {rule}, α={alpha:.1f}")
+    print(f"    接受规则: {rule}, α 模式: {config.alpha_schedule.mode} "
+          f"({alpha_min:.1f}→{alpha_max:.1f})")
 
     for round_idx in range(n_rounds):
+        # 当前轮的 α 与归一化 u（round_schedule 线性调度）
+        alpha = _alpha_at(round_idx)
+        u = (alpha - alpha_min) / (alpha_max - alpha_min)
+
         # 模拟候选生成（实际使用中调用 evolution.py 的逻辑）
         candidate = current + np.random.randn(n_queries) * 50
         candidate_evaluations += 1
@@ -127,9 +137,12 @@ def main():
     print("=" * 70)
     print()
 
-    # 唯一时间戳输出目录，避免重复运行时与既有目录碰撞（ExperimentLogger 拒绝非空目录）
-    # 加 . 前缀避免进入 git（.gitignore 已忽略 experiments/results/）
-    demo_output_dir = f"experiments/results/.demo/{time.strftime('%Y%m%d_%H%M%S')}"
+    # 唯一输出目录，避免重复运行时与既有目录碰撞（ExperimentLogger 拒绝非空目录）。
+    # 用 mkdtemp 保证唯一（秒级时间戳在快速连跑时仍可能碰撞）；.demo 前缀父目录
+    # 已被 .gitignore 忽略（experiments/results/），不进版本库。
+    _demo_root = Path("experiments/results/.demo")
+    _demo_root.mkdir(parents=True, exist_ok=True)
+    demo_output_dir = tempfile.mkdtemp(dir=str(_demo_root))
 
     # 步骤 1：加载配置
     print("步骤 1: 加载配置")
@@ -147,14 +160,15 @@ def main():
                 init_marginals_path="",
                 n_records=1000
             ),
+            # 与 example_phase_a.yaml 及 simulate_evolution._alpha_at 保持同一口径：
+            # A0 + round_schedule（阶段 0 唯一已接入的调度）。避免 fallback 声明 fixed
+            # 却按 round_schedule 线性算 α 的语义错位。
             acceptance_rule=AcceptanceRuleConfig(
-                rule="A1",
-                eps_L1=1e-5,
+                rule="A0",
                 eps_Q=0.0
             ),
             alpha_schedule=AlphaScheduleConfig(
-                mode="fixed",
-                alpha_value=5.0,
+                mode="round_schedule",
                 alpha_min=2.0,
                 alpha_max=10.0
             ),
@@ -176,9 +190,15 @@ def main():
         config.seeds = config.seeds[:2]  # 只用前两个种子
         config.output_dir = demo_output_dir
 
+    # α 描述：round_schedule 显示线性范围，fixed 显示单值
+    if config.alpha_schedule.mode == "fixed":
+        alpha_desc = f"α={config.alpha_schedule.alpha_value}"
+    else:
+        alpha_desc = f"α={config.alpha_schedule.alpha_min}→{config.alpha_schedule.alpha_max}"
+
     print(f"  ✓ 配置已加载: {config.experiment_name}")
     print(f"    接受规则: {config.acceptance_rule.rule}")
-    print(f"    α 模式: {config.alpha_schedule.mode} (α={config.alpha_schedule.alpha_value})")
+    print(f"    α 模式: {config.alpha_schedule.mode} ({alpha_desc})")
     print(f"    种子: {config.seeds}")
     print(f"    轮数: {config.n_rounds}")
     print()

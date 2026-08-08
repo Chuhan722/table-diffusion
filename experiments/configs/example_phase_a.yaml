@@ -1,20 +1,33 @@
-experiment_name: "phase_a_pilot_A0_vs_A1"
+# 阶段 A（接受规则对照）示例配置
+#
+# 用途：演示 ExperimentConfig 的字段结构、YAML 加载与校验。
+#
+# 【阶段 0 接入边界 / fail-closed】
+#   - 本配置可被 ExperimentConfig.from_yaml() 正常加载并通过 validate()。
+#   - 但 acceptance_rule=A0 尚未接入主循环（留待阶段 1），因此
+#     config.to_run_evolution_kwargs() 会抛 NotImplementedError——这是有意的
+#     fail-closed，避免"配了 A0 却静默按主循环默认判据跑"。
+#   - alpha_schedule.mode 用 round_schedule（阶段 0 唯一已接入的调度），
+#     这一部分是真实可运行的；fixed/probe 同样会被 fail-closed（留待阶段 2-5）。
+#   - 因此：阶段 0 用它做“加载 + 校验”演示；真正跑实验需等阶段 1 接入接受规则。
+
+experiment_name: "phase_a_pilot_A0"
 
 data:
   dataset_name: "nltcs"
-  target_path: "configs/nltcs/measured_1000query.json"
-  measured_target_path: "configs/nltcs/measured_1000query.json"
+  schema_path: "configs/nltcs/schema.yaml"
+  query_path: "configs/nltcs/measured_1000query.json"
   init_marginals_path: "configs/nltcs/init_marginals.json"
   n_records: 16181
 
+# 接受规则：A0 为 Issue #33 预注册实验臂（阶段 0 记录意图，尚未接入主循环）
 acceptance_rule:
-  rule: "A1"
-  eps_L1: 1.0e-5
+  rule: "A0"
   eps_Q: 0.0
 
+# α 调度：round_schedule 是阶段 0 唯一已接入主循环的模式（线性 alpha_min→alpha_max）
 alpha_schedule:
-  mode: "fixed"
-  alpha_value: 5.0
+  mode: "round_schedule"
   alpha_min: 2.0
   alpha_max: 10.0
 
@@ -23,6 +36,7 @@ n_rounds: 200
 output_dir: "experiments/results/phase_a_pilot"
 
 # 演化参数（与 #29 正式实验一致）
+rho: 0.01
 beta: 1.0
 eta: 0.5
 h: 0.8

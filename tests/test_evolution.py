@@ -97,12 +97,12 @@ class TestTermination:
         )
         assert diag["rounds_run"] <= 10
 
-    def test_candidate_budget_triggers_early_stop(self):
-        """给一个远小于 n_rounds 所需评估数的预算，应在跑满 n_rounds 前提前停止。
+    def test_candidate_budget_is_hard_cap(self):
+        """candidate_budget 是硬上限：评估次数精确等于预算、绝不越界。
 
-        锚定 candidate_budget 的实际停止行为（不只是配置校验）。
-        注意实现语义：预算检查在提案被接受时跳过（接受即 break），
-        因此实际评估次数会略微越过预算才停，这里断言 >= budget 而非精确相等。
+        锚定 #36 修复：预算检查在接受/拒绝分支之前判定，接受路径的 break
+        不再绕过它。给一个远小于 n_rounds 所需评估数的预算，应在跑满
+        n_rounds 前提前停止，且 count == budget（不是 >= budget）。
         """
         schema = make_toy_schema()
         queries = make_toy_queries()
@@ -113,9 +113,89 @@ class TestTermination:
             candidate_budget=budget,
         )
         assert diag["candidate_budget_exhausted"] is True
-        assert diag["candidate_evaluation_count"] >= budget
+        assert diag["candidate_evaluation_count"] == budget
         # 因预算而非 n_rounds 停止：轮数应远少于 n_rounds
         assert diag["rounds_run"] < 200
+
+    def test_candidate_budget_first_candidate_accepted(self):
+        """首个候选被接受时，budget=1 仍必须硬停在 count==1。
+
+        这是 #36 的核心复现：rho=0/mu=0 让提案≈原表，平局被接受；修复前
+        接受路径直接 break，预算检查被跳过，会连续接受直到跑满 n_rounds。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=5, seed=0,
+            rho=0.0, mu=0.0, candidate_budget=1,
+        )
+        assert diag["accept_history"][0] is True
+        assert diag["candidate_evaluation_count"] == 1
+        assert diag["candidate_budget_exhausted"] is True
+        assert diag["rounds_run"] == 1
+
+    def test_candidate_budget_first_candidate_rejected(self, monkeypatch):
+        """首个候选被拒绝时，budget=1 也必须硬停在 count==1。
+
+        用 monkeypatch 强制提案恒差（counts 全 0），确保被拒绝路径可复现。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([100, 0, 100])
+
+        def worse_step(S, *args, **kwargs):
+            return pd.DataFrame({"age": [18] * len(S), "edu": ["low"] * len(S),
+                                 "job": ["b"] * len(S)})
+
+        monkeypatch.setattr(evolution_module, "evolve_step", worse_step)
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=200, seed=0,
+            candidate_budget=1,
+        )
+        assert diag["accept_history"][0] is False
+        assert diag["candidate_evaluation_count"] == 1
+        assert diag["candidate_budget_exhausted"] is True
+        assert diag["rounds_run"] == 1
+
+    def test_candidate_budget_retry_hits_boundary_exactly(self, monkeypatch):
+        """一轮内多次重试恰好触边时，评估次数精确等于预算、不越界。
+
+        budget=2, max_retries=5，提案恒差 → 前两次评估都在同一轮内发生，
+        第二次触边即停：count==2、该轮 attempts==2。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([100, 0, 100])
+
+        def worse_step(S, *args, **kwargs):
+            return pd.DataFrame({"age": [18] * len(S), "edu": ["low"] * len(S),
+                                 "job": ["b"] * len(S)})
+
+        monkeypatch.setattr(evolution_module, "evolve_step", worse_step)
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=200, seed=0,
+            candidate_budget=2, max_retries=5,
+        )
+        assert diag["candidate_evaluation_count"] == 2
+        assert diag["candidate_budget_exhausted"] is True
+        assert diag["rounds_run"] == 1
+        assert diag["proposal_attempts_history"][0] == 2
+
+    def test_candidate_budget_recorded_in_params(self):
+        """candidate_budget 写入 diagnostics['params']（None 与显式值都记录）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag_none = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=3, seed=0,
+        )
+        assert diag_none["params"]["candidate_budget"] is None
+        _, diag_set = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=200, seed=0,
+            candidate_budget=4,
+        )
+        assert diag_set["params"]["candidate_budget"] == 4
 
     def test_no_candidate_budget_runs_full_rounds(self):
         """不设预算（None）时不应因预算提前停止。"""
@@ -130,6 +210,84 @@ class TestTermination:
         # 未达标时应跑满（与 test_runs_full_rounds_when_not_converged 同前提）
         if not diag["stopped_early"]:
             assert diag["rounds_run"] == 15
+
+    def test_candidate_budget_accumulates_across_rounds(self):
+        """预算跨多轮累计：每轮接受 1 个候选，budget=3 应在第 3 轮硬停。
+
+        补齐"接受路径的累计"这条线——首候选接受测试只覆盖 budget=1 单轮，
+        这里确认 budget>1 时评估次数跨轮累加，触边即停、精确等于预算。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=10, seed=0,
+            rho=0.0, mu=0.0, candidate_budget=3,
+        )
+        assert diag["candidate_evaluation_count"] == 3
+        assert diag["candidate_budget_exhausted"] is True
+        assert diag["rounds_run"] == 3
+        # 每轮各接受一次
+        assert all(diag["accept_history"])
+
+    def test_candidate_budget_larger_than_needed_not_exhausted(self):
+        """预算远大于所需评估数时不应触发预算停止，跑满 n_rounds。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=5, seed=0,
+            candidate_budget=10_000,
+        )
+        assert diag["candidate_budget_exhausted"] is False
+        assert diag["candidate_evaluation_count"] <= 10_000
+        if not diag["stopped_early"]:
+            assert diag["rounds_run"] == 5
+
+    @pytest.mark.parametrize("budget", [1, 2, 3, 5, 7])
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    @pytest.mark.parametrize("max_retries", [0, 3])
+    def test_candidate_budget_invariant_never_exceeds(self, budget, seed, max_retries):
+        """全局不变式：评估次数从不越界，且 exhausted ⇔ count==budget。
+
+        跨 预算 × 种子 × 重试 的组合扫描，锁死"硬上限"这一核心保证——
+        无论接受、拒绝、重试如何交织，count 都不会超过 budget。
+        """
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=200, seed=seed,
+            candidate_budget=budget, max_retries=max_retries,
+        )
+        count = diag["candidate_evaluation_count"]
+        assert count <= budget
+        # 触发预算停止 ⇔ 恰好用满预算
+        assert diag["candidate_budget_exhausted"] == (count == budget)
+
+    @pytest.mark.parametrize("bad_value", [0, -1, -5])
+    def test_candidate_budget_rejects_non_positive(self, bad_value):
+        """run_evolution 层拒绝非正预算。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match="candidate_budget"):
+            run_evolution(
+                target, queries, schema, n_records=100, n_rounds=5, seed=0,
+                candidate_budget=bad_value,
+            )
+
+    @pytest.mark.parametrize("bad_value", [True, 3.0, 2.5, "5"])
+    def test_candidate_budget_rejects_wrong_type(self, bad_value):
+        """run_evolution 层拒绝非整数预算（含 bool、float、str）。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        with pytest.raises(ValueError, match="candidate_budget"):
+            run_evolution(
+                target, queries, schema, n_records=100, n_rounds=5, seed=0,
+                candidate_budget=bad_value,
+            )
 
 
 class TestReproducibility:

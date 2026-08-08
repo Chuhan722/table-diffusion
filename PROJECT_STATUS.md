@@ -150,18 +150,26 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
   - fail-closed：拒绝非法值（如负数、超出范围、未知选项）
   - 验证参数间的依赖关系（如 factorized_gibbs_sweeps > 0 需要 residual_directed_diffusion）
 
-**4. 配置映射方法（to_run_evolution_kwargs()）：**
+**4. 配置映射方法（to_run_evolution_kwargs()）—— 阶段 0 fail-closed 边界：**
   - 自动加载文件（schema、queries、marginals）
   - 转换参数名（如 `lambda_` → `lambda_param`）
-  - 返回 run_evolution 需要的完整参数字典
   - 用法：`kwargs = config.to_run_evolution_kwargs(seed=0)` → `run_evolution(**kwargs)`
+  - **接入范围**：阶段 0 只交付数据结构 + 接线骨架，不改主循环算法。本方法
+    只对主循环**已真正支持**的口径做真实映射（默认接受判据 + 线性轮数 α 调度）。
+  - **fail-closed（#36 问题 2 修订）**：配置里预注册的 A0/A1 接受规则、fixed/probe
+    α 调度**尚未接入主循环**，本方法对这些口径直接抛 `NotImplementedError`，
+    而不是静默丢弃或错误映射（此前 fixed 会被当成线性调度、A0/A1 被整个丢掉）。
+    真正接入分别留待阶段 1（接受规则）与阶段 2-5（探测调度）。
 
 **5. 示例配置：**
   - `configs/experiments/nltcs_baseline.yaml`：基于 run.py 默认参数的完整配置
   - 包含所有参数及注释说明
 
-**6. 新脚本（不破坏现有代码）：**
-  - `scripts/run_from_config.py`：从 YAML 配置运行实验
+**6. 命令行启动脚本：留待阶段 1**
+  - 从 YAML 端到端运行实验的启动脚本（`scripts/run_from_config.py`）**本阶段不交付**：
+    它需调用 `to_run_evolution_kwargs()`，而阶段 0 的 fail-closed 对 A0/A1、fixed/probe
+    一律抛 `NotImplementedError`，此刻无法端到端跑真实验。待阶段 1 接入 A0/A1 后再交付
+    可运行版本。参数体系本身（读/校验/转换）已由 `experiment_config.py` 交付并测试。
   - 原 `scripts/run.py` 保持不变（向后兼容）
 
 **验证：**
@@ -219,15 +227,17 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 2. **接受规则模块** (`src/table_diffevo/acceptance.py`)
    - 统一接受规则接口 `check_acceptance()`，返回 (accepted, delta_L1, delta_Q)
-   - A0 规则：delta_Q < -eps_Q（严格不等式）
-   - A1 规则：delta_L1 < -eps_L1 优先 → |delta_L1| ≤ eps_L1 时使用 delta_Q < -eps_Q 打破平局
+   - **严格改善口径（Issue #33 预注册定义）**：A0/A1 均采用严格不等号，必须有
+     超过 eps 的实质改善才接受；平局与容差内微小恶化一律拒绝。
+   - A0 规则：`delta_Q < -eps_Q`（Q 改善超过 eps_Q 才接受）
+   - A1 规则：`delta_L1 < -eps_L1` 视为严格改善直接接受 → `|delta_L1| <= eps_L1`
+     落入平局带时用 `delta_Q < -eps_Q` 裁决 → `delta_L1 > eps_L1` 拒绝
    - **关键设计**：在 state 覆盖前计算 delta，避免误报零差值
-   - **A0 与主循环旧判据的边界差异（必须披露）**：A0 用严格不等式 `delta_Q < -eps_Q`，
-     拒绝 Q 平局与容差内微小恶化；主循环旧判据 `evolution.py` 的 `proposal_loss <= loss + tol`
-     则接受平局和 tol 容差内的微小恶化。A0 符合 Issue #33 冻结公式，可作为本次预注册实验臂，
-     但**不是与旧接受规则逐轨迹等价的 baseline**。阶段 1 分析时不得把轨迹差异错误归因于
-     L1/Q 主判逻辑本身——部分差异来自平局/容差边界的处理不同。
-   - 19 个单元测试全部通过，覆盖四象限、边界、严格不等式
+   - **与主循环的边界差异（须披露）**：主循环 `evolution.py` 是 `proposal_loss <= loss + tol`
+     （非严格，接受平局与容差内微小恶化）。A0/A1 严格口径与之不同，故 A0 符合 Issue #33
+     冻结公式、可作预注册臂，但**不是**主循环逐轨迹等价 baseline；阶段 A 分析须显式披露，
+     选出 A* 接入主循环时再单独决定其容差口径。
+   - 单元测试全部通过，覆盖四象限、严格不等号、两个 epsilon 边界
 
 3. **实验日志模块** (`src/table_diffevo/experiment_logger.py`)
    - 三层日志：`RoundLog`（每轮）、`BlockLog`（每块）、`ProbeLog`（探测分支）
@@ -262,8 +272,9 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
    - 输出到 `experiments/results/.demo`（隐藏目录，不污染结果区）
 
 **测试覆盖：**
-- 阶段 0 四个模块：metrics 11 + acceptance 19 + experiment_logger 21 + experiment_config 19 = 70 项
-- 全套单元测试 675 项全部通过（阶段 0 相对基线净增 acceptance 19 + logger 安全性 12 + config 验证增强 8；均为按 PR #36 审查反馈补齐的回归用例）
+- 阶段 0 四个模块（当前工作树，含未提交改动，pytest 收集数）：metrics 11 + acceptance 19 + experiment_logger 23 + experiment_config 32 = 85 项
+  （config 增量来自问题 1-3 的 fail-closed/未知键回归 + 本次「逐个加载仓库示例 YAML」回归；均尚未提交）
+- 全套单元测试 735 项全部通过（含本地未提交的问题 1-4 修订与 force_overwrite 文档修订；提交前以干净 checkout 复核数字为准）
 
 **验证通过：**
 - 度量计算与 `evolution.py` 完全一致（数值误差 < 1e-12）
@@ -1754,14 +1765,15 @@ winsorize_quantiles = (0.01, 0.99)  # 裁剪极端值
 
 6. ✅ 创建完整示例配置：configs/experiments/nltcs_baseline.yaml
 
-7. ✅ 创建示例脚本：scripts/run_from_config.py（演示纯 YAML 工作流）
+7. ⚠️ 曾创建示例脚本 scripts/run_from_config.py —— **本 PR 不交付**（见上「6. 命令行启动脚本」）：
+   fail-closed 下它无法端到端运行，留待阶段 1 接入 A0/A1 后交付可运行版本。
 
 8. ✅ 所有测试通过（19/19），向后兼容性验证通过
 
 **文件清单**：
 - 修改：src/table_diffevo/experiment_config.py（+21 参数 +详细文档 +to_run_evolution_kwargs）
 - 新增：configs/experiments/nltcs_baseline.yaml（完整参数示例）
-- 新增：scripts/run_from_config.py（YAML 工作流示例）
+- （不交付）scripts/run_from_config.py：留待阶段 1，理由同上
 - 修改：tests/test_experiment_config.py（更新参数名，全部通过）
 
 **向后兼容性**：
@@ -1775,24 +1787,30 @@ winsorize_quantiles = (0.01, 0.99)  # 裁剪极端值
 
 **已完成**：
 1. ✅ evolution.py 添加 candidate_budget 参数和追踪逻辑
-2. ✅ 在主循环中累计候选评估次数（包括重试和探测分支）
+2. ✅ 在主循环中累计候选评估次数（含一轮内的重试）
 3. ✅ 达到预算时提前终止，在诊断信息中记录状态
 4. ✅ ExperimentConfig 包含此参数并添加验证规则
-5. ✅ 测试覆盖：test_config_validation_negative_candidate_budget 通过
+5. ✅ 测试覆盖：配置校验 + 主循环硬上限行为（接受/拒绝/重试触边三类）
 
 **实现细节**：
 - candidate_evaluation_count 在每次候选评估后 +1
-- 重试和探测分支的评估都计入
-- 预算耗尽时 candidate_budget_exhausted = True，记录到 diag
+- 重试的评估计入（当前尚无 probe 主循环，不涉及探测分支计数）
+- 预算耗尽时 candidate_budget_exhausted = True，记录到 diag；
+  candidate_budget 本身也写入 diag["params"]
 - None 表示无限制（默认行为，向后兼容）
-- 注意语义：预算检查在提案被接受时跳过（接受即 break），因此实际评估次数会略微越过预算才停
+- 语义（#36 修复后）：candidate_budget 是**硬上限**。预算检查在接受/拒绝
+  分支之前判定，接受路径不再绕过它。触边的那个已评估候选仍可正常应用
+  （接受即生效），但随后立即停止，累计评估次数精确等于预算、绝不越界。
 
-### 补充：问题 2 缺口的两个回归测试 ✅ 已补（2026-08-06）
-审查（第三轮问题 2）要求配置闭环需有映射测试与预算停止的行为测试，本次补齐：
-- `test_to_run_evolution_kwargs_covers_signature`：用签名内省断言 kwargs 覆盖 run_evolution 全部必填参数、无未知键（防映射漂移）
-- `test_to_run_evolution_kwargs_maps_values`：断言配置字段值正确映射到对应参数（含 target 从 query result 派生）
-- `test_candidate_budget_triggers_early_stop`：小预算 + 大 n_rounds，断言真正因预算提前停止（exhausted=True、rounds_run < n_rounds）
-- `test_no_candidate_budget_runs_full_rounds`：None 时不因预算停止
+### 补充：问题 2 fail-closed 回归测试 ✅ 已补（2026-08-06 修订）
+审查（第三轮问题 2）指出签名内省测试只证"键合法"，证不了"语义正确"，且实测
+fixed 被静默当成线性调度、A0/A1 被整个丢掉。按方案 B（阶段 0 只做骨架、未接入
+口径 fail-closed），原先锚定"完整映射"的两个测试已替换为 fail-closed 契约测试：
+- `test_to_run_evolution_kwargs_fail_closed_on_acceptance_rule`：配 A0/A1 时
+  `to_run_evolution_kwargs` 必须抛 `NotImplementedError`（留待阶段 1），而非静默按默认判据跑
+- `test_to_run_evolution_kwargs_fail_closed_on_alpha_mode`：配 fixed/probe 时
+  必须抛 `NotImplementedError`（留待阶段 2-5），而非把 fixed 错当线性调度
+- 预算行为测试见上节（问题 2.3）：硬上限、接受/拒绝/重试触边、跨轮累计、不变式扫描
 
 ### 补充：问题 2 冗余字段清理 ✅ 已完成（2026-08-06）
 `DataConfig` 中 `target_path` / `measured_target_path` 两字段从未被 `to_run_evolution_kwargs`
@@ -1818,6 +1836,93 @@ nltcs_baseline.yaml、demo、全部测试中彻底删除，DataConfig docstring 
   - `test_backup_deletion_failure_still_publishes`：让删备份抛错，断言新数据仍完整发布
 
 全套测试 681 通过。至此 PR #36 第三轮反馈四个问题（1 logger 原子性 / 2 配置闭环 / 3 A0 边界披露 / 4 文本一致性）全部解决。
+
+### 问题 3（第四轮反馈）：示例/文档一致性 + 嵌套未知键护栏 ✅ 已完成（2026-08-08）
+
+第四轮审查（分支 HEAD 98680d1）在问题 3 下点出两处缺陷，指示「A 选方案 1、B 要做，先 A 后 B」。
+
+**缺陷 A：示例配置与文档引用了已删除的字段/模式（方案 1：全量对齐到已接入口径）** ✅
+- `experiments/configs/example_phase_a.yaml`：改为 `acceptance_rule=A0 + alpha_schedule.mode=round_schedule`，
+  `DataConfig` 用 `schema_path`/`query_path`（删除已废弃的 `target_path`），文件头补 fail-closed 接入边界说明。
+- `docs/experiment_infrastructure.md`：AlphaScheduleConfig 示例改 round_schedule + probe_* 新字段名并加接入边界注；
+  DataConfig 示例去掉 `target_path`；AcceptanceRuleConfig 补 A0/主循环旧判据边界差异；新增「接入边界（阶段 0 fail-closed）」表；
+  伪代码按 round_schedule 逐轮算 α（说明该模式下 alpha_value=None，不能直接读单值）。
+- `scripts/demo_infrastructure.py`：`simulate_evolution` 按 `_alpha_at(round_idx)` 逐轮线性算 α；打印按 mode 分支（fixed 单值 / 其余显示范围）。
+- **补漏（本轮复查）**：demo 的「配置文件不存在」fallback 分支原仍是旧口径 `rule="A1" + mode="fixed"`，
+  与同文件 `_alpha_at` 硬编码的 round_schedule 线性调度语义错位（config 声明 fixed 却按 round_schedule 跑）。
+  已对齐为 `A0 + round_schedule`，方案 1「全量对齐」现真正覆盖 fallback 路径。
+- 验证：demo 脚本 exit 0；配置测试通过。
+
+**缺陷 B：嵌套 dict 里的未知键抛原始 TypeError，不符合「拒绝未知 YAML 键」契约（要做）** ✅
+- 根因：顶层 `from_yaml` 有未知键护栏，但 `data`/`acceptance_rule`/`alpha_schedule` 内部拼错的键会被
+  `DataConfig(**...)` 等原样展开，抛晦涩的 `TypeError`（如 `__init__() got an unexpected keyword argument`），定位差。
+- 修复（`experiment_config.py` `from_yaml`）：新增嵌套节白名单循环，用 `dataclasses.fields()` 派生每个嵌套
+  dataclass 的合法键；未知键抛带节名的 `ValueError`（列出该节合法键），嵌套节非映射（写成标量/列表）也给清晰 `ValueError`。
+- 测试（`tests/test_experiment_config.py`）：新增参数化 `test_config_yaml_nested_unknown_key`（覆盖
+  data/acceptance_rule/alpha_schedule 三节；alpha_schedule 用旧字段名 `W` 模拟真实迁移遗漏）+
+  `test_config_yaml_nested_section_wrong_type`。
+- **补漏（本轮复查）**：护栏原本对必填节缺失/显式为空（`data:` / `data: null`）用 `if section_data is None: continue`
+  直接跳过，会漏到下方 `DataConfig(**None)` 抛晦涩的 `TypeError: argument after ** must be a mapping`——
+  与缺陷 B 同源（坏 YAML 必须落到带节名的清晰错误）。已改为：必填节缺失或为空立即抛带节名的 `ValueError`
+  （`配置节 'data' 缺失或为空`），补齐「拒绝坏 YAML」契约。新增 `test_config_yaml_nested_section_empty`
+  （参数化覆盖 `data:` / `data: null`）+ `test_config_yaml_nested_section_missing`（整节缺失）。
+
+**验证：** 配置测试 30 passed（本轮复查较上一版净增 3）；全套单测 733 passed（零回归）；demo 脚本 exit 0。
+
+至此 PR #36 第四轮反馈的问题 3 已全部解决。
+
+### 问题 4（第四轮反馈）：force_overwrite 非空发布非崩溃安全 ✅ 已完成（2026-08-08，走「降级定位 + 如实披露」）
+
+**审查者给的是二选一**：(A) 不可变唯一 run 目录 + 完成标记/manifest 作读取门禁；或
+(B) 明确禁止正式流程复用目录、把 `force_overwrite` 降级为非原子 best-effort 工具并补中断恢复说明。
+审查者强调的核心是「公开文字必须与实际保证一致」。选 **B**——不重写发布模型，只把过强声明改为与实际相符，并如实披露窗口 + 恢复办法。
+
+**问题本质**：仅 `force_overwrite` 复用**非空**目录时，`_publish()` 两次 rename（旧→备份、暂存→正式）
+之间正式目录短暂不存在；此刻被 `KeyboardInterrupt`/进程终止打断（`except` 无法覆盖），正式目录缺失，
+只剩 `.backup-*`（完整旧版）与 `.staging-*`（完整新版）。窗口微秒级，且只写日志、不碰源数据，下次跑必暴露。
+
+**改动（`experiment_logger.py`，仅文档/注释，不改发布算法）**：
+- `__init__` 的 `force_overwrite` docstring：明确定位为「非正式、best-effort 覆盖工具，不提供崩溃安全保证」，
+  正式实验请用新的（唯一/时间戳）`output_dir` 走首次发布的单步原子路径。
+- `save()` docstring：把「整组原子发布 / 读者只会看到完整旧版或新版」的强声明改为分情形说明——
+  空目录单步 `os.replace` 真正零窗口原子（正式实验走这条）；非空复用两步 rename **不是崩溃安全**。
+  新增「中断恢复」段：说明残留的 `.backup-*`/`.staging-*` 各是什么、如何改名恢复。
+- `_publish()` docstring + 两步 rename 处的行内注释：如实标注非崩溃安全窗口与回滚仅对普通异常可达。
+
+**未改**：发布逻辑本身（两步 rename + 普通异常回滚）保持不变；空目录单步原子路径不变。
+
+**验证**：`tests/test_experiment_logger.py` **23 passed**（纯文档改动，零回归）。
+
+**注意（对外动作待确认）**：PR 正文里若仍有「整组原子/崩溃安全」的措辞，需同步弱化——改 PR 正文是对外动作，等用户确认再动。
+
+### 设计决策：A0/A1 保持严格改善口径，不与主循环对齐（2026-08-08）
+
+**背景：** 曾一度把 A0/A1 从严格（`delta_Q < -eps_Q` 等）改为非严格容差口径以对齐主循环
+`proposal_loss <= loss + tol`。经讨论**已回退**：A0/A1 恢复为 Issue #33 预注册的严格改善口径。
+
+**为何回退（理由）：**
+- 接受规则是阶段 A 的**被测对象**，不是要跟主循环对齐的东西。A0/A1 两条臂只应在
+  「看 Q 还是看 L1」上有差异，严格/非严格口径必须一致，否则把「接受规则」和「容差口径」
+  两个变量混在一起，违背 Issue #33「禁止混淆」的对照原则。
+- 「与主循环对齐」既非 Issue #33 要求（原文就是严格 `<`），也非审查者要求（审查者只要求
+  **披露** A0 与主循环的边界差异，不要求改成对齐）。该需求是中途引入的，可安全丢弃。
+- 回退后代码自动与 Issue #33 预注册定义一致，**无需改动 Issue 正文**。
+- 「选出的 A* 接入主循环时用什么容差口径」这件事**推迟到阶段 1**：届时只有一条规则、
+  一个口径，再决定要不要带 tol，不存在「一加一减」的别扭。
+
+**回退改动（均本地未提交）：**
+- `acceptance.py`：`_check_A0` 回 `delta_Q < -eps_Q`；`_check_A1` 回 `delta_L1 < -eps_L1` /
+  平局带 `|delta_L1| <= eps_L1` / `delta_Q < -eps_Q`；模块与函数 docstring 去掉「对齐主循环」表述，
+  改为「严格改善口径 + 边界差异须披露」。
+- `experiment_config.py`：`AcceptanceRuleConfig` docstring/注释回「严格改善阈值」口径；校验逻辑不变。
+- `docs/experiment_infrastructure.md`：注块改回「A0/A1 严格 + 与主循环边界差异披露」。
+- `tests/test_acceptance.py`：受影响用例全部转回严格语义（平局/完美匹配/边界拒绝），
+  A1 边界的两个拆分用例合回单一 `test_a1_delta_l1_exactly_neg_epsilon_uses_q`。
+
+**验证：** `tests/test_acceptance.py tests/test_experiment_config.py tests/test_evolution.py` **140 passed**。
+
+**注意（fail-closed 不变）：** acceptance.py 仍未接入主循环（`to_run_evolution_kwargs()` 对 A0/A1 抛
+`NotImplementedError`），真正接入留待阶段 1。本次只改判据语义与配套测试/文档，不改主循环行为。
 
 ## 下一步（候选，待讨论）
 - 全套零件已实现并跑通：generator / queries / objective / fitness / distance /

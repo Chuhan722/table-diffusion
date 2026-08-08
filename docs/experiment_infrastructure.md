@@ -191,40 +191,46 @@ seed,arm,round,block,alpha,u,L1_current,best_L1,Q_current,accepted,delta_L1,delt
 ```yaml
 data:
   dataset_name: "nltcs"
-  target_path: "configs/nltcs/measured_1000query.json"
-  measured_target_path: "configs/nltcs/measured_1000query.json"
+  schema_path: "configs/nltcs/schema.yaml"          # 表 schema
+  query_path: "configs/nltcs/measured_1000query.json"  # 查询（target 从其 result 字段派生）
   init_marginals_path: "configs/nltcs/init_marginals.json"
   n_records: 16181
+  # device: "cpu"  # 可选，默认 cpu
 ```
+> 注：target 一律从 `query_path` 的 `result` 字段派生，不再单列 `target_path`；
+> 将来做 DP 时查询本身即加噪结果，同一入口不区分加噪/无噪来源。
 
 #### 2. 接受规则配置 (AcceptanceRuleConfig)
 ```yaml
 acceptance_rule:
   rule: "A1"  # "A0" 或 "A1"
-  eps_L1: 1.0e-5  # A1 需要
-  eps_Q: 0.0
+  eps_L1: 1.0e-5  # A1 需要（L1 平局带半宽）
+  eps_Q: 0.0      # Q 严格改善阈值
 ```
 
-> **A0 与主循环旧判据的边界差异（阶段 1 分析须知）**：
-> `acceptance.py` 的 A0 用严格不等式 `delta_Q < -eps_Q`，**拒绝** Q 平局与容差内的微小恶化；
-> 而 `evolution.py` 主循环的旧判据是 `proposal_loss <= loss + tol`，会**接受**平局和 tol 容差内的微小恶化。
-> A0 符合 Issue #33 冻结公式，可作为本次预注册实验臂，但它**不是**与旧接受规则逐轨迹等价的 baseline。
-> 阶段 1 对照分析时，不能把观察到的轨迹差异全部归因于 L1/Q 主判逻辑——部分差异来自平局/容差边界的处理不同。
+> **A0/A1 严格改善口径（Issue #33 预注册定义）**：
+> `acceptance.py` 采用**严格**不等号——必须有超过 eps 的实质改善才接受：
+> - A0：`delta_Q < -eps_Q` —— 仅当 Q 改善超过 eps_Q 才接受，Q 平局与任何恶化一律拒绝。
+> - A1：`delta_L1 < -eps_L1` 视为 L1 严格改善直接接受；`|delta_L1| <= eps_L1` 落入平局带时改由 `delta_Q < -eps_Q` 裁决；`delta_L1 > eps_L1` 拒绝。
+>
+> **与主循环的边界差异（阶段 A 分析须知）**：主循环 `evolution.py` 的判据是 `proposal_loss <= loss + tol`（非严格，接受平局与 tol 容差内微小恶化）。A0/A1 的严格口径在边界处理上与之不同，因此 A0 符合 Issue #33 冻结公式、可作预注册实验臂，但**不是**与旧主循环逐轨迹等价的 baseline。分析时须显式披露这一差异，勿把边界差异误归因于 L1/Q 主判逻辑。选出 A* 接入主循环时再单独决定其容差口径。
 
 #### 3. α 调度配置 (AlphaScheduleConfig)
 ```yaml
 alpha_schedule:
-  mode: "fixed"  # "fixed", "round_schedule", "probe"
-  alpha_value: 5.0  # fixed 模式需要
+  mode: "round_schedule"  # "fixed", "round_schedule", "probe"
+  # alpha_value: 5.0      # 仅 fixed 模式需要
   alpha_min: 2.0
   alpha_max: 10.0
-  # probe 模式参数（可选）
-  W: 20  # 块大小
-  P: 3   # 停滞触发块数
-  H: 2   # 探测分支块数
-  s: 0.10  # 归一化步长
-  C: 2   # 冷却块数
+  # probe 模式参数（可选，单位见字段名）
+  probe_block_candidate_budget: 20  # 块大小 W（单位：候选评估次数，非轮数）
+  probe_P: 3                        # 停滞触发块数
+  probe_H_candidate_budget: 2       # 每个探测分支的候选评估预算 H
+  probe_s: 0.10                     # 归一化步长
+  probe_C: 2                        # 冷却块数
 ```
+> **接入边界**：阶段 0 只有 `round_schedule` 已接入主循环；`fixed`/`probe` 可写入
+> 配置并通过 `validate()`，但 `to_run_evolution_kwargs()` 对二者 fail-closed（见上文“接入边界”一节）。
 
 #### 4. 实验参数
 ```yaml
@@ -295,6 +301,30 @@ config = ExperimentConfig.from_yaml(Path("bad_config.yaml"))
 
 ---
 
+## 接入边界（阶段 0 fail-closed）
+
+阶段 0 只交付**数据结构 + 接线骨架**，不改主循环算法。配置对象能完整
+**记录**接受规则（A0/A1）与 α 模式（fixed/round_schedule/probe）作为预注册
+意图，但 `to_run_evolution_kwargs()` 只对**当前主循环真正支持的口径**做真实映射：
+
+| 口径 | 阶段 0 状态 | 行为 |
+|------|-------------|------|
+| 接受规则 A0/A1 | 未接入主循环（留待阶段 1） | `to_run_evolution_kwargs()` 抛 `NotImplementedError` |
+| α 模式 `round_schedule` | 已接入（线性 alpha_min→alpha_max） | 正常映射 |
+| α 模式 `fixed` / `probe` | 未接入主循环（留待阶段 2-5） | `to_run_evolution_kwargs()` 抛 `NotImplementedError` |
+
+这是**有意的 fail-closed**：绝不让"配置里选了 A0/A1 或 fixed/probe"的实验静默
+按主循环默认判据（`proposal_loss <= loss + tol`）或线性 α 调度跑出来——那样
+得到的结果会用错误的算法产生，且不报错、极难发现。真正的接入分别在阶段 1
+（接受规则）与阶段 2-5（探测调度）完成，届时会放开对应护栏。
+
+```python
+config.to_run_evolution_kwargs(seed=0)
+# NotImplementedError: acceptance_rule='A0' 尚未接入主循环，留待阶段 1（接受规则对照）...
+```
+
+---
+
 ## 完整工作流示例
 
 ```python
@@ -311,11 +341,17 @@ config = ExperimentConfig.from_yaml(Path("experiments/configs/example_phase_a.ya
 logger = ExperimentLogger(Path(config.output_dir))
 
 # 3. 运行实验（伪代码）
+amin, amax = config.alpha_schedule.alpha_min, config.alpha_schedule.alpha_max
 for seed in config.seeds:
     for round in range(config.n_rounds):
         # 演化一轮...
         target = ...  # 从配置加载
         current = ...  # 当前合成表的查询答案
+
+        # α 逐轮取值：round_schedule 线性调度（与 evolution.py 一致）。
+        # 注意 round_schedule 下 alpha_value 为 None，须按进度计算，不能直接读单值。
+        progress = round / (config.n_rounds - 1) if config.n_rounds > 1 else 1.0
+        alpha = amin + (amax - amin) * progress
 
         # 计算度量
         l1, q, residual = compute_all_metrics(target, current, config.data.n_records)
@@ -326,9 +362,8 @@ for seed in config.seeds:
             arm=config.acceptance_rule.rule,
             round=round,
             block=round // 10,  # 假设 10 轮为一块
-            alpha=config.alpha_schedule.alpha_value,
-            u=(config.alpha_schedule.alpha_value - config.alpha_schedule.alpha_min) /
-              (config.alpha_schedule.alpha_max - config.alpha_schedule.alpha_min),
+            alpha=alpha,
+            u=(alpha - amin) / (amax - amin),
             L1_current=l1,
             best_L1=...,  # 维护最佳值
             Q_current=q,
