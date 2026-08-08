@@ -141,6 +141,7 @@ def run_evolution(
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    candidate_budget: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -246,6 +247,14 @@ def run_evolution(
     factorized_gibbs_logit_clip : float or None, default 30
         Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
         float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
+    candidate_budget : int or None, default None
+        可选的全局候选评估次数上限。若指定，演化会在达到此预算时提前停止，
+        与 n_rounds 并存（先达到者停止）。
+
+        候选评估 = 生成候选表 → 评估所有查询 → 计算误差（算1次）。
+        初始表评估不计入；只统计主循环中的候选提案评估（包括重试）。
+
+        用途：为长时间探索实验设置计算成本上限，确保可比性。
 
     Returns
     -------
@@ -268,8 +277,10 @@ def run_evolution(
         - additive_copy_drift_*_history: 独立单块一阶近似相对符号极限的改善与
           利用率；不等于原始 proposal 的精确收益
         - state_evaluation_count: int，实际执行当前表查询/适应度评价的次数
+        - candidate_evaluation_count: int，实际执行候选提案评价的次数（不含初始表）
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
         - direction_evaluation_count: int，实际计算局部方向矩阵的次数
+        - candidate_budget_exhausted: bool，是否因达到 candidate_budget 提前停止
         - factorized_gibbs_attempt_diagnostics_history: 每轮每次尝试的因子构造、
           Gibbs 微步和墙钟诊断；不参与接受或早停
         - primary_rng_state_sha256/factorized_gibbs_rng_state_sha256:
@@ -282,7 +293,7 @@ def run_evolution(
 
     Notes
     -----
-    **终止条件：** 残差全 0（达标）或达到 n_rounds。
+    **终止条件：** 残差全 0（达标）、达到 n_rounds、或达到 candidate_budget（若指定）。
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
     重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
@@ -343,6 +354,11 @@ def run_evolution(
             "residual_directed_diffusion 必须是布尔值，"
             f"得到 {residual_directed_diffusion!r}"
         )
+    if candidate_budget is not None:
+        if isinstance(candidate_budget, bool) or not isinstance(candidate_budget, (int, np.integer)):
+            raise ValueError(f"candidate_budget 必须是正整数或 None，得到 {candidate_budget!r}")
+        if candidate_budget <= 0:
+            raise ValueError(f"candidate_budget 必须 > 0，得到 {candidate_budget}")
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -517,8 +533,10 @@ def run_evolution(
         List[Dict[str, Any]]
     ] = []
     stopped_early = False
+    candidate_budget_exhausted = False
     rounds_run = 0
     state_evaluation_count = 0
+    candidate_evaluation_count = 0
     distance_evaluation_count = 0
     direction_evaluation_count = 0
     direction_evaluation_elapsed_sec = 0.0
@@ -843,6 +861,7 @@ def run_evolution(
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
+            candidate_evaluation_count += 1
 
             delta_q = proposal_q - q
             linear_gain = float(np.dot(count_residual, delta_q))
@@ -851,12 +870,22 @@ def run_evolution(
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
 
+            # 候选预算是硬上限：本次候选已被评估并计入，若刚好触边，就先标记
+            # 耗尽。这必须在接受/拒绝分支之前判定——否则接受路径的 break 会绕过
+            # 检查，导致连续接受时评估次数无限超出预算（见 #36 复现）。
+            if (candidate_budget is not None
+                    and candidate_evaluation_count >= candidate_budget):
+                candidate_budget_exhausted = True
+
+            # 边界上这个已评估的候选仍可正常应用（接受即生效），但随后必须停止。
             if proposal_loss <= loss + tol:
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
                 current_loss = proposal_loss
                 S = proposal
+
+            if accepted or candidate_budget_exhausted:
                 break
 
         accept_history.append(accepted)
@@ -881,14 +910,24 @@ def run_evolution(
 
         # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
         if do_log:
+            budget_info = ""
+            if candidate_budget is not None:
+                budget_info = f" | 候选: {candidate_evaluation_count}/{candidate_budget}"
             print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e}"
                   f" | 接受: {'是' if accepted else '否'}"
-                  f" | 尝试: {proposal_attempts}")
+                  f" | 尝试: {proposal_attempts}{budget_info}")
 
         # 9. 更新历史最优（直接用已知 loss，不重复评价）
         if current_loss < best_loss:
             best_loss = current_loss
             best_S = S.copy()
+
+        # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
+        if candidate_budget_exhausted:
+            if do_log or log_every > 0:
+                print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | "
+                      f"达到候选预算 {candidate_budget} 提前停止")
+            break
 
     elapsed_sec = time.perf_counter() - loop_start
     sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
@@ -963,6 +1002,8 @@ def run_evolution(
             factorized_gibbs_attempt_diagnostics_history
         ),
         "state_evaluation_count": state_evaluation_count,
+        "candidate_evaluation_count": candidate_evaluation_count,
+        "candidate_budget_exhausted": candidate_budget_exhausted,
         "distance_evaluation_count": distance_evaluation_count,
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
@@ -1036,6 +1077,9 @@ def run_evolution(
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
+            "candidate_budget": (
+                int(candidate_budget) if candidate_budget is not None else None
+            ),
         },
     }
 
