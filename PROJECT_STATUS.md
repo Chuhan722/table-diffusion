@@ -1924,11 +1924,16 @@ nltcs_baseline.yaml、demo、全部测试中彻底删除，DataConfig docstring 
 **注意（fail-closed 不变）：** acceptance.py 仍未接入主循环（`to_run_evolution_kwargs()` 对 A0/A1 抛
 `NotImplementedError`），真正接入留待阶段 1。本次只改判据语义与配套测试/文档，不改主循环行为。
 
-## 阶段 1（Issue #33）：A0/A1 接入主循环 —— 进行中（2026-08-09）
+## 阶段 1（Issue #33）：A0/A1 接入主循环 —— 已完成（2026-08-09）
 
 分支 `research/stage1-acceptance-rule`，从 `158787b`（PR #36 第四轮修订）起。
 `git merge-base --is-ancestor master 158787b` 为真，故该起点与「#36 合并后的 master」
-内容等价，不必等合并即可开工。**全部改动本地未提交、未推送。**
+内容等价，不必等合并即可开工。
+
+**PR #41**（https://github.com/Chuhan722/table-diffusion/pull/41）：
+- Base: `research/nltcs-convergence-probe`（PR #36 的分支）
+- Head: `research/stage1-acceptance-rule`
+- **注意**：PR #41 依赖 PR #36，需等 #36 合并后才能合并
 
 ### 已完成
 
