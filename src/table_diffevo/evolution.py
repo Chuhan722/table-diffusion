@@ -60,6 +60,8 @@ from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     evolve_step_factorized_gibbs,
 )
+from table_diffevo.acceptance import check_acceptance
+from table_diffevo.metrics import compute_normalized_l1
 
 
 def _rng_state_sha256(rng: np.random.Generator) -> str:
@@ -142,6 +144,9 @@ def run_evolution(
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     candidate_budget: Optional[int] = None,
+    acceptance_rule: Optional[str] = None,
+    eps_L1: float = 0.0,
+    eps_Q: float = 0.0,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -256,6 +261,39 @@ def run_evolution(
 
         用途：为长时间探索实验设置计算成本上限，确保可比性。
 
+    acceptance_rule : str or None, default None
+        整代接受判据的选择。**默认 None 保持主循环历史判据不变**：
+        `proposal_loss <= loss + tol`（非严格，接受平局与 tol 容差内的微小恶化）。
+        这是全部历史 baseline、钉死哈希与逐轮对拍所依赖的口径，默认路径逐轨迹等价。
+
+        显式传 'A0' / 'A1' 时改用 `acceptance.check_acceptance` 的
+        **严格改善**口径（Issue #33 预注册定义，见 acceptance.py 模块说明）：
+        - 'A0'：平方 loss 主判，`delta_Q < -eps_Q`
+        - 'A1'：归一化 L1 主判 + Q 平局判
+
+        注意两者在边界处理上不同：严格口径拒绝平局，非严格口径接受平局。整数
+        计数上平局并不罕见，因此 'A0' **不是**与默认路径逐轨迹等价的 baseline。
+        接受规则对照实验（阶段 A）应显式传 'A0'/'A1'；「严格 vs 非严格」本身是
+        另一个独立对照（'A0' vs None），须另行预注册，不要与 A0/A1 的判别力混谈。
+    eps_L1 : float, default 0.0
+        归一化 L1 平局带半宽（仅 A1 使用）：`|delta_L1| <= eps_L1` 视为 L1 平局，
+        转由 Q 裁决。单位为「每记录平均绝对误差」。
+
+        默认 0.0 是有语义的取值，也是接受规则对照实验采用的取值：平局带退化为
+        「ΔL1 恰好为 0」。之所以不需要非零容差，是因为
+        `normalized_l1 = sum(|target - current|) / (m * n_records)` 的分子是整数
+        计数之差，ΔL1 只能以 `1/(m * n_records)` 为步长跳变，0 与最小非零变化之间
+        隔着一整个台阶，不存在需要容差吸收的浮点毛刺——「相等」是可靠可判的事件。
+
+        取非零值时须注意两端的退化：带宽小于一个步长 `1/(m * n_records)` 时等价于
+        0（整数计数下 |ΔL1| 落不进 (0, 一步) 区间）；带宽大于 L1 总量时全部候选判
+        平局，A1 在算术上退化为 A0。两端都会让 A0/A1 对照测不出东西。同一个数值在
+        不同规模数据集上的松紧也不一致，跨数据集使用需按落带率复核。
+    eps_Q : float, default 0.0
+        平方 loss 严格改善阈值（A0/A1 均使用）：仅 `delta_Q < -eps_Q` 才接受。
+        `eps_Q = 0` 时要求严格改善，拒绝 Q 平局与任何恶化。
+        注意该参数不参与默认路径（None）——默认路径用的是 `tol`。
+
     Returns
     -------
     best_S : pd.DataFrame, shape (n_records, n_attributes)
@@ -271,6 +309,12 @@ def run_evolution(
         - accepted_attempt_history: List[int]，接受的尝试序号（0=全拒绝）
         - raw_proposal_gain_history: List[List[float]]，每轮各次接受检查前的
           原始 proposal 精确收益
+        - delta_L1_history: List[List[float]]，每轮各次尝试的归一化 L1 变化
+          （candidate - current，负数表示改善）
+        - delta_Q_history: List[List[float]]，每轮各次尝试的平方 loss 变化
+          （candidate - current，负数表示改善）
+          这两个字段**无条件记录**，与实际生效的判据无关：默认路径（None）也会
+          记录，便于在不改变轨迹的前提下观察 ΔL1 量级、为 eps_L1 定标。
         - copy_direction_*_history: 局部方向分布与正/反向实际复制概率
         - copy_probability_entropy_history: 每轮 active Bernoulli 复制核的平均熵
         - copy_probability_kl_history: 每轮复制核相对历史 Bernoulli(eta) 的平均 KL
@@ -359,6 +403,23 @@ def run_evolution(
             raise ValueError(f"candidate_budget 必须是正整数或 None，得到 {candidate_budget!r}")
         if candidate_budget <= 0:
             raise ValueError(f"candidate_budget 必须 > 0，得到 {candidate_budget}")
+    # 接受判据：None 保持主循环历史判据；显式规则名走 acceptance.check_acceptance
+    # 的严格口径。fail-closed——拼错的规则名必须立即报错，不得静默回落到默认路径。
+    if acceptance_rule is not None and acceptance_rule not in ("A0", "A1"):
+        raise ValueError(
+            "acceptance_rule 必须是 None（主循环历史判据）、'A0' 或 'A1'，"
+            f"得到 {acceptance_rule!r}"
+        )
+    for _eps_name, _eps_value in (("eps_L1", eps_L1), ("eps_Q", eps_Q)):
+        if (
+            isinstance(_eps_value, (bool, np.bool_))
+            or not isinstance(_eps_value, (int, float, np.integer, np.floating))
+            or not np.isfinite(_eps_value)
+            or _eps_value < 0.0
+        ):
+            raise ValueError(
+                f"{_eps_name} 必须是非负有限实数，得到 {_eps_value!r}"
+            )
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -529,6 +590,8 @@ def run_evolution(
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    delta_L1_history: List[List[float]] = []
+    delta_Q_history: List[List[float]] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
@@ -792,6 +855,8 @@ def run_evolution(
         attempt_gains: List[float] = []
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
+        attempt_delta_L1: List[float] = []
+        attempt_delta_Q: List[float] = []
         attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
@@ -870,6 +935,33 @@ def run_evolution(
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
 
+            # ΔL1 / ΔQ 无条件记录：只作诊断，不参与默认路径的判据，因此不改变
+            # 历史轨迹。这样默认跑一遍即可观察 ΔL1 的实际量级，为 eps_L1 定标。
+            # ΔQ 复用主循环已算好的 proposal_loss - loss；compute_squared_loss
+            # 委托的正是同一个 compute_loss(sigma=None, kappa=1, weights=None)，
+            # 故与 check_acceptance 内部算出的 delta_Q 一致，不重复评价。
+            attempt_delta_L1.append(
+                compute_normalized_l1(target, proposal_q, n_records)
+                - compute_normalized_l1(target, q, n_records)
+            )
+            attempt_delta_Q.append(float(proposal_loss - loss))
+
+            if acceptance_rule is None:
+                # 默认路径：主循环历史判据（非严格，接受平局与 tol 内微小恶化）。
+                # 全部历史 baseline、钉死哈希与逐轮对拍都依赖这一口径。
+                accept = proposal_loss <= loss + tol
+            else:
+                # 显式规则：Issue #33 预注册的严格改善口径（拒绝平局）。
+                accept, _, _ = check_acceptance(
+                    rule=acceptance_rule,
+                    target=target,
+                    current=q,
+                    candidate=proposal_q,
+                    n_records=n_records,
+                    eps_L1=eps_L1,
+                    eps_Q=eps_Q,
+                )
+
             # 候选预算是硬上限：本次候选已被评估并计入，若刚好触边，就先标记
             # 耗尽。这必须在接受/拒绝分支之前判定——否则接受路径的 break 会绕过
             # 检查，导致连续接受时评估次数无限超出预算（见 #36 复现）。
@@ -878,7 +970,7 @@ def run_evolution(
                 candidate_budget_exhausted = True
 
             # 边界上这个已评估的候选仍可正常应用（接受即生效），但随后必须停止。
-            if proposal_loss <= loss + tol:
+            if accept:
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
@@ -897,6 +989,8 @@ def run_evolution(
         raw_proposal_quadratic_penalty_history.append(
             attempt_quadratic_penalties
         )
+        delta_L1_history.append(attempt_delta_L1)
+        delta_Q_history.append(attempt_delta_Q)
         factorized_gibbs_attempt_diagnostics_history.append(
             attempt_factorized_gibbs_diagnostics
         )
@@ -998,6 +1092,8 @@ def run_evolution(
         "raw_proposal_quadratic_penalty_history": (
             raw_proposal_quadratic_penalty_history
         ),
+        "delta_L1_history": delta_L1_history,
+        "delta_Q_history": delta_Q_history,
         "factorized_gibbs_attempt_diagnostics_history": (
             factorized_gibbs_attempt_diagnostics_history
         ),
@@ -1080,6 +1176,15 @@ def run_evolution(
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None
             ),
+            "acceptance_rule": acceptance_rule,
+            "eps_L1": float(eps_L1),
+            # ΔL1 的步长 1/(m*N)。记它是为了让 eps_L1 事后可解释：单看
+            # eps_L1=0 判不出平局带是"恰好相等"还是"窄到失效"，配上步长才知道
+            # 这个数值相对本次运行的 ΔL1 分辨率是什么量级。
+            "delta_L1_step": (
+                1.0 / float(m * n_records) if m > 0 and n_records > 0 else None
+            ),
+            "eps_Q": float(eps_Q),
         },
     }
 

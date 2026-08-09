@@ -15,7 +15,12 @@ data:
   n_records: 16181
   device: "cuda"
 
-# 接受规则（阶段 0 暂不使用，保持默认）
+# 接受规则
+# 注意（阶段 1 起生效）：A0/A1 已接入主循环，此处填的规则会**真正参与判定**，
+# 走 acceptance.py 的严格改善口径（拒绝平局）。这与主循环历史默认判据
+# proposal_loss <= loss + tol（非严格）在边界处理上不同，因此本配置跑出的
+# A0 结果**不是**历史 baseline 的逐轨迹复现——要复现历史轨迹需直接调用
+# run_evolution 并让 acceptance_rule=None（配置路径给不出 None）。
 acceptance_rule:
   rule: "A0"
   eps_Q: 0.0

@@ -18,9 +18,18 @@ class AcceptanceRuleConfig:
     幅度"阈值，仅当 delta_Q < -eps_Q 才接受，Q 平局与恶化一律拒绝。A1 的 L1
     主判同为严格。此口径与主循环 `proposal_loss <= loss + tol`（非严格）在边界
     处理上不同，故 A0 非主循环逐轨迹等价 baseline。详见 acceptance.py。
+
+    A1 的 `eps_L1` 是 L1 平局带半宽（单位「每记录平均绝对误差」），必须显式
+    指定——缺省会把 A1 静默降级成另一条判据，属于换掉被测对象。对照实验取 0.0：
+    normalized_l1 的分子是整数计数之差，ΔL1 只能以 `1/(m * n_records)` 为步长
+    跳变，"恰好相等"是可靠可判的事件，不需要容差吸收浮点毛刺。
+
+    取非零值时须按落带率（|ΔL1| 落进平局带的候选比例）复核松紧：带宽小于一个
+    步长时等价于 0，带宽大于 L1 总量时 A1 在算术上退化为 A0，两端都让对照失效。
+    同一数值在不同规模数据集上的落带率可差两个数量级，不能跨数据集直接沿用。
     """
     rule: Literal["A0", "A1"]  # 移除 A2（已删除）
-    eps_L1: Optional[float] = None  # A1 需要：L1 平局容差（平局带半宽，>=0）
+    eps_L1: Optional[float] = None  # A1 必填：L1 平局带半宽（>=0）
     eps_Q: float = 0.0  # Q 严格改善阈值（delta_Q < -eps_Q 才接受，>=0）
 
 
@@ -286,11 +295,13 @@ class ExperimentConfig:
         if self.acceptance_rule.rule not in ["A0", "A1"]:
             errors.append(f"未知接受规则: {self.acceptance_rule.rule}，仅支持 A0 或 A1")
 
-        if self.acceptance_rule.rule == "A1":
-            if self.acceptance_rule.eps_L1 is None:
-                errors.append("A1 需要指定 eps_L1")
-            elif self.acceptance_rule.eps_L1 < 0:
-                errors.append("eps_L1 必须 >= 0")
+        # A1 的平局带半宽必须显式给出：缺了它语义就变成「纯 L1 严格改善」（另一条
+        # 判据），静默回落等于换掉被测对象。0.0 是合法值，不可与 None 混为一谈。
+        _abs_given = self.acceptance_rule.eps_L1 is not None
+        if self.acceptance_rule.rule == "A1" and not _abs_given:
+            errors.append("A1 需要显式指定 eps_L1（L1 平局带半宽，可为 0）")
+        if _abs_given and self.acceptance_rule.eps_L1 < 0:
+            errors.append("eps_L1 必须 >= 0")
 
         if self.acceptance_rule.eps_Q < 0:
             errors.append("eps_Q 必须 >= 0")
@@ -561,13 +572,17 @@ class ExperimentConfig:
         此方法加载必要的文件（schema、queries）并将配置参数转换为
         run_evolution() 函数需要的格式。
 
-        **接入范围（fail-closed）**：阶段 0 只负责数据结构与接线骨架。当前
-        主循环 run_evolution 仅支持默认接受判据（proposal_loss <= loss + tol）
-        与线性轮数 α 调度（alpha_min→alpha_max），因此本方法只对这两种口径
-        做真实映射。配置里预注册的 A0/A1 接受规则、fixed/probe α 调度尚未接入
-        主循环——留待阶段 1（接受规则）及阶段 2-5（探测调度）。为避免"配置填了
-        却静默按另一套算法运行"，本方法对这些尚未接入的口径**直接报错**，而不是
-        悄悄丢弃或错误映射。
+        **接入范围（fail-closed）**：阶段 1 已把 A0/A1 接受规则接入主循环，
+        故本方法现在真实映射 `acceptance_rule` / `eps_L1` / `eps_Q`。α 调度仍
+        只支持线性轮数调度（alpha_min→alpha_max）；配置里预注册的 fixed/probe
+        尚未接入——留待阶段 2-5（探测调度）。为避免"配置填了却静默按另一套算法
+        运行"，本方法对尚未接入的口径**直接报错**，而不是悄悄丢弃或错误映射。
+
+        **注意（口径差异须披露）**：显式指定 A0/A1 时主循环走 acceptance.py 的
+        严格改善口径（拒绝平局），与主循环历史默认判据
+        `proposal_loss <= loss + tol`（非严格）在边界处理上不同。因此 A0 **不是**
+        历史 baseline 的逐轨迹等价复现——要复现历史轨迹需让 `acceptance_rule=None`，
+        而本方法总会显式给出规则名（配置里 rule 是必填项）。
 
         Parameters
         ----------
@@ -582,8 +597,8 @@ class ExperimentConfig:
         Raises
         ------
         NotImplementedError
-            当配置使用尚未接入主循环的口径时（acceptance_rule 为 A0/A1，
-            或 alpha_schedule.mode 为 fixed/probe）。
+            当配置使用尚未接入主循环的口径时（alpha_schedule.mode 为
+            fixed/probe）。
 
         Usage
         -----
@@ -598,10 +613,10 @@ class ExperimentConfig:
         # round_schedule 配置则落到接受规则的报错，两道护栏都可观测、可测试。
         #
         # 阶段推进时放开对应白名单即可：
-        #   阶段 1 接入接受规则后，把 A0/A1 加入 _WIRED_ACCEPTANCE_RULES；
+        #   阶段 1 已接入接受规则，A0/A1 在白名单内；
         #   阶段 2-5 接入探测调度后，把 fixed/probe 加入 _WIRED_ALPHA_MODES。
         _WIRED_ALPHA_MODES = {"round_schedule"}          # 阶段 0 只接了线性轮数调度
-        _WIRED_ACCEPTANCE_RULES = set()                  # 阶段 0 未接入任何接受规则
+        _WIRED_ACCEPTANCE_RULES = {"A0", "A1"}           # 阶段 1 接入 A0/A1
 
         mode = self.alpha_schedule.mode
         if mode not in _WIRED_ALPHA_MODES:
@@ -612,10 +627,20 @@ class ExperimentConfig:
             )
         rule = self.acceptance_rule.rule
         if rule not in _WIRED_ACCEPTANCE_RULES:
+            # 白名单之外：拼错的、或未来新增而尚未接线的规则名。一律挡下，
+            # 绝不 fail-open 静默按主循环默认判据跑。
             raise NotImplementedError(
-                f"acceptance_rule={rule!r} 尚未接入主循环，留待阶段 1（接受规则对照）。"
-                f"当前 run_evolution 仅支持默认判据 proposal_loss <= loss + tol；"
-                f"配置可记录该字段作为预注册意图，但阶段 0 不能据此运行。"
+                f"acceptance_rule={rule!r} 未接入主循环。"
+                f"当前仅支持 {sorted(_WIRED_ACCEPTANCE_RULES)}（阶段 1 已接入）；"
+                f"配置可记录其他值作为预注册意图，但不能据此运行。"
+            )
+        # A1 的平局带半宽是主判容差，缺了它语义就变成"纯 L1 严格改善"（另一条
+        # 判据）。这里必须报错而不是回落到 0.0——否则等于静默换掉被测对象。
+        if rule == "A1" and self.acceptance_rule.eps_L1 is None:
+            raise ValueError(
+                "acceptance_rule.rule='A1' 必须显式指定 eps_L1 作为 L1 平局带半宽"
+                "（0 是合法取值）；缺省会把 A1 静默降级为纯 L1 严格改善判据，"
+                "属于换掉被测对象。"
             )
 
         from table_diffevo.schema import load_schema
@@ -671,6 +696,17 @@ class ExperimentConfig:
             "factorized_gibbs_max_order": self.factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": self.factorized_gibbs_logit_clip,
             "candidate_budget": self.candidate_budget,
+            # 阶段 1 接入：显式规则名 → 主循环走 acceptance.py 的严格改善口径。
+            # A0 不读平局带，eps_L1 缺省时补 0.0（run_evolution 的默认值）。
+            # 注意不能用 `or 0.0` 兜底：0.0 是合法且有语义的取值（平局带退化为
+            # 「ΔL1 恰好为 0」），`or` 会把它和 None 混为一谈。
+            "acceptance_rule": rule,
+            "eps_L1": (
+                float(self.acceptance_rule.eps_L1)
+                if self.acceptance_rule.eps_L1 is not None
+                else 0.0
+            ),
+            "eps_Q": float(self.acceptance_rule.eps_Q),
         }
 
         # 如果提供了种子，添加到参数中

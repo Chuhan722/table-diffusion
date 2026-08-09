@@ -47,7 +47,7 @@ def test_config_validation_a1_requires_eps_l1():
         output_dir="output"
     )
 
-    with pytest.raises(ValueError, match="A1 需要指定 eps_L1"):
+    with pytest.raises(ValueError, match="A1 需要显式指定 eps_L1"):
         config.validate()
 
 
@@ -645,16 +645,69 @@ def _make_config(tmp_path, *, rule="A0", mode="round_schedule", **overrides):
     return ExperimentConfig(**kwargs)
 
 
-def test_to_run_evolution_kwargs_fail_closed_on_acceptance_rule(tmp_path):
-    """阶段 0：A0/A1 尚未接入主循环，to_run_evolution_kwargs 必须报错而非静默运行。
+def test_to_run_evolution_kwargs_maps_acceptance_rule(tmp_path):
+    """阶段 1：A0/A1 已接入主循环，必须真实映射到 run_evolution 参数。
 
-    锚定 fail-closed 契约——绝不让配置了 A0/A1 的实验静默按默认判据跑。
-    真正的接受规则接入留待阶段 1（PR #37）。
+    这是阶段 0 那条 fail-closed 用例的继任者——护栏放开后，改为锚定"确实映射"，
+    避免参数被静默丢弃（配置填了 A1 却按默认判据跑，正是护栏原本要防的事）。
     """
     for rule in ("A0", "A1"):
         config = _make_config(tmp_path, rule=rule, mode="round_schedule")
-        with pytest.raises(NotImplementedError, match="acceptance_rule"):
-            config.to_run_evolution_kwargs(seed=42)
+        kwargs = config.to_run_evolution_kwargs(seed=42)
+        assert kwargs["acceptance_rule"] == rule
+        assert kwargs["eps_L1"] == 1e-5     # _make_config 里设的值
+        assert kwargs["eps_Q"] == 0.0
+
+
+def test_to_run_evolution_kwargs_a1_requires_eps_l1(tmp_path):
+    """A1 缺 eps_L1 必须报错，不得回落到 0.0。
+
+    回落本身会给出一个语义正确的判据（平局带 = ΔL1 恰好为 0），但那是**配置
+    没说**的判据。A1 的平局带宽度是被测对象的一部分，只能由配置显式声明。
+    """
+    config = _make_config(tmp_path, rule="A1", mode="round_schedule")
+    config.acceptance_rule.eps_L1 = None
+    with pytest.raises(ValueError, match="必须显式指定 eps_L1"):
+        config.to_run_evolution_kwargs(seed=42)
+
+
+def test_to_run_evolution_kwargs_preserves_zero_eps_l1(tmp_path):
+    """eps_L1=0.0 是合法取值，不能被当成"没给"。
+
+    0.0 的语义是"平局带退化为 ΔL1 恰好为 0"，与 None（未指定）不同。
+    用 `or 0.0` 兜底会把两者混为一谈，这条锚定该区分。
+    """
+    config = _make_config(tmp_path, rule="A1", mode="round_schedule")
+    config.acceptance_rule.eps_L1 = 0.0
+    kwargs = config.to_run_evolution_kwargs(seed=42)
+    assert kwargs["eps_L1"] == 0.0
+
+
+def test_to_run_evolution_kwargs_a0_allows_missing_eps_l1(tmp_path):
+    """A0 不读 eps_L1，配置里缺省是合法的，映射时补 0.0。"""
+    config = _make_config(tmp_path, rule="A0", mode="round_schedule")
+    config.acceptance_rule.eps_L1 = None
+    kwargs = config.to_run_evolution_kwargs(seed=42)
+    assert kwargs["acceptance_rule"] == "A0"
+    assert kwargs["eps_L1"] == 0.0
+
+
+def test_to_run_evolution_kwargs_result_is_runnable(tmp_path):
+    """映射结果能直接喂给 run_evolution 端到端跑通。
+
+    阶段 0 时 fail-closed 让这条路走不通（护栏必抛），故当时未交付可运行版本。
+    阶段 1 接入后必须真的能跑——否则"已接入"只是名义上的。
+    """
+    from table_diffevo.evolution import run_evolution
+
+    config = _make_config(tmp_path, rule="A1", mode="round_schedule",
+                          n_rounds=5)
+    kwargs = config.to_run_evolution_kwargs(seed=42)
+    kwargs["log_every"] = 10 ** 9          # 保持测试输出干净
+    best_S, diag = run_evolution(**kwargs)
+    assert len(best_S) == config.data.n_records
+    assert diag["params"]["acceptance_rule"] == "A1"
+    assert diag["rounds_run"] == 5
 
 
 def test_to_run_evolution_kwargs_fail_closed_on_alpha_mode(tmp_path):
@@ -695,8 +748,10 @@ def test_to_run_evolution_kwargs_fails_before_file_io(tmp_path):
     guard 早于 I/O，既能给出清晰的“未接入”信息，也避免对不存在的数据文件
     先报一个误导性的 FileNotFoundError。用一个指向不存在文件的配置验证：
     应抛 NotImplementedError（护栏），而不是文件相关错误。
+
+    阶段 1 起接受规则已接入，故这里改用仍未接线的 α 模式（fixed）来触发护栏。
     """
-    config = _make_config(tmp_path, rule="A0", mode="round_schedule")
+    config = _make_config(tmp_path, rule="A0", mode="fixed")
     config.data.schema_path = "/nonexistent/schema.json"
     config.data.query_path = "/nonexistent/queries.json"
     with pytest.raises(NotImplementedError):
