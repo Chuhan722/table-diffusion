@@ -60,6 +60,8 @@ from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     evolve_step_factorized_gibbs,
 )
+from table_diffevo.checkpoint import Checkpoint
+from table_diffevo.probe_controller import ProbeController
 
 
 def _rng_state_sha256(rng: np.random.Generator) -> str:
@@ -127,6 +129,8 @@ def run_evolution(
     lambda_param: float = 0.5,
     alpha_min: float = 2.0,
     alpha_max: float = 10.0,
+    alpha_value: Optional[float] = None,
+    alpha_schedule_mode: str = 'round_schedule',
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
     exclude_self: bool = True,
@@ -142,6 +146,13 @@ def run_evolution(
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     candidate_budget: Optional[int] = None,
+    probe_block_candidate_budget: Optional[int] = None,
+    probe_P: int = 3,
+    probe_H_candidate_budget: int = 2,
+    probe_s: float = 0.1,
+    probe_C: int = 2,
+    probe_stall_rel: float = 0.02,
+    probe_patience: int = 3,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -570,15 +581,47 @@ def run_evolution(
     best_S = S.copy()
     best_loss = initial_loss
 
+    # 探测式 α 调度：初始化 ProbeController 和块追踪变量
+    probe_controller = None
+    probe_history: List[Dict[str, Any]] = []
+    block_candidate_count = 0
+    block_best_L1_at_start: Optional[float] = None
+    current_alpha: Optional[float] = None
+    if alpha_schedule_mode == "probe":
+        if probe_block_candidate_budget is None:
+            raise ValueError("alpha_schedule_mode='probe' requires probe_block_candidate_budget to be specified")
+        probe_controller = ProbeController(
+            alpha_min=alpha_min,
+            alpha_max=alpha_max,
+            P=probe_P,
+            H=probe_H_candidate_budget,
+            s=probe_s,
+            C=probe_C,
+            stall_rel=probe_stall_rel,
+            patience=probe_patience,
+        )
+        # probe 模式下初始 alpha 从 alpha_value（如果提供）或 alpha_min 开始
+        current_alpha = alpha_value if alpha_value is not None else alpha_min
+
     for t in range(n_rounds):
         rounds_run = t + 1
 
-        # 计算当前轮的动态锐度 α_t（geometric 模式用）
-        if n_rounds > 1:
-            progress = t / (n_rounds - 1)
+        # 计算当前轮的动态锐度 α_t
+        if alpha_schedule_mode == "fixed":
+            if alpha_value is None:
+                raise ValueError("alpha_schedule_mode='fixed' requires alpha_value to be specified")
+            alpha_t = alpha_value
+        elif alpha_schedule_mode == "round_schedule":
+            if n_rounds > 1:
+                progress = t / (n_rounds - 1)
+            else:
+                progress = 1.0
+            alpha_t = alpha_min + (alpha_max - alpha_min) * progress
+        elif alpha_schedule_mode == "probe":
+            # probe 模式下，alpha_t 由探测控制器维护（在块结束时更新）
+            alpha_t = current_alpha
         else:
-            progress = 1.0
-        alpha_t = alpha_min + (alpha_max - alpha_min) * progress
+            raise ValueError(f"Unsupported alpha_schedule_mode: {alpha_schedule_mode}")
         alpha_history.append(alpha_t)
 
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
@@ -602,7 +645,8 @@ def run_evolution(
         )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
-        if np.all(residual == 0):
+        # probe 模式下由经验平台检测控制提前停止，不使用残差全 0 检查
+        if alpha_schedule_mode != "probe" and np.all(residual == 0):
             if do_log:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
@@ -922,6 +966,161 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
+        # 探测式 α 调度：块结束检查（按候选评估次数计块）
+        if alpha_schedule_mode == "probe":
+            # 累计本轮的候选评估次数（包含重试）
+            block_candidate_count += proposal_attempts
+
+            # 块开始：记录起始 L1（平均绝对误差 / n_records）
+            if block_candidate_count - proposal_attempts == 0:
+                best_q_start = evaluate_table(best_S, queries)
+                block_best_L1_at_start = float(np.mean(np.abs(target - best_q_start)) / n_records)
+
+            # 块结束：检查是否触发探测
+            if block_candidate_count >= probe_block_candidate_budget:
+                best_q_current = evaluate_table(best_S, queries)
+                current_best_L1 = float(np.mean(np.abs(target - best_q_current)) / n_records)
+                block_L1_improvement = block_best_L1_at_start - current_best_L1
+
+                # 更新停滞状态（相对比例判定，传入当前 L1 作分母）
+                probe_controller.update_stall_status(block_L1_improvement, current_best_L1)
+
+                # 检查是否触发探测
+                if probe_controller.should_trigger_probe():
+                    # 捕获当前状态
+                    checkpoint = Checkpoint.capture(
+                        S, best_loss, rng, t + 1, current_alpha
+                    )
+
+                    # 创建三个分支，并对相同 α 去重（毛病一）：
+                    # α 触边界时 DOWN/HOLD 或 UP/HOLD 会算出同一个 α，从同一 checkpoint
+                    # + 同一 RNG 出发结果逐位相同，只需跑一次、同组方向共享。
+                    branches = probe_controller.create_probe_branches(current_alpha)
+                    unique_alphas = probe_controller.unique_branch_alphas(branches)
+                    alpha_to_result = {}  # branch_alpha -> (branch_L1_improvement, branch_L1)
+
+                    for branch_alpha, _dirs in unique_alphas:
+                        # 恢复检查点
+                        S_branch, best_loss_branch, rng_state, _, _ = checkpoint.restore()
+                        rng.bit_generator.state = rng_state
+                        best_S_branch = S_branch.copy()  # 保存分支最优表
+
+                        # 运行 H 个候选评估
+                        branch_candidate_count = 0
+                        while branch_candidate_count < probe_H_candidate_budget:
+                            # 评估当前状态
+                            q_h, residual_h, fitness_h = _eval_counts_resid_fitness(S_branch)
+                            loss_h = compute_loss(target, q_h)
+                            state_evaluation_count += 1
+
+                            if loss_h < best_loss_branch:
+                                best_loss_branch = loss_h
+                                best_S_branch = S_branch.copy()  # 更新分支最优表
+
+                            # 距离计算
+                            distances_h = pairwise_block_distance(
+                                S_branch, S_branch, schema, device=device,
+                                return_tensor=(device in ('cuda', 'cpu'))
+                            )
+                            distance_evaluation_count += 1
+
+                            # 抽样概率和 donor
+                            probs_h = compute_sampling_probs(
+                                fitness_h, distances_h, beta=beta, h=h, device=device,
+                                distance_mode=distance_mode, p=p,
+                                lambda_param=lambda_param, alpha=branch_alpha, delta=delta,
+                                winsorize_quantiles=winsorize_quantiles,
+                                exclude_self=exclude_self,
+                            )
+                            donor_idx_h = sample_donors(probs_h, rng, device=device)
+                            del probs_h
+                            donors_h = S_branch.iloc[donor_idx_h].reset_index(drop=True)
+
+                            # 演化步骤
+                            if residual_directed_diffusion:
+                                direction_start = time.perf_counter()
+                                copy_direction_scores_h = compute_copy_direction_scores(
+                                    S_branch, donors_h, schema, queries, residual_h,
+                                    batch_size=batch_size, device=device,
+                                )
+                                direction_evaluation_elapsed_sec += (
+                                    time.perf_counter() - direction_start
+                                )
+                                direction_evaluation_count += 1
+                                direction_kwargs_h = {
+                                    "copy_direction_scores": copy_direction_scores_h,
+                                    "copy_direction_strength": diffusion_direction_strength,
+                                }
+                            else:
+                                direction_kwargs_h = {}
+
+                            proposal_h = evolve_step(
+                                S_branch, donors_h, schema,
+                                rho=rho, eta=eta, mu=mu, rng=rng,
+                                **direction_kwargs_h,
+                            )
+                            proposal_q_h = _eval_counts(proposal_h)
+                            proposal_loss_h = compute_loss(target, proposal_q_h)
+                            candidate_evaluation_count += 1
+                            branch_candidate_count += 1
+
+                            # 接受检查
+                            if proposal_loss_h <= loss_h + tol:
+                                S_branch = proposal_h
+                                if proposal_loss_h < best_loss_branch:
+                                    best_loss_branch = proposal_loss_h
+                                    best_S_branch = proposal_h.copy()  # 更新分支最优表
+
+                        # 该 α 的结果：计算真正的 L1 误差（同组方向共享）
+                        branch_q = evaluate_table(best_S_branch, queries)
+                        branch_L1 = float(np.mean(np.abs(target - branch_q)) / n_records)
+
+                        # checkpoint 的起始 L1
+                        checkpoint_q = evaluate_table(checkpoint.syn_table, queries)
+                        checkpoint_L1 = float(np.mean(np.abs(target - checkpoint_q)) / n_records)
+                        branch_L1_improvement = checkpoint_L1 - branch_L1
+
+                        alpha_to_result[branch_alpha] = (branch_L1_improvement, branch_L1)
+
+                    # 把去重后的结果按方向映射回三个分支（DOWN/HOLD/UP）
+                    branch_results = []
+                    for branch_name, branch_alpha in branches:
+                        imp, l1 = alpha_to_result[branch_alpha]
+                        branch_results.append((branch_name, imp, l1, branch_alpha))
+
+                    # 选择获胜分支（final_L1 最低者胜，平局偏 HOLD）
+                    winner_name, winner_alpha = probe_controller.select_winner(branch_results)
+                    winner_L1 = min(b[2] for b in branch_results)
+
+                    # 应用获胜者的 alpha
+                    current_alpha = winner_alpha
+
+                    # 结算：启动冷却、重置停滞、按是否刷新历史最好 L1 更新耐心计数
+                    probe_controller.register_probe_outcome(winner_L1)
+
+                    # 记录探测历史
+                    probe_history.append({
+                        "round": t + 1,
+                        "trigger_alpha": checkpoint.alpha,
+                        "branches": branch_results,
+                        "winner": winner_name,
+                        "winner_alpha": winner_alpha,
+                        "no_improve_probes": probe_controller.no_improve_probes,
+                    })
+
+                    # 检查经验平台
+                    if probe_controller.is_empirical_plateau():
+                        if log_every >= 0:
+                            print(f"轮次 {t+1}/{n_rounds} | 检测到经验平台（连续 {probe_controller.no_improve_probes} 次探测未刷新最好 L1），提前停止")
+                        stopped_early = True
+                        break
+
+                # 块结束：重置块计数，准备下一块。
+                # block_best_L1_at_start 不在此设置——下一块开始时由 973-975 的守卫
+                # 用 evaluate_table 重算（原先这里写 best_loss/n_records 是平方量纲，
+                # 与 L1 不同量纲，且必被重算覆盖，属死存储，已删除）。
+                block_candidate_count = 0
+
         # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
         if candidate_budget_exhausted:
             if do_log or log_every > 0:
@@ -1021,6 +1220,7 @@ def run_evolution(
             factorized_gibbs_factor_table_entries
         ),
         "factorized_gibbs_microsteps": factorized_gibbs_microsteps,
+        "probe_history": probe_history,
         "initial_table_sha256": initial_table_sha256,
         "primary_rng_post_initialization_state_sha256": (
             primary_rng_post_initialization_state_sha256
@@ -1080,6 +1280,17 @@ def run_evolution(
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None
             ),
+            "alpha_schedule_mode": alpha_schedule_mode,
+            "alpha_value": alpha_value,
+            "probe_block_candidate_budget": (
+                int(probe_block_candidate_budget) if probe_block_candidate_budget is not None else None
+            ),
+            "probe_P": int(probe_P),
+            "probe_H_candidate_budget": int(probe_H_candidate_budget),
+            "probe_s": probe_s,
+            "probe_C": int(probe_C),
+            "probe_stall_rel": probe_stall_rel,
+            "probe_patience": int(probe_patience),
         },
     }
 
