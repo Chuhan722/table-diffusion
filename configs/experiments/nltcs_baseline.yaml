@@ -1,0 +1,71 @@
+# NLTCS 基线配置
+# 基于 scripts/run.py 的默认参数
+
+experiment_name: "nltcs_baseline"
+n_rounds: 600
+seeds: [0, 1, 2]
+output_dir: "outputs/nltcs_baseline"
+
+# 数据配置
+data:
+  dataset_name: "nltcs"
+  schema_path: "configs/nltcs/schema.yaml"
+  query_path: "configs/nltcs/measured_1000query.json"
+  init_marginals_path: "configs/nltcs/init_marginals.json"
+  n_records: 16181
+  device: "cuda"
+
+# 接受规则（阶段 0 暂不使用，保持默认）
+acceptance_rule:
+  rule: "A0"
+  eps_Q: 0.0
+
+# Alpha 调度（当前使用 round_schedule 模式）
+alpha_schedule:
+  mode: "round_schedule"
+  alpha_min: 2.0
+  alpha_max: 10.0
+
+# 演化参数
+rho: 0.01
+beta: 1.0
+eta: 0.5
+h: 0.8
+mu: 0.01
+lambda_: 0.5
+delta: 0.05
+winsorize_limits: [0.01, 0.99]
+
+# 初始化参数
+init_method: "pairwise_maxent"
+maxent_max_states: 1000000
+maxent_max_sweeps: 200
+maxent_tol: 1.0e-8
+
+# 计算与性能参数
+eval_method: "vectorized"
+batch_size: 256
+log_every: 50
+tol: 1.0e-9
+
+# 抽样参数
+distance_mode: "geometric"
+p: 1.0
+exclude_self: true
+
+# 重试参数
+max_retries: 0
+retry_rho_decay: 0.5
+
+# 候选预算（可选）
+candidate_budget: null
+
+# 残差驱动扩散核（默认关闭）
+residual_directed_diffusion: false
+diffusion_direction_strength: 1.0
+diffusion_direction_normalization: "initial_rms"
+
+# Gibbs 参数（默认关闭）
+factorized_gibbs_sweeps: 0
+factorized_gibbs_max_order: 3
+factorized_gibbs_logit_clip: 30.0
