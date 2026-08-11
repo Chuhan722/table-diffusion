@@ -372,16 +372,36 @@ def test_independent_audit_detects_sparse_delta_tampering(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "candidate,gate,expected",
+    "candidate,gate,expected,expected_legacy",
     [
-        (90.0, True, "supports_persistent_heatbath_smoke"),
-        (97.0, True, "persistent_heatbath_smoke_inconclusive"),
-        (101.0, True, "persistent_heatbath_smoke_not_supported"),
-        (90.0, False, "implementation_or_experiment_failure"),
+        (
+            90.0,
+            True,
+            "construction_energy_check_passed",
+            "supports_persistent_heatbath_smoke",
+        ),
+        (
+            97.0,
+            True,
+            "construction_energy_check_inconclusive",
+            "persistent_heatbath_smoke_inconclusive",
+        ),
+        (
+            101.0,
+            True,
+            "construction_energy_check_not_passed",
+            "persistent_heatbath_smoke_not_supported",
+        ),
+        (
+            90.0,
+            False,
+            "implementation_or_experiment_failure",
+            "implementation_or_experiment_failure",
+        ),
     ],
 )
 def test_classification_follows_preregistered_seed_level_rules(
-    candidate, gate, expected
+    candidate, gate, expected, expected_legacy
 ):
     runs = [
         _fake_run(seed, 100.0, candidate, gate=gate)
@@ -393,6 +413,7 @@ def test_classification_follows_preregistered_seed_level_rules(
     )
 
     assert aggregate["classification"] == expected
+    assert aggregate["legacy_classification"] == expected_legacy
     assert aggregate["primary"]["candidate_minus_baseline"]["wins"] == (
         20 if candidate < 100.0 else 0
     )
@@ -410,6 +431,9 @@ def test_custom_protocol_never_receives_formal_classification():
     )
 
     assert aggregate["classification"] == (
+        "exploratory_protocol_no_formal_classification"
+    )
+    assert aggregate["legacy_classification"] == (
         "exploratory_protocol_no_formal_classification"
     )
 
