@@ -372,8 +372,15 @@ workload、初始化及同查询评价预算/同墙钟下的直接比较。
 20 个 seed 的 40 条轨迹均跑满 3000 微步。主终点从无向参考扩散的
 `10555.7663` 降到 candidate 的 `1342.6576`，相对降低 87.28%；配对差均值为
 `-9213.1087`，95% t 区间 `[-9658.0813,-8768.1360]`，20/0/0。通过预登记的
-5% 与 14/20 门槛，原始输出分类为 `supports_persistent_heatbath_smoke`。该标签
-现在只作为历史协议结果保留，不是方法支持结论。
+5% 与 14/20 门槛，原始输出（2026-08-05）分类标签为
+`supports_persistent_heatbath_smoke`。2026-08-11 第三轮审查后，在提交
+`dfdeae5` 按同一协议、同一种子与随机日程重跑正式实验：新输出主分类为
+`construction_energy_check_passed`，`legacy_classification` 逐字保留历史标签。
+新旧 51MB JSON 逐字段对拍共 151 处差异，全部属于三类：分类重命名与新增
+legacy 字段（2 处）、非决策墙钟诊断字段（`*_elapsed_sec` 及其汇总，133 处）、
+环境快照与两个在 `e0875da` 已更新的协议描述字符串（16 处）；全部轨迹、随机
+日程、表哈希、loss 历史与聚合统计完全一致。该分类只作为构造层能量检查结果
+保留，不是方法支持结论。
 
 这个巨大相对差主要受 baseline 退化支配。`beta=0` 会从已经利用 1-way marginal 的
 初始表持续向全域均匀参考分布扩散：四个 750 步窗口的平均 loss 依次为
@@ -395,20 +402,33 @@ gain 均值从参考侧 `-3.3370` 变为 `+0.2493`；相对同状态均匀条件
 不可约且有自环。保存前审计和全新进程只读审计都复算了 20 个初始状态、20 条随机
 日程、40 张最终表和 120000 次转移，零失败。
 
-CPU 上每 seed 的初始尺度枚举平均 3.086 秒，配对生成平均 12.544 秒；baseline 与
-candidate 的 3000 微步内核分别为 4.507/4.472 秒。正式生成阶段耗时 250.884 秒，
-不把保存前重复审计时间混入这一数字。正式 JSON 大小 51,347,863 字节，路径为
+CPU 上重跑各 seed 的初始尺度枚举平均 3.039 秒，配对生成平均 12.230 秒；
+baseline 与 candidate 的 3000 微步内核分别为 4.379/4.354 秒。重跑正式生成阶段
+耗时 244.600 秒，不把保存前重复审计时间混入这一数字。原始正式 JSON（51,347,863
+字节，SHA-256
+`27da4e8fdf94bd060d49157b2d8b20b54727da7cf94fcfb8605f607f419dd39c`）保留为
+`formal_20seed_3000step_tau1.pre_rename.json`；重跑正式 JSON 大小 51,348,052
+字节，路径为
 `outputs/persistent_workload_heatbath/formal_20seed_3000step_tau1.json`，SHA-256
-为 `27da4e8fdf94bd060d49157b2d8b20b54727da7cf94fcfb8605f607f419dd39c`。
+为 `f255628ed07173a5a0727d754a9661ab31db07a4464c15d75a4272d50d2ab3e4`。
 
 ### 8.3 核心负面观察：生成后离线质量恶化（探索性，非预注册主判断）
 
 正式分类完成后，提交 `6ee4034` 上单独运行
 `PYTHONPATH=src conda run --no-capture-output -n gsd python scripts/analyze_persistent_heatbath_offline.py`。
-离线脚本先重建并验证 20 张初始表与 40 张最终表，之后才读取单一真实参考表；这些
-指标没有进入生成、参数、早停、分类或输出选择。提交 `f5f425a` 的第一次启动因脚本
-同目录导入方式错误，在读取正式 JSON 和参考表前退出，没有输出；`6ee4034` 只修正
-脚本执行入口。
+提交 `f5f425a` 的第一次启动因脚本同目录导入方式错误，在读取正式 JSON 和参考表前
+退出，没有输出；`6ee4034` 只修正脚本执行入口。
+
+第三轮审查指出该脚本此前只检查输入 JSON 是否声明 `independent_audit.passed`，
+一份被修改但内部自洽的 JSON 可能被当作正式结果接受。提交 `dfdeae5` 起，离线
+脚本在读取真实参考表之前先用固定公开 schema/query/marginal 重新执行完整
+`independent_audit()`（公开输入哈希校验、20 条随机日程与 120000 次逐转移重放、
+聚合复算），任何失败直接终止；重执行结果记入离线输出的
+`independent_audit_reexecuted` 字段，`--audit-existing` 也校验该字段。此后脚本
+再重建并验证 20 张初始表与 40 张最终表，之后才读取单一真实参考表；这些指标
+没有进入生成、参数、早停、分类或输出选择。端到端负测试确认：把重跑正式 JSON 的
+`runs[0].candidate.loss_history[500]` 加 1 并保留内部审计标志后，离线评价在读取
+参考表前以 `transition_replay_mismatch` 与 `recomputed_loss_mismatch` 拒绝。
 
 离线结果构成本阶段的核心方法观察。这组指标是正式能量实验完成后追加的离线
 分析，不属于运行前预注册的主判断标准，因此按探索性负面信号报告：
@@ -428,10 +448,16 @@ candidate 相对无向 baseline 的 workload L1、未测量 3/4-way 和分箱 TV
 初始表的 L1 与 3-way 退化。该数据集没有独立 train/test 划分，联合指标只属于单一
 参考表的生成后诊断。
 
-离线 JSON 大小 92,619 字节，路径为
+离线 JSON 于提交 `dfdeae5` 随正式重跑重新生成：`analysis` 段与原输出
+（92,619 字节，SHA-256
+`375afa01d30102140d22749e837f0e200587c771ae86f477a6363f40e3a80e35`，保留为
+`offline_formal_20seed_3000step_tau1.pre_rename.json`）逐字段一致，新增的
+来源字段记录重执行审计与新旧分类。重跑离线 JSON 大小 93,010 字节，路径为
 `outputs/persistent_workload_heatbath/offline_formal_20seed_3000step_tau1.json`，
-SHA-256 为 `375afa01d30102140d22749e837f0e200587c771ae86f477a6363f40e3a80e35`；
-全新进程复算 20 个 seed、60 张表、正式结果与参考表哈希后通过。
+SHA-256 为
+`7f35b1fe5dab244130b6b1e91a78de218308a9f6609eef40558bd2b2dbaed7b2`；重执行审计
+复核 20 个初始状态、20 条随机日程、40 张最终表与 120000 次转移，含审计的离线
+评价总耗时 276.169 秒。
 
 ### 8.4 结论与下一问题
 

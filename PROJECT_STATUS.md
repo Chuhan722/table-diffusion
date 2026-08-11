@@ -151,7 +151,7 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 ### 固定温单坐标平方 workload 热浴——生成质量未改善
 
-**核心负面结论：** 以整张合成表为持久状态、使用
+**核心负面信号（探索性，非预注册主判断）：** 以整张合成表为持久状态、使用
 `P(v|rest) proportional exp(-beta E/N)` 条件分布的 `tau=1` candidate，虽然将
 相对初始表的平方 workload loss 从 `2155.35` 降到 `1371.80`（20/0/0），却把同一
 50-query workload 的 normalized L1 从 `0.017713` 恶化到 `0.019767`（仅 3/20
@@ -183,15 +183,26 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 与主线块级 donor-copy 的邻域不同，强相关查询上的能垒/混合限制未排除。因而当前
 无法在能量形式、温度定标、平衡态框架和更新粒度间分配负结果的因果责任。
 
+**离线评价可验证性：** 第三轮审查发现离线脚本原先只检查输入 JSON 是否声明
+`independent_audit.passed`，内部自洽的篡改 JSON 可能被接受。现在离线评价在读取
+真实参考表之前，用固定公开 schema/query/marginal 重新执行完整独立审计（公开
+输入哈希、20 条随机日程与 120000 次逐转移重放、聚合复算），失败直接终止，重执行
+结果写入输出的 `independent_audit_reexecuted`。端到端负测试确认篡改
+`loss_history[500]` 的 JSON 在读取参考表前被
+`transition_replay_mismatch`/`recomputed_loss_mismatch` 拒绝。含审计的离线评价
+总耗时 276.169 秒。
+
 **覆盖、规模与输出：** 结果只覆盖 `test_300x10` 和单一 `tau=1`；初始 RMS 固定
 `beta` 在状态漂移后的有效温度未经验证，没有温度前沿或跨数据集证据。当前精确
 小表一次扫描为 3000 个坐标，nltcs 一次扫描为 258896 个坐标且 workload 为
 1001 个查询，尚无实际规模可行性证据。自适应温度/退火使用新种子由 Issue #40
 独立验证；本 PR 不在观察正式结果后追加温度扫描。研究代码保留作为非默认、非稳定
-API 的复现基础。CPU 正式生成 250.884 秒。专项 57 项、完整
-CPU/torch 测试 662 项通过。正式/离线 JSON 的 SHA-256 分别为
-`27da4e8fdf94bd060d49157b2d8b20b54727da7cf94fcfb8605f607f419dd39c` 和
-`375afa01d30102140d22749e837f0e200587c771ae86f477a6363f40e3a80e35`。完整公式、
+API 的复现基础。分类重命名后按同协议重跑正式实验（CPU 生成 244.600 秒），新旧
+JSON 对拍除分类字段、非决策墙钟诊断和环境快照外逐字段一致，原输出保留为
+`*.pre_rename.json`。专项 59 项、完整 CPU/torch 测试 664 项通过。重跑正式/离线
+JSON 的 SHA-256 分别为
+`f255628ed07173a5a0727d754a9661ab31db07a4464c15d75a4272d50d2ab3e4` 和
+`7f35b1fe5dab244130b6b1e91a78de218308a9f6609eef40558bd2b2dbaed7b2`。完整公式、
 协议、失败与边界见 `docs/设计/持久化workload能量热浴扩散.md`，关联 Issue #32。
 
 ## 最近变更（2026-08-04）
