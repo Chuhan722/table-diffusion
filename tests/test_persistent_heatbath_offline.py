@@ -58,7 +58,8 @@ def test_validate_source_requires_formal_passed_generation():
             "acceptance_or_checkpoint_selection": False,
         },
         "aggregate": {
-            "classification": "supports_persistent_heatbath_smoke",
+            "classification": "construction_energy_check_passed",
+            "legacy_classification": "supports_persistent_heatbath_smoke",
             "all_diagnostic_gates_passed": True,
         },
         "independent_audit": {"passed": True},
@@ -69,6 +70,62 @@ def test_validate_source_requires_formal_passed_generation():
     invalid["independent_audit"]["passed"] = False
     with pytest.raises(ValueError, match="正式输出"):
         analysis._validate_source_payload(invalid)
+
+    legacy_mismatch = copy.deepcopy(payload)
+    legacy_mismatch["aggregate"]["legacy_classification"] = (
+        "construction_energy_check_passed"
+    )
+    with pytest.raises(ValueError, match="正式输出"):
+        analysis._validate_source_payload(legacy_mismatch)
+
+    renamed_only = copy.deepcopy(payload)
+    renamed_only["aggregate"]["classification"] = (
+        "supports_persistent_heatbath_smoke"
+    )
+    with pytest.raises(ValueError, match="正式输出"):
+        analysis._validate_source_payload(renamed_only)
+
+
+def test_reverify_independent_audit_reexecutes_with_fixed_public_inputs(
+    monkeypatch,
+):
+    calls = {}
+
+    def _fake_audit(payload, *, input_paths=None):
+        calls["payload"] = payload
+        calls["input_paths"] = input_paths
+        return {"passed": True, "failures": []}
+
+    monkeypatch.setattr(
+        analysis.experiment, "independent_audit", _fake_audit
+    )
+    payload = {"runs": []}
+
+    audit = analysis._reverify_independent_audit(payload)
+
+    assert audit["passed"] is True
+    assert calls["payload"] is payload
+    assert calls["input_paths"] == {
+        "schema": analysis.experiment.SCHEMA_PATH,
+        "queries": analysis.experiment.QUERY_PATH,
+        "marginals": analysis.experiment.MARGINALS_PATH,
+    }
+
+
+def test_reverify_independent_audit_rejects_recorded_only_pass(monkeypatch):
+    monkeypatch.setattr(
+        analysis.experiment,
+        "independent_audit",
+        lambda payload, *, input_paths=None: {
+            "passed": False,
+            "failures": [{"reason": "aggregate_mismatch"}],
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="重新执行的独立审计"):
+        analysis._reverify_independent_audit(
+            {"independent_audit": {"passed": True}}
+        )
 
 
 def test_relative_change_handles_zero_reference_explicitly():

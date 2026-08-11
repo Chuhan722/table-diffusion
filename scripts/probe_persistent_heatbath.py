@@ -4,7 +4,10 @@
 marginal。脚本不接受真实训练/测试表路径，不执行接受、回滚、早停或 best 选择。
 
 预注册分类只检查有限温核是否按构造降低其直接定义的平方能量，不是方法有效性或
-相对完整生成器优势的分类；方法层解释必须结合生成后的独立质量评价。
+相对完整生成器优势的分类。主分类标签因此命名为 ``construction_energy_check_*``，
+运行前冻结的历史标签逐字保留在 ``legacy_classification``，判定规则与门槛不变。
+固定温单坐标核是平衡态采样器，脚本返回固定预算末态，不是退火或 best-tracking
+优化器；方法层解释必须结合生成后的独立质量评价。
 """
 
 import argparse
@@ -57,6 +60,19 @@ ORACLE_BETAS = (0.0, 0.7, 1.3)
 IDENTITY_TOLERANCE = 1e-12
 REQUIRED_WINS = 14
 MIN_SUPPORT_REDUCTION = 0.05
+# 2026-08-11 审查后把主分类重命名为构造层能量检查语义；判定规则与门槛保持
+# 运行前冻结协议不变，历史标签逐字映射保留在 legacy_classification。
+LEGACY_CLASSIFICATION_LABELS = {
+    "construction_energy_check_passed": (
+        "supports_persistent_heatbath_smoke"
+    ),
+    "construction_energy_check_inconclusive": (
+        "persistent_heatbath_smoke_inconclusive"
+    ),
+    "construction_energy_check_not_passed": (
+        "persistent_heatbath_smoke_not_supported"
+    ),
+}
 
 
 def _sha256_bytes(payload):
@@ -823,18 +839,19 @@ def aggregate_results(
         "all_run_semantic_gates_passed": bool(run_gates_passed),
     }
     all_gates_passed = all(diagnostic_gates.values())
-    # 保留运行前冻结的历史分类以便原始输出逐字段重放。由于分类指标正是核直接
-    # 优化的平方能量，它只属于实现一致性检查，不得解释为方法有效性证据。
+    # 判定规则与门槛保持运行前冻结的历史协议。由于分类指标正是核直接优化的
+    # 平方能量，主分类命名为构造层能量检查；历史标签逐字保留在
+    # legacy_classification，两者都不得解释为方法有效性证据。
     if not all_gates_passed:
         classification = "implementation_or_experiment_failure"
     elif not classify:
         classification = "exploratory_protocol_no_formal_classification"
     elif candidate_mean >= baseline_mean or wins <= 10:
-        classification = "persistent_heatbath_smoke_not_supported"
+        classification = "construction_energy_check_not_passed"
     elif reduction >= MIN_SUPPORT_REDUCTION and wins >= REQUIRED_WINS:
-        classification = "supports_persistent_heatbath_smoke"
+        classification = "construction_energy_check_passed"
     else:
-        classification = "persistent_heatbath_smoke_inconclusive"
+        classification = "construction_energy_check_inconclusive"
 
     candidate_entropy = _summarize([
         run["candidate"]["metrics"][
@@ -850,6 +867,9 @@ def aggregate_results(
         "primary": primary,
         "candidate_relative_reduction": float(reduction),
         "classification": classification,
+        "legacy_classification": LEGACY_CLASSIFICATION_LABELS.get(
+            classification, classification
+        ),
         "classification_thresholds": {
             "minimum_relative_reduction": MIN_SUPPORT_REDUCTION,
             "minimum_wins": REQUIRED_WINS,
@@ -1670,6 +1690,7 @@ def main():
         overwrite=args.overwrite and not formal,
     )
     print(f"classification={aggregate['classification']}")
+    print(f"legacy_classification={aggregate['legacy_classification']}")
     print(f"output={output}")
     print(f"sha256={_sha256_file(output)}")
 

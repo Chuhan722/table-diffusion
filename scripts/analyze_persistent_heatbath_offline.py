@@ -1,8 +1,9 @@
 """对持久化热浴正式输出做生成后离线质量评价。
 
-本脚本只读取已经完成并通过审计的生成结果。它先用公开输入重建所有初始表和最终
-合成表，确认哈希、查询答案与 loss；此后才读取真实参考表。离线指标不参与生成、
-正式分类、参数选择、早停或输出表选择。
+本脚本只读取已经完成的生成结果。在读取真实参考表之前，它先用固定公开输入重新
+执行完整独立审计（公开输入哈希、逐转移重放、聚合复算），再重建所有初始表和最终
+合成表并确认哈希、查询答案与 loss；不采信输入 JSON 自带的审计标志。此后才读取
+真实参考表。离线指标不参与生成、正式分类、参数选择、早停或输出表选择。
 """
 
 import argparse
@@ -320,28 +321,51 @@ def _load_fixed_inputs():
 
 
 def _validate_source_payload(payload):
-    valid_classifications = {
-        "supports_persistent_heatbath_smoke",
-        "persistent_heatbath_smoke_inconclusive",
-        "persistent_heatbath_smoke_not_supported",
-    }
+    aggregate = payload.get("aggregate", {})
+    classification = aggregate.get("classification")
     if (
         payload.get("experiment") != "persistent_workload_heatbath"
         or payload.get("formal_protocol") is not True
         or not experiment._formal_payload_matches(payload)
-        or payload.get("aggregate", {}).get("classification")
-        not in valid_classifications
-        or payload.get("aggregate", {}).get(
-            "all_diagnostic_gates_passed"
-        ) is not True
+        or classification not in experiment.LEGACY_CLASSIFICATION_LABELS
+        or aggregate.get("legacy_classification")
+        != experiment.LEGACY_CLASSIFICATION_LABELS[classification]
+        or aggregate.get("all_diagnostic_gates_passed") is not True
         or payload.get("independent_audit", {}).get("passed") is not True
     ):
         raise ValueError("输入不是通过门禁的持久化热浴正式输出")
 
 
+def _reverify_independent_audit(payload):
+    """在读取真实参考表前用固定公开输入重新执行独立审计。
+
+    不信任输入 JSON 自带的 ``independent_audit.passed`` 字段：这里重新校验公开
+    输入哈希，并逐转移重放全部轨迹与聚合；任何失败都直接终止离线评价。
+    """
+    audit = experiment.independent_audit(
+        payload,
+        input_paths={
+            "schema": experiment.SCHEMA_PATH,
+            "queries": experiment.QUERY_PATH,
+            "marginals": experiment.MARGINALS_PATH,
+        },
+    )
+    if not audit["passed"]:
+        raise RuntimeError(
+            "生成结果未通过重新执行的独立审计："
+            + json.dumps(
+                audit["failures"][:5], ensure_ascii=False, sort_keys=True
+            )
+        )
+    return audit
+
+
 def _recompute(input_path):
     payload = experiment._load_json_strict(input_path)
     _validate_source_payload(payload)
+    # 隐私与可验证性边界：先重新执行完整独立审计（公开输入哈希、逐转移重放、
+    # 聚合复算），只有全部通过才继续；不采信 JSON 自带的审计标志。
+    audit_recheck = _reverify_independent_audit(payload)
     schema, queries, marginals = _load_fixed_inputs()
     states = _reconstruct_generated_states(
         payload, schema, queries, marginals
@@ -353,7 +377,7 @@ def _recompute(input_path):
     analysis = build_analysis(
         payload, schema, queries, marginals, reference, states
     )
-    return payload, analysis
+    return payload, analysis, audit_recheck
 
 
 def main():
@@ -374,17 +398,19 @@ def main():
             raise RuntimeError(
                 "正式离线评价要求当前提交对应的工作树完全干净"
             )
-    payload, analysis = _recompute(args.input)
+    payload, analysis, audit_recheck = _recompute(args.input)
     source_hash = experiment._sha256_file(args.input)
     reference_hash = experiment._sha256_file(REAL_DATA_PATH)
 
     if args.audit_existing is not None:
         existing = experiment._load_json_strict(args.audit_existing)
+        existing_source = existing.get("source", {})
         passed = bool(
-            existing.get("source", {}).get("generation_result_sha256")
-            == source_hash
-            and existing.get("source", {}).get("reference_sha256")
-            == reference_hash
+            existing_source.get("generation_result_sha256") == source_hash
+            and existing_source.get("reference_sha256") == reference_hash
+            and existing_source.get(
+                "independent_audit_reexecuted", {}
+            ).get("passed") is True
             and json.dumps(
                 existing.get("analysis"),
                 sort_keys=True,
@@ -397,6 +423,9 @@ def main():
             "passed": passed,
             "generation_result_sha256": source_hash,
             "reference_sha256": reference_hash,
+            "generation_audit_reexecuted_passed": bool(
+                audit_recheck["passed"]
+            ),
             "checked_seeds": len(payload["runs"]),
             "checked_tables": 3 * len(payload["runs"]),
         }
@@ -420,6 +449,10 @@ def main():
             "generation_classification": payload["aggregate"][
                 "classification"
             ],
+            "generation_legacy_classification": payload["aggregate"][
+                "legacy_classification"
+            ],
+            "independent_audit_reexecuted": audit_recheck,
             "reference_path": str(REAL_DATA_PATH),
             "reference_sha256": reference_hash,
             "public_input_sha256": payload["public_input_sha256"],
