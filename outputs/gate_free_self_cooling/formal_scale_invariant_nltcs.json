@@ -1,0 +1,816 @@
+{
+ "protocol": {
+  "hypothesis": "尺度不变选择解决无门低温选择退化；配置对齐后门在主指标上冗余",
+  "seeds": [
+   100,
+   101,
+   102,
+   103,
+   104
+  ],
+  "rounds": 2000,
+  "frozen_si_alpha": 16.0,
+  "arms": {
+   "no_gate_si": {
+    "tol": null,
+    "selection_scale_invariant": true,
+    "alpha_min": 16.0,
+    "alpha_max": 16.0
+   },
+   "gate_si": {
+    "tol": 1e-09,
+    "selection_scale_invariant": true,
+    "alpha_min": 16.0,
+    "alpha_max": 16.0
+   },
+   "no_gate_legacy": {
+    "tol": null,
+    "alpha_min": 2.0,
+    "alpha_max": 10.0
+   },
+   "gate_legacy": {
+    "tol": 1e-09,
+    "alpha_min": 2.0,
+    "alpha_max": 10.0
+   }
+  },
+  "shared_params": {
+   "rho": 0.01,
+   "beta": 1.0,
+   "h": 0.8,
+   "eta": 0.5,
+   "mu": 0.01,
+   "lambda_param": 0.5,
+   "delta": 0.05,
+   "winsorize_quantiles": [
+    0.01,
+    0.99
+   ],
+   "distance_mode": "geometric",
+   "init_method": "marginal",
+   "residual_directed_diffusion": true,
+   "diffusion_direction_strength": 2.0,
+   "diffusion_direction_normalization": "initial_rms",
+   "exclude_self": true
+  },
+  "primary_metric": "final_table_measured_l1",
+  "thresholds": {
+   "mechanism_max_ratio": 0.6,
+   "redundancy_max_ratio": 1.1,
+   "quality_risk_rel": 0.05
+  },
+  "dev_calibration_note": "si alpha=16 由 dev seed 42..44 定标冻结；dev 种子不进正式种子集；支持集唯一状态数为观察指标（dev 已知收窄）"
+ },
+ "environment": {
+  "git_commit": "f59d0ba3d7620d7f7674e5310eae2450ac55a342",
+  "git_worktree_clean_including_untracked": true,
+  "python": "3.9.21",
+  "numpy": "1.26.4",
+  "pandas": "2.2.3",
+  "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+  "argv": [
+   "scripts/probe_scale_invariant_formal.py",
+   "--datasets",
+   "nltcs",
+   "--out",
+   "outputs/gate_free_self_cooling/formal_scale_invariant_nltcs.json"
+  ],
+  "started_at": "2026-08-13T02:11:21.128875+08:00"
+ },
+ "formal": true,
+ "datasets": {
+  "nltcs": {
+   "runs": [
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 538930.0,
+     "final_loss": 540443.0,
+     "final_table_measured_l1": 0.0010111636092725025,
+     "best_loss": 442654.0,
+     "best_table_measured_l1": 0.0009110227267325098,
+     "tail_mean_loss": 619136.38,
+     "final_table_sha256": "dcdd73ed7fd8ecc8e749353f8dd3f2bbe5a977691b3fe91e42f8961df3bf3d3f",
+     "elapsed_sec": 608.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0014961339788063899,
+       "unmeasured_4way_l1": 0.0016648842320154354,
+       "raw_joint_tvd": 0.257771460354737,
+       "binned_joint_tvd": 0.257771460354737,
+       "raw_unique_states": 2119,
+       "raw_support_overlap": 1246
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.532315986585976,
+       "unmeasured_4way_l1": 0.25002926808975945,
+       "raw_joint_tvd": 0.3430399034286806,
+       "binned_joint_tvd": 0.3430399034286806,
+       "raw_unique_states": 2119,
+       "raw_support_overlap": 643
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 755561.0,
+     "final_loss": 755561.0,
+     "final_table_measured_l1": 0.0016489289092960066,
+     "best_loss": 755561.0,
+     "best_table_measured_l1": 0.0016489289092960066,
+     "tail_mean_loss": 755561.0,
+     "final_table_sha256": "e94da7a674c4e2a01ad9603608448b0217a248422c84526b6efc144703aebbd9",
+     "elapsed_sec": 341.8,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0019462904468240923,
+       "unmeasured_4way_l1": 0.0018290682804618901,
+       "raw_joint_tvd": 0.2585130708856066,
+       "binned_joint_tvd": 0.2585130708856066,
+       "raw_unique_states": 2789,
+       "raw_support_overlap": 1291
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5321218904804528,
+       "unmeasured_4way_l1": 0.25002037517488696,
+       "raw_joint_tvd": 0.33791159556344563,
+       "binned_joint_tvd": 0.33791159556344563,
+       "raw_unique_states": 2789,
+       "raw_support_overlap": 669
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3277713.5,
+     "final_loss": 3265578.5,
+     "final_table_measured_l1": 0.0034222621825365784,
+     "best_loss": 3241592.0,
+     "best_table_measured_l1": 0.0034265221830885265,
+     "tail_mean_loss": 3434895.345,
+     "final_table_sha256": "61b2819f5331be9a0ab430154752965f069febf97b3e1ba55f9f69d32dea12a9",
+     "elapsed_sec": 428.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003896687419873944,
+       "unmeasured_4way_l1": 0.003231689282844959,
+       "raw_joint_tvd": 0.28119399295469993,
+       "binned_joint_tvd": 0.28119399295469993,
+       "raw_unique_states": 3058,
+       "raw_support_overlap": 1407
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5317191761955414,
+       "unmeasured_4way_l1": 0.25002101189910214,
+       "raw_joint_tvd": 0.3696777431816788,
+       "binned_joint_tvd": 0.3696777431816788,
+       "raw_unique_states": 3058,
+       "raw_support_overlap": 695
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2109013.0,
+     "final_loss": 2109013.0,
+     "final_table_measured_l1": 0.00283333254101439,
+     "best_loss": 2109013.0,
+     "best_table_measured_l1": 0.00283333254101439,
+     "tail_mean_loss": 2276603.26,
+     "final_table_sha256": "60affb0f631ce4bc25cbcf846d9ed85eac6012b5dcbe5876aeefd000ddf9267e",
+     "elapsed_sec": 323.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0031700664904368374,
+       "unmeasured_4way_l1": 0.0026748404552619375,
+       "raw_joint_tvd": 0.2640751498671281,
+       "binned_joint_tvd": 0.2640751498671281,
+       "raw_unique_states": 3007,
+       "raw_support_overlap": 1437
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.531887507331305,
+       "unmeasured_4way_l1": 0.2500259358996998,
+       "raw_joint_tvd": 0.35422784845324784,
+       "binned_joint_tvd": 0.35422784845324784,
+       "raw_unique_states": 3007,
+       "raw_support_overlap": 706
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 493210.0,
+     "final_loss": 479647.5,
+     "final_table_measured_l1": 0.0009307175118929645,
+     "best_loss": 408089.0,
+     "best_table_measured_l1": 0.0008834870709909336,
+     "tail_mean_loss": 500794.935,
+     "final_table_sha256": "43aec3f3173df5bd6c638df182b45f73592203342f14d8bdde817add2f2e5496",
+     "elapsed_sec": 427.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0014460905698574914,
+       "unmeasured_4way_l1": 0.0016718920100973127,
+       "raw_joint_tvd": 0.25505222174154873,
+       "binned_joint_tvd": 0.25505222174154873,
+       "raw_unique_states": 2065,
+       "raw_support_overlap": 1232
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5323307428868383,
+       "unmeasured_4way_l1": 0.2500273791412543,
+       "raw_joint_tvd": 0.3371100939472648,
+       "binned_joint_tvd": 0.3371100939472648,
+       "raw_unique_states": 2065,
+       "raw_support_overlap": 636
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 782748.0,
+     "final_loss": 782748.0,
+     "final_table_measured_l1": 0.0016330002115800275,
+     "best_loss": 782748.0,
+     "best_table_measured_l1": 0.0016330002115800275,
+     "tail_mean_loss": 782748.0,
+     "final_table_sha256": "c915da52b613636edd3d949d791fd6a78421208aa42c2f8b0818bd5cd0778626",
+     "elapsed_sec": 211.7,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0019990663352007776,
+       "unmeasured_4way_l1": 0.0019135266501004097,
+       "raw_joint_tvd": 0.26339534021383104,
+       "binned_joint_tvd": 0.26339534021383104,
+       "raw_unique_states": 2737,
+       "raw_support_overlap": 1245
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5320842580094703,
+       "unmeasured_4way_l1": 0.25002054496801096,
+       "raw_joint_tvd": 0.3418048598712846,
+       "binned_joint_tvd": 0.3418048598712846,
+       "raw_unique_states": 2737,
+       "raw_support_overlap": 654
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3274776.5,
+     "final_loss": 3301938.0,
+     "final_table_measured_l1": 0.0035274039352897273,
+     "best_loss": 3245214.5,
+     "best_table_measured_l1": 0.003515858716402564,
+     "tail_mean_loss": 3510978.935,
+     "final_table_sha256": "f460dc2696adce7b741104a883d36baee920674d8d62745ebdb38ad0055c49a7",
+     "elapsed_sec": 425.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003927790842846239,
+       "unmeasured_4way_l1": 0.003220037949813613,
+       "raw_joint_tvd": 0.278660156974229,
+       "binned_joint_tvd": 0.278660156974229,
+       "raw_unique_states": 3026,
+       "raw_support_overlap": 1400
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5316874774751704,
+       "unmeasured_4way_l1": 0.25002239146823513,
+       "raw_joint_tvd": 0.36677443879035593,
+       "binned_joint_tvd": 0.36677443879035593,
+       "raw_unique_states": 3026,
+       "raw_support_overlap": 699
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1838904.0,
+     "final_loss": 1838904.0,
+     "final_table_measured_l1": 0.002610701207821287,
+     "best_loss": 1838904.0,
+     "best_table_measured_l1": 0.002610701207821287,
+     "tail_mean_loss": 1949340.76,
+     "final_table_sha256": "739b2c31a01c834585ca50d4267ff9d5dbf83d16b49847a2edabd2909ab9f151",
+     "elapsed_sec": 447.1,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0030026982219428463,
+       "unmeasured_4way_l1": 0.0025598084784012724,
+       "raw_joint_tvd": 0.25950188492676596,
+       "binned_joint_tvd": 0.25950188492676596,
+       "raw_unique_states": 2957,
+       "raw_support_overlap": 1428
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5318577605025825,
+       "unmeasured_4way_l1": 0.2500196535541097,
+       "raw_joint_tvd": 0.3458224134594825,
+       "binned_joint_tvd": 0.3458224134594825,
+       "raw_unique_states": 2957,
+       "raw_support_overlap": 710
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 588752.0,
+     "final_loss": 626031.5,
+     "final_table_measured_l1": 0.0011324810162953666,
+     "best_loss": 426479.5,
+     "best_table_measured_l1": 0.0009304705553392286,
+     "tail_mean_loss": 594897.175,
+     "final_table_sha256": "25adfdd13f0dd0d5025ed636aba5b3ded47fc8624ef7a9ab1c57d2b46b6f6bd0",
+     "elapsed_sec": 510.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0017103291376085697,
+       "unmeasured_4way_l1": 0.0018904871471152915,
+       "raw_joint_tvd": 0.2640751498671281,
+       "binned_joint_tvd": 0.2640751498671281,
+       "raw_unique_states": 2043,
+       "raw_support_overlap": 1232
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5322875670435744,
+       "unmeasured_4way_l1": 0.2500335553661419,
+       "raw_joint_tvd": 0.35033536716023594,
+       "binned_joint_tvd": 0.35033536716023594,
+       "raw_unique_states": 2043,
+       "raw_support_overlap": 656
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 809720.5,
+     "final_loss": 809720.5,
+     "final_table_measured_l1": 0.0016889976101396903,
+     "best_loss": 809720.5,
+     "best_table_measured_l1": 0.0016889976101396903,
+     "tail_mean_loss": 809720.5,
+     "final_table_sha256": "6d6670457fa9ca46795f31dd6698c2a0f21ba78a72a3dd780792fe66d792a813",
+     "elapsed_sec": 210.8,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.002030060458995961,
+       "unmeasured_4way_l1": 0.0019198552976595123,
+       "raw_joint_tvd": 0.2688338174402077,
+       "binned_joint_tvd": 0.2688338174402077,
+       "raw_unique_states": 2802,
+       "raw_support_overlap": 1284
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5320979212510096,
+       "unmeasured_4way_l1": 0.250020672312854,
+       "raw_joint_tvd": 0.34631645761953256,
+       "binned_joint_tvd": 0.34631645761953256,
+       "raw_unique_states": 2802,
+       "raw_support_overlap": 654
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3320751.5,
+     "final_loss": 3297417.5,
+     "final_table_measured_l1": 0.003445723055141509,
+     "best_loss": 3320751.5,
+     "best_table_measured_l1": 0.003445723055141509,
+     "tail_mean_loss": 3543056.5,
+     "final_table_sha256": "28e959a11322283a6ea87dcf9905609fb4578bfda6f3f41430d77ac63e3c9089",
+     "elapsed_sec": 424.9,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0038552005750760593,
+       "unmeasured_4way_l1": 0.0032074061220900107,
+       "raw_joint_tvd": 0.2811321920771275,
+       "binned_joint_tvd": 0.2811321920771275,
+       "raw_unique_states": 3045,
+       "raw_support_overlap": 1430
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5317422085169934,
+       "unmeasured_4way_l1": 0.2500216910715984,
+       "raw_joint_tvd": 0.3690605747145491,
+       "binned_joint_tvd": 0.3690605747145491,
+       "raw_unique_states": 3045,
+       "raw_support_overlap": 699
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2058888.0,
+     "final_loss": 2056036.5,
+     "final_table_measured_l1": 0.002753133400188588,
+     "best_loss": 2058888.0,
+     "best_table_measured_l1": 0.002753133400188588,
+     "tail_mean_loss": 2203282.23,
+     "final_table_sha256": "bd3b072d9b60500bc94c6bfd30c740b0ff007e333dc76ff7352e6ebbab31b4ec",
+     "elapsed_sec": 322.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0030944470740438532,
+       "unmeasured_4way_l1": 0.002637450075417445,
+       "raw_joint_tvd": 0.2650639639082875,
+       "binned_joint_tvd": 0.2650639639082875,
+       "raw_unique_states": 2990,
+       "raw_support_overlap": 1446
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.531834025500137,
+       "unmeasured_4way_l1": 0.2500219882095655,
+       "raw_joint_tvd": 0.3546603018128741,
+       "binned_joint_tvd": 0.3546603018128741,
+       "raw_unique_states": 2990,
+       "raw_support_overlap": 719
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 486340.0,
+     "final_loss": 494186.5,
+     "final_table_measured_l1": 0.0009735644739661797,
+     "best_loss": 471172.0,
+     "best_table_measured_l1": 0.0009820227359316415,
+     "tail_mean_loss": 586892.535,
+     "final_table_sha256": "14256a80d633379d75a27f664816281125a77013d0d563c6757f99ab2b0ac3bf",
+     "elapsed_sec": 425.1,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.001444919507245583,
+       "unmeasured_4way_l1": 0.0017340112301023245,
+       "raw_joint_tvd": 0.2570298498238675,
+       "binned_joint_tvd": 0.2570298498238675,
+       "raw_unique_states": 2069,
+       "raw_support_overlap": 1226
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5322846001682686,
+       "unmeasured_4way_l1": 0.25002735791711383,
+       "raw_joint_tvd": 0.3387161528472443,
+       "binned_joint_tvd": 0.3387161528472443,
+       "raw_unique_states": 2069,
+       "raw_support_overlap": 640
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 894993.5,
+     "final_loss": 894993.5,
+     "final_table_measured_l1": 0.0017438219650691069,
+     "best_loss": 894993.5,
+     "best_table_measured_l1": 0.0017438219650691069,
+     "tail_mean_loss": 894993.5,
+     "final_table_sha256": "afe1604be630bbb1fa61e9e1f7ee139cce31dd34e01514df6d99e0574089b23d",
+     "elapsed_sec": 212.1,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0021350657398637738,
+       "unmeasured_4way_l1": 0.0019939059920365157,
+       "raw_joint_tvd": 0.2644459551325629,
+       "binned_joint_tvd": 0.2644459551325629,
+       "raw_unique_states": 2782,
+       "raw_support_overlap": 1264
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5321364125543172,
+       "unmeasured_4way_l1": 0.2500198657955148,
+       "raw_joint_tvd": 0.33482078776791807,
+       "binned_joint_tvd": 0.33482078776791807,
+       "raw_unique_states": 2782,
+       "raw_support_overlap": 665
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3485045.0,
+     "final_loss": 3457333.0,
+     "final_table_measured_l1": 0.0035490126337416367,
+     "best_loss": 3483085.5,
+     "best_table_measured_l1": 0.0035490126337416367,
+     "tail_mean_loss": 3647718.17,
+     "final_table_sha256": "69be7ef6fb702758505bfd866e635a56f59c6390b68be50f34ce731c84625399",
+     "elapsed_sec": 425.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003975523354907638,
+       "unmeasured_4way_l1": 0.0033127902009615125,
+       "raw_joint_tvd": 0.2837278289351709,
+       "binned_joint_tvd": 0.2837278289351709,
+       "raw_unique_states": 3052,
+       "raw_support_overlap": 1437
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5317206596331943,
+       "unmeasured_4way_l1": 0.2500282068827341,
+       "raw_joint_tvd": 0.3679472231200368,
+       "binned_joint_tvd": 0.3679472231200368,
+       "raw_unique_states": 3052,
+       "raw_support_overlap": 696
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2043473.5,
+     "final_loss": 2043473.5,
+     "final_table_measured_l1": 0.0028012899281671297,
+     "best_loss": 2043473.5,
+     "best_table_measured_l1": 0.0028012899281671297,
+     "tail_mean_loss": 2234698.805,
+     "final_table_sha256": "7ec151a97b80b94e5a3af51fb4f3c5cfa6356609adefaa020be4359579bfae6e",
+     "elapsed_sec": 329.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0031301410624548303,
+       "unmeasured_4way_l1": 0.002642717581534713,
+       "raw_joint_tvd": 0.2666707867251715,
+       "binned_joint_tvd": 0.2666707867251715,
+       "raw_unique_states": 3017,
+       "raw_support_overlap": 1455
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5318696280038051,
+       "unmeasured_4way_l1": 0.2500207572094161,
+       "raw_joint_tvd": 0.35602030307792054,
+       "binned_joint_tvd": 0.35602030307792054,
+       "raw_unique_states": 3017,
+       "raw_support_overlap": 709
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 583349.0,
+     "final_loss": 571375.5,
+     "final_table_measured_l1": 0.0010541957887610196,
+     "best_loss": 415410.5,
+     "best_table_measured_l1": 0.0009084914220567147,
+     "tail_mean_loss": 564248.9,
+     "final_table_sha256": "bb751b14b10bbd240bef2a3c89f3e7911a45bd57ff52afd71457300d26df4130",
+     "elapsed_sec": 425.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.001489857083206559,
+       "unmeasured_4way_l1": 0.001654302529557458,
+       "raw_joint_tvd": 0.2552994252518386,
+       "binned_joint_tvd": 0.2552994252518386,
+       "raw_unique_states": 2137,
+       "raw_support_overlap": 1256
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5323250433632248,
+       "unmeasured_4way_l1": 0.2500260420204023,
+       "raw_joint_tvd": 0.3363686552976988,
+       "binned_joint_tvd": 0.3363686552976988,
+       "raw_unique_states": 2137,
+       "raw_support_overlap": 654
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 744012.0,
+     "final_loss": 744012.0,
+     "final_table_measured_l1": 0.001641026299576451,
+     "best_loss": 744012.0,
+     "best_table_measured_l1": 0.001641026299576451,
+     "tail_mean_loss": 744012.0,
+     "final_table_sha256": "ff0d45b31c8bfd4f94f96f919fa8eb065c806ae62f191977be81e7c720435ad4",
+     "elapsed_sec": 210.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0019476957219583823,
+       "unmeasured_4way_l1": 0.0018448920216425314,
+       "raw_joint_tvd": 0.26895741919535265,
+       "binned_joint_tvd": 0.26895741919535265,
+       "raw_unique_states": 2783,
+       "raw_support_overlap": 1261
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5321147075191863,
+       "unmeasured_4way_l1": 0.2500196747782502,
+       "raw_joint_tvd": 0.34854140379967685,
+       "binned_joint_tvd": 0.34854140379967685,
+       "raw_unique_states": 2783,
+       "raw_support_overlap": 631
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3059194.5,
+     "final_loss": 3065489.5,
+     "final_table_measured_l1": 0.0033889230477822034,
+     "best_loss": 3042740.5,
+     "best_table_measured_l1": 0.0033791682639096273,
+     "tail_mean_loss": 3282176.325,
+     "final_table_sha256": "70ca30ce6703bd9227b76c33f28537c683c1b7b699c8f9143320d8893a06ad30",
+     "elapsed_sec": 424.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0038375877933929524,
+       "unmeasured_4way_l1": 0.0031904490818494904,
+       "raw_joint_tvd": 0.2775477411779247,
+       "binned_joint_tvd": 0.2775477411779247,
+       "raw_unique_states": 3084,
+       "raw_support_overlap": 1457
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5317453315436309,
+       "unmeasured_4way_l1": 0.25002362246838455,
+       "raw_joint_tvd": 0.36436298229798275,
+       "binned_joint_tvd": 0.36436298229798275,
+       "raw_unique_states": 3084,
+       "raw_support_overlap": 708
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1857804.0,
+     "final_loss": 1857804.0,
+     "final_table_measured_l1": 0.0026392246897778077,
+     "best_loss": 1857804.0,
+     "best_table_measured_l1": 0.0026392246897778077,
+     "tail_mean_loss": 1992697.465,
+     "final_table_sha256": "c86e153af8df7d6579ebaa3e4a4c63945be4693cd8ba24faee18aca9a9fa3948",
+     "elapsed_sec": 327.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0029849136844099927,
+       "unmeasured_4way_l1": 0.002503788699403927,
+       "raw_joint_tvd": 0.2573388542117298,
+       "binned_joint_tvd": 0.2573388542117298,
+       "raw_unique_states": 2973,
+       "raw_support_overlap": 1465
+      },
+      "test": {
+       "unmeasured_3way_l1": 0.5318906303579425,
+       "unmeasured_4way_l1": 0.25002116046808576,
+       "raw_joint_tvd": 0.3505814629910143,
+       "binned_joint_tvd": 0.3505814629910143,
+       "raw_unique_states": 2973,
+       "raw_support_overlap": 703
+      }
+     }
+    }
+   ],
+   "judgment": {
+    "arm_means": {
+     "no_gate_si": 0.0010204244800376065,
+     "gate_si": 0.0016711549991322565,
+     "no_gate_legacy": 0.003466664970898331,
+     "gate_legacy": 0.0027275363533938403
+    },
+    "mechanism": {
+     "ratio": 0.29435335938251334,
+     "threshold": 0.6,
+     "passed": true,
+     "no_gate_si_wins": 5
+    },
+    "gate_redundancy": {
+     "ratio": 0.6106103147628195,
+     "threshold": 1.1,
+     "passed": true
+    },
+    "quality": {
+     "test.unmeasured_3way_l1": {
+      "no_gate_si": 0.5323087880095765,
+      "gate_legacy": 0.5318679103391544,
+      "relative_change": 0.0008289232379915156,
+      "flagged": false
+     },
+     "test.unmeasured_4way_l1": {
+      "no_gate_si": 0.25002872050693437,
+      "gate_legacy": 0.2500218990681754,
+      "relative_change": 2.7283365114764363e-05,
+      "flagged": false
+     },
+     "test.binned_joint_tvd": {
+      "no_gate_si": 0.3411140345362249,
+      "gate_legacy": 0.35226246595890787,
+      "relative_change": -0.031648082041143284,
+      "flagged": false
+     },
+     "test.raw_unique_states": {
+      "no_gate_si": 2086.6,
+      "gate_legacy": 2988.8,
+      "observational": true
+     },
+     "train.unmeasured_3way_l1": {
+      "no_gate_si": 0.0015174660553449186,
+      "gate_legacy": 0.003076453306657672,
+      "relative_change": -0.506748224632238,
+      "flagged": false
+     },
+     "train.unmeasured_4way_l1": {
+      "no_gate_si": 0.0017231154297775646,
+      "gate_legacy": 0.0026037210580038593,
+      "relative_change": -0.33821043368655257,
+      "flagged": false
+     },
+     "train.binned_joint_tvd": {
+      "no_gate_si": 0.25784562140782397,
+      "gate_legacy": 0.2625301279278166,
+      "relative_change": -0.017843691148776097,
+      "flagged": false
+     },
+     "train.raw_unique_states": {
+      "no_gate_si": 2086.6,
+      "gate_legacy": 2988.8,
+      "observational": true
+     }
+    },
+    "any_quality_risk": false,
+    "classification": "supports_scale_invariant_selection"
+   }
+  }
+ }
+}
