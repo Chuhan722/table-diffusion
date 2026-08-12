@@ -126,6 +126,40 @@ class TestRhoAnnealSchedule:
                 assert acc == pytest.approx(rho_t * c_t)
 
 
+class TestTwoPhaseSchedule:
+    def test_reaches_end_at_k_then_holds(self):
+        rounds, k = 12, 4
+        _, diag = _run(
+            rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=k,
+            n_rounds=rounds, tol=float("inf"),
+        )
+        schedule = diag["rho_schedule_history"]
+        expected = [
+            0.1 * (0.01 / 0.1) ** min(1.0, t / k)
+            for t in range(len(schedule))
+        ]
+        assert schedule == pytest.approx(expected)
+        assert schedule[k] == pytest.approx(0.01)
+        assert all(v == pytest.approx(0.01) for v in schedule[k:])
+
+    def test_params_record_rounds(self):
+        _, diag = _run(
+            rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=5,
+        )
+        assert diag["params"]["rho_anneal_rounds"] == 5
+        _, diag_off = _run(rho=0.1, rho_anneal_end=0.01)
+        assert diag_off["params"]["rho_anneal_rounds"] is None
+
+    def test_requires_anneal_end(self):
+        with pytest.raises(ValueError, match="rho_anneal_rounds"):
+            _run(rho=0.1, rho_anneal_rounds=5)
+
+    @pytest.mark.parametrize("bad", [0, -3, 1.5, True, "5"])
+    def test_rejects_invalid_rounds(self, bad):
+        with pytest.raises((ValueError, TypeError)):
+            _run(rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=bad)
+
+
 class TestRhoAnnealValidation:
     @pytest.mark.parametrize("bad", [
         0.0, -0.01, 0.2, float("nan"), float("inf"), True, "0.01",

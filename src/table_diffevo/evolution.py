@@ -163,6 +163,7 @@ def run_evolution(
     self_cooling_monotone: bool = False,
     self_cooling_stop_ratio: Optional[float] = None,
     rho_anneal_end: Optional[float] = None,
+    rho_anneal_rounds: Optional[int] = None,
     return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -308,6 +309,13 @@ def run_evolution(
         rho`` 时每轮值恒为 rho（浮点上与关闭一致）。与
         ``residual_self_cooling`` 可组合：冷却因子乘在退火后的 rho_t 上。
         None 时完全关闭，rho 恒定，行为与历史逐轨迹一致。
+    rho_anneal_rounds : int or None, default None
+        两段式调度的快降段轮数 K（需同时启用 rho_anneal_end）。指定时退火
+        进度按 ``min(1, t / K)`` 计算：前 K 轮从 ``rho`` 几何降温到
+        ``rho_anneal_end``，之后恒定在 ``rho_anneal_end`` 深潜。None 时
+        退火进度铺满全程 ``n_rounds``。动机：无门恒定动力学的噪声地板随
+        rho 近似线性抬升，而到达高温地板只需少量轮数——快降段之后把预算
+        留给低温深潜。仍是纯时间驱动的盲调度，不读取残差或候选评价。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -477,6 +485,21 @@ def run_evolution(
                 f"得到 {rho_anneal_end!r}（rho={rho}）"
             )
         rho_anneal_end = float(rho_anneal_end)
+    if rho_anneal_rounds is not None:
+        if rho_anneal_end is None:
+            raise ValueError(
+                "rho_anneal_rounds 需要同时启用 rho_anneal_end"
+            )
+        if (
+            isinstance(rho_anneal_rounds, (bool, np.bool_))
+            or not isinstance(rho_anneal_rounds, (int, np.integer))
+            or rho_anneal_rounds < 1
+        ):
+            raise ValueError(
+                "rho_anneal_rounds 必须是正整数或 None，"
+                f"得到 {rho_anneal_rounds!r}"
+            )
+        rho_anneal_rounds = int(rho_anneal_rounds)
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -707,8 +730,13 @@ def run_evolution(
 
         # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
         # 或候选评价。关闭时 rho_t 恒等于 rho，逐轨迹等价于历史行为。
+        # rho_anneal_rounds 指定时为两段式：前 K 轮快降，其后恒定深潜。
         if rho_anneal_end is not None:
-            rho_t = rho * (rho_anneal_end / rho) ** progress
+            if rho_anneal_rounds is not None:
+                anneal_progress = min(1.0, t / rho_anneal_rounds)
+            else:
+                anneal_progress = progress
+            rho_t = rho * (rho_anneal_end / rho) ** anneal_progress
         else:
             rho_t = rho
         rho_schedule_history.append(rho_t)
@@ -1266,6 +1294,10 @@ def run_evolution(
             ),
             "rho_anneal_end": (
                 float(rho_anneal_end) if rho_anneal_end is not None else None
+            ),
+            "rho_anneal_rounds": (
+                int(rho_anneal_rounds)
+                if rho_anneal_rounds is not None else None
             ),
         },
     }
