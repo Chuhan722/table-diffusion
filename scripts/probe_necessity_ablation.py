@@ -29,8 +29,9 @@
   全臂报告，不设门槛，只作解释。
 
 协议与 ``probe_gate_free_formal.py`` 共享数据集、种子（100..104）、轮数
-（2000）与共同参数；扩散臂与正式运行完全同配置，其结果可与正式 JSON 交叉
-核对。隐私边界一致：生成只读公开输入，参考表在数据集全部生成后离线评价。
+（2000）与共同参数（含 2026-08-12 审查后显式固定的 rho=0.01；此前首轮运行
+继承默认 rho=0.1，保留为历史记录）；扩散臂与正式运行完全同配置，其结果可与
+正式 JSON 交叉核对。隐私边界一致：生成只读公开输入，参考表在数据集全部生成后离线评价。
 """
 
 import argparse
@@ -53,6 +54,7 @@ else:
 from table_diffevo.evolution import run_evolution
 from table_diffevo.marginals import load_marginals
 from table_diffevo.metrics import compute_normalized_l1
+from table_diffevo.objective import compute_loss
 from table_diffevo.queries import evaluate_table, load_queries
 from table_diffevo.schema import load_schema
 
@@ -87,7 +89,7 @@ DATASETS = {
 }
 
 BASE_PARAMS = dict(
-    beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
+    rho=0.01, beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
     winsorize_quantiles=(0.01, 0.99), distance_mode="geometric",
     init_method="marginal", exclude_self=True,
 )
@@ -198,11 +200,14 @@ def _run_dataset(name, spec, seeds, rounds):
             losses = diag["loss_history"]
             final_table = diag.pop("final_table")
             final_q = evaluate_table(final_table, queries)
+            # 终态平方 loss 从最终表重算（与 formal 脚本同口径修正）。
+            final_loss = float(compute_loss(target, final_q))
             runs.append({
                 "dataset": name,
                 "seed": int(seed),
                 "arm": arm,
-                "final_loss": float(losses[-1]),
+                "final_loss": final_loss,
+                "pre_final_proposal_loss": float(losses[-1]),
                 "best_loss": float(diag["best_loss"]),
                 "tail_mean_loss": float(np.mean(losses[-TAIL_WINDOW:])),
                 "final_table_measured_l1": float(
@@ -218,7 +223,7 @@ def _run_dataset(name, spec, seeds, rounds):
             tables[(seed, arm)] = final_table
             print(
                 f"[{name}] seed={seed} {arm:26s} "
-                f"final={losses[-1]:12.1f} "
+                f"final={final_loss:12.1f} "
                 f"L1={runs[-1]['final_table_measured_l1']:.6f} "
                 f"({elapsed:.1f}s)",
                 flush=True,
