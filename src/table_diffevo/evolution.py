@@ -162,6 +162,7 @@ def run_evolution(
     residual_self_cooling: Optional[float] = None,
     self_cooling_monotone: bool = False,
     self_cooling_stop_ratio: Optional[float] = None,
+    rho_anneal_end: Optional[float] = None,
     return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -297,6 +298,16 @@ def run_evolution(
         内在停止阈值（需同时启用 residual_self_cooling）。当残差比
         ``r_t <= self_cooling_stop_ratio`` 时提前停止，作为达标早停之外的
         内在收敛停机信号；取值须在 (0, 1)。None 时不启用。
+    rho_anneal_end : float or None, default None
+        时间驱动的几何 rho 退火终点（Issue #44 机制迭代，默认关闭）。设为
+        (0, rho] 内的值时，第 t 轮（t 从 0 起）的参与率为
+        ``rho_t = rho * (rho_anneal_end / rho) ** (t / (n_rounds - 1))``，
+        即从 ``rho`` 几何插值到 ``rho_anneal_end``——扩散模型意义上的盲
+        噪声时间表（noise schedule）：调度只依赖轮次进度，不读取残差或任何
+        候选评价，因而不存在残差反馈的过早冻结死锁。``rho_anneal_end ==
+        rho`` 时每轮值恒为 rho（浮点上与关闭一致）。与
+        ``residual_self_cooling`` 可组合：冷却因子乘在退火后的 rho_t 上。
+        None 时完全关闭，rho 恒定，行为与历史逐轨迹一致。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -451,6 +462,21 @@ def run_evolution(
                 f"得到 {self_cooling_stop_ratio!r}"
             )
         self_cooling_stop_ratio = float(self_cooling_stop_ratio)
+    if rho_anneal_end is not None:
+        if (
+            isinstance(rho_anneal_end, (bool, np.bool_))
+            or not isinstance(
+                rho_anneal_end,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(rho_anneal_end)
+            or not 0.0 < rho_anneal_end <= rho
+        ):
+            raise ValueError(
+                "rho_anneal_end 必须位于 (0, rho] 或为 None，"
+                f"得到 {rho_anneal_end!r}（rho={rho}）"
+            )
+        rho_anneal_end = float(rho_anneal_end)
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -604,6 +630,7 @@ def run_evolution(
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
+    rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
     copy_direction_mean_history: List[Optional[float]] = []
     copy_direction_positive_rate_history: List[Optional[float]] = []
     copy_direction_negative_rate_history: List[Optional[float]] = []
@@ -677,6 +704,14 @@ def run_evolution(
             progress = 1.0
         alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
+
+        # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
+        # 或候选评价。关闭时 rho_t 恒等于 rho，逐轨迹等价于历史行为。
+        if rho_anneal_end is not None:
+            rho_t = rho * (rho_anneal_end / rho) ** progress
+        else:
+            rho_t = rho
+        rho_schedule_history.append(rho_t)
 
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
@@ -935,7 +970,7 @@ def run_evolution(
         )
         for attempt in range(max_retries + 1):
             attempt_rho = (
-                rho * self_cooling_factor * (retry_rho_decay ** attempt)
+                rho_t * self_cooling_factor * (retry_rho_decay ** attempt)
             )
             if factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
@@ -1095,6 +1130,7 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
+        "rho_schedule_history": rho_schedule_history,
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history
@@ -1227,6 +1263,9 @@ def run_evolution(
             "self_cooling_stop_ratio": (
                 float(self_cooling_stop_ratio)
                 if self_cooling_stop_ratio is not None else None
+            ),
+            "rho_anneal_end": (
+                float(rho_anneal_end) if rho_anneal_end is not None else None
             ),
         },
     }
