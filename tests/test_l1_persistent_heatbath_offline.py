@@ -173,6 +173,44 @@ def test_source_validation_requires_formal_generation_and_audit():
         analysis._validate_source_payload(invalid)
 
 
+def test_reverify_reexecutes_audit_with_fixed_public_inputs(monkeypatch):
+    calls = {}
+
+    def _fake_audit(payload, *, input_paths=None):
+        calls["payload"] = payload
+        calls["input_paths"] = input_paths
+        return {"passed": True, "failures": []}
+
+    monkeypatch.setattr(
+        analysis.experiment, "independent_audit", _fake_audit
+    )
+
+    audit = analysis._reverify_independent_audit({"runs": []})
+
+    assert audit["passed"] is True
+    assert calls["input_paths"] == {
+        "schema": analysis.experiment.SCHEMA_PATH,
+        "queries": analysis.experiment.QUERY_PATH,
+        "marginals": analysis.experiment.MARGINALS_PATH,
+    }
+
+
+def test_reverify_rejects_recorded_only_pass(monkeypatch):
+    monkeypatch.setattr(
+        analysis.experiment,
+        "independent_audit",
+        lambda payload, *, input_paths=None: {
+            "passed": False,
+            "failures": [{"reason": "target_public_input_mismatch"}],
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="重新执行的独立审计"):
+        analysis._reverify_independent_audit(
+            {"independent_audit": {"passed": True}}
+        )
+
+
 def test_summarize_rejects_nonfinite_and_reports_median():
     result = analysis._summarize([1.0, 4.0, 9.0])
     assert result["median"] == 4.0

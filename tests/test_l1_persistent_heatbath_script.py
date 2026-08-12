@@ -233,6 +233,103 @@ def test_independent_audit_detects_tampering(
         )
 
 
+def test_independent_audit_binds_target_to_hashed_queries(
+    monkeypatch, tmp_path
+):
+    """payload 自带 target 与已哈希 queries 不一致时必须失败（审查修复 1）。"""
+    monkeypatch.setattr(probe, "N_RECORDS", 2)
+    paths, marginals = _write_public_inputs(tmp_path)
+    schema, queries, target = _tiny_problem()
+    fake_target = target + 1.0
+    run = probe.run_seed(
+        63,
+        schema,
+        queries,
+        fake_target,
+        marginals,
+        steps=6,
+        tail=2,
+        tau=1.0,
+        verify_every=4,
+    )
+    payload = _payload(run, paths, fake_target)
+
+    audit = probe.independent_audit(payload, input_paths=paths)
+
+    assert audit["passed"] is False
+    assert any(
+        failure.get("reason") == "target_public_input_mismatch"
+        for failure in audit["failures"]
+    )
+
+
+def test_independent_audit_checks_marginal_record_count(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(probe, "N_RECORDS", 2)
+    paths, marginals = _write_public_inputs(tmp_path)
+    schema, queries, target = _tiny_problem()
+    run = probe.run_seed(
+        64, schema, queries, target, marginals,
+        steps=6, tail=2, tau=1.0, verify_every=4,
+    )
+    payload = _payload(run, paths, target)
+    tampered = copy.deepcopy(payload)
+    tampered["protocol"]["n_records"] = 3
+
+    audit = probe.independent_audit(tampered, input_paths=paths)
+
+    assert audit["passed"] is False
+    assert any(
+        failure.get("reason") == "marginal_record_count_mismatch"
+        for failure in audit["failures"]
+    )
+
+
+def test_independent_audit_verifies_step0_checkpoint(monkeypatch, tmp_path):
+    """step 0 checkpoint 被篡改时必须失败（审查修复 3）。"""
+    monkeypatch.setattr(probe, "N_RECORDS", 2)
+    paths, marginals = _write_public_inputs(tmp_path)
+    schema, queries, target = _tiny_problem()
+    run = probe.run_seed(
+        65, schema, queries, target, marginals,
+        steps=6, tail=2, tau=1.0, verify_every=4,
+    )
+    payload = _payload(run, paths, target)
+    tampered = copy.deepcopy(payload)
+    tampered["runs"][0]["candidate"]["full_state_audits"][0][
+        "query_answers"
+    ] = [999, 999, 999]
+
+    audit = probe.independent_audit(tampered, input_paths=paths)
+
+    assert audit["passed"] is False
+    assert any(
+        failure.get("reason") == "initial_checkpoint_mismatch"
+        for failure in audit["failures"]
+    )
+
+
+def test_audit_counts_reflect_actual_successes(monkeypatch, tmp_path):
+    """checked_* 只统计实际成功项：中途转移失败时不得报告满额。"""
+    monkeypatch.setattr(probe, "N_RECORDS", 2)
+    paths, marginals = _write_public_inputs(tmp_path)
+    schema, queries, target = _tiny_problem()
+    run = probe.run_seed(
+        66, schema, queries, target, marginals,
+        steps=6, tail=2, tau=1.0, verify_every=4,
+    )
+    payload = _payload(run, paths, target)
+    tampered = copy.deepcopy(payload)
+    tampered["runs"][0]["candidate"]["energy_history"][3] = 999.0
+
+    audit = probe.independent_audit(tampered, input_paths=paths)
+
+    assert audit["passed"] is False
+    assert audit["checked_seed_trajectories"] < 2
+    assert audit["checked_transitions"] < 12
+
+
 def test_generation_aggregate_waits_for_offline_quality(monkeypatch):
     monkeypatch.setattr(probe, "N_RECORDS", 2)
     schema, queries, target = _tiny_problem()

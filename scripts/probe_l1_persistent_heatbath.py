@@ -931,8 +931,19 @@ def _formal_payload_matches(payload):
 
 
 def independent_audit(payload, *, input_paths):
-    """从公开输入、seed 和稀疏历史独立重放全部正式转移。"""
+    """从公开输入、seed 和稀疏历史独立重放全部正式转移。
+
+    审计口径（2026-08-12 审查修复）：target 从已哈希的 queries 重新派生并
+    绑定比较，protocol.n_records 与 marginals 公开记录数比对；step 0
+    checkpoint 与重建初始状态显式比较；checked_* 计数只在对应项实际审计
+    成功后递增。
+    """
     failures = []
+    checked_seed_trajectories = 0
+    checked_transitions = 0
+    checked_public_initial_states = 0
+    checked_random_schedules = 0
+    checked_final_tables = 0
     required_paths = {"schema", "queries", "marginals"}
     if set(input_paths) != required_paths:
         raise ValueError("input_paths 必须包含 schema、queries 与 marginals")
@@ -941,6 +952,13 @@ def independent_audit(payload, *, input_paths):
         queries = load_queries(str(input_paths["queries"]))
         marginals = load_marginals(str(input_paths["marginals"]))
         target = np.asarray(payload["target"], dtype=float)
+        # target 绑定：payload 自带 target 必须逐元素等于已哈希 queries 的
+        # result；否则结果只与自带 target 自洽，不对应声明的公开查询目标。
+        expected_target = np.asarray(
+            [query["result"] for query in queries], dtype=float
+        )
+        if not np.array_equal(target, expected_target):
+            failures.append({"reason": "target_public_input_mismatch"})
         recorded_hashes = payload["public_input_sha256"]
         if any(
             common._sha256_file(path) != recorded_hashes.get(name)
@@ -961,6 +979,8 @@ def independent_audit(payload, *, input_paths):
     tail = int(payload["protocol"]["tail_window"])
     verify_every = int(payload["protocol"]["verify_every"])
     n_records = int(payload["protocol"]["n_records"])
+    if int(marginals.get("n_records", -1)) != n_records:
+        failures.append({"reason": "marginal_record_count_mismatch"})
     if payload.get("exact_oracle") != run_exact_oracle():
         failures.append({"reason": "exact_oracle_mismatch"})
 
@@ -1002,6 +1022,8 @@ def independent_audit(payload, *, input_paths):
                     "seed": seed,
                     "reason": "regenerated_initial_state_mismatch",
                 })
+            else:
+                checked_public_initial_states += 1
 
             modes = {
                 "baseline": ENERGY_MODE_SQUARED,
@@ -1081,6 +1103,8 @@ def independent_audit(payload, *, input_paths):
                     "seed": seed,
                     "reason": "random_schedule_replay_mismatch",
                 })
+            else:
+                checked_random_schedules += 1
 
             expected_checkpoints = [0]
             expected_checkpoints.extend(range(
@@ -1150,6 +1174,17 @@ def independent_audit(payload, *, input_paths):
                         "variant": variant,
                         "reason": "checkpoint_schedule_mismatch",
                     })
+                # step 0 checkpoint 显式绑定重建初始状态：只在转移后比较会
+                # 让初始 checkpoint 永远不被验证（审查修复）。
+                if 0 not in checkpoints or checkpoints[0] != _state_audit(
+                    state, schema, queries, target, 0
+                ):
+                    failures.append({
+                        "seed": seed,
+                        "variant": variant,
+                        "reason": "initial_checkpoint_mismatch",
+                    })
+                replay_broken = False
                 for index, (coordinate, gumbels) in enumerate(schedule):
                     diagnostics = persistent_heatbath_step(
                         state,
@@ -1173,7 +1208,9 @@ def independent_audit(payload, *, input_paths):
                             "reason": "transition_replay_mismatch",
                             "field": mismatch,
                         })
+                        replay_broken = True
                         break
+                    checked_transitions += 1
                     step_number = index + 1
                     if step_number in checkpoints:
                         audit = _state_audit(
@@ -1190,7 +1227,10 @@ def independent_audit(payload, *, input_paths):
                                 "step": step_number,
                                 "reason": "checkpoint_replay_mismatch",
                             })
+                            replay_broken = True
                             break
+                if not replay_broken:
+                    checked_seed_trajectories += 1
                 if (
                     common._frame_sha256(state.table)
                     != trajectory["final_table_sha256"]
@@ -1204,6 +1244,8 @@ def independent_audit(payload, *, input_paths):
                         "variant": variant,
                         "reason": "final_state_mismatch",
                     })
+                elif not replay_broken:
+                    checked_final_tables += 1
                 recomputed = _trajectory_metrics(trajectory, tail)
                 if recomputed != trajectory["metrics"]:
                     failures.append({
@@ -1256,17 +1298,12 @@ def independent_audit(payload, *, input_paths):
         failures.append({"reason": "aggregate_mismatch"})
     return {
         "passed": not failures,
-        "checked_seed_trajectories": int(
-            2 * len(payload.get("runs", []))
-        ),
-        "checked_transitions": int(
-            2 * len(payload.get("runs", [])) * steps
-        ),
-        "checked_public_initial_states": int(
-            len(payload.get("runs", []))
-        ),
-        "checked_random_schedules": int(len(payload.get("runs", []))),
-        "checked_final_tables": int(2 * len(payload.get("runs", []))),
+        # 全部计数只在对应项实际审计成功后递增；异常或提前退出不再报告满额。
+        "checked_seed_trajectories": int(checked_seed_trajectories),
+        "checked_transitions": int(checked_transitions),
+        "checked_public_initial_states": int(checked_public_initial_states),
+        "checked_random_schedules": int(checked_random_schedules),
+        "checked_final_tables": int(checked_final_tables),
         "failures": failures,
     }
 
