@@ -108,6 +108,40 @@ ARMS = {
         rho=0.01, diffusion_direction_strength=4.0,
         selection_scale_invariant=True, alpha_min=6.0, alpha_max=6.0,
     ),
+    "si_a8": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=8.0, alpha_max=8.0,
+    ),
+    "si_a10": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=10.0, alpha_max=10.0,
+    ),
+    "si_a12": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=12.0, alpha_max=12.0,
+    ),
+    "si_a16": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=16.0, alpha_max=16.0,
+    ),
+    # ds 归因：si 下方向强度回到默认 2.0，检验 ds4 是否仍必要（更简配置）。
+    "si_a10_ds2": dict(
+        rho=0.01, diffusion_direction_strength=2.0,
+        selection_scale_invariant=True, alpha_min=10.0, alpha_max=10.0,
+    ),
+    "si_a12_ds2": dict(
+        rho=0.01, diffusion_direction_strength=2.0,
+        selection_scale_invariant=True, alpha_min=12.0, alpha_max=12.0,
+    ),
+    "si_a16_ds2": dict(
+        rho=0.01, diffusion_direction_strength=2.0,
+        selection_scale_invariant=True, alpha_min=16.0, alpha_max=16.0,
+    ),
+    "gate_si_a10": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=10.0, alpha_max=10.0,
+        tol=1e-9,
+    ),
     # 公平性对照（rho 混淆教训）：有门同配置。"无门越过有门"必须在双方
     # 同参数下成立，否则是配置混淆而非机制差异。
     "gate_ds4_alpha_hi": dict(
