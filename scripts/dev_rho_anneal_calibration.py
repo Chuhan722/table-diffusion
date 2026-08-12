@@ -137,6 +137,14 @@ ARMS = {
         rho=0.01, diffusion_direction_strength=2.0,
         selection_scale_invariant=True, alpha_min=16.0, alpha_max=16.0,
     ),
+    "si_a20_ds2": dict(
+        rho=0.01, diffusion_direction_strength=2.0,
+        selection_scale_invariant=True, alpha_min=20.0, alpha_max=20.0,
+    ),
+    "si_a24_ds2": dict(
+        rho=0.01, diffusion_direction_strength=2.0,
+        selection_scale_invariant=True, alpha_min=24.0, alpha_max=24.0,
+    ),
     "gate_si_a10": dict(
         rho=0.01, diffusion_direction_strength=4.0,
         selection_scale_invariant=True, alpha_min=10.0, alpha_max=10.0,
