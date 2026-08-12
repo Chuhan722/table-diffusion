@@ -164,6 +164,7 @@ def run_evolution(
     self_cooling_stop_ratio: Optional[float] = None,
     rho_anneal_end: Optional[float] = None,
     rho_anneal_rounds: Optional[int] = None,
+    selection_scale_invariant: bool = False,
     return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -316,6 +317,12 @@ def run_evolution(
         退火进度铺满全程 ``n_rounds``。动机：无门恒定动力学的噪声地板随
         rho 近似线性抬升，而到达高温地板只需少量轮数——快降段之后把预算
         留给低温深潜。仍是纯时间驱动的盲调度，不读取残差或候选评价。
+    selection_scale_invariant : bool, default False
+        尺度不变选择（仅 distance_mode='geometric'；Issue #44 机制迭代）。
+        True 时 donor 选择 logits 先做行内标准化再乘 alpha：选择压力的
+        有效温度恒等于 alpha，与联合分数行内离散度的绝对尺度解耦，消除
+        种群同质化导致的晚期选择退化（否则需要靠调大 alpha 补偿）。纯
+        分布侧机制：不读取候选评价、不引入接受/拒绝。False 保持历史行为。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -500,6 +507,17 @@ def run_evolution(
                 f"得到 {rho_anneal_rounds!r}"
             )
         rho_anneal_rounds = int(rho_anneal_rounds)
+    if not isinstance(selection_scale_invariant, (bool, np.bool_)):
+        raise ValueError(
+            "selection_scale_invariant 必须是布尔值，"
+            f"得到 {selection_scale_invariant!r}"
+        )
+    selection_scale_invariant = bool(selection_scale_invariant)
+    if selection_scale_invariant and distance_mode != "geometric":
+        raise ValueError(
+            "selection_scale_invariant 仅支持 distance_mode='geometric'，"
+            f"得到 {distance_mode!r}"
+        )
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -828,6 +846,7 @@ def run_evolution(
             # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
             # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
             exclude_self=exclude_self,
+            scale_invariant=selection_scale_invariant,
         )
         donor_idx = sample_donors(probs, rng, device=device)
         # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
@@ -1299,6 +1318,7 @@ def run_evolution(
                 int(rho_anneal_rounds)
                 if rho_anneal_rounds is not None else None
             ),
+            "selection_scale_invariant": bool(selection_scale_invariant),
         },
     }
     if return_final_table:

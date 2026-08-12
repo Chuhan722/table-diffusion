@@ -55,6 +55,69 @@ ARMS = {
     # 轮即到，几何全程调度在高温段停留过久）。
     "twophase_A": dict(rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300),
     "twophase_B": dict(rho=0.1, rho_anneal_end=0.005, rho_anneal_rounds=400),
+    # 漂移场强度扫描（低温区净下降速率是无门 vs 有门的主要差距来源；
+    # 以下全为分布侧参数，不读取候选评价）。
+    "twophase_ds4": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=4.0,
+    ),
+    "twophase_ds8": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=8.0,
+    ),
+    "twophase_alpha_hi": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        alpha_min=6.0, alpha_max=20.0,
+    ),
+    "twophase_ds4_alpha_hi": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=4.0, alpha_min=6.0, alpha_max=20.0,
+    ),
+    # 归因：ds8 增益是否依赖退火（恒定 rho=0.01 + ds8）；拐点探测 ds16。
+    "const_001_ds8": dict(rho=0.01, diffusion_direction_strength=8.0),
+    "twophase_ds16": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=16.0,
+    ),
+    "twophase_ds8_alpha_hi": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=8.0, alpha_min=6.0, alpha_max=20.0,
+    ),
+    "twophase_ds4_alpha_xhi": dict(
+        rho=0.1, rho_anneal_end=0.01, rho_anneal_rounds=300,
+        diffusion_direction_strength=4.0, alpha_min=12.0, alpha_max=40.0,
+    ),
+    # 最优组合去退火：若与 twophase_ds4_alpha_hi 打平，机制收敛为
+    # 恒定 rho + 强漂移 + 陡选择（最简形式，无调度组件）。
+    "const_001_ds4_alpha_hi": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        alpha_min=6.0, alpha_max=20.0,
+    ),
+    # 尺度不变选择（结构性方案）：行内标准化后有效温度恒等于 alpha，
+    # 无 alpha 调度自由度（alpha_min==alpha_max）。判定标准：恒定标准分
+    # alpha 打平/超过调出来的最优递增 alpha 谱系 → 证明"结构而非调参"。
+    "si_a2": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=2.0, alpha_max=2.0,
+    ),
+    "si_a4": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=4.0, alpha_max=4.0,
+    ),
+    "si_a6": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        selection_scale_invariant=True, alpha_min=6.0, alpha_max=6.0,
+    ),
+    # 公平性对照（rho 混淆教训）：有门同配置。"无门越过有门"必须在双方
+    # 同参数下成立，否则是配置混淆而非机制差异。
+    "gate_ds4_alpha_hi": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        alpha_min=6.0, alpha_max=20.0, tol=1e-9,
+    ),
+    "gate_ds4_alpha_xhi": dict(
+        rho=0.01, diffusion_direction_strength=4.0,
+        alpha_min=12.0, alpha_max=40.0, tol=1e-9,
+    ),
 }
 
 
@@ -76,6 +139,7 @@ def main():
     results = {}
     for arm in args.arms:
         per_seed = []
+        arm_kwargs = {**SHARED, **ARMS[arm]}  # 臂参数覆盖共享默认
         for seed in args.seeds:
             t0 = time.time()
             _best, diag = run_evolution(
@@ -89,8 +153,7 @@ def main():
                 device="cuda",
                 log_every=0,
                 return_final_table=True,
-                **SHARED,
-                **ARMS[arm],
+                **arm_kwargs,
             )
             final_table = diag.pop("final_table")
             final_answers = evaluate_table(final_table, queries)

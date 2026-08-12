@@ -75,6 +75,7 @@ def compute_sampling_probs(
     delta: float = 0.05,
     winsorize_quantiles: tuple = (0.01, 0.99),
     exclude_self: bool = False,
+    scale_invariant: bool = False,
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -143,6 +144,15 @@ def compute_sampling_probs(
         - True：抽样前把对角线 probs[i,i] 置 0 并按行重归一化，等价于候选池
           排除自身。仅在候选池=全表（K=N，行 i 与列 i 是同一条记录）时有意义，
           故要求 distances 为方阵（N==K），否则报错。主循环全对全时开启。
+    scale_invariant : bool, default False
+        尺度不变选择（仅 geometric 模式；Issue #44 机制迭代）。True 时对
+        每行的联合分数做标准化 ``logits = alpha * (log_A - mean_i) /
+        (std_i + 1e-8)`` 再 softmax：选择压力的有效温度恒等于 alpha，与
+        log_A 行内离散度的绝对尺度解耦。动机：随着种群同质化，行内分数
+        离散度收缩，固定 alpha 的 softmax 区分度衰减、选择退化为均匀——
+        标准化把"锐度"变成机制内生性质，不再依赖对 alpha 的调参补偿。
+        行内离散度为零时（所有 donor 分数相同）退化为均匀抽样，语义正确
+        （无信息 → 无偏好）。False（默认）保持历史行为完全不变。
 
     Returns
     -------
@@ -210,7 +220,8 @@ def compute_sampling_probs(
     if device in ('cuda', 'cpu'):
         return _compute_sampling_probs_torch(
             fitness, distances, beta, h, device, distance_mode, p,
-            lambda_param, alpha, delta, winsorize_quantiles, exclude_self
+            lambda_param, alpha, delta, winsorize_quantiles, exclude_self,
+            scale_invariant,
         )
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
@@ -293,8 +304,16 @@ def compute_sampling_probs(
         log_s = np.log(s)                          # (N, K)
         log_A = lambda_param * log_f[None, :] + (1 - lambda_param) * log_s  # (N, K)
 
-        # 第4步：应用锐度 α_t
-        logits = alpha * log_A  # (N, K)
+        # 第4步：应用锐度 α_t。尺度不变模式先做行内标准化：有效温度恒等于
+        # alpha，与 log_A 行内离散度的绝对尺度解耦（离散度为零的行退化为
+        # 均匀）。减行均值本身被 softmax 平移不变性吸收，保留是为了让
+        # logits 的数值语义（标准分）自解释。
+        if scale_invariant:
+            row_mean = log_A.mean(axis=1, keepdims=True)
+            row_std = log_A.std(axis=1, keepdims=True)
+            logits = alpha * (log_A - row_mean) / (row_std + 1e-8)
+        else:
+            logits = alpha * log_A  # (N, K)
 
         # 第5步：softmax（减最大值防溢出）
         logits_max = np.max(logits, axis=1, keepdims=True)
@@ -319,7 +338,7 @@ def compute_sampling_probs(
 
 def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p,
                                   lambda_param, alpha, delta, winsorize_quantiles,
-                                  exclude_self=False):
+                                  exclude_self=False, scale_invariant=False):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -419,8 +438,14 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         log_s = torch.log(s)                       # (N, K)
         log_A = lambda_param * log_f.unsqueeze(0) + (1 - lambda_param) * log_s  # (N, K)
 
-        # 第4步：应用锐度 α_t
-        logits = alpha * log_A  # (N, K)
+        # 第4步：应用锐度 α_t（scale_invariant 时先行内标准化，与 numpy
+        # 路径同语义；std 用总体口径 unbiased=False 对齐 np.std 默认）。
+        if scale_invariant:
+            row_mean = log_A.mean(dim=1, keepdim=True)
+            row_std = log_A.std(dim=1, keepdim=True, unbiased=False)
+            logits = alpha * (log_A - row_mean) / (row_std + 1e-8)
+        else:
+            logits = alpha * log_A  # (N, K)
 
         # 第5步：softmax（torch 内置，自动减最大值）
         probs = torch.softmax(logits, dim=1)
