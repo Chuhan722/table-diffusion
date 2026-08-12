@@ -30,7 +30,7 @@ OUTPUT_DIR = Path("outputs/gate_free_self_cooling")
 
 # 与 Issue #43 三臂探索一致的固定参数（残差定向扩散开启）。
 SHARED_PARAMS = dict(
-    beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
+    rho=0.01, beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
     winsorize_quantiles=(0.01, 0.99), distance_mode="geometric",
     init_method="marginal", residual_directed_diffusion=True,
     diffusion_direction_strength=2.0,
