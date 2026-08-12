@@ -4,11 +4,14 @@
 
 - 数据集与轮数：test_300x10（CPU，2000 轮）、nltcs（CUDA，2000 轮）；
 - 正式种子：100..104（全新，配对）；
-- 三臂（唯一变量为接受门与冷却）：
+- 共同参数显式固定 rho=0.01（项目标准配置；2026-08-12 审查后由继承默认
+  rho=0.1 更正并重跑，见 PR #45 记录）；
+- 四臂（gate × cooling 完整对照，审查后由三臂扩展）：
   * ``no_gate_self_cooling``：tol=inf 关闭接受门 + 残差自冷却（p 由 dev 定标
     冻结，写入本文件常量）；
   * ``no_gate``：tol=inf 关闭接受门、恒定扰动（机制消融参考）；
   * ``historical_gate``：主循环历史贪心判据（现默认，baseline）；
+  * ``gate_self_cooling``：历史贪心门 + 同一自冷却（隔离门与冷却的贡献）；
 - 共同参数与 Issue #43 三臂探索一致（残差定向扩散开启），不使用
   self_cooling_stop_ratio、best 选择、重试或早停干预；
 - 主指标：最终状态（非 best）measured workload L1；
@@ -55,6 +58,7 @@ else:
 from table_diffevo.evolution import run_evolution
 from table_diffevo.marginals import load_marginals
 from table_diffevo.metrics import compute_normalized_l1
+from table_diffevo.objective import compute_loss
 from table_diffevo.queries import evaluate_table, load_queries
 from table_diffevo.schema import load_schema
 
@@ -89,7 +93,7 @@ DATASETS = {
 }
 
 SHARED_PARAMS = dict(
-    beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
+    rho=0.01, beta=1.0, h=0.8, eta=0.5, mu=0.01, lambda_param=0.5, delta=0.05,
     winsorize_quantiles=(0.01, 0.99), distance_mode="geometric",
     init_method="marginal", residual_directed_diffusion=True,
     diffusion_direction_strength=2.0,
@@ -104,6 +108,11 @@ ARMS = {
     ),
     "no_gate": dict(tol=float("inf")),
     "historical_gate": {},
+    # gate×cooling 完整对照（审查意见）：隔离"门"与"冷却"两个因素。
+    "gate_self_cooling": dict(
+        residual_self_cooling=FORMAL_COOLING_EXPONENT,
+        self_cooling_monotone=False,
+    ),
 }
 
 OUTPUT_PATH = Path(
@@ -178,14 +187,18 @@ def _run_dataset(name, spec, seeds, rounds):
             final_table = diag.pop("final_table")
             final_q = evaluate_table(final_table, queries)
             best_q = evaluate_table(best_S, queries)
+            # 终态平方 loss 从最终表重算（审查意见 3）：loss_history[-1] 是
+            # 最后一次 proposal 之前的状态，最后一轮接受后不再入历史。
+            final_loss = float(compute_loss(target, final_q))
             runs.append({
                 "dataset": name,
                 "seed": int(seed),
                 "arm": arm,
-                "final_loss": float(losses[-1]),
+                "final_loss": final_loss,
+                "pre_final_proposal_loss": float(losses[-1]),
                 "best_loss": float(diag["best_loss"]),
                 "drift_ratio": float(
-                    losses[-1] / diag["best_loss"]
+                    final_loss / diag["best_loss"]
                 ) if diag["best_loss"] > 0 else 1.0,
                 "tail_mean_loss": float(np.mean(losses[-TAIL_WINDOW:])),
                 "final_table_measured_l1": float(
@@ -208,7 +221,7 @@ def _run_dataset(name, spec, seeds, rounds):
             tables[(seed, arm)] = final_table
             print(
                 f"[{name}] seed={seed} {arm:22s} "
-                f"final={losses[-1]:11.1f} best={diag['best_loss']:11.1f} "
+                f"final={final_loss:11.1f} best={diag['best_loss']:11.1f} "
                 f"drift={runs[-1]['drift_ratio']:.3f} "
                 f"({elapsed:.1f}s)",
                 flush=True,
@@ -231,6 +244,7 @@ def main():
         args.seeds == FORMAL_SEEDS
         and args.rounds == FORMAL_ROUNDS
         and set(args.datasets) == set(DATASETS)
+        and not args.allow_dirty
     )
     environment = _environment()
     if formal and not args.allow_dirty and not environment[
@@ -367,12 +381,16 @@ def _judge(runs):
             baseline_value = _offline_mean(runs, baseline, ref_name, metric)
             if baseline_value > 0:
                 relative = (candidate_value - baseline_value) / baseline_value
+            elif candidate_value > 0:
+                relative = float("inf")  # baseline 为 0 而 candidate 恶化
             else:
                 relative = 0.0
             risks[f"{ref_name}:{metric}"] = {
                 "candidate": candidate_value,
                 "baseline": baseline_value,
-                "relative": float(relative),
+                "relative": (
+                    "inf" if np.isinf(relative) else float(relative)
+                ),
                 "flagged": bool(relative > QUALITY_RISK_REL),
             }
     any_risk = any(item["flagged"] for item in risks.values())

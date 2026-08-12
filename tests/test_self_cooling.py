@@ -179,6 +179,27 @@ class TestSelfCoolingIntegration:
 
         assert "final_table" not in diag
 
+    def test_final_table_loss_is_authoritative_terminal_metric(self):
+        # loss_history[-1] 记录的是最后一次 proposal 之前的状态；最后一轮
+        # 接受后最终表已变化。终态统计必须从 final_table 重算（审查意见）。
+        from table_diffevo.objective import compute_loss
+        from table_diffevo.queries import evaluate_table
+
+        _, diag = _run(
+            n_rounds=12, rho=0.3, mu=0.05, seed=0, n_records=30,
+            target=np.asarray([25.0, 6.0, 5.0]), tol=float("inf"),
+            return_final_table=True,
+        )
+
+        schema, queries, _ = _tiny_problem()
+        target = np.asarray([25.0, 6.0, 5.0])
+        final_loss = compute_loss(
+            target, evaluate_table(diag["final_table"], queries)
+        )
+        assert final_loss == pytest.approx(2.5)
+        assert diag["loss_history"][-1] == pytest.approx(3.0)
+        assert final_loss != diag["loss_history"][-1]
+
     def test_monotone_cooling_never_reheats(self):
         common = dict(
             n_rounds=60, rho=0.3, mu=0.02, seed=9, n_records=30,
