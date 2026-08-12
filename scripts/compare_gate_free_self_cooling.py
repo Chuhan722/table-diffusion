@@ -39,11 +39,12 @@ SHARED_PARAMS = dict(
 )
 
 
-def build_arms(cooling_exponent):
+def build_arms(cooling_exponent, monotone):
     return {
         "no_gate": dict(tol=float("inf")),
         "no_gate_self_cooling": dict(
             tol=float("inf"), residual_self_cooling=cooling_exponent,
+            self_cooling_monotone=monotone,
         ),
         "historical_gate": {},
     }
@@ -58,6 +59,10 @@ def main():
         help="残差自冷却指数 p（1=linear，2=quadratic，0.5=sqrt）",
     )
     parser.add_argument("--tail", type=int, default=100)
+    parser.add_argument(
+        "--non-monotone", action="store_true",
+        help="机制消融：冷却跟随当前残差比（默认用历史最低残差比，温度只降不升）",
+    )
     args = parser.parse_args()
 
     schema = load_schema(str(SCHEMA_PATH))
@@ -65,7 +70,7 @@ def main():
     marginals = load_marginals(str(MARGINALS_PATH))
     target = np.asarray([q["result"] for q in queries], dtype=float)
 
-    arms = build_arms(args.cooling_exponent)
+    arms = build_arms(args.cooling_exponent, not args.non_monotone)
     rows = []
     for seed in args.seeds:
         for arm, extra in arms.items():
@@ -119,6 +124,7 @@ def main():
                 "seeds": args.seeds,
                 "rounds": args.rounds,
                 "cooling_exponent": args.cooling_exponent,
+                "monotone": not args.non_monotone,
                 "shared_params": {
                     key: (list(value) if isinstance(value, tuple) else value)
                     for key, value in SHARED_PARAMS.items()

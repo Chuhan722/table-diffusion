@@ -156,3 +156,54 @@ class TestSelfCoolingIntegration:
 
         assert all(diag["accept_history"])
         assert len(best) == 8
+
+    def test_return_final_table_exposes_terminal_state(self):
+        common = dict(
+            n_rounds=40, rho=0.3, mu=0.02, seed=9, n_records=30,
+            target=np.asarray([25.0, 6.0, 5.0]), tol=float("inf"),
+            return_final_table=True,
+        )
+        best, diag = _run(**common)
+
+        final = diag["final_table"]
+        assert isinstance(final, pd.DataFrame)
+        assert len(final) == 30
+        assert list(final.columns) == list(best.columns)
+        # 无门配置下最终表与 best 表一般不同（终点回漂）。
+        assert not final.equals(best) or (
+            diag["loss_history"][-1] == diag["best_loss"]
+        )
+
+    def test_final_table_absent_by_default(self):
+        _, diag = _run()
+
+        assert "final_table" not in diag
+
+    def test_monotone_cooling_never_reheats(self):
+        common = dict(
+            n_rounds=60, rho=0.3, mu=0.02, seed=9, n_records=30,
+            target=np.asarray([25.0, 6.0, 5.0]), tol=float("inf"),
+        )
+        _, diag = _run(
+            residual_self_cooling=1.0, self_cooling_monotone=True, **common
+        )
+
+        history = diag["self_cooling_history"]
+        assert all(b <= a + 1e-12 for a, b in zip(history, history[1:]))
+        assert diag["params"]["self_cooling_monotone"] is True
+
+    def test_non_monotone_ablation_can_reheat(self):
+        # 较大 mu 持续注入噪声：残差下降后回升，非单调冷却因子随之复燃。
+        common = dict(
+            n_rounds=80, rho=0.4, mu=0.2, seed=3, n_records=30,
+            target=np.asarray([25.0, 6.0, 5.0]), tol=float("inf"),
+        )
+        _, diag = _run(residual_self_cooling=1.0, **common)
+
+        history = diag["self_cooling_history"]
+        assert any(b > a for a, b in zip(history, history[1:]))
+        assert diag["params"]["self_cooling_monotone"] is False
+
+    def test_invalid_monotone_flag_rejected(self):
+        with pytest.raises(ValueError, match="self_cooling_monotone"):
+            _run(residual_self_cooling=1.0, self_cooling_monotone=1)

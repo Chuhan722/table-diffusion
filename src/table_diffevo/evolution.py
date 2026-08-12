@@ -160,7 +160,9 @@ def run_evolution(
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     candidate_budget: Optional[int] = None,
     residual_self_cooling: Optional[float] = None,
+    self_cooling_monotone: bool = False,
     self_cooling_stop_ratio: Optional[float] = None,
+    return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -285,10 +287,21 @@ def run_evolution(
 
         该机制只作用于扰动幅度（分布侧），不引入任何接受/拒绝判定；与
         ``tol=inf``（关闭整代接受门）组合即为无门控扩散演化研究配置。
+    self_cooling_monotone : bool, default False
+        机制消融选项。False（默认）：冷却跟随当前残差比，状态回漂时温度回升
+        （复燃）并快速重新收敛；True：使用历史最低残差比，温度只降不升
+        （分布侧棘轮）。dev 定标（test_300x10、seed 42..44、2000 轮）显示
+        单调冷却反而更差（final 96.8 vs 89.2）：温度锁死后偶发劣化步的恢复
+        极慢。保留该开关仅作机制消融对照。两种模式都不读取候选评价。
     self_cooling_stop_ratio : float or None, default None
         内在停止阈值（需同时启用 residual_self_cooling）。当残差比
         ``r_t <= self_cooling_stop_ratio`` 时提前停止，作为达标早停之外的
         内在收敛停机信号；取值须在 (0, 1)。None 时不启用。
+    return_final_table : bool, default False
+        为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
+        拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
+        DataFrame，不可直接 JSON 序列化，调用方保存诊断前必须自行弹出。
+        默认 False 保持诊断字典可序列化，行为与历史一致。
 
     Returns
     -------
@@ -413,6 +426,12 @@ def run_evolution(
                 f"得到 {residual_self_cooling!r}"
             )
         residual_self_cooling = float(residual_self_cooling)
+    if residual_self_cooling is not None and not isinstance(
+        self_cooling_monotone, (bool, np.bool_)
+    ):
+        raise ValueError(
+            f"self_cooling_monotone 必须是布尔值，得到 {self_cooling_monotone!r}"
+        )
     if self_cooling_stop_ratio is not None:
         if residual_self_cooling is None:
             raise ValueError(
@@ -640,6 +659,7 @@ def run_evolution(
     self_cooling_history: List[float] = []
     self_cooling_stopped = False
     self_cooling_factor = 1.0
+    self_cooling_min_ratio = 1.0
     state_eval_cache = (
         initial_q, initial_residual, initial_fitness, initial_loss
     )
@@ -673,11 +693,17 @@ def run_evolution(
         # 检查之后执行。
         self_cooling_ratio = None
         if residual_self_cooling is not None:
-            self_cooling_ratio, self_cooling_factor = _self_cooling_factor(
+            self_cooling_ratio, _ = _self_cooling_factor(
                 float(np.abs(target - q).sum()),
                 self_cooling_initial_l1,
                 residual_self_cooling,
             )
+            if self_cooling_monotone:
+                self_cooling_min_ratio = min(
+                    self_cooling_min_ratio, self_cooling_ratio
+                )
+                self_cooling_ratio = self_cooling_min_ratio
+            self_cooling_factor = self_cooling_ratio ** residual_self_cooling
             self_cooling_history.append(self_cooling_factor)
         else:
             self_cooling_history.append(1.0)
@@ -1194,11 +1220,17 @@ def run_evolution(
                 float(residual_self_cooling)
                 if residual_self_cooling is not None else None
             ),
+            "self_cooling_monotone": (
+                bool(self_cooling_monotone)
+                if residual_self_cooling is not None else None
+            ),
             "self_cooling_stop_ratio": (
                 float(self_cooling_stop_ratio)
                 if self_cooling_stop_ratio is not None else None
             ),
         },
     }
+    if return_final_table:
+        diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
     return best_S.reset_index(drop=True), diagnostics
