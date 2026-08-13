@@ -4,19 +4,34 @@ import numpy as np
 
 if __package__:
     from scripts import compare_factorized_gibbs_unfiltered as trajectory
+    from scripts import issue49_stage_t_a_protocol as frozen_protocol
 else:
     import compare_factorized_gibbs_unfiltered as trajectory
+    import issue49_stage_t_a_protocol as frozen_protocol
 
 
-STATE_LIBRARY_FORMAT = "issue49_unfiltered_state_library_v1"
-SOURCE_TEMPERATURES = (4.0, 8.0)
+STATE_LIBRARY_FORMAT = "issue49_unfiltered_state_library_v2"
+SOURCE_TEMPERATURES = frozen_protocol.TEMPERATURES
 
 
 def _temperature_key(temperature):
     return f"tau_{temperature:g}".replace(".", "p")
 
 
-def _validate_protocol(seeds, rounds, snapshot_rounds, device):
+def _normalize_temperatures(source_temperatures):
+    values = tuple(float(value) for value in source_temperatures)
+    if (
+        not values
+        or len(set(values)) != len(values)
+        or any(not np.isfinite(value) or value < 0.0 for value in values)
+    ):
+        raise ValueError("source_temperatures 必须非空、非负、有限且不重复")
+    return values
+
+
+def _validate_protocol(
+    seeds, rounds, snapshot_rounds, device, source_temperatures
+):
     if (
         not seeds
         or len(set(seeds)) != len(seeds)
@@ -49,7 +64,13 @@ def _validate_protocol(seeds, rounds, snapshot_rounds, device):
         )
     if device not in ("numpy", "cpu", "cuda"):
         raise ValueError("device 必须是 numpy、cpu 或 cuda")
-    return [int(seed) for seed in seeds], int(rounds), normalized
+    temperatures = _normalize_temperatures(source_temperatures)
+    return (
+        [int(seed) for seed in seeds],
+        int(rounds),
+        normalized,
+        temperatures,
+    )
 
 
 def _snapshot_map(run, expected_rounds):
@@ -70,8 +91,9 @@ def _snapshot_map(run, expected_rounds):
     return indexed
 
 
-def _seed_gates(seed, rounds, snapshot_rounds, runs, snapshots):
-    temperatures = SOURCE_TEMPERATURES
+def _seed_gates(
+    seed, rounds, snapshot_rounds, runs, snapshots, temperatures
+):
     initial = [snapshots[tau][0] for tau in temperatures]
     reference_scale = [
         runs[tau]["direction_reference_scale"] for tau in temperatures
@@ -115,29 +137,39 @@ def _seed_gates(seed, rounds, snapshot_rounds, runs, snapshots):
             for state_round, snapshot in snapshots[tau].items()
         ),
         "initial_snapshots_exact_except_temperature": all(
-            initial[0][field] == initial[1][field]
+            snapshot[field] == initial[0][field]
+            for snapshot in initial[1:]
             for field in comparable_initial_fields
         ),
         "initial_table_aligned": (
-            runs[temperatures[0]]["initial_csv_sha256"]
-            == runs[temperatures[1]]["initial_csv_sha256"]
-            == initial[0]["state_sha256"]
+            all(
+                runs[tau]["initial_csv_sha256"]
+                == initial[0]["state_sha256"]
+                for tau in temperatures
+            )
         ),
         "initial_loss_aligned": (
-            runs[temperatures[0]]["initial_loss"]
-            == runs[temperatures[1]]["initial_loss"]
-            == initial[0]["current_loss"]
+            all(
+                runs[tau]["initial_loss"]
+                == initial[0]["current_loss"]
+                for tau in temperatures
+            )
         ),
         "initial_primary_rng_aligned": (
-            initial[0]["primary_rng_state_sha256"]
-            == initial[1]["primary_rng_state_sha256"]
+            all(
+                snapshot["primary_rng_state_sha256"]
+                == initial[0]["primary_rng_state_sha256"]
+                for snapshot in initial[1:]
+            )
         ),
         "primary_rng_endpoint_aligned": (
-            runs[temperatures[0]]["primary_rng_state_sha256"]
-            == runs[temperatures[1]]["primary_rng_state_sha256"]
+            len({
+                runs[tau]["primary_rng_state_sha256"]
+                for tau in temperatures
+            }) == 1
         ),
         "direction_reference_scale_aligned": (
-            reference_scale[0] == reference_scale[1]
+            len(set(reference_scale)) == 1
         ),
         "direction_reference_scale_positive_finite": all(
             scale is not None and np.isfinite(scale) and scale > 0.0
@@ -155,8 +187,9 @@ def _seed_gates(seed, rounds, snapshot_rounds, runs, snapshots):
             for snapshot in snapshots[tau].values()
         ),
         "alpha_schedule_aligned": all(
-            snapshots[temperatures[0]][state_round]["donor_alpha"]
-            == snapshots[temperatures[1]][state_round]["donor_alpha"]
+            snapshots[tau][state_round]["donor_alpha"]
+            == snapshots[temperatures[0]][state_round]["donor_alpha"]
+            for tau in temperatures[1:]
             for state_round in snapshot_rounds
         ),
         "terminal_snapshot_matches_run": all(
@@ -195,7 +228,15 @@ def _trajectory_identity(run):
     }
 
 
-def _state_entry(seed, stage, source_temperature, snapshot, *, shared=False):
+def _state_entry(
+    seed,
+    stage,
+    source_temperature,
+    snapshot,
+    *,
+    source_temperatures,
+    shared=False,
+):
     temperature_label = (
         "shared"
         if shared else _temperature_key(source_temperature)
@@ -215,7 +256,7 @@ def _state_entry(seed, stage, source_temperature, snapshot, *, shared=False):
             None if shared else float(source_temperature)
         ),
         "shared_source_temperatures": (
-            list(SOURCE_TEMPERATURES) if shared else None
+            list(source_temperatures) if shared else None
         ),
         "snapshot": snapshot,
     }
@@ -231,16 +272,19 @@ def build_state_library(
     rounds,
     snapshot_rounds,
     device,
+    source_temperatures=SOURCE_TEMPERATURES,
 ):
-    seeds, rounds, snapshot_rounds = _validate_protocol(
-        seeds, rounds, snapshot_rounds, device
+    seeds, rounds, snapshot_rounds, temperatures = _validate_protocol(
+        seeds,
+        rounds,
+        snapshot_rounds,
+        device,
+        source_temperatures,
     )
-    states = []
-    seed_rows = []
+    runs_by_seed = {}
     for seed in seeds:
         runs = {}
-        snapshots = {}
-        for temperature in SOURCE_TEMPERATURES:
+        for temperature in temperatures:
             run = trajectory._run_one(
                 target,
                 queries,
@@ -254,28 +298,80 @@ def build_state_library(
                 snapshot_rounds=snapshot_rounds,
             )
             runs[temperature] = run
-            snapshots[temperature] = _snapshot_map(
-                run, snapshot_rounds
+        runs_by_seed[seed] = runs
+
+    return build_state_library_from_runs(
+        runs_by_seed,
+        seeds=seeds,
+        rounds=rounds,
+        snapshot_rounds=snapshot_rounds,
+        device=device,
+        source_temperatures=temperatures,
+    )
+
+
+def build_state_library_from_runs(
+    runs_by_seed,
+    *,
+    seeds,
+    rounds,
+    snapshot_rounds,
+    device,
+    source_temperatures=SOURCE_TEMPERATURES,
+):
+    seeds, rounds, snapshot_rounds, temperatures = _validate_protocol(
+        seeds,
+        rounds,
+        snapshot_rounds,
+        device,
+        source_temperatures,
+    )
+    if set(runs_by_seed) != set(seeds):
+        raise RuntimeError(
+            "预计算来源轨迹 seeds 不完整："
+            f"得到 {sorted(runs_by_seed)}，要求 {seeds}"
+        )
+
+    states = []
+    seed_rows = []
+    for seed in seeds:
+        runs = runs_by_seed[seed]
+        if set(runs) != set(temperatures):
+            raise RuntimeError(
+                f"seed {seed} 预计算来源温度不完整：{sorted(runs)}"
             )
+        snapshots = {
+            temperature: _snapshot_map(
+                runs[temperature], snapshot_rounds
+            )
+            for temperature in temperatures
+        }
 
         gates = _seed_gates(
-            seed, rounds, snapshot_rounds, runs, snapshots
+            seed,
+            rounds,
+            snapshot_rounds,
+            runs,
+            snapshots,
+            temperatures,
         )
         seed_states = [_state_entry(
             seed,
             "initial",
-            SOURCE_TEMPERATURES[0],
-            snapshots[SOURCE_TEMPERATURES[0]][0],
+            temperatures[0],
+            snapshots[temperatures[0]][0],
+            source_temperatures=temperatures,
             shared=True,
         )]
         for state_round in snapshot_rounds[1:]:
             stage = "late" if state_round == rounds else "mid"
-            for temperature in SOURCE_TEMPERATURES:
+            for temperature in temperatures:
                 seed_states.append(_state_entry(
                     seed,
                     stage,
                     temperature,
                     snapshots[temperature][state_round],
+                    source_temperatures=temperatures,
                 ))
         states.extend(seed_states)
         seed_rows.append({
@@ -285,13 +381,13 @@ def build_state_library(
                 _temperature_key(temperature): _trajectory_identity(
                     runs[temperature]
                 )
-                for temperature in SOURCE_TEMPERATURES
+                for temperature in temperatures
             },
             "gates": gates,
             "all_gates_passed": True,
         })
 
-    expected_state_count = len(seeds) * 5
+    expected_state_count = len(seeds) * (1 + 2 * len(temperatures))
     state_ids = [state["state_id"] for state in states]
     global_gates = {
         "expected_state_count": len(states) == expected_state_count,
@@ -306,7 +402,7 @@ def build_state_library(
         "state_library_format": STATE_LIBRARY_FORMAT,
         "dataset": "test_300x10",
         "source_kernel": "independent_directional_unfiltered",
-        "source_temperatures": list(SOURCE_TEMPERATURES),
+        "source_temperatures": list(temperatures),
         "source_sweeps": 0,
         "rounds": rounds,
         "snapshot_rounds": list(snapshot_rounds),

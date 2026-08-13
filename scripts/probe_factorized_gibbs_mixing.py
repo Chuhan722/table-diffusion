@@ -31,6 +31,7 @@ from table_diffevo.factorized_diffusion import (
     build_sparse_mask_energy,
     evaluate_sparse_mask_energies,
     propagate_random_scan_distribution,
+    random_scan_gibbs_mask,
     sparse_single_directions,
 )
 from table_diffevo.generator import init_synthetic_table
@@ -38,6 +39,7 @@ from table_diffevo.joint_diffusion import (
     additive_mask_directions,
     baseline_mask_log_probabilities,
     compute_joint_mask_landscapes,
+    enumerate_copy_masks,
     gibbs_mask_log_probabilities,
 )
 from table_diffevo.marginals import load_marginals
@@ -324,12 +326,65 @@ def _empty_logit_accumulator():
         "raw_logit_min": None,
         "raw_logit_max": None,
         "raw_logit_abs_max": 0.0,
+        "raw_logit_abs_max_condition": None,
         "clip_hit_count": 0,
+        "clip_hit_conditions": [],
         "conditional_probability_min": None,
         "conditional_probability_max": None,
         "minimum_binary_outcome_probability": None,
         "uniform_condition_entropy_sum": 0.0,
         "all_conditionals_bidirectional": True,
+    }
+
+
+def _empty_probability_accumulator():
+    return {
+        "distribution_count": 0,
+        "all_finite": True,
+        "all_nonnegative": True,
+        "probability_sum_max_error": 0.0,
+        "minimum_probability": None,
+        "maximum_probability": None,
+    }
+
+
+def _accumulate_probability_diagnostics(accumulator, probabilities):
+    values = np.asarray(probabilities, dtype=float)
+    accumulator["distribution_count"] += 1
+    finite = bool(values.ndim == 1 and np.all(np.isfinite(values)))
+    accumulator["all_finite"] &= finite
+    if not finite:
+        accumulator["all_nonnegative"] = False
+        return
+    minimum = float(values.min())
+    maximum = float(values.max())
+    accumulator["all_nonnegative"] &= minimum >= 0.0
+    accumulator["probability_sum_max_error"] = max(
+        accumulator["probability_sum_max_error"],
+        abs(float(values.sum()) - 1.0),
+    )
+    accumulator["minimum_probability"] = (
+        minimum
+        if accumulator["minimum_probability"] is None
+        else min(accumulator["minimum_probability"], minimum)
+    )
+    accumulator["maximum_probability"] = (
+        maximum
+        if accumulator["maximum_probability"] is None
+        else max(accumulator["maximum_probability"], maximum)
+    )
+
+
+def _finalize_probability_diagnostics(accumulator):
+    return {
+        "distribution_count": int(accumulator["distribution_count"]),
+        "all_finite": bool(accumulator["all_finite"]),
+        "all_nonnegative": bool(accumulator["all_nonnegative"]),
+        "probability_sum_max_error": float(
+            accumulator["probability_sum_max_error"]
+        ),
+        "minimum_probability": accumulator["minimum_probability"],
+        "maximum_probability": accumulator["maximum_probability"],
     }
 
 
@@ -377,7 +432,13 @@ def _raw_conditional_logits(masks, directions, eta, strength):
     return np.concatenate(logits)
 
 
-def _accumulate_logit_diagnostics(accumulator, raw_logits, logit_clip):
+def _accumulate_logit_diagnostics(
+    accumulator,
+    raw_logits,
+    logit_clip,
+    *,
+    condition_context=None,
+):
     values = np.asarray(raw_logits, dtype=float)
     if values.ndim != 1 or not np.all(np.isfinite(values)):
         raise ValueError("raw_logits 必须是有限一维数组")
@@ -401,13 +462,51 @@ def _accumulate_logit_diagnostics(accumulator, raw_logits, logit_clip):
         if accumulator["raw_logit_max"] is None
         else max(accumulator["raw_logit_max"], maximum)
     )
-    accumulator["raw_logit_abs_max"] = max(
-        accumulator["raw_logit_abs_max"],
-        float(np.max(np.abs(values))),
-    )
-    accumulator["clip_hit_count"] += int(np.sum(
-        np.abs(values) > logit_clip
-    ))
+    absolute = np.abs(values)
+    maximum_index = int(np.argmax(absolute))
+    maximum_absolute = float(absolute[maximum_index])
+
+    def condition_identity(flat_index):
+        if condition_context is None:
+            return {"flat_condition_index": int(flat_index)}
+        n_active = int(condition_context["n_active"])
+        conditions_per_variable = 1 << (n_active - 1)
+        variable = int(flat_index // conditions_per_variable)
+        within_variable = int(flat_index % conditions_per_variable)
+        masks = np.asarray(condition_context["masks"], dtype=bool)
+        lower_indices = np.flatnonzero(~masks[:, variable])
+        lower_state_index = int(lower_indices[within_variable])
+        active_indices = condition_context["active_attribute_indices"]
+        result = {
+            "proposal_index": int(condition_context["proposal_index"]),
+            "row": int(condition_context["row_index"]),
+            "variable": variable,
+            "attribute_index": int(active_indices[variable]),
+            "attribute": condition_context["attribute_names"][
+                int(active_indices[variable])
+            ],
+            "conditioning_mask_with_variable_zero": (
+                masks[lower_state_index].astype(int).tolist()
+            ),
+            "flat_condition_index": int(flat_index),
+        }
+        return result
+
+    if (
+        accumulator["raw_logit_abs_max_condition"] is None
+        or maximum_absolute > accumulator["raw_logit_abs_max"]
+    ):
+        maximum_condition = condition_identity(maximum_index)
+        maximum_condition["raw_logit"] = float(values[maximum_index])
+        accumulator["raw_logit_abs_max"] = maximum_absolute
+        accumulator["raw_logit_abs_max_condition"] = maximum_condition
+
+    hit_indices = np.flatnonzero(absolute >= logit_clip)
+    accumulator["clip_hit_count"] += int(len(hit_indices))
+    for hit_index in hit_indices:
+        hit = condition_identity(int(hit_index))
+        hit["raw_logit"] = float(values[hit_index])
+        accumulator["clip_hit_conditions"].append(hit)
     effective_logits = np.clip(values, -logit_clip, logit_clip)
     probabilities = np.empty_like(effective_logits)
     positive = effective_logits >= 0.0
@@ -468,9 +567,13 @@ def _finalize_logit_diagnostics(accumulator, logit_clip):
         "raw_logit_min": accumulator["raw_logit_min"],
         "raw_logit_max": accumulator["raw_logit_max"],
         "raw_logit_abs_max": float(accumulator["raw_logit_abs_max"]),
+        "raw_logit_abs_max_condition": accumulator[
+            "raw_logit_abs_max_condition"
+        ],
         "logit_clip": float(logit_clip),
         "clip_hit_count": hits,
         "clip_hit_rate": float(hits / count) if count else 0.0,
+        "clip_hit_conditions": list(accumulator["clip_hit_conditions"]),
         "raw_logit_strictly_inside_clip": bool(
             count == 0
             or accumulator["raw_logit_abs_max"] < logit_clip
@@ -595,6 +698,123 @@ def _sample_index(probabilities, gumbels):
     positive = probabilities > 0.0
     scores[positive] = np.log(probabilities[positive])
     return int(np.argmax(scores + gumbels))
+
+
+def _empty_production_sampler_diagnostics():
+    return {
+        "comparison_count": 0,
+        "mismatch_count": 0,
+        "microsteps": 0,
+        "production_sampler_elapsed_sec": 0.0,
+        "exact_tape_replay_elapsed_sec": 0.0,
+    }
+
+
+def _reference_random_scan_mask(
+    model,
+    initial_mask,
+    eta,
+    strength,
+    n_steps,
+    seed,
+    *,
+    logit_clip,
+):
+    """用完整能量枚举重放 production sampler 的同一条随机 tape。"""
+    mask = np.asarray(initial_mask, dtype=bool).copy()
+    if n_steps == 0 or model.n_active_attributes == 0:
+        return mask
+    masks = enumerate_copy_masks(model.n_active_attributes)
+    energies = evaluate_sparse_mask_energies(model, masks)
+    powers = 1 << np.arange(model.n_active_attributes)
+    base_logit = float(np.log(eta) - np.log1p(-eta))
+    rng = np.random.default_rng(seed)
+    for _ in range(n_steps):
+        variable = int(rng.integers(0, model.n_active_attributes))
+        lower_mask = mask.copy()
+        lower_mask[variable] = False
+        lower = int(lower_mask.astype(np.int64) @ powers)
+        upper = lower | (1 << variable)
+        difference = float(energies[upper] - energies[lower])
+        if strength == 0.0 or difference == 0.0:
+            probability = float(eta)
+        else:
+            raw_logit = base_logit + float(strength) * difference
+            effective_logit = float(np.clip(
+                raw_logit, -logit_clip, logit_clip
+            ))
+            if effective_logit >= 0.0:
+                probability = float(
+                    1.0 / (1.0 + np.exp(-effective_logit))
+                )
+            else:
+                exponential = float(np.exp(effective_logit))
+                probability = exponential / (1.0 + exponential)
+        mask[variable] = rng.random() < probability
+    return mask
+
+
+def _compare_production_sampler(
+    accumulator,
+    model,
+    initial_mask,
+    eta,
+    strength,
+    n_steps,
+    seed,
+    *,
+    logit_clip,
+):
+    production_start = time.perf_counter()
+    actual = random_scan_gibbs_mask(
+        model,
+        initial_mask,
+        eta,
+        strength,
+        n_steps,
+        np.random.default_rng(seed),
+        logit_clip=logit_clip,
+    )
+    accumulator["production_sampler_elapsed_sec"] += (
+        time.perf_counter() - production_start
+    )
+    replay_start = time.perf_counter()
+    expected = _reference_random_scan_mask(
+        model,
+        initial_mask,
+        eta,
+        strength,
+        n_steps,
+        seed,
+        logit_clip=logit_clip,
+    )
+    accumulator["exact_tape_replay_elapsed_sec"] += (
+        time.perf_counter() - replay_start
+    )
+    accumulator["comparison_count"] += 1
+    accumulator["microsteps"] += int(n_steps)
+    accumulator["mismatch_count"] += int(
+        not np.array_equal(actual, expected)
+    )
+
+
+def _finalize_production_sampler_diagnostics(accumulator):
+    comparisons = int(accumulator["comparison_count"])
+    mismatches = int(accumulator["mismatch_count"])
+    return {
+        "comparison_count": comparisons,
+        "mismatch_count": mismatches,
+        "all_exact_tape_replays_match": bool(
+            comparisons > 0 and mismatches == 0
+        ),
+        "microsteps": int(accumulator["microsteps"]),
+        "production_sampler_elapsed_sec": float(
+            accumulator["production_sampler_elapsed_sec"]
+        ),
+        "exact_tape_replay_elapsed_sec": float(
+            accumulator["exact_tape_replay_elapsed_sec"]
+        ),
+    }
 
 
 def _measure_proposal(state, proposal, q, loss, target, queries, schema, device):
@@ -750,6 +970,14 @@ def _probe_state(
     global_logit = {
         tau: _empty_logit_accumulator() for tau in temperatures
     }
+    probability_diagnostics = _empty_probability_accumulator()
+    probability_diagnostics_by_temperature = {
+        tau: _empty_probability_accumulator() for tau in temperatures
+    }
+    production_sampler_diagnostics = {
+        tau: _empty_production_sampler_diagnostics()
+        for tau in temperatures
+    }
     exact_energy_max_error = 0.0
     one_hot_max_error = 0.0
     factor_count_sum = 0
@@ -757,6 +985,9 @@ def _probe_state(
     maximum_factor_order = 0
     active_factor_rows = 0
     tvd_snapshot_increase_max = 0.0
+    tvd_snapshot_increase_max_by_temperature = {
+        tau: 0.0 for tau in temperatures
+    }
     factor_build_elapsed = 0.0
     exact_propagation_elapsed = 0.0
     probe_start = time.perf_counter()
@@ -880,7 +1111,19 @@ def _probe_state(
                     masks, factor_energies, ETA, strength
                 )
                 _accumulate_logit_diagnostics(
-                    global_logit[tau], raw_logits, GIBBS_LOGIT_CLIP
+                    global_logit[tau],
+                    raw_logits,
+                    GIBBS_LOGIT_CLIP,
+                    condition_context={
+                        "proposal_index": proposal_index,
+                        "row_index": row_index,
+                        "n_active": n_active,
+                        "masks": masks,
+                        "active_attribute_indices": (
+                            landscape.active_attribute_indices
+                        ),
+                        "attribute_names": attr_names,
+                    },
                 )
                 independent = np.exp(gibbs_mask_log_probabilities(
                     reference_log, additive, strength
@@ -914,11 +1157,45 @@ def _probe_state(
                         tvd_snapshot_increase_max = max(
                             tvd_snapshot_increase_max, tvd - previous_tvd
                         )
+                        tvd_snapshot_increase_max_by_temperature[tau] = max(
+                            tvd_snapshot_increase_max_by_temperature[tau],
+                            tvd - previous_tvd,
+                        )
                     previous_tvd = tvd
                     previous_sweep = sweep
                 variants[_joint_name(tau)] = joint
 
+                initial_mask = masks[_sample_index(independent, gumbels)]
+                for sweep in sweeps:
+                    if sweep == 0:
+                        continue
+                    production_seed = _address_seed(
+                        seed,
+                        state_index,
+                        proposal_index,
+                        10_000
+                        + int(round(float(tau) * 1_000)) * N_RECORDS
+                        + row_index,
+                    )
+                    _compare_production_sampler(
+                        production_sampler_diagnostics[tau],
+                        model,
+                        initial_mask,
+                        ETA,
+                        strength,
+                        sweep * n_active,
+                        production_seed,
+                        logit_clip=GIBBS_LOGIT_CLIP,
+                    )
+
                 for name, probabilities in variants.items():
+                    _accumulate_probability_diagnostics(
+                        probability_diagnostics, probabilities
+                    )
+                    _accumulate_probability_diagnostics(
+                        probability_diagnostics_by_temperature[tau],
+                        probabilities,
+                    )
                     metrics = _distribution_metrics(
                         probabilities,
                         joint,
@@ -968,6 +1245,22 @@ def _probe_state(
     conditional_logit_diagnostics = {
         f"tau_{_tau_label(tau)}": _finalize_logit_diagnostics(
             global_logit[tau], GIBBS_LOGIT_CLIP
+        )
+        for tau in temperatures
+    }
+    finalized_probability_diagnostics_by_temperature = {
+        f"tau_{_tau_label(tau)}": (
+            _finalize_probability_diagnostics(
+                probability_diagnostics_by_temperature[tau]
+            )
+        )
+        for tau in temperatures
+    }
+    finalized_production_sampler_diagnostics = {
+        f"tau_{_tau_label(tau)}": (
+            _finalize_production_sampler_diagnostics(
+                production_sampler_diagnostics[tau]
+            )
         )
         for tau in temperatures
     }
@@ -1021,12 +1314,27 @@ def _probe_state(
             ),
             "maximum_active_factor_order": maximum_factor_order,
             "tvd_snapshot_increase_max": tvd_snapshot_increase_max,
+            "tvd_snapshot_increase_max_by_temperature": {
+                f"tau_{_tau_label(tau)}": float(
+                    tvd_snapshot_increase_max_by_temperature[tau]
+                )
+                for tau in temperatures
+            },
             "factor_build_elapsed_sec": factor_build_elapsed,
             "exact_finite_state_propagation_elapsed_sec": (
                 exact_propagation_elapsed
             ),
         },
         "conditional_logit_diagnostics": conditional_logit_diagnostics,
+        "probability_diagnostics": _finalize_probability_diagnostics(
+            probability_diagnostics
+        ),
+        "probability_diagnostics_by_temperature": (
+            finalized_probability_diagnostics_by_temperature
+        ),
+        "production_sampler_diagnostics": (
+            finalized_production_sampler_diagnostics
+        ),
         "kernel_summary": kernel_summary,
         "proposal_summary": proposal_summary,
         "paired": paired,

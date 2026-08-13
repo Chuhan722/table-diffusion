@@ -80,6 +80,20 @@ def test_raw_conditional_logit_diagnostics_detect_clip_hits():
     assert result["all_conditionals_bidirectional"] is True
 
 
+def test_raw_conditional_logit_exactly_on_clip_boundary_is_ineligible():
+    accumulator = probe._empty_logit_accumulator()
+    probe._accumulate_logit_diagnostics(
+        accumulator, np.asarray([-30.0, 30.0]), logit_clip=30.0
+    )
+
+    result = probe._finalize_logit_diagnostics(
+        accumulator, logit_clip=30.0
+    )
+
+    assert result["clip_hit_count"] == 2
+    assert result["raw_logit_strictly_inside_clip"] is False
+
+
 def test_probe_reads_verified_current_snapshot_without_recalibration(
     tmp_path, monkeypatch
 ):

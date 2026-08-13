@@ -23,7 +23,7 @@ def _inputs():
     return target, queries, schema, marginals
 
 
-def test_short_tau4_tau8_state_library_is_aligned_and_probe_readable():
+def test_short_five_temperature_state_library_is_aligned_and_probe_readable():
     target, queries, schema, marginals = _inputs()
     with contextlib.redirect_stdout(io.StringIO()):
         library = builder.build_state_library(
@@ -31,19 +31,19 @@ def test_short_tau4_tau8_state_library_is_aligned_and_probe_readable():
             queries,
             schema,
             marginals,
-            seeds=[8],
+            seeds=[99],
             rounds=12,
             snapshot_rounds=[0, 6, 12],
             device="numpy",
         )
 
     assert library["state_library_format"] == (
-        "issue49_unfiltered_state_library_v1"
+        "issue49_unfiltered_state_library_v2"
     )
-    assert library["source_temperatures"] == [4.0, 8.0]
+    assert library["source_temperatures"] == [4.0, 5.0, 6.0, 7.0, 8.0]
     assert library["source_sweeps"] == 0
     assert library["snapshot_rounds"] == [0, 6, 12]
-    assert library["state_count"] == library["expected_state_count"] == 5
+    assert library["state_count"] == library["expected_state_count"] == 11
     assert library["all_gates_passed"] is True
     assert all(library["gates"].values())
 
@@ -51,27 +51,30 @@ def test_short_tau4_tau8_state_library_is_aligned_and_probe_readable():
     assert [state["state_family"] for state in states] == [
         "initial",
         "mid_source_tau_4",
+        "mid_source_tau_5",
+        "mid_source_tau_6",
+        "mid_source_tau_7",
         "mid_source_tau_8",
         "late_source_tau_4",
+        "late_source_tau_5",
+        "late_source_tau_6",
+        "late_source_tau_7",
         "late_source_tau_8",
     ]
     assert states[0]["source_temperature"] is None
-    assert states[0]["shared_source_temperatures"] == [4.0, 8.0]
+    assert states[0]["shared_source_temperatures"] == [
+        4.0, 5.0, 6.0, 7.0, 8.0
+    ]
 
     seed_row = library["seed_rows"][0]
     assert seed_row["all_gates_passed"] is True
     assert all(seed_row["gates"].values())
-    tau4 = seed_row["source_trajectories"]["tau_4"]
-    tau8 = seed_row["source_trajectories"]["tau_8"]
-    assert tau4["initial_state_sha256"] == tau8[
-        "initial_state_sha256"
-    ]
-    assert tau4["direction_reference_scale"] == tau8[
-        "direction_reference_scale"
-    ]
-    assert tau4["primary_rng_endpoint_sha256"] == tau8[
-        "primary_rng_endpoint_sha256"
-    ]
+    trajectories = list(seed_row["source_trajectories"].values())
+    assert len({row["initial_state_sha256"] for row in trajectories}) == 1
+    assert len({row["direction_reference_scale"] for row in trajectories}) == 1
+    assert len({
+        row["primary_rng_endpoint_sha256"] for row in trajectories
+    }) == 1
 
     for entry in states:
         snapshot = entry["snapshot"]
@@ -83,7 +86,7 @@ def test_short_tau4_tau8_state_library_is_aligned_and_probe_readable():
             device="numpy",
         )
         assert probe._frame_sha256(restored) == snapshot["state_sha256"]
-        assert controls["source_seed"] == 8
+        assert controls["source_seed"] == 99
         assert controls["state_round"] == entry["state_round"]
 
     json.dumps(library, ensure_ascii=False, allow_nan=False)

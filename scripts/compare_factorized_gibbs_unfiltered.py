@@ -20,8 +20,10 @@ import pandas as pd
 from scipy import stats
 
 from table_diffevo.directional_diffusion import (
+    bernoulli_entropy,
     compute_copy_direction_scores,
     direction_rms_scale,
+    tilted_copy_probabilities,
 )
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.factorized_diffusion import (
@@ -116,6 +118,355 @@ def _frame_records(frame):
 def _donor_alpha(round_index, rounds):
     progress = round_index / (rounds - 1) if rounds > 1 else 1.0
     return 2.0 + 8.0 * progress
+
+
+def _empty_independent_direction_diagnostics():
+    return {
+        "condition_count": 0,
+        "raw_logit_min": None,
+        "raw_logit_max": None,
+        "raw_logit_abs_max": 0.0,
+        "raw_logit_abs_max_condition": None,
+        "clip_hit_count": 0,
+        "clip_hit_conditions": [],
+        "conditional_probability_min": None,
+        "conditional_probability_max": None,
+        "minimum_binary_outcome_probability": None,
+        "conditional_entropy_sum": 0.0,
+        "negative_direction_count": 0,
+        "negative_direction_probability_sum": 0.0,
+        "positive_direction_count": 0,
+        "positive_direction_probability_sum": 0.0,
+        "all_finite": True,
+        "all_conditionals_bidirectional": True,
+    }
+
+
+def _accumulate_independent_direction_diagnostics(
+    accumulator,
+    directions,
+    differs,
+    strength,
+    *,
+    round_index,
+    attribute_names,
+    eta=ETA,
+    logit_clip=GIBBS_LOGIT_CLIP,
+):
+    direction_values = np.asarray(directions, dtype=float)
+    active = np.asarray(differs, dtype=bool)
+    if direction_values.shape != active.shape:
+        raise ValueError("方向量与 recipient/donor 差异 mask 形状不一致")
+    if not np.all(np.isfinite(direction_values)):
+        raise ValueError("独立方向量必须全部有限")
+    if not np.isfinite(strength) or strength < 0.0:
+        raise ValueError("独立方向核强度必须是非负有限值")
+    if not np.any(active):
+        return
+
+    base_logit = float(np.log(eta) - np.log1p(-eta))
+    with np.errstate(over="ignore", invalid="ignore"):
+        raw_matrix = base_logit + float(strength) * direction_values
+    raw = raw_matrix[active]
+    if not np.all(np.isfinite(raw)):
+        accumulator["all_finite"] = False
+        raise ValueError("独立方向核原始 logit 超出 float64 可表示范围")
+    probabilities = tilted_copy_probabilities(
+        eta, direction_values[active], float(strength)
+    )
+    if not np.all(np.isfinite(probabilities)):
+        accumulator["all_finite"] = False
+        raise ValueError("独立方向核条件概率不是有限值")
+
+    count = int(raw.size)
+    minimum = float(raw.min())
+    maximum = float(raw.max())
+    absolute = np.abs(raw)
+    maximum_flat_index = int(np.argmax(absolute))
+    active_indices = np.argwhere(active)
+    maximum_row, maximum_attribute = active_indices[maximum_flat_index]
+    maximum_absolute = float(absolute[maximum_flat_index])
+    if (
+        accumulator["raw_logit_abs_max_condition"] is None
+        or maximum_absolute > accumulator["raw_logit_abs_max"]
+    ):
+        accumulator["raw_logit_abs_max"] = maximum_absolute
+        accumulator["raw_logit_abs_max_condition"] = {
+            "round": int(round_index),
+            "row": int(maximum_row),
+            "attribute_index": int(maximum_attribute),
+            "attribute": attribute_names[int(maximum_attribute)],
+            "direction": float(direction_values[
+                maximum_row, maximum_attribute
+            ]),
+            "raw_logit": float(raw_matrix[
+                maximum_row, maximum_attribute
+            ]),
+        }
+
+    accumulator["condition_count"] += count
+    accumulator["raw_logit_min"] = (
+        minimum
+        if accumulator["raw_logit_min"] is None
+        else min(accumulator["raw_logit_min"], minimum)
+    )
+    accumulator["raw_logit_max"] = (
+        maximum
+        if accumulator["raw_logit_max"] is None
+        else max(accumulator["raw_logit_max"], maximum)
+    )
+    probability_minimum = float(probabilities.min())
+    probability_maximum = float(probabilities.max())
+    minimum_outcome = float(np.min(np.minimum(
+        probabilities, 1.0 - probabilities
+    )))
+    accumulator["conditional_probability_min"] = (
+        probability_minimum
+        if accumulator["conditional_probability_min"] is None
+        else min(
+            accumulator["conditional_probability_min"],
+            probability_minimum,
+        )
+    )
+    accumulator["conditional_probability_max"] = (
+        probability_maximum
+        if accumulator["conditional_probability_max"] is None
+        else max(
+            accumulator["conditional_probability_max"],
+            probability_maximum,
+        )
+    )
+    accumulator["minimum_binary_outcome_probability"] = (
+        minimum_outcome
+        if accumulator["minimum_binary_outcome_probability"] is None
+        else min(
+            accumulator["minimum_binary_outcome_probability"],
+            minimum_outcome,
+        )
+    )
+    accumulator["conditional_entropy_sum"] += float(
+        bernoulli_entropy(probabilities).sum()
+    )
+    interior = (probabilities > 0.0) & (probabilities < 1.0)
+    accumulator["all_conditionals_bidirectional"] &= bool(
+        np.all(interior)
+    )
+
+    active_directions = direction_values[active]
+    negative = active_directions < 0.0
+    positive = active_directions > 0.0
+    accumulator["negative_direction_count"] += int(negative.sum())
+    accumulator["negative_direction_probability_sum"] += float(
+        probabilities[negative].sum()
+    )
+    accumulator["positive_direction_count"] += int(positive.sum())
+    accumulator["positive_direction_probability_sum"] += float(
+        probabilities[positive].sum()
+    )
+
+    hit_indices = np.argwhere(active & (np.abs(raw_matrix) >= logit_clip))
+    accumulator["clip_hit_count"] += int(len(hit_indices))
+    for row_index, attribute_index in hit_indices:
+        accumulator["clip_hit_conditions"].append({
+            "round": int(round_index),
+            "row": int(row_index),
+            "attribute_index": int(attribute_index),
+            "attribute": attribute_names[int(attribute_index)],
+            "direction": float(direction_values[
+                row_index, attribute_index
+            ]),
+            "raw_logit": float(raw_matrix[row_index, attribute_index]),
+        })
+
+
+def _finalize_independent_direction_diagnostics(
+    accumulator, *, logit_clip=GIBBS_LOGIT_CLIP
+):
+    count = int(accumulator["condition_count"])
+    negative_count = int(accumulator["negative_direction_count"])
+    positive_count = int(accumulator["positive_direction_count"])
+    hits = int(accumulator["clip_hit_count"])
+    return {
+        "condition_count": count,
+        "raw_logit_min": accumulator["raw_logit_min"],
+        "raw_logit_max": accumulator["raw_logit_max"],
+        "raw_logit_abs_max": float(accumulator["raw_logit_abs_max"]),
+        "raw_logit_abs_max_condition": accumulator[
+            "raw_logit_abs_max_condition"
+        ],
+        "logit_clip": float(logit_clip),
+        "clip_hit_count": hits,
+        "clip_hit_rate": float(hits / count) if count else 0.0,
+        "clip_hit_conditions": list(accumulator["clip_hit_conditions"]),
+        "raw_logit_strictly_inside_clip": bool(
+            count == 0 or accumulator["raw_logit_abs_max"] < logit_clip
+        ),
+        "conditional_probability_min": accumulator[
+            "conditional_probability_min"
+        ],
+        "conditional_probability_max": accumulator[
+            "conditional_probability_max"
+        ],
+        "minimum_binary_outcome_probability": accumulator[
+            "minimum_binary_outcome_probability"
+        ],
+        "conditional_entropy_mean": (
+            float(accumulator["conditional_entropy_sum"] / count)
+            if count else None
+        ),
+        "negative_direction_count": negative_count,
+        "negative_direction_copy_probability": (
+            float(
+                accumulator["negative_direction_probability_sum"]
+                / negative_count
+            ) if negative_count else None
+        ),
+        "positive_direction_count": positive_count,
+        "positive_direction_copy_probability": (
+            float(
+                accumulator["positive_direction_probability_sum"]
+                / positive_count
+            ) if positive_count else None
+        ),
+        "all_finite": bool(accumulator["all_finite"]),
+        "all_conditionals_bidirectional": bool(
+            accumulator["all_conditionals_bidirectional"]
+        ),
+    }
+
+
+def _empty_factor_conditional_diagnostics():
+    return {
+        "condition_count": 0,
+        "raw_logit_min": None,
+        "raw_logit_max": None,
+        "raw_logit_abs_max": 0.0,
+        "raw_logit_abs_max_condition": None,
+        "clip_hit_count": 0,
+        "clip_hit_conditions": [],
+        "conditional_probability_min": None,
+        "conditional_probability_max": None,
+        "minimum_binary_outcome_probability": None,
+        "conditional_entropy_sum": 0.0,
+        "all_finite": True,
+        "all_conditionals_bidirectional": True,
+    }
+
+
+def _accumulate_factor_conditional_diagnostics(
+    accumulator, update, *, round_index, logit_clip=GIBBS_LOGIT_CLIP
+):
+    count = int(update["condition_count"])
+    if update["logit_clip"] != float(logit_clip):
+        raise RuntimeError("实际 Gibbs 条件诊断的 clip 与轨迹协议不一致")
+    if count == 0:
+        return
+    if (
+        len(update["clip_hit_conditions"])
+        != update["clip_hit_count"]
+        or update["conditional_entropy_mean"] is None
+    ):
+        raise RuntimeError("实际 Gibbs 条件诊断内部不完整")
+    maximum_context = {
+        "round": int(round_index),
+        **update["raw_logit_abs_max_condition"],
+    }
+    if (
+        accumulator["raw_logit_abs_max_condition"] is None
+        or update["raw_logit_abs_max"]
+        > accumulator["raw_logit_abs_max"]
+    ):
+        accumulator["raw_logit_abs_max"] = float(
+            update["raw_logit_abs_max"]
+        )
+        accumulator["raw_logit_abs_max_condition"] = maximum_context
+    accumulator["condition_count"] += count
+    accumulator["raw_logit_min"] = (
+        float(update["raw_logit_min"])
+        if accumulator["raw_logit_min"] is None
+        else min(accumulator["raw_logit_min"], update["raw_logit_min"])
+    )
+    accumulator["raw_logit_max"] = (
+        float(update["raw_logit_max"])
+        if accumulator["raw_logit_max"] is None
+        else max(accumulator["raw_logit_max"], update["raw_logit_max"])
+    )
+    accumulator["clip_hit_count"] += int(update["clip_hit_count"])
+    accumulator["clip_hit_conditions"].extend({
+        "round": int(round_index),
+        **condition,
+    } for condition in update["clip_hit_conditions"])
+    accumulator["conditional_probability_min"] = (
+        float(update["conditional_probability_min"])
+        if accumulator["conditional_probability_min"] is None
+        else min(
+            accumulator["conditional_probability_min"],
+            update["conditional_probability_min"],
+        )
+    )
+    accumulator["conditional_probability_max"] = (
+        float(update["conditional_probability_max"])
+        if accumulator["conditional_probability_max"] is None
+        else max(
+            accumulator["conditional_probability_max"],
+            update["conditional_probability_max"],
+        )
+    )
+    accumulator["minimum_binary_outcome_probability"] = (
+        float(update["minimum_binary_outcome_probability"])
+        if accumulator["minimum_binary_outcome_probability"] is None
+        else min(
+            accumulator["minimum_binary_outcome_probability"],
+            update["minimum_binary_outcome_probability"],
+        )
+    )
+    accumulator["conditional_entropy_sum"] += float(
+        update["conditional_entropy_sum"]
+    )
+    accumulator["all_finite"] &= bool(update["all_finite"])
+    accumulator["all_conditionals_bidirectional"] &= bool(
+        update["all_conditionals_bidirectional"]
+    )
+
+
+def _finalize_factor_conditional_diagnostics(
+    accumulator, *, logit_clip=GIBBS_LOGIT_CLIP
+):
+    count = int(accumulator["condition_count"])
+    hits = int(accumulator["clip_hit_count"])
+    return {
+        "condition_count": count,
+        "raw_logit_min": accumulator["raw_logit_min"],
+        "raw_logit_max": accumulator["raw_logit_max"],
+        "raw_logit_abs_max": float(accumulator["raw_logit_abs_max"]),
+        "raw_logit_abs_max_condition": accumulator[
+            "raw_logit_abs_max_condition"
+        ],
+        "logit_clip": float(logit_clip),
+        "clip_hit_count": hits,
+        "clip_hit_rate": float(hits / count) if count else 0.0,
+        "clip_hit_conditions": list(accumulator["clip_hit_conditions"]),
+        "raw_logit_strictly_inside_clip": bool(
+            count == 0 or accumulator["raw_logit_abs_max"] < logit_clip
+        ),
+        "conditional_probability_min": accumulator[
+            "conditional_probability_min"
+        ],
+        "conditional_probability_max": accumulator[
+            "conditional_probability_max"
+        ],
+        "minimum_binary_outcome_probability": accumulator[
+            "minimum_binary_outcome_probability"
+        ],
+        "conditional_entropy_mean": (
+            float(accumulator["conditional_entropy_sum"] / count)
+            if count else None
+        ),
+        "all_finite": bool(accumulator["all_finite"]),
+        "all_conditionals_bidirectional": bool(
+            accumulator["all_conditionals_bidirectional"]
+        ),
+    }
 
 
 def _normalize_snapshot_rounds(snapshot_rounds, rounds):
@@ -238,6 +589,12 @@ def _run_one(
     condition_evaluation_batches = 0
     compiled_validation_elapsed = 0.0
     direction_elapsed = 0.0
+    independent_direction_diagnostics = (
+        _empty_independent_direction_diagnostics()
+    )
+    factor_conditional_diagnostics = (
+        _empty_factor_conditional_diagnostics()
+    )
     state_sha256_history = []
     trajectory_audit_elapsed = 0.0
     snapshot_capture_elapsed = 0.0
@@ -324,6 +681,14 @@ def _run_one(
             temperature / direction_reference_scale
             if direction_reference_scale is not None else 0.0
         )
+        _accumulate_independent_direction_diagnostics(
+            independent_direction_diagnostics,
+            directions,
+            differs,
+            effective_strength,
+            round_index=round_index,
+            attribute_names=schema.attribute_names(),
+        )
 
         proposal, update_diagnostics = evolve_step_factorized_gibbs(
             state,
@@ -342,6 +707,11 @@ def _run_one(
             max_factor_order=3,
             gibbs_logit_clip=GIBBS_LOGIT_CLIP,
             compiled_workload=compiled_workload,
+        )
+        _accumulate_factor_conditional_diagnostics(
+            factor_conditional_diagnostics,
+            update_diagnostics["factor_conditional_logit_diagnostics"],
+            round_index=round_index,
         )
         proposal_q, proposal_residual, proposal_fitness = evaluate_vectorized(
             proposal,
@@ -441,6 +811,17 @@ def _run_one(
     losses = np.asarray(loss_history, dtype=float)
     positive_gains = gains[gains > 0.0]
     negative_gains = gains[gains < 0.0]
+    completed_current_losses = np.asarray(
+        (
+            loss_history[1:len(gain_history)] + [final_loss]
+            if gain_history else []
+        ),
+        dtype=float,
+    )
+    current_loss_path = np.asarray(
+        [initial_loss, *completed_current_losses.tolist()], dtype=float
+    )
+    late_window = completed_current_losses[-250:]
     label = "independent" if sweeps == 0 else f"gibbs_{sweeps}_sweeps"
     result = {
         "seed": int(seed),
@@ -465,6 +846,13 @@ def _run_one(
         "late_250_mean_loss": (
             float(losses[-250:].mean()) if len(losses) else final_loss
         ),
+        "late_window_rounds": int(len(late_window)),
+        "late_window_current_loss_mean": (
+            float(late_window.mean()) if len(late_window) else final_loss
+        ),
+        "current_loss_auc": float(np.sum(
+            0.5 * (current_loss_path[:-1] + current_loss_path[1:])
+        )),
         "positive_gain_rate": (
             float(np.mean(gains > 0.0)) if len(gains) else 0.0
         ),
@@ -485,6 +873,17 @@ def _run_one(
         "final_unique_states": int(len(state.value_counts())),
         "mean_unique_states": float(np.mean(unique_history)),
         "direction_reference_scale": direction_reference_scale,
+        "direction_reference_scale_round": direction_reference_scale_round,
+        "independent_direction_diagnostics": (
+            _finalize_independent_direction_diagnostics(
+                independent_direction_diagnostics
+            )
+        ),
+        "factor_conditional_logit_diagnostics": (
+            _finalize_factor_conditional_diagnostics(
+                factor_conditional_diagnostics
+            )
+        ),
         "direction_elapsed_sec": direction_elapsed,
         "factor_build_elapsed_sec": factor_build_elapsed,
         "compiled_validation_elapsed_sec": compiled_validation_elapsed,
@@ -517,6 +916,9 @@ def _run_one(
         "final_csv_sha256": _frame_sha256(state),
         "state_sha256_history": state_sha256_history,
         "loss_history": loss_history,
+        "current_loss_after_round_history": (
+            completed_current_losses.tolist()
+        ),
         "gain_history": gain_history,
         "changed_cells_history": changed_cells_history,
     }
