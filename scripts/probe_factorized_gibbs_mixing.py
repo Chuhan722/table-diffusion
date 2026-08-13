@@ -318,6 +318,111 @@ def _empty_kernel_accumulator():
     }
 
 
+def _empty_logit_accumulator():
+    return {
+        "condition_count": 0,
+        "raw_logit_min": None,
+        "raw_logit_max": None,
+        "raw_logit_abs_max": 0.0,
+        "clip_hit_count": 0,
+    }
+
+
+def _raw_conditional_logits(masks, directions, eta, strength):
+    checked_masks = np.asarray(masks)
+    values = np.asarray(directions, dtype=float)
+    if (
+        checked_masks.ndim != 2
+        or checked_masks.dtype.kind not in "biuf"
+        or not np.all(np.isfinite(checked_masks))
+        or np.any((checked_masks != 0) & (checked_masks != 1))
+    ):
+        raise ValueError("masks 必须是有限 0/1 二维数组")
+    checked_masks = checked_masks.astype(bool, copy=False)
+    if values.shape != (len(checked_masks),):
+        raise ValueError("directions 必须与完整 mask 数量一致")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("directions 必须全部有限")
+    if (
+        not np.isfinite(eta)
+        or not 0.0 < eta < 1.0
+        or not np.isfinite(strength)
+        or strength < 0.0
+    ):
+        raise ValueError("eta/strength 必须是有效有限值")
+    n_active = checked_masks.shape[1]
+    if len(checked_masks) != 1 << n_active:
+        raise ValueError("masks 必须完整枚举全部状态")
+    if n_active == 0:
+        return np.empty(0, dtype=float)
+
+    base_logit = float(np.log(eta) - np.log1p(-eta))
+    state_indices = np.arange(len(checked_masks), dtype=np.intp)
+    logits = []
+    for variable in range(n_active):
+        lower = state_indices[~checked_masks[:, variable]]
+        upper = lower | (1 << variable)
+        with np.errstate(over="ignore", invalid="ignore"):
+            variable_logits = base_logit + strength * (
+                values[upper] - values[lower]
+            )
+        if not np.all(np.isfinite(variable_logits)):
+            raise ValueError("未截断条件 logit 超出 float64 可表示范围")
+        logits.append(variable_logits)
+    return np.concatenate(logits)
+
+
+def _accumulate_logit_diagnostics(accumulator, raw_logits, logit_clip):
+    values = np.asarray(raw_logits, dtype=float)
+    if values.ndim != 1 or not np.all(np.isfinite(values)):
+        raise ValueError("raw_logits 必须是有限一维数组")
+    if (
+        not np.isfinite(logit_clip)
+        or logit_clip <= 0.0
+    ):
+        raise ValueError("logit_clip 必须是正有限值")
+    if values.size == 0:
+        return
+    minimum = float(values.min())
+    maximum = float(values.max())
+    accumulator["condition_count"] += int(values.size)
+    accumulator["raw_logit_min"] = (
+        minimum
+        if accumulator["raw_logit_min"] is None
+        else min(accumulator["raw_logit_min"], minimum)
+    )
+    accumulator["raw_logit_max"] = (
+        maximum
+        if accumulator["raw_logit_max"] is None
+        else max(accumulator["raw_logit_max"], maximum)
+    )
+    accumulator["raw_logit_abs_max"] = max(
+        accumulator["raw_logit_abs_max"],
+        float(np.max(np.abs(values))),
+    )
+    accumulator["clip_hit_count"] += int(np.sum(
+        np.abs(values) > logit_clip
+    ))
+
+
+def _finalize_logit_diagnostics(accumulator, logit_clip):
+    count = int(accumulator["condition_count"])
+    hits = int(accumulator["clip_hit_count"])
+    return {
+        "condition_count": count,
+        "raw_logit_min": accumulator["raw_logit_min"],
+        "raw_logit_max": accumulator["raw_logit_max"],
+        "raw_logit_abs_max": float(accumulator["raw_logit_abs_max"]),
+        "logit_clip": float(logit_clip),
+        "clip_hit_count": hits,
+        "clip_hit_rate": float(hits / count) if count else 0.0,
+        "raw_logit_strictly_inside_clip": bool(
+            count == 0
+            or accumulator["raw_logit_abs_max"] < logit_clip
+        ),
+    }
+
+
 def _safe_kl(probabilities, reference):
     positive = probabilities > 0.0
     return float(np.dot(
@@ -570,6 +675,9 @@ def _probe_state(
     global_kernel = {
         name: _empty_kernel_accumulator() for name in configs
     }
+    global_logit = {
+        tau: _empty_logit_accumulator() for tau in temperatures
+    }
     exact_energy_max_error = 0.0
     one_hot_max_error = 0.0
     factor_count_sum = 0
@@ -696,6 +804,12 @@ def _probe_state(
                     tau / direction_reference_scale
                     if direction_reference_scale is not None else 0.0
                 )
+                raw_logits = _raw_conditional_logits(
+                    masks, factor_energies, ETA, strength
+                )
+                _accumulate_logit_diagnostics(
+                    global_logit[tau], raw_logits, GIBBS_LOGIT_CLIP
+                )
                 independent = np.exp(gibbs_mask_log_probabilities(
                     reference_log, additive, strength
                 ))
@@ -779,6 +893,12 @@ def _probe_state(
         name: _summarize_proposals(rows)
         for name, rows in proposal_rows.items()
     }
+    conditional_logit_diagnostics = {
+        f"tau_{_tau_label(tau)}": _finalize_logit_diagnostics(
+            global_logit[tau], GIBBS_LOGIT_CLIP
+        )
+        for tau in temperatures
+    }
     paired = {}
     recovery = {}
     for tau in temperatures:
@@ -834,6 +954,7 @@ def _probe_state(
                 exact_propagation_elapsed
             ),
         },
+        "conditional_logit_diagnostics": conditional_logit_diagnostics,
         "kernel_summary": kernel_summary,
         "proposal_summary": proposal_summary,
         "paired": paired,

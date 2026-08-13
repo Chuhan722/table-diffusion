@@ -20,6 +20,42 @@ def _inputs():
     return target, queries, schema, marginals
 
 
+def test_raw_conditional_logit_diagnostics_detect_clip_hits():
+    masks = np.asarray([
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [1, 1],
+    ], dtype=bool)
+    directions = np.asarray([0.0, 1.0, -1.0, 3.0])
+
+    raw_logits = probe._raw_conditional_logits(
+        masks, directions, eta=0.5, strength=10.0
+    )
+    np.testing.assert_array_equal(
+        raw_logits, np.asarray([10.0, 40.0, -10.0, 20.0])
+    )
+
+    accumulator = probe._empty_logit_accumulator()
+    probe._accumulate_logit_diagnostics(
+        accumulator, raw_logits, logit_clip=30.0
+    )
+    result = probe._finalize_logit_diagnostics(
+        accumulator, logit_clip=30.0
+    )
+
+    assert result == {
+        "condition_count": 4,
+        "raw_logit_min": -10.0,
+        "raw_logit_max": 40.0,
+        "raw_logit_abs_max": 40.0,
+        "logit_clip": 30.0,
+        "clip_hit_count": 1,
+        "clip_hit_rate": 0.25,
+        "raw_logit_strictly_inside_clip": False,
+    }
+
+
 def test_probe_reads_verified_current_snapshot_without_recalibration(
     tmp_path, monkeypatch
 ):
@@ -106,6 +142,10 @@ def test_probe_reads_verified_current_snapshot_without_recalibration(
     assert result["state_sha256"] == snapshot["state_sha256"]
     assert result["state_loss"] == snapshot["current_loss"]
     assert result["external_snapshot_controls"] == controls
+    logit = result["conditional_logit_diagnostics"]["tau_4"]
+    assert logit["condition_count"] > 0
+    assert np.isfinite(logit["raw_logit_abs_max"])
+    assert 0 <= logit["clip_hit_count"] <= logit["condition_count"]
 
 
 def test_probe_default_path_keeps_legacy_scale_and_alpha_rules(monkeypatch):
