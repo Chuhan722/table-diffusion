@@ -82,8 +82,9 @@ DATASETS = {
         "n_records": 16181,
         "device": "cuda",
         "references": {
+            # 一次实验一份源数据（PR #47 第三轮审查更正）：源数据为
+            # train，离线参考只用 train；test 须以其为源数据独立建实验。
             "train": Path("data/nltcs/nltcs.train.data"),
-            "test": Path("data/nltcs/nltcs.test.data"),
         },
     },
 }
