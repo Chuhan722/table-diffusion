@@ -98,7 +98,6 @@
      "final_loss": 130.5,
      "pre_final_proposal_loss": 130.5,
      "best_loss": 101.5,
-     "tail_mean_loss": 116.72,
      "final_table_measured_l1": 0.0058,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -111,7 +110,8 @@
        "binned_joint_tvd": 0.9700000000000001,
        "raw_unique_states": 284
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 116.72
     },
     {
      "dataset": "test_300x10",
@@ -120,7 +120,6 @@
      "final_loss": 13913.0,
      "pre_final_proposal_loss": 13833.0,
      "best_loss": 2491.0,
-     "tail_mean_loss": 13844.095,
      "final_table_measured_l1": 0.06333333333333334,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -133,7 +132,8 @@
        "binned_joint_tvd": 0.9733333333333334,
        "raw_unique_states": 296
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 13844.095
     },
     {
      "dataset": "test_300x10",
@@ -142,7 +142,6 @@
      "final_loss": 10.0,
      "pre_final_proposal_loss": 10.0,
      "best_loss": 10.0,
-     "tail_mean_loss": 10.26,
      "final_table_measured_l1": 0.0010666666666666667,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -155,7 +154,8 @@
        "binned_joint_tvd": 0.9833333333333334,
        "raw_unique_states": 295
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10.26
     },
     {
      "dataset": "test_300x10",
@@ -164,7 +164,6 @@
      "final_loss": 61.5,
      "pre_final_proposal_loss": 61.5,
      "best_loss": 61.5,
-     "tail_mean_loss": 66.63,
      "final_table_measured_l1": 0.003933333333333333,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -177,7 +176,8 @@
        "binned_joint_tvd": 0.9833333333333334,
        "raw_unique_states": 296
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 66.63
     },
     {
      "dataset": "test_300x10",
@@ -186,7 +186,6 @@
      "final_loss": 96.0,
      "pre_final_proposal_loss": 96.0,
      "best_loss": 87.0,
-     "tail_mean_loss": 104.105,
      "final_table_measured_l1": 0.0052,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -199,7 +198,8 @@
        "binned_joint_tvd": 0.9766666666666668,
        "raw_unique_states": 282
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 104.105
     },
     {
      "dataset": "test_300x10",
@@ -208,7 +208,6 @@
      "final_loss": 15901.5,
      "pre_final_proposal_loss": 15901.5,
      "best_loss": 2272.0,
-     "tail_mean_loss": 15546.36,
      "final_table_measured_l1": 0.06713333333333334,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -221,7 +220,8 @@
        "binned_joint_tvd": 0.9833333333333334,
        "raw_unique_states": 292
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 15546.36
     },
     {
      "dataset": "test_300x10",
@@ -230,7 +230,6 @@
      "final_loss": 11.5,
      "pre_final_proposal_loss": 11.5,
      "best_loss": 11.5,
-     "tail_mean_loss": 11.5,
      "final_table_measured_l1": 0.0014,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -243,7 +242,8 @@
        "binned_joint_tvd": 0.9766666666666668,
        "raw_unique_states": 294
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 11.5
     },
     {
      "dataset": "test_300x10",
@@ -252,7 +252,6 @@
      "final_loss": 57.0,
      "pre_final_proposal_loss": 57.0,
      "best_loss": 57.0,
-     "tail_mean_loss": 57.0,
      "final_table_measured_l1": 0.0037333333333333337,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -265,7 +264,8 @@
        "binned_joint_tvd": 0.9733333333333334,
        "raw_unique_states": 296
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 57.0
     },
     {
      "dataset": "test_300x10",
@@ -274,7 +274,6 @@
      "final_loss": 116.5,
      "pre_final_proposal_loss": 116.5,
      "best_loss": 81.0,
-     "tail_mean_loss": 120.64,
      "final_table_measured_l1": 0.005533333333333333,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -287,7 +286,8 @@
        "binned_joint_tvd": 0.9666666666666668,
        "raw_unique_states": 290
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 120.64
     },
     {
      "dataset": "test_300x10",
@@ -296,7 +296,6 @@
      "final_loss": 14237.0,
      "pre_final_proposal_loss": 14280.0,
      "best_loss": 1802.0,
-     "tail_mean_loss": 14373.61,
      "final_table_measured_l1": 0.0652,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -309,7 +308,8 @@
        "binned_joint_tvd": 0.9900000000000002,
        "raw_unique_states": 298
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 14373.61
     },
     {
      "dataset": "test_300x10",
@@ -318,7 +318,6 @@
      "final_loss": 14.0,
      "pre_final_proposal_loss": 14.0,
      "best_loss": 14.0,
-     "tail_mean_loss": 14.0,
      "final_table_measured_l1": 0.0013333333333333335,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -331,7 +330,8 @@
        "binned_joint_tvd": 0.9900000000000001,
        "raw_unique_states": 287
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 14.0
     },
     {
      "dataset": "test_300x10",
@@ -340,7 +340,6 @@
      "final_loss": 54.0,
      "pre_final_proposal_loss": 54.0,
      "best_loss": 54.0,
-     "tail_mean_loss": 57.31,
      "final_table_measured_l1": 0.0036000000000000003,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -353,7 +352,8 @@
        "binned_joint_tvd": 0.9866666666666668,
        "raw_unique_states": 298
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 57.31
     },
     {
      "dataset": "test_300x10",
@@ -362,7 +362,6 @@
      "final_loss": 119.0,
      "pre_final_proposal_loss": 112.5,
      "best_loss": 98.5,
-     "tail_mean_loss": 130.37,
      "final_table_measured_l1": 0.0056,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -375,7 +374,8 @@
        "binned_joint_tvd": 0.9766666666666668,
        "raw_unique_states": 285
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 130.37
     },
     {
      "dataset": "test_300x10",
@@ -384,7 +384,6 @@
      "final_loss": 11098.0,
      "pre_final_proposal_loss": 11126.0,
      "best_loss": 1828.0,
-     "tail_mean_loss": 10577.125,
      "final_table_measured_l1": 0.051866666666666665,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -397,7 +396,8 @@
        "binned_joint_tvd": 0.9966666666666668,
        "raw_unique_states": 294
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10577.125
     },
     {
      "dataset": "test_300x10",
@@ -406,7 +406,6 @@
      "final_loss": 10.5,
      "pre_final_proposal_loss": 10.5,
      "best_loss": 10.5,
-     "tail_mean_loss": 11.955,
      "final_table_measured_l1": 0.0012666666666666666,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -419,7 +418,8 @@
        "binned_joint_tvd": 0.9800000000000001,
        "raw_unique_states": 295
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 11.955
     },
     {
      "dataset": "test_300x10",
@@ -428,7 +428,6 @@
      "final_loss": 44.5,
      "pre_final_proposal_loss": 44.5,
      "best_loss": 44.5,
-     "tail_mean_loss": 50.07,
      "final_table_measured_l1": 0.003133333333333333,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -441,7 +440,8 @@
        "binned_joint_tvd": 0.9900000000000001,
        "raw_unique_states": 296
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 50.07
     },
     {
      "dataset": "test_300x10",
@@ -450,7 +450,6 @@
      "final_loss": 114.0,
      "pre_final_proposal_loss": 114.0,
      "best_loss": 67.0,
-     "tail_mean_loss": 133.385,
      "final_table_measured_l1": 0.0052,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -463,7 +462,8 @@
        "binned_joint_tvd": 0.9800000000000001,
        "raw_unique_states": 291
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 133.385
     },
     {
      "dataset": "test_300x10",
@@ -472,7 +472,6 @@
      "final_loss": 12423.5,
      "pre_final_proposal_loss": 12377.5,
      "best_loss": 2044.5,
-     "tail_mean_loss": 11762.76,
      "final_table_measured_l1": 0.061000000000000006,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -485,7 +484,8 @@
        "binned_joint_tvd": 0.99,
        "raw_unique_states": 297
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 11762.76
     },
     {
      "dataset": "test_300x10",
@@ -494,7 +494,6 @@
      "final_loss": 16.5,
      "pre_final_proposal_loss": 16.5,
      "best_loss": 16.5,
-     "tail_mean_loss": 17.145,
      "final_table_measured_l1": 0.0016666666666666668,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -507,7 +506,8 @@
        "binned_joint_tvd": 0.9833333333333334,
        "raw_unique_states": 290
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 17.145
     },
     {
      "dataset": "test_300x10",
@@ -516,7 +516,6 @@
      "final_loss": 76.0,
      "pre_final_proposal_loss": 76.0,
      "best_loss": 76.0,
-     "tail_mean_loss": 76.0,
      "final_table_measured_l1": 0.004,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -529,7 +528,8 @@
        "binned_joint_tvd": 0.9833333333333334,
        "raw_unique_states": 297
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 76.0
     }
    ],
    "judgment": {
@@ -551,12 +551,29 @@
      "necessity_min_wins": 4,
      "confound_max_ratio": 1.1
     }
+   },
+   "initial_state": {
+    "measured_l1_mean": 0.017666666666666667,
+    "measured_l1_by_seed": {
+     "100": 0.019266666666666668,
+     "101": 0.017733333333333334,
+     "102": 0.0156,
+     "103": 0.015933333333333334,
+     "104": 0.0198
+    },
+    "loss_by_seed": {
+     "100": 2556.5,
+     "101": 2272.0,
+     "102": 1834.0,
+     "103": 1855.5,
+     "104": 2501.5
+    },
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；由 scripts/audit_formal_json.py 可独立重建复验"
    }
   },
   "nltcs": {
    "reference_sha256": {
-    "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30",
-    "test": "f9ffa6b74b27dc03bee3203d157ee31079e80b13be40d0c0093d635c25aed523"
+    "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30"
    },
    "runs": [
     {
@@ -566,7 +583,6 @@
      "final_loss": 10343053.5,
      "pre_final_proposal_loss": 10342552.5,
      "best_loss": 10335895.0,
-     "tail_mean_loss": 10665827.825,
      "final_table_measured_l1": 0.0066665304289678555,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -579,7 +595,8 @@
        "binned_joint_tvd": 0.32902787219578516,
        "raw_unique_states": 3509
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10665827.825
     },
     {
      "dataset": "nltcs",
@@ -588,7 +605,6 @@
      "final_loss": 709143533.5,
      "pre_final_proposal_loss": 708993085.5,
      "best_loss": 685065039.0,
-     "tail_mean_loss": 710922396.445,
      "final_table_measured_l1": 0.0638521604469321,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -601,7 +617,8 @@
        "binned_joint_tvd": 0.7748594030035226,
        "raw_unique_states": 7983
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 710922396.445
     },
     {
      "dataset": "nltcs",
@@ -610,7 +627,6 @@
      "final_loss": 2109013.0,
      "pre_final_proposal_loss": 2109013.0,
      "best_loss": 2109013.0,
-     "tail_mean_loss": 2276603.26,
      "final_table_measured_l1": 0.00283333254101439,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -623,7 +639,8 @@
        "binned_joint_tvd": 0.2640751498671281,
        "raw_unique_states": 3007
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2276603.26
     },
     {
      "dataset": "nltcs",
@@ -632,7 +649,6 @@
      "final_loss": 525225871.5,
      "pre_final_proposal_loss": 525225871.5,
      "best_loss": 525225871.5,
-     "tail_mean_loss": 526434673.3,
      "final_table_measured_l1": 0.051378384917721176,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -645,7 +661,8 @@
        "binned_joint_tvd": 0.7125641184104814,
        "raw_unique_states": 6477
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 526434673.3
     },
     {
      "dataset": "nltcs",
@@ -654,7 +671,6 @@
      "final_loss": 9913793.0,
      "pre_final_proposal_loss": 9930668.0,
      "best_loss": 9913793.0,
-     "tail_mean_loss": 10375771.405,
      "final_table_measured_l1": 0.0065617591110453104,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -667,7 +683,8 @@
        "binned_joint_tvd": 0.32575242568444474,
        "raw_unique_states": 3512
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10375771.405
     },
     {
      "dataset": "nltcs",
@@ -676,7 +693,6 @@
      "final_loss": 734740545.0,
      "pre_final_proposal_loss": 733485911.0,
      "best_loss": 696478560.5,
-     "tail_mean_loss": 730345633.21,
      "final_table_measured_l1": 0.06443479269633401,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -689,7 +705,8 @@
        "binned_joint_tvd": 0.7755392126568199,
        "raw_unique_states": 8040
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 730345633.21
     },
     {
      "dataset": "nltcs",
@@ -698,7 +715,6 @@
      "final_loss": 1838904.0,
      "pre_final_proposal_loss": 1838904.0,
      "best_loss": 1838904.0,
-     "tail_mean_loss": 1949340.76,
      "final_table_measured_l1": 0.002610701207821287,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -711,7 +727,8 @@
        "binned_joint_tvd": 0.25950188492676596,
        "raw_unique_states": 2957
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 1949340.76
     },
     {
      "dataset": "nltcs",
@@ -720,7 +737,6 @@
      "final_loss": 527683332.5,
      "pre_final_proposal_loss": 527683332.5,
      "best_loss": 527683332.5,
-     "tail_mean_loss": 530010953.085,
      "final_table_measured_l1": 0.05173400235510117,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -733,7 +749,8 @@
        "binned_joint_tvd": 0.713182127186206,
        "raw_unique_states": 6601
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 530010953.085
     },
     {
      "dataset": "nltcs",
@@ -742,7 +759,6 @@
      "final_loss": 10077480.0,
      "pre_final_proposal_loss": 10077956.0,
      "best_loss": 10072222.5,
-     "tail_mean_loss": 10413467.47,
      "final_table_measured_l1": 0.006643872165162568,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -755,7 +771,8 @@
        "binned_joint_tvd": 0.32649403621531425,
        "raw_unique_states": 3508
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10413467.47
     },
     {
      "dataset": "nltcs",
@@ -764,7 +781,6 @@
      "final_loss": 707821078.0,
      "pre_final_proposal_loss": 707309902.5,
      "best_loss": 690917091.0,
-     "tail_mean_loss": 705016763.315,
      "final_table_measured_l1": 0.06332262385658344,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -777,7 +793,8 @@
        "binned_joint_tvd": 0.7747976021259504,
        "raw_unique_states": 7775
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 705016763.315
     },
     {
      "dataset": "nltcs",
@@ -786,7 +803,6 @@
      "final_loss": 2056036.5,
      "pre_final_proposal_loss": 2058888.0,
      "best_loss": 2056036.5,
-     "tail_mean_loss": 2203282.23,
      "final_table_measured_l1": 0.002753133400188588,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -799,7 +815,8 @@
        "binned_joint_tvd": 0.2650639639082875,
        "raw_unique_states": 2990
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2203282.23
     },
     {
      "dataset": "nltcs",
@@ -808,7 +825,6 @@
      "final_loss": 528315850.0,
      "pre_final_proposal_loss": 528315850.0,
      "best_loss": 528315850.0,
-     "tail_mean_loss": 530349689.53,
      "final_table_measured_l1": 0.05184766410895822,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -821,7 +837,8 @@
        "binned_joint_tvd": 0.7175081886162784,
        "raw_unique_states": 6585
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 530349689.53
     },
     {
      "dataset": "nltcs",
@@ -830,7 +847,6 @@
      "final_loss": 10085191.0,
      "pre_final_proposal_loss": 10092357.0,
      "best_loss": 10085191.0,
-     "tail_mean_loss": 10512980.86,
      "final_table_measured_l1": 0.006651774774882123,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -843,7 +859,8 @@
        "binned_joint_tvd": 0.32915147395093014,
        "raw_unique_states": 3556
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10512980.86
     },
     {
      "dataset": "nltcs",
@@ -852,7 +869,6 @@
      "final_loss": 700616470.0,
      "pre_final_proposal_loss": 700801956.5,
      "best_loss": 684830887.0,
-     "tail_mean_loss": 702362941.09,
      "final_table_measured_l1": 0.06290205684557085,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -865,7 +881,8 @@
        "binned_joint_tvd": 0.7686175143687042,
        "raw_unique_states": 7708
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 702362941.09
     },
     {
      "dataset": "nltcs",
@@ -874,7 +891,6 @@
      "final_loss": 2043473.5,
      "pre_final_proposal_loss": 2043473.5,
      "best_loss": 2043473.5,
-     "tail_mean_loss": 2234698.805,
      "final_table_measured_l1": 0.0028012899281671297,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -887,7 +903,8 @@
        "binned_joint_tvd": 0.2666707867251715,
        "raw_unique_states": 3017
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2234698.805
     },
     {
      "dataset": "nltcs",
@@ -896,7 +913,6 @@
      "final_loss": 526550720.5,
      "pre_final_proposal_loss": 526619691.5,
      "best_loss": 526550720.5,
-     "tail_mean_loss": 528894571.585,
      "final_table_measured_l1": 0.05165213625753765,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -909,7 +925,8 @@
        "binned_joint_tvd": 0.7116371052468945,
        "raw_unique_states": 6528
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 528894571.585
     },
     {
      "dataset": "nltcs",
@@ -918,7 +935,6 @@
      "final_loss": 10062812.5,
      "pre_final_proposal_loss": 10082083.5,
      "best_loss": 10062812.5,
-     "tail_mean_loss": 10524900.035,
      "final_table_measured_l1": 0.006604791290533828,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -931,7 +947,8 @@
        "binned_joint_tvd": 0.3270502441134664,
        "raw_unique_states": 3453
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10524900.035
     },
     {
      "dataset": "nltcs",
@@ -940,7 +957,6 @@
      "final_loss": 728845851.5,
      "pre_final_proposal_loss": 728501272.0,
      "best_loss": 685850640.0,
-     "tail_mean_loss": 731655941.105,
      "final_table_measured_l1": 0.06465464576829758,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -953,7 +969,8 @@
        "binned_joint_tvd": 0.7813484951486311,
        "raw_unique_states": 8046
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 731655941.105
     },
     {
      "dataset": "nltcs",
@@ -962,7 +979,6 @@
      "final_loss": 1857804.0,
      "pre_final_proposal_loss": 1857804.0,
      "best_loss": 1857804.0,
-     "tail_mean_loss": 1992697.465,
      "final_table_measured_l1": 0.0026392246897778077,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -975,7 +991,8 @@
        "binned_joint_tvd": 0.2573388542117298,
        "raw_unique_states": 2973
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 1992697.465
     },
     {
      "dataset": "nltcs",
@@ -984,7 +1001,6 @@
      "final_loss": 529049002.0,
      "pre_final_proposal_loss": 529049002.0,
      "best_loss": 529049002.0,
-     "tail_mean_loss": 531645405.53,
      "final_table_measured_l1": 0.05215240849626858,
      "rounds_run": 2000,
      "candidate_evaluations": 2000,
@@ -997,7 +1013,8 @@
        "binned_joint_tvd": 0.711698906124467,
        "raw_unique_states": 6708
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 531645405.53
     }
    ],
    "judgment": {
@@ -1036,7 +1053,7 @@
      "103": 696766249.5,
      "104": 693723685.5
     },
-    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；审查（PR #47 意见 1）要求的初始对照基准"
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；由 scripts/audit_formal_json.py 可独立重建复验"
    },
    "test_evaluation_withdrawn": {
     "reason": "一次实验一份源数据：本实验 queries/marginals/target/n_records全部来自 train，train 源合成表与 test 的比较（含等行数抽样口径）不构成 test 源数据实验，按第三轮审查撤回。test 若要评价须以其为源数据独立建实验。",
@@ -1044,7 +1061,10 @@
      "offline.test",
      "offline_fullsize_invalid",
      "test_reevaluation"
-    ]
+    ],
+    "withdrawn_reference_sha256": {
+     "test": "f9ffa6b74b27dc03bee3203d157ee31079e80b13be40d0c0093d635c25aed523"
+    }
    }
   }
  },

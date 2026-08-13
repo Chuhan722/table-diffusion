@@ -1,12 +1,18 @@
 """扩散必要性 2×2 消融（Issue #43 预注册协议）。
 
-回答两个归因问题：
+回答两个归因问题（结论范围见第四轮审查定稿）：
 
-1. **扩散方向是否必要**：无门条件下，扩散核（fitness/距离加权 donor + 残差
-   定向复制）是否显著优于随机核（均匀 donor + 无定向复制，其余扰动结构与
-   冷却完全相同）；
-2. **门是否遮蔽归因**：有门条件下，随机核是否接近扩散核——若接近，说明贪心
-   门本身就能驱动收敛，门内比较无法体现扩散的贡献。
+1. **完整引导组合是否有增量价值**：无门+双重自冷却条件下，完整引导组合
+   （fitness/距离加权 donor + 残差定向复制，作为整体、不拆分子机制）是否
+   显著优于无引导对照（均匀 donor + 无定向复制，其余扰动结构与冷却完全
+   相同——对照臂仍保留冷却或门提供的反馈，不称"完全无引导"）；
+2. **门是否遮蔽归因**：历史门控条件下，无引导对照是否接近完整引导——若
+   接近，说明贪心门本身就能驱动收敛，门内比较无法体现引导的贡献。
+
+结论表述（冻结口径）：在当前参数、固定 2000 轮等候选评价与 measured L1
+指标下，完整 donor/copy 方向引导组合，在"无门+双重自冷却"和"历史门控"
+两种具体配置中，均显著优于均匀 donor、无定向复制的对照。不推广到其他
+无门控配置，不宣称单个子机制单独必要。
 
 四臂（2×2，配对种子，等轮数等候选预算）：
 
@@ -210,7 +216,10 @@ def _run_dataset(name, spec, seeds, rounds):
                 "final_loss": final_loss,
                 "pre_final_proposal_loss": float(losses[-1]),
                 "best_loss": float(diag["best_loss"]),
-                "tail_mean_loss": float(np.mean(losses[-TAIL_WINDOW:])),
+                # 口径注记：loss_history 是 round-start/pre-proposal 状态窗口。
+                "tail_mean_pre_proposal_loss": float(
+                    np.mean(losses[-TAIL_WINDOW:])
+                ),
                 "final_table_measured_l1": float(
                     compute_normalized_l1(target, final_q, n_records)
                 ),
@@ -294,6 +303,10 @@ def main():
         "git_worktree_clean_including_untracked"
     ]:
         raise RuntimeError("正式协议要求工作树（含未跟踪文件）完全干净")
+    # --allow-dirty 强制非正式（第四轮审查）：脏树试跑即使参数与预注册
+    # 完全一致也不得标记为正式产物。
+    if args.allow_dirty:
+        formal = False
     if args.output.exists():
         raise FileExistsError(f"输出已存在，不覆盖：{args.output}")
 
