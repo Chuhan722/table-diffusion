@@ -46,6 +46,7 @@ RHO = 0.01
 ETA = 0.5
 MU = 0.01
 GIBBS_LOGIT_CLIP = DEFAULT_LOGIT_CLIP
+CURRENT_SNAPSHOT_FORMAT = "issue49_unfiltered_current_v1"
 
 
 def _git_commit():
@@ -144,6 +145,7 @@ def _capture_current_snapshot(
     rng,
     gibbs_rng,
     *,
+    seed,
     state_round,
     rounds,
     current_loss,
@@ -153,6 +155,9 @@ def _capture_current_snapshot(
 ):
     alpha_round = min(state_round, rounds - 1)
     return {
+        "snapshot_format": CURRENT_SNAPSHOT_FORMAT,
+        "source_seed": int(seed),
+        "source_rounds": int(rounds),
         "state_round": int(state_round),
         "state_kind": "current",
         "source_temperature": float(temperature),
@@ -243,6 +248,7 @@ def _run_one(
             state,
             rng,
             gibbs_rng,
+            seed=seed,
             state_round=0,
             rounds=rounds,
             current_loss=initial_loss,
@@ -395,6 +401,7 @@ def _run_one(
                 state,
                 rng,
                 gibbs_rng,
+                seed=seed,
                 state_round=completed_round,
                 rounds=rounds,
                 current_loss=proposal_loss,

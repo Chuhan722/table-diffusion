@@ -18,6 +18,7 @@ import sys
 import time
 
 import numpy as np
+import pandas as pd
 
 from table_diffevo.directional_diffusion import (
     compute_copy_direction_scores,
@@ -54,6 +55,7 @@ N_RECORDS = 300
 RHO = 0.01
 ETA = 0.5
 GIBBS_LOGIT_CLIP = DEFAULT_LOGIT_CLIP
+CURRENT_SNAPSHOT_FORMAT = "issue49_unfiltered_current_v1"
 
 
 def _git_commit():
@@ -64,6 +66,171 @@ def _git_commit():
         text=True,
     )
     return completed.stdout.strip()
+
+
+def _frame_sha256(frame):
+    return hashlib.sha256(
+        frame.to_csv(index=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _is_sha256(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _load_json_strict(path):
+    def reject_constant(value):
+        raise ValueError(f"快照包含非标准数值常量：{value}")
+
+    with Path(path).open(encoding="utf-8") as handle:
+        return json.load(handle, parse_constant=reject_constant)
+
+
+def _snapshot_integer(snapshot, key):
+    value = snapshot[key]
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, np.integer))
+    ):
+        raise ValueError(f"快照字段 {key} 必须是整数")
+    return int(value)
+
+
+def _restore_current_snapshot(
+    snapshot,
+    target,
+    queries,
+    schema,
+    *,
+    device,
+):
+    if not isinstance(snapshot, dict):
+        raise ValueError("外部快照必须是 JSON object")
+    required = {
+        "snapshot_format",
+        "source_seed",
+        "source_rounds",
+        "state_round",
+        "state_kind",
+        "source_temperature",
+        "source_sweeps",
+        "donor_alpha",
+        "current_loss",
+        "state_sha256",
+        "primary_rng_state_sha256",
+        "gibbs_rng_state_sha256",
+        "table_columns",
+        "table_records",
+        "direction_reference_scale",
+        "direction_reference_scale_round",
+    }
+    missing = sorted(required - set(snapshot))
+    if missing:
+        raise ValueError(f"外部快照缺少字段：{missing}")
+    if snapshot["snapshot_format"] != CURRENT_SNAPSHOT_FORMAT:
+        raise ValueError("外部快照格式版本不匹配")
+    if snapshot["state_kind"] != "current":
+        raise ValueError("外部快照必须保存 current state")
+
+    source_seed = _snapshot_integer(snapshot, "source_seed")
+    source_rounds = _snapshot_integer(snapshot, "source_rounds")
+    state_round = _snapshot_integer(snapshot, "state_round")
+    source_sweeps = _snapshot_integer(snapshot, "source_sweeps")
+    scale_round = _snapshot_integer(
+        snapshot, "direction_reference_scale_round"
+    )
+    if source_seed < 0 or source_rounds <= 0:
+        raise ValueError("快照 source seed/rounds 无效")
+    if not 0 <= state_round <= source_rounds:
+        raise ValueError("快照 state_round 超出来源轨迹")
+    if source_sweeps < 0 or scale_round < 0:
+        raise ValueError("快照 sweeps 或 s0 发现轮次无效")
+
+    source_temperature = float(snapshot["source_temperature"])
+    probe_alpha = float(snapshot["donor_alpha"])
+    recorded_loss = float(snapshot["current_loss"])
+    reference_scale = float(snapshot["direction_reference_scale"])
+    if (
+        not np.isfinite(source_temperature)
+        or source_temperature < 0.0
+        or not np.isfinite(probe_alpha)
+        or probe_alpha <= 0.0
+        or not np.isfinite(recorded_loss)
+        or recorded_loss < 0.0
+        or not np.isfinite(reference_scale)
+        or reference_scale <= 0.0
+    ):
+        raise ValueError("快照温度、alpha、loss 或 s0 无效")
+
+    expected_columns = schema.attribute_names()
+    if snapshot["table_columns"] != expected_columns:
+        raise ValueError("快照表格列名或顺序与 schema 不一致")
+    records = snapshot["table_records"]
+    if not isinstance(records, list) or len(records) != N_RECORDS:
+        raise ValueError(f"快照必须包含 {N_RECORDS} 条表格记录")
+    if any(
+        not isinstance(row, dict) or list(row) != expected_columns
+        for row in records
+    ):
+        raise ValueError("快照记录的字段或顺序与 schema 不一致")
+    state = pd.DataFrame(records, columns=expected_columns)
+
+    recorded_hash = snapshot["state_sha256"]
+    if not _is_sha256(recorded_hash):
+        raise ValueError("快照 state_sha256 格式无效")
+    actual_hash = _frame_sha256(state)
+    if actual_hash != recorded_hash:
+        raise ValueError("快照表格哈希核验失败")
+    if not _is_sha256(snapshot["primary_rng_state_sha256"]):
+        raise ValueError("快照主 RNG 哈希格式无效")
+    gibbs_rng_hash = snapshot["gibbs_rng_state_sha256"]
+    if gibbs_rng_hash is not None and not _is_sha256(gibbs_rng_hash):
+        raise ValueError("快照 Gibbs RNG 哈希格式无效")
+
+    q, _, _ = evaluate_vectorized(
+        state,
+        queries,
+        schema,
+        target=target,
+        n_records=N_RECORDS,
+        batch_size=256,
+        device=device,
+        want_fitness=False,
+        verbose=False,
+    )
+    recomputed_loss = float(compute_loss(target, q))
+    if abs(recomputed_loss - recorded_loss) > 1e-10:
+        raise ValueError("快照 current loss 重新计算不一致")
+
+    controls = {
+        "snapshot_format": CURRENT_SNAPSHOT_FORMAT,
+        "source_seed": source_seed,
+        "source_rounds": source_rounds,
+        "source_temperature": source_temperature,
+        "source_sweeps": source_sweeps,
+        "state_round": state_round,
+        "state_sha256": actual_hash,
+        "current_loss": recomputed_loss,
+        "probe_alpha": probe_alpha,
+        "direction_reference_scale": reference_scale,
+        "direction_reference_scale_round": scale_round,
+        "primary_rng_state_sha256": snapshot[
+            "primary_rng_state_sha256"
+        ],
+        "gibbs_rng_state_sha256": gibbs_rng_hash,
+    }
+    return state, controls
+
+
+def _load_current_snapshot(path, target, queries, schema, *, device):
+    snapshot = _load_json_strict(path)
+    return _restore_current_snapshot(
+        snapshot, target, queries, schema, device=device
+    )
 
 
 def _tau_label(tau):
@@ -339,6 +506,7 @@ def _probe_state(
     proposals,
     device,
     max_active_attributes,
+    external_snapshot_controls=None,
 ):
     q, residual, fitness = evaluate_vectorized(
         state,
@@ -356,7 +524,32 @@ def _probe_state(
     distances = pairwise_block_distance(
         state, state, schema, device=device, return_tensor=use_torch
     )
-    probe_alpha = 2.0 if state_rounds == 0 else 10.0
+    if external_snapshot_controls is None:
+        probe_alpha = 2.0 if state_rounds == 0 else 10.0
+        direction_reference_scale = None
+        reference_scale_proposal_index = None
+    else:
+        controls = external_snapshot_controls
+        if (
+            controls.get("source_seed") != seed
+            or controls.get("state_round") != state_rounds
+            or controls.get("state_sha256") != _frame_sha256(state)
+            or abs(float(controls.get("current_loss", np.inf)) - loss)
+            > 1e-10
+        ):
+            raise ValueError("外部快照身份与 probe state 不一致")
+        probe_alpha = float(controls["probe_alpha"])
+        direction_reference_scale = float(
+            controls["direction_reference_scale"]
+        )
+        if (
+            not np.isfinite(probe_alpha)
+            or probe_alpha <= 0.0
+            or not np.isfinite(direction_reference_scale)
+            or direction_reference_scale <= 0.0
+        ):
+            raise ValueError("外部快照的 probe alpha 或 s0 无效")
+        reference_scale_proposal_index = None
     sampling_probabilities = compute_sampling_probs(
         fitness,
         distances,
@@ -377,8 +570,6 @@ def _probe_state(
     global_kernel = {
         name: _empty_kernel_accumulator() for name in configs
     }
-    direction_reference_scale = None
-    reference_scale_proposal_index = None
     exact_energy_max_error = 0.0
     one_hot_max_error = 0.0
     factor_count_sum = 0
@@ -617,9 +808,7 @@ def _probe_state(
         "state_rounds": int(state_rounds),
         "state_loss": float(loss),
         "probe_alpha": probe_alpha,
-        "state_sha256": hashlib.sha256(
-            state.to_csv(index=False).encode("utf-8")
-        ).hexdigest(),
+        "state_sha256": _frame_sha256(state),
         "n_proposals": int(proposals),
         "rho": RHO,
         "eta": ETA,
@@ -652,6 +841,10 @@ def _probe_state(
         "proposal_rows": proposal_rows,
         "elapsed_sec": time.perf_counter() - probe_start,
     }
+    if external_snapshot_controls is not None:
+        result["external_snapshot_controls"] = dict(
+            external_snapshot_controls
+        )
 
     print(
         f"seed={seed:02d} state_rounds={state_rounds} "
