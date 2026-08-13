@@ -713,12 +713,80 @@
        "raw_support_overlap": 1406
       },
       "test": {
+       "unmeasured_3way_l1": 0.009080246794057006,
+       "unmeasured_3way_l1_std": 0.0003641793997200118,
+       "unmeasured_3way_l1_values": [
+        0.009111117912369123,
+        0.008668506962163284,
+        0.00966256634089335,
+        0.008997361667096603,
+        0.008961681087762668
+       ],
+       "unmeasured_4way_l1": 0.00685002343145112,
+       "unmeasured_4way_l1_std": 0.00022942792982560614,
+       "unmeasured_4way_l1_values": [
+        0.0068101687404066875,
+        0.006624033028158492,
+        0.007229430411986036,
+        0.006732042679199664,
+        0.006854442297504722
+       ],
+       "raw_joint_tvd": 0.43714462299134726,
+       "raw_joint_tvd_std": 0.003274774237759961,
+       "raw_joint_tvd_values": [
+        0.44190358467243507,
+        0.4369592088998763,
+        0.4335599505562422,
+        0.43479604449938186,
+        0.43850432632880093
+       ],
+       "binned_joint_tvd": 0.43714462299134726,
+       "binned_joint_tvd_std": 0.003274774237759961,
+       "binned_joint_tvd_values": [
+        0.44190358467243507,
+        0.4369592088998763,
+        0.4335599505562422,
+        0.43479604449938186,
+        0.43850432632880093
+       ],
+       "raw_unique_states": 1213.0,
+       "raw_unique_states_std": 16.896745248715803,
+       "raw_unique_states_values": [
+        1185.0,
+        1226.0,
+        1211.0,
+        1226.0,
+        1217.0
+       ],
+       "raw_support_overlap": 412.0,
+       "raw_support_overlap_std": 2.9154759474226504,
+       "raw_support_overlap_values": [
+        410.0,
+        416.0,
+        414.0,
+        411.0,
+        409.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310597491210242,
        "unmeasured_4way_l1": 0.2500206510887136,
        "raw_joint_tvd": 0.4083076268929001,
        "binned_joint_tvd": 0.4083076268929001,
        "raw_unique_states": 3509,
-       "raw_support_overlap": 690
+       "raw_support_overlap": 690,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -749,12 +817,80 @@
        "raw_support_overlap": 1407
       },
       "test": {
+       "unmeasured_3way_l1": 0.006753716870152672,
+       "unmeasured_3way_l1_std": 0.0007760122356754162,
+       "unmeasured_3way_l1_values": [
+        0.005957017159782162,
+        0.007436316802320533,
+        0.006390805559736942,
+        0.007721136831664492,
+        0.006263307997259232
+       ],
+       "unmeasured_4way_l1": 0.004917964452111547,
+       "unmeasured_4way_l1_std": 0.0003565231465438559,
+       "unmeasured_4way_l1_values": [
+        0.004571531296268626,
+        0.00533288366454312,
+        0.004721437400671022,
+        0.005273052812453306,
+        0.00469091708662166
+       ],
+       "raw_joint_tvd": 0.3875154511742892,
+       "raw_joint_tvd_std": 0.008375049587680894,
+       "raw_joint_tvd_values": [
+        0.3831891223733003,
+        0.3995673671199011,
+        0.3878244746600741,
+        0.3770086526576019,
+        0.38998763906056855
+       ],
+       "binned_joint_tvd": 0.3875154511742892,
+       "binned_joint_tvd_std": 0.008375049587680894,
+       "binned_joint_tvd_values": [
+        0.3831891223733003,
+        0.3995673671199011,
+        0.3878244746600741,
+        0.3770086526576019,
+        0.38998763906056855
+       ],
+       "raw_unique_states": 1117.0,
+       "raw_unique_states_std": 18.614510468986285,
+       "raw_unique_states_values": [
+        1114.0,
+        1135.0,
+        1104.0,
+        1095.0,
+        1137.0
+       ],
+       "raw_support_overlap": 442.0,
+       "raw_support_overlap_std": 5.5677643628300215,
+       "raw_support_overlap_values": [
+        449.0,
+        439.0,
+        438.0,
+        447.0,
+        437.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5317191761955414,
        "unmeasured_4way_l1": 0.25002101189910214,
        "raw_joint_tvd": 0.3696777431816788,
        "binned_joint_tvd": 0.3696777431816788,
        "raw_unique_states": 3058,
-       "raw_support_overlap": 695
+       "raw_support_overlap": 695,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -785,12 +921,80 @@
        "raw_support_overlap": 1437
       },
       "test": {
+       "unmeasured_3way_l1": 0.006223520637896929,
+       "unmeasured_3way_l1_std": 0.0004036604297370465,
+       "unmeasured_3way_l1_values": [
+        0.0063784696045186455,
+        0.005946008490884822,
+        0.006462322869736684,
+        0.006658839320904104,
+        0.0056719629034403885
+       ],
+       "unmeasured_4way_l1": 0.004556903618631061,
+       "unmeasured_4way_l1_std": 0.00028336079915040587,
+       "unmeasured_4way_l1_values": [
+        0.004530080549858053,
+        0.004350439424605061,
+        0.0047416852307148975,
+        0.004929370305220121,
+        0.004232942582757169
+       ],
+       "raw_joint_tvd": 0.38355995055624226,
+       "raw_joint_tvd_std": 0.007797563353505605,
+       "raw_joint_tvd_values": [
+        0.37793572311495666,
+        0.38071693448702093,
+        0.39122373300370816,
+        0.3924598269468479,
+        0.37546353522867737
+       ],
+       "binned_joint_tvd": 0.38355995055624226,
+       "binned_joint_tvd_std": 0.007797563353505605,
+       "binned_joint_tvd_values": [
+        0.37793572311495666,
+        0.38071693448702093,
+        0.39122373300370816,
+        0.3924598269468479,
+        0.37546353522867737
+       ],
+       "raw_unique_states": 1096.4,
+       "raw_unique_states_std": 13.849187701811251,
+       "raw_unique_states_values": [
+        1086.0,
+        1105.0,
+        1099.0,
+        1113.0,
+        1079.0
+       ],
+       "raw_support_overlap": 430.8,
+       "raw_support_overlap_std": 7.120393247567159,
+       "raw_support_overlap_values": [
+        426.0,
+        426.0,
+        443.0,
+        431.0,
+        428.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.531887507331305,
        "unmeasured_4way_l1": 0.2500259358996998,
        "raw_joint_tvd": 0.35422784845324784,
        "binned_joint_tvd": 0.35422784845324784,
        "raw_unique_states": 3007,
-       "raw_support_overlap": 706
+       "raw_support_overlap": 706,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -821,12 +1025,80 @@
        "raw_support_overlap": 1406
       },
       "test": {
+       "unmeasured_3way_l1": 0.008728172386073551,
+       "unmeasured_3way_l1_std": 0.0003482722036535868,
+       "unmeasured_3way_l1_values": [
+        0.008200599496193343,
+        0.009138834773777318,
+        0.008904139321965933,
+        0.008751032941060367,
+        0.008646255397370786
+       ],
+       "unmeasured_4way_l1": 0.006430566497779106,
+       "unmeasured_4way_l1_std": 0.00025875235812447756,
+       "unmeasured_4way_l1_values": [
+        0.0060532946657792155,
+        0.006696110209320963,
+        0.006646275927410044,
+        0.0063396719936429455,
+        0.006417479692742363
+       ],
+       "raw_joint_tvd": 0.4215080346106303,
+       "raw_joint_tvd_std": 0.004375711451948777,
+       "raw_joint_tvd_values": [
+        0.42027194066749063,
+        0.4245982694684795,
+        0.41841779975278115,
+        0.41687268232385655,
+        0.4273794808405438
+       ],
+       "binned_joint_tvd": 0.4215080346106303,
+       "binned_joint_tvd_std": 0.004375711451948777,
+       "binned_joint_tvd_values": [
+        0.42027194066749063,
+        0.4245982694684795,
+        0.41841779975278115,
+        0.41687268232385655,
+        0.4273794808405438
+       ],
+       "raw_unique_states": 1192.4,
+       "raw_unique_states_std": 24.182638400306942,
+       "raw_unique_states_values": [
+        1167.0,
+        1220.0,
+        1207.0,
+        1167.0,
+        1201.0
+       ],
+       "raw_support_overlap": 407.6,
+       "raw_support_overlap_std": 7.503332592921627,
+       "raw_support_overlap_values": [
+        400.0,
+        419.0,
+        404.0,
+        404.0,
+        411.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5311304075986985,
        "unmeasured_4way_l1": 0.25001978089895277,
        "raw_joint_tvd": 0.40014735193170525,
        "binned_joint_tvd": 0.40014735193170525,
        "raw_unique_states": 3506,
-       "raw_support_overlap": 686
+       "raw_support_overlap": 686,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -857,12 +1129,80 @@
        "raw_support_overlap": 1410
       },
       "test": {
+       "unmeasured_3way_l1": 0.009211085995036885,
+       "unmeasured_3way_l1_std": 0.0005648654850060671,
+       "unmeasured_3way_l1_values": [
+        0.009795216897323003,
+        0.008661089773899119,
+        0.008912493418221363,
+        0.00883910229223909,
+        0.009847527593501857
+       ],
+       "unmeasured_4way_l1": 0.006820946358956248,
+       "unmeasured_4way_l1_std": 0.0002770324440109504,
+       "unmeasured_4way_l1_values": [
+        0.007093871826566512,
+        0.006493249874353089,
+        0.006771095097732922,
+        0.006631228011790434,
+        0.007115286984338282
+       ],
+       "raw_joint_tvd": 0.43263288009888745,
+       "raw_joint_tvd_std": 0.007197660506089098,
+       "raw_joint_tvd_values": [
+        0.4289245982694684,
+        0.42490729295426444,
+        0.44252163164400493,
+        0.4375772558714462,
+        0.42923362175525337
+       ],
+       "binned_joint_tvd": 0.43263288009888745,
+       "binned_joint_tvd_std": 0.007197660506089098,
+       "binned_joint_tvd_values": [
+        0.4289245982694684,
+        0.42490729295426444,
+        0.44252163164400493,
+        0.4375772558714462,
+        0.42923362175525337
+       ],
+       "raw_unique_states": 1175.0,
+       "raw_unique_states_std": 8.426149773176359,
+       "raw_unique_states_values": [
+        1172.0,
+        1179.0,
+        1178.0,
+        1184.0,
+        1162.0
+       ],
+       "raw_support_overlap": 401.6,
+       "raw_support_overlap_std": 9.710818709048171,
+       "raw_support_overlap_values": [
+        404.0,
+        408.0,
+        409.0,
+        385.0,
+        402.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310576410780438,
        "unmeasured_4way_l1": 0.2500240045029137,
        "raw_joint_tvd": 0.40670198814721814,
        "binned_joint_tvd": 0.40670198814721814,
        "raw_unique_states": 3512,
-       "raw_support_overlap": 675
+       "raw_support_overlap": 675,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -893,12 +1233,80 @@
        "raw_support_overlap": 1400
       },
       "test": {
+       "unmeasured_3way_l1": 0.006924530812093109,
+       "unmeasured_3way_l1_std": 0.0006399500308828277,
+       "unmeasured_3way_l1_values": [
+        0.006709510428098245,
+        0.006202487053493073,
+        0.0065903669618759654,
+        0.007834815001271072,
+        0.007285474615727187
+       ],
+       "unmeasured_4way_l1": 0.005075587654002364,
+       "unmeasured_4way_l1_std": 0.0003592835370165923,
+       "unmeasured_4way_l1_values": [
+        0.004856168244610766,
+        0.004711801640880751,
+        0.005008451452749969,
+        0.005645578926635787,
+        0.0051559380051345435
+       ],
+       "raw_joint_tvd": 0.403584672435105,
+       "raw_joint_tvd_std": 0.009784388256481808,
+       "raw_joint_tvd_values": [
+        0.4020395550061804,
+        0.40389369592088986,
+        0.39369592088998756,
+        0.4196538936959208,
+        0.3986402966625463
+       ],
+       "binned_joint_tvd": 0.403584672435105,
+       "binned_joint_tvd_std": 0.009784388256481808,
+       "binned_joint_tvd_values": [
+        0.4020395550061804,
+        0.40389369592088986,
+        0.39369592088998756,
+        0.4196538936959208,
+        0.3986402966625463
+       ],
+       "raw_unique_states": 1124.2,
+       "raw_unique_states_std": 26.4896206088347,
+       "raw_unique_states_values": [
+        1122.0,
+        1101.0,
+        1096.0,
+        1155.0,
+        1147.0
+       ],
+       "raw_support_overlap": 432.4,
+       "raw_support_overlap_std": 9.423375191511797,
+       "raw_support_overlap_values": [
+        433.0,
+        428.0,
+        439.0,
+        419.0,
+        443.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5316874774751704,
        "unmeasured_4way_l1": 0.25002239146823513,
        "raw_joint_tvd": 0.36677443879035593,
        "binned_joint_tvd": 0.36677443879035593,
        "raw_unique_states": 3026,
-       "raw_support_overlap": 699
+       "raw_support_overlap": 699,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -929,12 +1337,80 @@
        "raw_support_overlap": 1428
       },
       "test": {
+       "unmeasured_3way_l1": 0.005929518910238593,
+       "unmeasured_3way_l1_std": 0.0005867665200076694,
+       "unmeasured_3way_l1_values": [
+        0.005669230255132537,
+        0.0051673598744793135,
+        0.00610559515206329,
+        0.0059407774212669375,
+        0.006764631848250886
+       ],
+       "unmeasured_4way_l1": 0.0043236163558320545,
+       "unmeasured_4way_l1_std": 0.000295635666737651,
+       "unmeasured_4way_l1_values": [
+        0.004195927681712602,
+        0.003919271010201171,
+        0.0044086147937353135,
+        0.0043701354269957485,
+        0.004724132866515437
+       ],
+       "raw_joint_tvd": 0.38034610630407906,
+       "raw_joint_tvd_std": 0.0038806755441163254,
+       "raw_joint_tvd_values": [
+        0.37639060568603205,
+        0.38257107540173046,
+        0.3779357231149567,
+        0.38597033374536455,
+        0.37886279357231145
+       ],
+       "binned_joint_tvd": 0.38034610630407906,
+       "binned_joint_tvd_std": 0.0038806755441163254,
+       "binned_joint_tvd_values": [
+        0.37639060568603205,
+        0.38257107540173046,
+        0.3779357231149567,
+        0.38597033374536455,
+        0.37886279357231145
+       ],
+       "raw_unique_states": 1082.4,
+       "raw_unique_states_std": 14.501724035437993,
+       "raw_unique_states_values": [
+        1074.0,
+        1097.0,
+        1062.0,
+        1085.0,
+        1094.0
+       ],
+       "raw_support_overlap": 434.0,
+       "raw_support_overlap_std": 6.670832032063167,
+       "raw_support_overlap_values": [
+        433.0,
+        438.0,
+        436.0,
+        423.0,
+        440.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318577605025825,
        "unmeasured_4way_l1": 0.2500196535541097,
        "raw_joint_tvd": 0.3458224134594825,
        "binned_joint_tvd": 0.3458224134594825,
        "raw_unique_states": 2957,
-       "raw_support_overlap": 710
+       "raw_support_overlap": 710,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -965,12 +1441,80 @@
        "raw_support_overlap": 1421
       },
       "test": {
+       "unmeasured_3way_l1": 0.008969426193823777,
+       "unmeasured_3way_l1_std": 0.0003663254101483012,
+       "unmeasured_3way_l1_values": [
+        0.009212928580753036,
+        0.00857372310371384,
+        0.00906107141050249,
+        0.008605577975416783,
+        0.009393829898732739
+       ],
+       "unmeasured_4way_l1": 0.006575242973960527,
+       "unmeasured_4way_l1_std": 0.00024157080810238834,
+       "unmeasured_4way_l1_values": [
+        0.006734080196688354,
+        0.006234315360165174,
+        0.006742166594221601,
+        0.006403959915239273,
+        0.0067616928034882305
+       ],
+       "raw_joint_tvd": 0.42299134734239796,
+       "raw_joint_tvd_std": 0.010407257700679308,
+       "raw_joint_tvd_values": [
+        0.4304697156983931,
+        0.4094561186650185,
+        0.4317058096415327,
+        0.4140914709517923,
+        0.42923362175525337
+       ],
+       "binned_joint_tvd": 0.42299134734239796,
+       "binned_joint_tvd_std": 0.010407257700679308,
+       "binned_joint_tvd_values": [
+        0.4304697156983931,
+        0.4094561186650185,
+        0.4317058096415327,
+        0.4140914709517923,
+        0.42923362175525337
+       ],
+       "raw_unique_states": 1185.8,
+       "raw_unique_states_std": 16.976454282328802,
+       "raw_unique_states_values": [
+        1184.0,
+        1158.0,
+        1202.0,
+        1196.0,
+        1189.0
+       ],
+       "raw_support_overlap": 402.6,
+       "raw_support_overlap_std": 9.633275663033837,
+       "raw_support_overlap_values": [
+        397.0,
+        395.0,
+        411.0,
+        415.0,
+        395.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310937120357075,
        "unmeasured_4way_l1": 0.250021966985425,
        "raw_joint_tvd": 0.39576155219970255,
        "binned_joint_tvd": 0.39576155219970255,
        "raw_unique_states": 3486,
-       "raw_support_overlap": 685
+       "raw_support_overlap": 685,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1001,12 +1545,80 @@
        "raw_support_overlap": 1381
       },
       "test": {
+       "unmeasured_3way_l1": 0.0096211862379459,
+       "unmeasured_3way_l1_std": 0.0010690666031720666,
+       "unmeasured_3way_l1_values": [
+        0.009215348926397133,
+        0.010153193825651418,
+        0.008297491397623126,
+        0.009310367011844392,
+        0.011129530028213422
+       ],
+       "unmeasured_4way_l1": 0.006987313906736033,
+       "unmeasured_4way_l1_std": 0.0005655200389434016,
+       "unmeasured_4way_l1_values": [
+        0.006858835694589712,
+        0.007231043446664584,
+        0.006229518704410546,
+        0.006848881572691832,
+        0.007768290115323488
+       ],
+       "raw_joint_tvd": 0.43108776266996285,
+       "raw_joint_tvd_std": 0.005899840263299384,
+       "raw_joint_tvd_values": [
+        0.42676143386897397,
+        0.4273794808405438,
+        0.4276885043263287,
+        0.43294190358467244,
+        0.44066749072929534
+       ],
+       "binned_joint_tvd": 0.43108776266996285,
+       "binned_joint_tvd_std": 0.005899840263299384,
+       "binned_joint_tvd_values": [
+        0.42676143386897397,
+        0.4273794808405438,
+        0.4276885043263287,
+        0.43294190358467244,
+        0.44066749072929534
+       ],
+       "raw_unique_states": 1188.6,
+       "raw_unique_states_std": 24.2755020545405,
+       "raw_unique_states_values": [
+        1191.0,
+        1180.0,
+        1177.0,
+        1166.0,
+        1229.0
+       ],
+       "raw_support_overlap": 398.8,
+       "raw_support_overlap_std": 9.20326029187483,
+       "raw_support_overlap_values": [
+        409.0,
+        402.0,
+        386.0,
+        393.0,
+        404.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310567041700526,
        "unmeasured_4way_l1": 0.2500198657955148,
        "raw_joint_tvd": 0.40972633517205587,
        "binned_joint_tvd": 0.40972633517205587,
        "raw_unique_states": 3508,
-       "raw_support_overlap": 665
+       "raw_support_overlap": 665,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1037,12 +1649,80 @@
        "raw_support_overlap": 1430
       },
       "test": {
+       "unmeasured_3way_l1": 0.006409809176826392,
+       "unmeasured_3way_l1_std": 0.00021079141226377606,
+       "unmeasured_3way_l1_values": [
+        0.006262371089267969,
+        0.006713570362727052,
+        0.00641735128615606,
+        0.00648637017484577,
+        0.006169382971135114
+       ],
+       "unmeasured_4way_l1": 0.0048251130822206225,
+       "unmeasured_4way_l1_std": 8.254981147344276e-05,
+       "unmeasured_4way_l1_values": [
+        0.004757518439533272,
+        0.004961758343634116,
+        0.004802216479441448,
+        0.004836875500889717,
+        0.004767196647604558
+       ],
+       "raw_joint_tvd": 0.39796044499381944,
+       "raw_joint_tvd_std": 0.0031468849488506746,
+       "raw_joint_tvd_values": [
+        0.3949320148331273,
+        0.4032756489493201,
+        0.39678615574783677,
+        0.3977132262051915,
+        0.3970951792336217
+       ],
+       "binned_joint_tvd": 0.39796044499381944,
+       "binned_joint_tvd_std": 0.0031468849488506746,
+       "binned_joint_tvd_values": [
+        0.3949320148331273,
+        0.4032756489493201,
+        0.39678615574783677,
+        0.3977132262051915,
+        0.3970951792336217
+       ],
+       "raw_unique_states": 1103.6,
+       "raw_unique_states_std": 19.16507239746305,
+       "raw_unique_states_values": [
+        1112.0,
+        1113.0,
+        1096.0,
+        1074.0,
+        1123.0
+       ],
+       "raw_support_overlap": 433.2,
+       "raw_support_overlap_std": 7.5630681604756145,
+       "raw_support_overlap_values": [
+        433.0,
+        423.0,
+        440.0,
+        429.0,
+        441.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5317422085169934,
        "unmeasured_4way_l1": 0.2500216910715984,
        "raw_joint_tvd": 0.3690605747145491,
        "binned_joint_tvd": 0.3690605747145491,
        "raw_unique_states": 3045,
-       "raw_support_overlap": 699
+       "raw_support_overlap": 699,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1073,12 +1753,80 @@
        "raw_support_overlap": 1446
       },
       "test": {
+       "unmeasured_3way_l1": 0.006153596071482331,
+       "unmeasured_3way_l1_std": 0.0007906078047586961,
+       "unmeasured_3way_l1_values": [
+        0.007372919361578403,
+        0.005405100277262305,
+        0.006036654339039519,
+        0.006410792930217219,
+        0.005542513449314215
+       ],
+       "unmeasured_4way_l1": 0.004448134143359731,
+       "unmeasured_4way_l1_std": 0.0003722223722033944,
+       "unmeasured_4way_l1_values": [
+        0.005008982056262649,
+        0.004168951799127943,
+        0.004335497629687987,
+        0.004623169630122658,
+        0.0041040696015974135
+       ],
+       "raw_joint_tvd": 0.38195302843016055,
+       "raw_joint_tvd_std": 0.004342852077427446,
+       "raw_joint_tvd_values": [
+        0.3831891223733003,
+        0.3872064276885043,
+        0.38226205191594553,
+        0.38195302843016066,
+        0.3751545117428924
+       ],
+       "binned_joint_tvd": 0.38195302843016055,
+       "binned_joint_tvd_std": 0.004342852077427446,
+       "binned_joint_tvd_values": [
+        0.3831891223733003,
+        0.3872064276885043,
+        0.38226205191594553,
+        0.38195302843016066,
+        0.3751545117428924
+       ],
+       "raw_unique_states": 1079.2,
+       "raw_unique_states_std": 14.923136399564266,
+       "raw_unique_states_values": [
+        1103.0,
+        1083.0,
+        1072.0,
+        1064.0,
+        1074.0
+       ],
+       "raw_support_overlap": 429.4,
+       "raw_support_overlap_std": 10.261578825892242,
+       "raw_support_overlap_values": [
+        441.0,
+        424.0,
+        417.0,
+        426.0,
+        439.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.531834025500137,
        "unmeasured_4way_l1": 0.2500219882095655,
        "raw_joint_tvd": 0.3546603018128741,
        "binned_joint_tvd": 0.3546603018128741,
        "raw_unique_states": 2990,
-       "raw_support_overlap": 719
+       "raw_support_overlap": 719,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1109,12 +1857,80 @@
        "raw_support_overlap": 1425
       },
       "test": {
+       "unmeasured_3way_l1": 0.009237256958259499,
+       "unmeasured_3way_l1_std": 0.0006961554147682698,
+       "unmeasured_3way_l1_values": [
+        0.008834964281944347,
+        0.009044831671987262,
+        0.00904006905636501,
+        0.008800376761933553,
+        0.010466043019067327
+       ],
+       "unmeasured_4way_l1": 0.006692794998573738,
+       "unmeasured_4way_l1_std": 0.0002693104762775979,
+       "unmeasured_4way_l1_values": [
+        0.006624393838547115,
+        0.0065991158872030315,
+        0.006563841365680056,
+        0.006508403910675233,
+        0.0071682199907632535
+       ],
+       "raw_joint_tvd": 0.42305315203955496,
+       "raw_joint_tvd_std": 0.004722097277483363,
+       "raw_joint_tvd_values": [
+        0.41996291718170575,
+        0.418726823238566,
+        0.42027194066749063,
+        0.42892459826946844,
+        0.4273794808405438
+       ],
+       "binned_joint_tvd": 0.42305315203955496,
+       "binned_joint_tvd_std": 0.004722097277483363,
+       "binned_joint_tvd_values": [
+        0.41996291718170575,
+        0.418726823238566,
+        0.42027194066749063,
+        0.42892459826946844,
+        0.4273794808405438
+       ],
+       "raw_unique_states": 1195.0,
+       "raw_unique_states_std": 13.982131454109563,
+       "raw_unique_states_values": [
+        1200.0,
+        1196.0,
+        1171.0,
+        1207.0,
+        1201.0
+       ],
+       "raw_support_overlap": 409.2,
+       "raw_support_overlap_std": 11.476062042355817,
+       "raw_support_overlap_values": [
+        416.0,
+        422.0,
+        405.0,
+        392.0,
+        411.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5311541426011439,
        "unmeasured_4way_l1": 0.2500206935369946,
        "raw_joint_tvd": 0.40027158391829637,
        "binned_joint_tvd": 0.40027158391829637,
        "raw_unique_states": 3564,
-       "raw_support_overlap": 685
+       "raw_support_overlap": 685,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1145,12 +1961,80 @@
        "raw_support_overlap": 1410
       },
       "test": {
+       "unmeasured_3way_l1": 0.009272391007931863,
+       "unmeasured_3way_l1_std": 0.0002602190240690682,
+       "unmeasured_3way_l1_values": [
+        0.009171548477805588,
+        0.00915202956132094,
+        0.009580040361996263,
+        0.009501027788066415,
+        0.00895730885047011
+       ],
+       "unmeasured_4way_l1": 0.006872487061763946,
+       "unmeasured_4way_l1_std": 0.00018579179723358626,
+       "unmeasured_4way_l1_values": [
+        0.006727882747660251,
+        0.0068167269998234145,
+        0.007112124587402708,
+        0.007019969369320419,
+        0.006685731604612939
+       ],
+       "raw_joint_tvd": 0.43269468479604445,
+       "raw_joint_tvd_std": 0.005619641156989973,
+       "raw_joint_tvd_values": [
+        0.43016069221260805,
+        0.42645241038318904,
+        0.44097651421508033,
+        0.430469715698393,
+        0.4354140914709517
+       ],
+       "binned_joint_tvd": 0.43269468479604445,
+       "binned_joint_tvd_std": 0.005619641156989973,
+       "binned_joint_tvd_values": [
+        0.43016069221260805,
+        0.42645241038318904,
+        0.44097651421508033,
+        0.430469715698393,
+        0.4354140914709517
+       ],
+       "raw_unique_states": 1207.0,
+       "raw_unique_states_std": 14.916433890176299,
+       "raw_unique_states_values": [
+        1208.0,
+        1197.0,
+        1190.0,
+        1229.0,
+        1211.0
+       ],
+       "raw_support_overlap": 398.2,
+       "raw_support_overlap_std": 10.47377677822093,
+       "raw_support_overlap_values": [
+        398.0,
+        405.0,
+        384.0,
+        411.0,
+        393.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310844210314607,
        "unmeasured_4way_l1": 0.25002181841644144,
        "raw_joint_tvd": 0.41349615050813077,
        "binned_joint_tvd": 0.41349615050813077,
        "raw_unique_states": 3556,
-       "raw_support_overlap": 671
+       "raw_support_overlap": 671,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1181,12 +2065,80 @@
        "raw_support_overlap": 1437
       },
       "test": {
+       "unmeasured_3way_l1": 0.0069506549299161585,
+       "unmeasured_3way_l1_std": 0.0006689746072556953,
+       "unmeasured_3way_l1_values": [
+        0.006495036573764952,
+        0.008113935507001513,
+        0.006914693278184848,
+        0.006580060973972071,
+        0.006649548316657412
+       ],
+       "unmeasured_4way_l1": 0.005102223950338908,
+       "unmeasured_4way_l1_std": 0.00035450700167889525,
+       "unmeasured_4way_l1_values": [
+        0.004899232025699887,
+        0.005729881212730408,
+        0.005029909058802755,
+        0.004915171355220799,
+        0.0049369260992406854
+       ],
+       "raw_joint_tvd": 0.38912237330037075,
+       "raw_joint_tvd_std": 0.00781591202587604,
+       "raw_joint_tvd_values": [
+        0.3912237330037082,
+        0.39802224969097644,
+        0.37886279357231145,
+        0.3940049443757725,
+        0.38349814585908526
+       ],
+       "binned_joint_tvd": 0.38912237330037075,
+       "binned_joint_tvd_std": 0.00781591202587604,
+       "binned_joint_tvd_values": [
+        0.3912237330037082,
+        0.39802224969097644,
+        0.37886279357231145,
+        0.3940049443757725,
+        0.38349814585908526
+       ],
+       "raw_unique_states": 1110.0,
+       "raw_unique_states_std": 14.300349646075091,
+       "raw_unique_states_values": [
+        1112.0,
+        1115.0,
+        1100.0,
+        1130.0,
+        1093.0
+       ],
+       "raw_support_overlap": 431.8,
+       "raw_support_overlap_std": 9.47100839404126,
+       "raw_support_overlap_values": [
+        429.0,
+        430.0,
+        448.0,
+        423.0,
+        429.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5317206596331943,
        "unmeasured_4way_l1": 0.2500282068827341,
        "raw_joint_tvd": 0.3679472231200368,
        "binned_joint_tvd": 0.3679472231200368,
        "raw_unique_states": 3052,
-       "raw_support_overlap": 696
+       "raw_support_overlap": 696,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1217,12 +2169,80 @@
        "raw_support_overlap": 1455
       },
       "test": {
+       "unmeasured_3way_l1": 0.006204517020807477,
+       "unmeasured_3way_l1_std": 0.0003865171702045622,
+       "unmeasured_3way_l1_values": [
+        0.006480046045904743,
+        0.0059210242777844755,
+        0.0059694311906663975,
+        0.005903847631277986,
+        0.006748235958403784
+       ],
+       "unmeasured_4way_l1": 0.004498333480487375,
+       "unmeasured_4way_l1_std": 0.0001852268859761056,
+       "unmeasured_4way_l1_values": [
+        0.004544300723997882,
+        0.004356530752930629,
+        0.00434345668237819,
+        0.004451063074749725,
+        0.004796316168380445
+       ],
+       "raw_joint_tvd": 0.38337453646477127,
+       "raw_joint_tvd_std": 0.003819910294279934,
+       "raw_joint_tvd_values": [
+        0.38844252163164394,
+        0.37886279357231145,
+        0.38071693448702104,
+        0.3856613102595796,
+        0.3831891223733003
+       ],
+       "binned_joint_tvd": 0.38337453646477127,
+       "binned_joint_tvd_std": 0.003819910294279934,
+       "binned_joint_tvd_values": [
+        0.38844252163164394,
+        0.37886279357231145,
+        0.38071693448702104,
+        0.3856613102595796,
+        0.3831891223733003
+       ],
+       "raw_unique_states": 1073.2,
+       "raw_unique_states_std": 23.530830839560256,
+       "raw_unique_states_values": [
+        1094.0,
+        1083.0,
+        1056.0,
+        1041.0,
+        1092.0
+       ],
+       "raw_support_overlap": 435.8,
+       "raw_support_overlap_std": 5.449770637375485,
+       "raw_support_overlap_values": [
+        435.0,
+        441.0,
+        434.0,
+        428.0,
+        441.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318696280038051,
        "unmeasured_4way_l1": 0.2500207572094161,
        "raw_joint_tvd": 0.35602030307792054,
        "binned_joint_tvd": 0.35602030307792054,
        "raw_unique_states": 3017,
-       "raw_support_overlap": 709
+       "raw_support_overlap": 709,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1253,12 +2273,80 @@
        "raw_support_overlap": 1401
       },
       "test": {
+       "unmeasured_3way_l1": 0.008668772419427474,
+       "unmeasured_3way_l1_std": 0.000266109007905179,
+       "unmeasured_3way_l1_values": [
+        0.00857817341667234,
+        0.008543039366999976,
+        0.009061852167161875,
+        0.008791476136016553,
+        0.008369321010286625
+       ],
+       "unmeasured_4way_l1": 0.006431500359961423,
+       "unmeasured_4way_l1_std": 9.663219552529296e-05,
+       "unmeasured_4way_l1_values": [
+        0.006414911571740991,
+        0.006382056602235836,
+        0.006573731815156413,
+        0.006469224147298931,
+        0.006317577663374944
+       ],
+       "raw_joint_tvd": 0.42466007416563656,
+       "raw_joint_tvd_std": 0.007928123852426701,
+       "raw_joint_tvd_values": [
+        0.41841779975278115,
+        0.4224351050679851,
+        0.4165636588380716,
+        0.4313967861557477,
+        0.434487021013597
+       ],
+       "binned_joint_tvd": 0.42466007416563656,
+       "binned_joint_tvd_std": 0.007928123852426701,
+       "binned_joint_tvd_values": [
+        0.41841779975278115,
+        0.4224351050679851,
+        0.4165636588380716,
+        0.4313967861557477,
+        0.434487021013597
+       ],
+       "raw_unique_states": 1195.0,
+       "raw_unique_states_std": 13.546217184144066,
+       "raw_unique_states_values": [
+        1177.0,
+        1206.0,
+        1187.0,
+        1195.0,
+        1210.0
+       ],
+       "raw_support_overlap": 406.0,
+       "raw_support_overlap_std": 7.516648189186454,
+       "raw_support_overlap_values": [
+        410.0,
+        411.0,
+        413.0,
+        400.0,
+        396.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5312386985473554,
        "unmeasured_4way_l1": 0.25002188208886295,
        "raw_joint_tvd": 0.4011980050462823,
        "binned_joint_tvd": 0.4011980050462823,
        "raw_unique_states": 3507,
-       "raw_support_overlap": 692
+       "raw_support_overlap": 692,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1289,12 +2377,80 @@
        "raw_support_overlap": 1384
       },
       "test": {
+       "unmeasured_3way_l1": 0.009154512367497786,
+       "unmeasured_3way_l1_std": 0.0003558959889736838,
+       "unmeasured_3way_l1_values": [
+        0.00965850640626454,
+        0.008761573155962077,
+        0.009017270961910942,
+        0.00896878597336308,
+        0.009366425339988296
+       ],
+       "unmeasured_4way_l1": 0.006758369103084802,
+       "unmeasured_4way_l1_std": 0.00023628861677846483,
+       "unmeasured_4way_l1_values": [
+        0.007037330716255315,
+        0.006438279350439424,
+        0.006668837188769205,
+        0.006708590003939201,
+        0.006938808256020864
+       ],
+       "raw_joint_tvd": 0.430469715698393,
+       "raw_joint_tvd_std": 0.004686573203987375,
+       "raw_joint_tvd_values": [
+        0.43757725587144614,
+        0.4289245982694684,
+        0.42707045735475885,
+        0.4261433868974041,
+        0.4326328800988875
+       ],
+       "binned_joint_tvd": 0.430469715698393,
+       "binned_joint_tvd_std": 0.004686573203987375,
+       "binned_joint_tvd_values": [
+        0.43757725587144614,
+        0.4289245982694684,
+        0.42707045735475885,
+        0.4261433868974041,
+        0.4326328800988875
+       ],
+       "raw_unique_states": 1189.8,
+       "raw_unique_states_std": 17.369513522260778,
+       "raw_unique_states_values": [
+        1193.0,
+        1178.0,
+        1189.0,
+        1172.0,
+        1217.0
+       ],
+       "raw_support_overlap": 404.0,
+       "raw_support_overlap_std": 8.276472678623424,
+       "raw_support_overlap_values": [
+        406.0,
+        390.0,
+        407.0,
+        405.0,
+        412.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5311460227318863,
        "unmeasured_4way_l1": 0.2500219457612845,
        "raw_joint_tvd": 0.4073782073910641,
        "binned_joint_tvd": 0.4073782073910641,
        "raw_unique_states": 3453,
-       "raw_support_overlap": 669
+       "raw_support_overlap": 669,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1325,12 +2481,80 @@
        "raw_support_overlap": 1457
       },
       "test": {
+       "unmeasured_3way_l1": 0.006696721634017505,
+       "unmeasured_3way_l1_std": 0.0004954781642420532,
+       "unmeasured_3way_l1_values": [
+        0.006607621684048392,
+        0.007544529675311412,
+        0.006548518404932883,
+        0.006544692697301892,
+        0.006238245708492946
+       ],
+       "unmeasured_4way_l1": 0.004887333772531548,
+       "unmeasured_4way_l1_std": 0.0002813897647432369,
+       "unmeasured_4way_l1_values": [
+        0.0046986426737662835,
+        0.005330464112525299,
+        0.0049219206319020894,
+        0.004887367731156359,
+        0.004598273713307706
+       ],
+       "raw_joint_tvd": 0.39227441285537695,
+       "raw_joint_tvd_std": 0.008060123987617076,
+       "raw_joint_tvd_values": [
+        0.38627935723114953,
+        0.39338689740420263,
+        0.4045117428924597,
+        0.3933868974042027,
+        0.38380716934487014
+       ],
+       "binned_joint_tvd": 0.39227441285537695,
+       "binned_joint_tvd_std": 0.008060123987617076,
+       "binned_joint_tvd_values": [
+        0.38627935723114953,
+        0.39338689740420263,
+        0.4045117428924597,
+        0.3933868974042027,
+        0.38380716934487014
+       ],
+       "raw_unique_states": 1110.4,
+       "raw_unique_states_std": 30.78636061635087,
+       "raw_unique_states_values": [
+        1067.0,
+        1139.0,
+        1137.0,
+        1117.0,
+        1092.0
+       ],
+       "raw_support_overlap": 431.4,
+       "raw_support_overlap_std": 8.619744775803978,
+       "raw_support_overlap_values": [
+        432.0,
+        443.0,
+        436.0,
+        423.0,
+        423.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5317453315436309,
        "unmeasured_4way_l1": 0.25002362246838455,
        "raw_joint_tvd": 0.36436298229798275,
        "binned_joint_tvd": 0.36436298229798275,
        "raw_unique_states": 3084,
-       "raw_support_overlap": 708
+       "raw_support_overlap": 708,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1361,12 +2585,80 @@
        "raw_support_overlap": 1465
       },
       "test": {
+       "unmeasured_3way_l1": 0.0058409030293982995,
+       "unmeasured_3way_l1_std": 0.0005079947092463254,
+       "unmeasured_3way_l1_values": [
+        0.006330765372630169,
+        0.006056017104192289,
+        0.005013550812580301,
+        0.00606640116776212,
+        0.005737780689826616
+       ],
+       "unmeasured_4way_l1": 0.004307120953829855,
+       "unmeasured_4way_l1_std": 0.00030399060309635267,
+       "unmeasured_4way_l1_values": [
+        0.004617715026012307,
+        0.004547038638123311,
+        0.0038481276912210164,
+        0.004280718123038889,
+        0.004242005290753746
+       ],
+       "raw_joint_tvd": 0.3839307787391842,
+       "raw_joint_tvd_std": 0.006077636474135726,
+       "raw_joint_tvd_values": [
+        0.3927688504326328,
+        0.38535228677379474,
+        0.3791718170580964,
+        0.37731767614338685,
+        0.38504326328800986
+       ],
+       "binned_joint_tvd": 0.3839307787391842,
+       "binned_joint_tvd_std": 0.006077636474135726,
+       "binned_joint_tvd_values": [
+        0.3927688504326328,
+        0.38535228677379474,
+        0.3791718170580964,
+        0.37731767614338685,
+        0.38504326328800986
+       ],
+       "raw_unique_states": 1075.0,
+       "raw_unique_states_std": 13.729530217745982,
+       "raw_unique_states_values": [
+        1081.0,
+        1095.0,
+        1074.0,
+        1061.0,
+        1064.0
+       ],
+       "raw_support_overlap": 427.4,
+       "raw_support_overlap_std": 4.669047011971501,
+       "raw_support_overlap_values": [
+        424.0,
+        433.0,
+        432.0,
+        424.0,
+        424.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318906303579425,
        "unmeasured_4way_l1": 0.25002116046808576,
        "raw_joint_tvd": 0.3505814629910143,
        "binned_joint_tvd": 0.3505814629910143,
        "raw_unique_states": 2973,
-       "raw_support_overlap": 703
+       "raw_support_overlap": 703,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     },
@@ -1397,17 +2689,154 @@
        "raw_support_overlap": 1409
       },
       "test": {
+       "unmeasured_3way_l1": 0.008785479924872473,
+       "unmeasured_3way_l1_std": 0.00045859660144367554,
+       "unmeasured_3way_l1_values": [
+        0.008335982700930849,
+        0.008550456555264142,
+        0.008994160564793121,
+        0.008561230997163667,
+        0.009485568806210576
+       ],
+       "unmeasured_4way_l1": 0.006524122509134871,
+       "unmeasured_4way_l1_std": 0.0002668039608992694,
+       "unmeasured_4way_l1_values": [
+        0.0062988791955880955,
+        0.006338419769353022,
+        0.006743058008122903,
+        0.006362105910159062,
+        0.006878149662451269
+       ],
+       "raw_joint_tvd": 0.4271940667490729,
+       "raw_joint_tvd_std": 0.003193574952475611,
+       "raw_joint_tvd_values": [
+        0.42614338689740416,
+        0.430778739184178,
+        0.4292336217552533,
+        0.4224351050679851,
+        0.42737948084054384
+       ],
+       "binned_joint_tvd": 0.4271940667490729,
+       "binned_joint_tvd_std": 0.003193574952475611,
+       "binned_joint_tvd_values": [
+        0.42614338689740416,
+        0.430778739184178,
+        0.4292336217552533,
+        0.4224351050679851,
+        0.42737948084054384
+       ],
+       "raw_unique_states": 1190.8,
+       "raw_unique_states_std": 7.362064927722384,
+       "raw_unique_states_values": [
+        1185.0,
+        1198.0,
+        1181.0,
+        1195.0,
+        1195.0
+       ],
+       "raw_support_overlap": 404.0,
+       "raw_support_overlap_std": 2.449489742783178,
+       "raw_support_overlap_values": [
+        407.0,
+        401.0,
+        406.0,
+        403.0,
+        403.0
+       ],
+       "subsample_rows": 3236,
+       "source_rows": 16181,
+       "eval_seeds": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005
+       ]
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5311372782573011,
        "unmeasured_4way_l1": 0.250020672312854,
        "raw_joint_tvd": 0.40305174490461704,
        "binned_joint_tvd": 0.40305174490461704,
        "raw_unique_states": 3496,
-       "raw_support_overlap": 690
+       "raw_support_overlap": 690,
+       "invalid_reason": "全表（16181 行）与 test（3236 行）不等行数直接比较，混合分布差异与样本量差异；按审查意见撤回"
       }
      }
     }
    ],
    "judgment": {
+    "primary_l1": {
+     "candidate": 0.006625745554118337,
+     "baseline": 0.0027275363533938403,
+     "ratio": 2.429205222461656,
+     "passed": false
+    },
+    "drift_ratio_diagnostic": {
+     "candidate": 1.0002429132998267
+    },
+    "quality_risks": {
+     "test:unmeasured_3way_l1": {
+      "candidate": 0.009267884480493888,
+      "baseline": 0.006070411133964726,
+      "relative": 0.5267309373229913,
+      "flagged": true
+     },
+     "test:unmeasured_4way_l1": {
+      "candidate": 0.006857827972398431,
+      "baseline": 0.004426821710428015,
+      "relative": 0.5491538672641438,
+      "flagged": true
+     },
+     "test:binned_joint_tvd": {
+      "candidate": 0.432805933250927,
+      "baseline": 0.38263288009888746,
+      "relative": 0.13112582781456944,
+      "flagged": true
+     },
+     "train:unmeasured_3way_l1": {
+      "candidate": 0.007389198974124168,
+      "baseline": 0.003076453306657672,
+      "relative": 1.4018563708194094,
+      "flagged": true
+     },
+     "train:unmeasured_4way_l1": {
+      "candidate": 0.0056431102887595066,
+      "baseline": 0.0026037210580038593,
+      "relative": 1.167325209976906,
+      "flagged": true
+     },
+     "train:binned_joint_tvd": {
+      "candidate": 0.32749521043198815,
+      "baseline": 0.2625301279278166,
+      "relative": 0.247457627118644,
+      "flagged": true
+     }
+    },
+    "any_quality_risk": true,
+    "classification": "gate_free_self_cooling_not_supported"
+   },
+   "initial_state": {
+    "measured_l1_mean": 0.06327612193751492,
+    "measured_l1_by_seed": {
+     "100": 0.06323791775865195,
+     "101": 0.06336540907951822,
+     "102": 0.06326860211045367,
+     "103": 0.06333528037996242,
+     "104": 0.0631734003589884
+    },
+    "loss_by_seed": {
+     "100": 693835300.0,
+     "101": 696478560.5,
+     "102": 693978150.5,
+     "103": 696766249.5,
+     "104": 693723685.5
+    },
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；审查（PR #47 意见 1）要求的初始对照基准"
+   },
+   "judgment_before_test_reeval": {
     "primary_l1": {
      "candidate": 0.006625745554118337,
      "baseline": 0.0027275363533938403,
@@ -1460,5 +2889,18 @@
    }
   }
  },
- "finished_at": "2026-08-12T18:18:21.399952+08:00"
+ "finished_at": "2026-08-12T18:18:21.399952+08:00",
+ "test_reevaluation": {
+  "eval_seeds": [
+   9001,
+   9002,
+   9003,
+   9004,
+   9005
+  ],
+  "method": "对每个 (seed, arm) 最终表按固定评价种子无放回抽取与 test 等行数子样本，重算全部 test 侧指标并报告均值/标准差/逐种子值",
+  "regenerated_tables_sha256_verified": true,
+  "git_commit": "c8eb84157b71d70613e3be464478500aedd10aa3",
+  "reevaluated_at": "2026-08-13T11:57:24.436601+08:00"
+ }
 }
