@@ -165,6 +165,7 @@ def run_evolution(
     rho_anneal_end: Optional[float] = None,
     rho_anneal_rounds: Optional[int] = None,
     selection_scale_invariant: bool = False,
+    selection_scale_invariant_min_spread: float = 1e-3,
     return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -323,6 +324,14 @@ def run_evolution(
         有效温度恒等于 alpha，与联合分数行内离散度的绝对尺度解耦，消除
         种群同质化导致的晚期选择退化（否则需要靠调大 alpha 补偿）。纯
         分布侧机制：不读取候选评价、不引入接受/拒绝。False 保持历史行为。
+        开启且 exclude_self=True 时行统计只在非自身候选上计算（第三轮
+        审查修正）；启用时诊断新增 ``donor_top_share_history``（每轮被选
+        最多的 donor 占比，选择集中度监控）。
+    selection_scale_invariant_min_spread : float, default 1e-3
+        尺度不变选择的低信号保护下限（需 selection_scale_invariant=True）。
+        行内标准差低于该值时按该值截断：放大倍数有界
+        （alpha/min_spread），离散度趋零时选择平滑退化为均匀，避免把
+        噪声级微小差异放大成极端选择偏好。必须为正有限数。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -519,6 +528,22 @@ def run_evolution(
             f"得到 {distance_mode!r}"
         )
     if (
+        isinstance(selection_scale_invariant_min_spread, (bool, np.bool_))
+        or not isinstance(
+            selection_scale_invariant_min_spread,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(selection_scale_invariant_min_spread)
+        or selection_scale_invariant_min_spread <= 0
+    ):
+        raise ValueError(
+            "selection_scale_invariant_min_spread 必须是正有限数，"
+            f"得到 {selection_scale_invariant_min_spread!r}"
+        )
+    selection_scale_invariant_min_spread = float(
+        selection_scale_invariant_min_spread
+    )
+    if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
             diffusion_direction_strength,
@@ -672,6 +697,7 @@ def run_evolution(
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
+    donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
     copy_direction_mean_history: List[Optional[float]] = []
     copy_direction_positive_rate_history: List[Optional[float]] = []
     copy_direction_negative_rate_history: List[Optional[float]] = []
@@ -847,11 +873,18 @@ def run_evolution(
             # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
             exclude_self=exclude_self,
             scale_invariant=selection_scale_invariant,
+            scale_invariant_min_spread=selection_scale_invariant_min_spread,
         )
         donor_idx = sample_donors(probs, rng, device=device)
         # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
         del probs
         donors = S.iloc[donor_idx].reset_index(drop=True)
+        # 选择集中度监控（第三轮审查）：被选最多的 donor 占比。只在尺度
+        # 不变选择启用时记录（高锐度下的同质化风险监控）。
+        if selection_scale_invariant:
+            donor_top_share_history.append(
+                float(np.bincount(donor_idx).max() / len(donor_idx))
+            )
 
         # 诊断：记录选中 donor 的适应度和距离
         N = len(S)  # 记录数
@@ -1178,6 +1211,7 @@ def run_evolution(
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
         "rho_schedule_history": rho_schedule_history,
+        "donor_top_share_history": donor_top_share_history,
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history
@@ -1319,6 +1353,10 @@ def run_evolution(
                 if rho_anneal_rounds is not None else None
             ),
             "selection_scale_invariant": bool(selection_scale_invariant),
+            "selection_scale_invariant_min_spread": (
+                float(selection_scale_invariant_min_spread)
+                if selection_scale_invariant else None
+            ),
         },
     }
     if return_final_table:

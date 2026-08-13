@@ -76,6 +76,7 @@ def compute_sampling_probs(
     winsorize_quantiles: tuple = (0.01, 0.99),
     exclude_self: bool = False,
     scale_invariant: bool = False,
+    scale_invariant_min_spread: float = 1e-3,
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -147,12 +148,20 @@ def compute_sampling_probs(
     scale_invariant : bool, default False
         尺度不变选择（仅 geometric 模式；Issue #44 机制迭代）。True 时对
         每行的联合分数做标准化 ``logits = alpha * (log_A - mean_i) /
-        (std_i + 1e-8)`` 再 softmax：选择压力的有效温度恒等于 alpha，与
-        log_A 行内离散度的绝对尺度解耦。动机：随着种群同质化，行内分数
-        离散度收缩，固定 alpha 的 softmax 区分度衰减、选择退化为均匀——
-        标准化把"锐度"变成机制内生性质，不再依赖对 alpha 的调参补偿。
-        行内离散度为零时（所有 donor 分数相同）退化为均匀抽样，语义正确
-        （无信息 → 无偏好）。False（默认）保持历史行为完全不变。
+        max(std_i, scale_invariant_min_spread)`` 再 softmax：选择压力的
+        有效温度恒等于 alpha，与 log_A 行内离散度的绝对尺度解耦。动机：
+        随着种群同质化，行内分数离散度收缩，固定 alpha 的 softmax 区分度
+        衰减、选择退化为均匀——标准化把"锐度"变成机制内生性质，不再依赖
+        对 alpha 的调参补偿。``exclude_self=True`` 时行统计只在非自身
+        候选上计算（第三轮审查修正：自身条目距离恒 0、分数极端，参与
+        统计会扭曲其余合法 donor 之间的选择强度）。False（默认）保持
+        历史行为完全不变。
+    scale_invariant_min_spread : float, default 1e-3
+        低信号保护（仅 scale_invariant=True 时生效）。行内标准差的下限：
+        放大倍数被限制在 ``alpha / scale_invariant_min_spread`` 以内；
+        当行内离散度低于该值时选择强度随离散度线性平滑衰减（离散度趋零
+        时退化为均匀），避免把纯噪声级微小差异放大成极端选择偏好。必须
+        为正有限数。
 
     Returns
     -------
@@ -205,6 +214,16 @@ def compute_sampling_probs(
         raise ValueError(f"delta 必须在 (0,1)，得到 {delta}")
     if len(winsorize_quantiles) != 2 or not (0 <= winsorize_quantiles[0] < winsorize_quantiles[1] <= 1):
         raise ValueError(f"winsorize_quantiles 必须是 (q_low, q_high)，0 <= q_low < q_high <= 1，得到 {winsorize_quantiles}")
+    if not (
+        isinstance(scale_invariant_min_spread, (int, float, np.integer, np.floating))
+        and not isinstance(scale_invariant_min_spread, (bool, np.bool_))
+        and np.isfinite(scale_invariant_min_spread)
+        and scale_invariant_min_spread > 0
+    ):
+        raise ValueError(
+            "scale_invariant_min_spread 必须是正有限数，"
+            f"得到 {scale_invariant_min_spread!r}"
+        )
 
     # exclude_self 只在候选池=全表（方阵，行 i 与列 i 同一条记录）时有意义。
     # 共享参考池（K≠N）里没有"自己"，盲目屏蔽第 i 列会误伤真实候选，故此处拦截。
@@ -221,7 +240,7 @@ def compute_sampling_probs(
         return _compute_sampling_probs_torch(
             fitness, distances, beta, h, device, distance_mode, p,
             lambda_param, alpha, delta, winsorize_quantiles, exclude_self,
-            scale_invariant,
+            scale_invariant, scale_invariant_min_spread,
         )
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
@@ -305,13 +324,30 @@ def compute_sampling_probs(
         log_A = lambda_param * log_f[None, :] + (1 - lambda_param) * log_s  # (N, K)
 
         # 第4步：应用锐度 α_t。尺度不变模式先做行内标准化：有效温度恒等于
-        # alpha，与 log_A 行内离散度的绝对尺度解耦（离散度为零的行退化为
-        # 均匀）。减行均值本身被 softmax 平移不变性吸收，保留是为了让
-        # logits 的数值语义（标准分）自解释。
+        # alpha，与 log_A 行内离散度的绝对尺度解耦。两项保护（第三轮审查）：
+        # (a) exclude_self 时行统计只在非自身候选上计算——自身条目距离恒 0、
+        #     分数极端，参与统计会扭曲其余合法 donor 之间的选择强度（自身
+        #     概率本身在 softmax 后置零重归一化，等价于从候选集中移除，
+        #     不受此处标准化取值影响）；
+        # (b) 标准差下限 scale_invariant_min_spread：放大倍数有界
+        #     （alpha/min_spread），离散度低于下限时选择强度随之线性衰减、
+        #     趋零时退化为均匀——不把噪声级微小差异放大成极端选择偏好。
+        # 减行均值本身被 softmax 平移不变性吸收，保留是为了标准分语义自解释。
         if scale_invariant:
-            row_mean = log_A.mean(axis=1, keepdims=True)
-            row_std = log_A.std(axis=1, keepdims=True)
-            logits = alpha * (log_A - row_mean) / (row_std + 1e-8)
+            if exclude_self:
+                idx = np.arange(K)
+                diag = log_A[idx, idx]
+                k_eff = K - 1
+                row_sum = log_A.sum(axis=1) - diag
+                row_mean = (row_sum / k_eff)[:, None]
+                row_sq = (log_A ** 2).sum(axis=1) - diag ** 2
+                row_var = row_sq / k_eff - (row_sum / k_eff) ** 2
+                row_std = np.sqrt(np.maximum(row_var, 0.0))[:, None]
+            else:
+                row_mean = log_A.mean(axis=1, keepdims=True)
+                row_std = log_A.std(axis=1, keepdims=True)
+            denom = np.maximum(row_std, scale_invariant_min_spread)
+            logits = alpha * (log_A - row_mean) / denom
         else:
             logits = alpha * log_A  # (N, K)
 
@@ -338,7 +374,8 @@ def compute_sampling_probs(
 
 def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p,
                                   lambda_param, alpha, delta, winsorize_quantiles,
-                                  exclude_self=False, scale_invariant=False):
+                                  exclude_self=False, scale_invariant=False,
+                                  scale_invariant_min_spread=1e-3):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -439,11 +476,26 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         log_A = lambda_param * log_f.unsqueeze(0) + (1 - lambda_param) * log_s  # (N, K)
 
         # 第4步：应用锐度 α_t（scale_invariant 时先行内标准化，与 numpy
-        # 路径同语义；std 用总体口径 unbiased=False 对齐 np.std 默认）。
+        # 路径同语义；std 用总体口径对齐 np.std 默认）。两项保护同 numpy：
+        # exclude_self 时行统计只在非自身候选上计算；标准差下限
+        # scale_invariant_min_spread 使放大倍数有界、低离散度平滑退化均匀。
         if scale_invariant:
-            row_mean = log_A.mean(dim=1, keepdim=True)
-            row_std = log_A.std(dim=1, keepdim=True, unbiased=False)
-            logits = alpha * (log_A - row_mean) / (row_std + 1e-8)
+            if exclude_self:
+                diag = torch.diagonal(log_A)
+                k_eff = K - 1
+                row_sum = log_A.sum(dim=1) - diag
+                mean_off = row_sum / k_eff
+                row_sq = (log_A ** 2).sum(dim=1) - diag ** 2
+                row_var = row_sq / k_eff - mean_off ** 2
+                row_mean = mean_off.unsqueeze(1)
+                row_std = torch.sqrt(
+                    torch.clamp(row_var, min=0.0)
+                ).unsqueeze(1)
+            else:
+                row_mean = log_A.mean(dim=1, keepdim=True)
+                row_std = log_A.std(dim=1, keepdim=True, unbiased=False)
+            denom = torch.clamp(row_std, min=scale_invariant_min_spread)
+            logits = alpha * (log_A - row_mean) / denom
         else:
             logits = alpha * log_A  # (N, K)
 
