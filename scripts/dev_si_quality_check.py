@@ -107,12 +107,11 @@ def main():
     measured_triples = offline_helpers._measured_cell_keys(
         queries, marginals, order=3
     )
+    # 一次实验一份源数据（第三轮审查）：本脚本源数据为 train，离线参考
+    # 只用 train；test 须以其为源数据独立建实验。
     references = {
         "train": pd.read_csv(
             "data/nltcs/nltcs.train.data", header=None, names=columns
-        )[columns],
-        "test": pd.read_csv(
-            "data/nltcs/nltcs.test.data", header=None, names=columns
         )[columns],
     }
     for arm in args.arms:

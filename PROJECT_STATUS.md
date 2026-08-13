@@ -161,6 +161,32 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-08-13 晚）
+
+### 尺度不变选择 v2：审查修复后正式重跑，主判定维持 supports（PR #48）
+
+第一轮审查（PR #48）指出五处实现/协议问题，全部修复：低信号保护
+`scale_invariant_min_spread`（放大倍数有界、低离散度平滑退化均匀）、
+exclude_self 行统计只在非自身候选上计算（numpy/torch 同步）、donor
+集中度监控（dev 实测 top_share 峰值 2.2% 无坍缩）、best_loss 改用主
+循环值、nltcs 离线参考限定 train（一次实验一份源数据）、formal 标志
+校验协议参数、any_quality_risk 纳入分类、单变量归因臂
+no_gate_legacy_a16。专项测试 18 项，全套 906 通过。
+
+**v2 正式结果**（重新预注册 Issue #44 评论 5278428081，提交 051cf22，
+五臂、种子 100..104、2000 轮、formal=true）：nltcs 主判定
+**supports_scale_invariant_selection**——无门 si L1 **0.001094**（五臂
+最优 5/5）：机制改进 0.316✓、**标准化归因 0.584✓（v2 新增：同 alpha
+下标准化本身贡献 42%，是最大单一来源；alpha 数值贡献也真实）**、门
+冗余 0.729✓（配置对齐后无门反好 27%），质量零报警，best_loss 不变式
+零违反。test_300x10 辅助 mechanism_gain_gate_not_redundant（机制与
+归因成立、小表门仍强 4.60 且高阶风险 flagged，如实保留）。v1 输出
+归档 *.prefix_legacy.json，v1 数字不再引用（v2 无门 si 0.001094 与
+v1 0.001020 同量级，方向不变）。正式 JSON SHA-256 `e5c507bb…`。
+
+"门冗余"结论限于测试配置（rho=0.01、a16、nltcs、2000 轮等预算），
+不从方法设计推广（审查意见一.3 的定位）。
+
 ## 最近变更（2026-08-13）
 
 ### 尺度不变选择：无门控扩散演化正式通过预注册判定（Issue #44 阶段二）
