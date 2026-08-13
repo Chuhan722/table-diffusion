@@ -93,7 +93,6 @@
      "pre_final_proposal_loss": 130.5,
      "best_loss": 101.5,
      "drift_ratio": 1.2857142857142858,
-     "tail_mean_loss": 116.72,
      "final_table_measured_l1": 0.0058,
      "best_table_measured_l1": 0.0051333333333333335,
      "min_cooling_factor": 0.24567474048442905,
@@ -111,7 +110,8 @@
        "raw_unique_states": 284,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 116.72
     },
     {
      "dataset": "test_300x10",
@@ -121,7 +121,6 @@
      "pre_final_proposal_loss": 174.5,
      "best_loss": 89.5,
      "drift_ratio": 1.9385474860335195,
-     "tail_mean_loss": 208.41,
      "final_table_measured_l1": 0.0066,
      "best_table_measured_l1": 0.005,
      "min_cooling_factor": 1.0,
@@ -139,7 +138,8 @@
        "raw_unique_states": 286,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 208.41
     },
     {
      "dataset": "test_300x10",
@@ -149,7 +149,6 @@
      "pre_final_proposal_loss": 10.0,
      "best_loss": 10.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 10.26,
      "final_table_measured_l1": 0.0010666666666666667,
      "best_table_measured_l1": 0.0010666666666666667,
      "min_cooling_factor": 1.0,
@@ -167,7 +166,8 @@
        "raw_unique_states": 295,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10.26
     },
     {
      "dataset": "test_300x10",
@@ -177,7 +177,6 @@
      "pre_final_proposal_loss": 23.0,
      "best_loss": 23.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 23.7,
      "final_table_measured_l1": 0.002,
      "best_table_measured_l1": 0.002,
      "min_cooling_factor": 0.10034602076124567,
@@ -195,7 +194,8 @@
        "raw_unique_states": 295,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 23.7
     },
     {
      "dataset": "test_300x10",
@@ -205,7 +205,6 @@
      "pre_final_proposal_loss": 96.0,
      "best_loss": 87.0,
      "drift_ratio": 1.103448275862069,
-     "tail_mean_loss": 104.105,
      "final_table_measured_l1": 0.0052,
      "best_table_measured_l1": 0.004933333333333333,
      "min_cooling_factor": 0.2669172932330827,
@@ -223,7 +222,8 @@
        "raw_unique_states": 282,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 104.105
     },
     {
      "dataset": "test_300x10",
@@ -233,7 +233,6 @@
      "pre_final_proposal_loss": 141.5,
      "best_loss": 77.0,
      "drift_ratio": 1.8376623376623376,
-     "tail_mean_loss": 131.625,
      "final_table_measured_l1": 0.006333333333333333,
      "best_table_measured_l1": 0.004266666666666667,
      "min_cooling_factor": 1.0,
@@ -251,7 +250,8 @@
        "raw_unique_states": 290,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 131.625
     },
     {
      "dataset": "test_300x10",
@@ -261,7 +261,6 @@
      "pre_final_proposal_loss": 11.5,
      "best_loss": 11.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 11.5,
      "final_table_measured_l1": 0.0014,
      "best_table_measured_l1": 0.0014,
      "min_cooling_factor": 1.0,
@@ -279,7 +278,8 @@
        "raw_unique_states": 294,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 11.5
     },
     {
      "dataset": "test_300x10",
@@ -289,7 +289,6 @@
      "pre_final_proposal_loss": 21.0,
      "best_loss": 21.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 21.365,
      "final_table_measured_l1": 0.002,
      "best_table_measured_l1": 0.002,
      "min_cooling_factor": 0.11278195488721804,
@@ -307,7 +306,8 @@
        "raw_unique_states": 294,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 21.365
     },
     {
      "dataset": "test_300x10",
@@ -317,7 +317,6 @@
      "pre_final_proposal_loss": 116.5,
      "best_loss": 81.0,
      "drift_ratio": 1.4382716049382716,
-     "tail_mean_loss": 120.64,
      "final_table_measured_l1": 0.005533333333333333,
      "best_table_measured_l1": 0.004533333333333334,
      "min_cooling_factor": 0.26495726495726496,
@@ -335,7 +334,8 @@
        "raw_unique_states": 290,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 120.64
     },
     {
      "dataset": "test_300x10",
@@ -345,7 +345,6 @@
      "pre_final_proposal_loss": 123.0,
      "best_loss": 60.5,
      "drift_ratio": 2.0661157024793386,
-     "tail_mean_loss": 121.755,
      "final_table_measured_l1": 0.0054666666666666665,
      "best_table_measured_l1": 0.0042,
      "min_cooling_factor": 1.0,
@@ -363,7 +362,8 @@
        "raw_unique_states": 281,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 121.755
     },
     {
      "dataset": "test_300x10",
@@ -373,7 +373,6 @@
      "pre_final_proposal_loss": 14.0,
      "best_loss": 14.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 14.0,
      "final_table_measured_l1": 0.0013333333333333335,
      "best_table_measured_l1": 0.0013333333333333335,
      "min_cooling_factor": 1.0,
@@ -391,7 +390,8 @@
        "raw_unique_states": 287,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 14.0
     },
     {
      "dataset": "test_300x10",
@@ -401,7 +401,6 @@
      "pre_final_proposal_loss": 18.5,
      "best_loss": 18.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 18.5,
      "final_table_measured_l1": 0.0019333333333333331,
      "best_table_measured_l1": 0.0019333333333333331,
      "min_cooling_factor": 0.11965811965811966,
@@ -419,7 +418,8 @@
        "raw_unique_states": 296,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 18.5
     },
     {
      "dataset": "test_300x10",
@@ -429,7 +429,6 @@
      "pre_final_proposal_loss": 112.5,
      "best_loss": 98.5,
      "drift_ratio": 1.2081218274111676,
-     "tail_mean_loss": 130.37,
      "final_table_measured_l1": 0.0056,
      "best_table_measured_l1": 0.0046,
      "min_cooling_factor": 0.28870292887029286,
@@ -447,7 +446,8 @@
        "raw_unique_states": 285,
        "raw_support_overlap": 2
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 130.37
     },
     {
      "dataset": "test_300x10",
@@ -457,7 +457,6 @@
      "pre_final_proposal_loss": 112.0,
      "best_loss": 67.0,
      "drift_ratio": 1.6343283582089552,
-     "tail_mean_loss": 107.335,
      "final_table_measured_l1": 0.0051333333333333335,
      "best_table_measured_l1": 0.004266666666666667,
      "min_cooling_factor": 1.0,
@@ -475,7 +474,8 @@
        "raw_unique_states": 284,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 107.335
     },
     {
      "dataset": "test_300x10",
@@ -485,7 +485,6 @@
      "pre_final_proposal_loss": 10.5,
      "best_loss": 10.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 11.955,
      "final_table_measured_l1": 0.0012666666666666666,
      "best_table_measured_l1": 0.0012666666666666666,
      "min_cooling_factor": 1.0,
@@ -503,7 +502,8 @@
        "raw_unique_states": 295,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 11.955
     },
     {
      "dataset": "test_300x10",
@@ -513,7 +513,6 @@
      "pre_final_proposal_loss": 14.5,
      "best_loss": 14.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 15.225,
      "final_table_measured_l1": 0.0016666666666666668,
      "best_table_measured_l1": 0.0016666666666666668,
      "min_cooling_factor": 0.10460251046025104,
@@ -531,7 +530,8 @@
        "raw_unique_states": 294,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 15.225
     },
     {
      "dataset": "test_300x10",
@@ -541,7 +541,6 @@
      "pre_final_proposal_loss": 114.0,
      "best_loss": 67.0,
      "drift_ratio": 1.7014925373134329,
-     "tail_mean_loss": 133.385,
      "final_table_measured_l1": 0.0052,
      "best_table_measured_l1": 0.004,
      "min_cooling_factor": 0.20202020202020202,
@@ -559,7 +558,8 @@
        "raw_unique_states": 291,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 133.385
     },
     {
      "dataset": "test_300x10",
@@ -569,7 +569,6 @@
      "pre_final_proposal_loss": 132.0,
      "best_loss": 68.5,
      "drift_ratio": 1.9416058394160585,
-     "tail_mean_loss": 103.53,
      "final_table_measured_l1": 0.0061333333333333335,
      "best_table_measured_l1": 0.0042,
      "min_cooling_factor": 1.0,
@@ -587,7 +586,8 @@
        "raw_unique_states": 283,
        "raw_support_overlap": 1
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 103.53
     },
     {
      "dataset": "test_300x10",
@@ -597,7 +597,6 @@
      "pre_final_proposal_loss": 16.5,
      "best_loss": 16.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 17.145,
      "final_table_measured_l1": 0.0016666666666666668,
      "best_table_measured_l1": 0.0016666666666666668,
      "min_cooling_factor": 1.0,
@@ -615,7 +614,8 @@
        "raw_unique_states": 290,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 17.145
     },
     {
      "dataset": "test_300x10",
@@ -625,7 +625,6 @@
      "pre_final_proposal_loss": 17.0,
      "best_loss": 17.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 17.0,
      "final_table_measured_l1": 0.0015999999999999999,
      "best_table_measured_l1": 0.0015999999999999999,
      "min_cooling_factor": 0.07407407407407407,
@@ -643,7 +642,8 @@
        "raw_unique_states": 293,
        "raw_support_overlap": 0
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 17.0
     }
    ],
    "judgment": {
@@ -678,12 +678,29 @@
     },
     "any_quality_risk": true,
     "classification": "gate_free_self_cooling_not_supported"
+   },
+   "initial_state": {
+    "measured_l1_mean": 0.017666666666666667,
+    "measured_l1_by_seed": {
+     "100": 0.019266666666666668,
+     "101": 0.017733333333333334,
+     "102": 0.0156,
+     "103": 0.015933333333333334,
+     "104": 0.0198
+    },
+    "loss_by_seed": {
+     "100": 2556.5,
+     "101": 2272.0,
+     "102": 1834.0,
+     "103": 1855.5,
+     "104": 2501.5
+    },
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；由 scripts/audit_formal_json.py 可独立重建复验"
    }
   },
   "nltcs": {
    "reference_sha256": {
-    "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30",
-    "test": "f9ffa6b74b27dc03bee3203d157ee31079e80b13be40d0c0093d635c25aed523"
+    "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30"
    },
    "runs": [
     {
@@ -694,7 +711,6 @@
      "pre_final_proposal_loss": 10342552.5,
      "best_loss": 10335895.0,
      "drift_ratio": 1.0006925863701208,
-     "tail_mean_loss": 10665827.825,
      "final_table_measured_l1": 0.0066665304289678555,
      "best_table_measured_l1": 0.00666214695013904,
      "min_cooling_factor": 0.10535051099508336,
@@ -712,7 +728,8 @@
        "raw_unique_states": 3509,
        "raw_support_overlap": 1406
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10665827.825
     },
     {
      "dataset": "nltcs",
@@ -722,7 +739,6 @@
      "pre_final_proposal_loss": 3277713.5,
      "best_loss": 3241592.0,
      "drift_ratio": 1.0073996048855007,
-     "tail_mean_loss": 3434895.345,
      "final_table_measured_l1": 0.0034222621825365784,
      "best_table_measured_l1": 0.0034265221830885265,
      "min_cooling_factor": 1.0,
@@ -740,7 +756,8 @@
        "raw_unique_states": 3058,
        "raw_support_overlap": 1407
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 3434895.345
     },
     {
      "dataset": "nltcs",
@@ -750,7 +767,6 @@
      "pre_final_proposal_loss": 2109013.0,
      "best_loss": 2109013.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 2276603.26,
      "final_table_measured_l1": 0.00283333254101439,
      "best_table_measured_l1": 0.00283333254101439,
      "min_cooling_factor": 1.0,
@@ -768,7 +784,8 @@
        "raw_unique_states": 3007,
        "raw_support_overlap": 1437
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2276603.26
     },
     {
      "dataset": "nltcs",
@@ -778,7 +795,6 @@
      "pre_final_proposal_loss": 9115553.0,
      "best_loss": 9115553.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 9481864.855,
      "final_table_measured_l1": 0.006315049513862937,
      "best_table_measured_l1": 0.006315049513862937,
      "min_cooling_factor": 0.09986175601107514,
@@ -796,7 +812,8 @@
        "raw_unique_states": 3506,
        "raw_support_overlap": 1406
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 9481864.855
     },
     {
      "dataset": "nltcs",
@@ -806,7 +823,6 @@
      "pre_final_proposal_loss": 9930668.0,
      "best_loss": 9913793.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 10375771.405,
      "final_table_measured_l1": 0.0065617591110453104,
      "best_table_measured_l1": 0.0065617591110453104,
      "min_cooling_factor": 0.10371211907153666,
@@ -824,7 +840,8 @@
        "raw_unique_states": 3512,
        "raw_support_overlap": 1410
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10375771.405
     },
     {
      "dataset": "nltcs",
@@ -834,7 +851,6 @@
      "pre_final_proposal_loss": 3274776.5,
      "best_loss": 3245214.5,
      "drift_ratio": 1.0174791219501824,
-     "tail_mean_loss": 3510978.935,
      "final_table_measured_l1": 0.0035274039352897273,
      "best_table_measured_l1": 0.003515858716402564,
      "min_cooling_factor": 1.0,
@@ -852,7 +868,8 @@
        "raw_unique_states": 3026,
        "raw_support_overlap": 1400
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 3510978.935
     },
     {
      "dataset": "nltcs",
@@ -862,7 +879,6 @@
      "pre_final_proposal_loss": 1838904.0,
      "best_loss": 1838904.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 1949340.76,
      "final_table_measured_l1": 0.002610701207821287,
      "best_table_measured_l1": 0.002610701207821287,
      "min_cooling_factor": 1.0,
@@ -880,7 +896,8 @@
        "raw_unique_states": 2957,
        "raw_support_overlap": 1428
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 1949340.76
     },
     {
      "dataset": "nltcs",
@@ -890,7 +907,6 @@
      "pre_final_proposal_loss": 9103327.0,
      "best_loss": 9103327.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 9566381.375,
      "final_table_measured_l1": 0.0063350529947155615,
      "best_table_measured_l1": 0.0063350529947155615,
      "min_cooling_factor": 0.0999765185255193,
@@ -908,7 +924,8 @@
        "raw_unique_states": 3486,
        "raw_support_overlap": 1421
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 9566381.375
     },
     {
      "dataset": "nltcs",
@@ -918,7 +935,6 @@
      "pre_final_proposal_loss": 10077956.0,
      "best_loss": 10072222.5,
      "drift_ratio": 1.0005219801290133,
-     "tail_mean_loss": 10413467.47,
      "final_table_measured_l1": 0.006643872165162568,
      "best_table_measured_l1": 0.006636154772858314,
      "min_cooling_factor": 0.104888594840028,
@@ -936,7 +952,8 @@
        "raw_unique_states": 3508,
        "raw_support_overlap": 1381
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10413467.47
     },
     {
      "dataset": "nltcs",
@@ -946,7 +963,6 @@
      "pre_final_proposal_loss": 3320751.5,
      "best_loss": 3297417.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 3543056.5,
      "final_table_measured_l1": 0.003445723055141509,
      "best_table_measured_l1": 0.003445723055141509,
      "min_cooling_factor": 1.0,
@@ -964,7 +980,8 @@
        "raw_unique_states": 3045,
        "raw_support_overlap": 1430
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 3543056.5
     },
     {
      "dataset": "nltcs",
@@ -974,7 +991,6 @@
      "pre_final_proposal_loss": 2058888.0,
      "best_loss": 2056036.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 2203282.23,
      "final_table_measured_l1": 0.002753133400188588,
      "best_table_measured_l1": 0.002753133400188588,
      "min_cooling_factor": 1.0,
@@ -992,7 +1008,8 @@
        "raw_unique_states": 2990,
        "raw_support_overlap": 1446
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2203282.23
     },
     {
      "dataset": "nltcs",
@@ -1002,7 +1019,6 @@
      "pre_final_proposal_loss": 9045307.5,
      "best_loss": 9033028.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 9454360.79,
      "final_table_measured_l1": 0.006248803418323225,
      "best_table_measured_l1": 0.006248803418323225,
      "min_cooling_factor": 0.09878773152688448,
@@ -1020,7 +1036,8 @@
        "raw_unique_states": 3564,
        "raw_support_overlap": 1425
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 9454360.79
     },
     {
      "dataset": "nltcs",
@@ -1030,7 +1047,6 @@
      "pre_final_proposal_loss": 10092357.0,
      "best_loss": 10085191.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 10512980.86,
      "final_table_measured_l1": 0.006651774774882123,
      "best_table_measured_l1": 0.006651774774882123,
      "min_cooling_factor": 0.1050618363449734,
@@ -1048,7 +1064,8 @@
        "raw_unique_states": 3556,
        "raw_support_overlap": 1410
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10512980.86
     },
     {
      "dataset": "nltcs",
@@ -1058,7 +1075,6 @@
      "pre_final_proposal_loss": 3485045.0,
      "best_loss": 3457333.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 3647718.17,
      "final_table_measured_l1": 0.0035490126337416367,
      "best_table_measured_l1": 0.0035490126337416367,
      "min_cooling_factor": 1.0,
@@ -1076,7 +1092,8 @@
        "raw_unique_states": 3052,
        "raw_support_overlap": 1437
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 3647718.17
     },
     {
      "dataset": "nltcs",
@@ -1086,7 +1103,6 @@
      "pre_final_proposal_loss": 2043473.5,
      "best_loss": 2043473.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 2234698.805,
      "final_table_measured_l1": 0.0028012899281671297,
      "best_table_measured_l1": 0.0028012899281671297,
      "min_cooling_factor": 1.0,
@@ -1104,7 +1120,8 @@
        "raw_unique_states": 3017,
        "raw_support_overlap": 1455
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 2234698.805
     },
     {
      "dataset": "nltcs",
@@ -1114,7 +1131,6 @@
      "pre_final_proposal_loss": 8647794.0,
      "best_loss": 8639628.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 9013608.225,
      "final_table_measured_l1": 0.00611995383641141,
      "best_table_measured_l1": 0.00611995383641141,
      "min_cooling_factor": 0.09660838346234792,
@@ -1132,7 +1148,8 @@
        "raw_unique_states": 3507,
        "raw_support_overlap": 1401
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 9013608.225
     },
     {
      "dataset": "nltcs",
@@ -1142,7 +1159,6 @@
      "pre_final_proposal_loss": 10082083.5,
      "best_loss": 10062812.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 10524900.035,
      "final_table_measured_l1": 0.006604791290533828,
      "best_table_measured_l1": 0.006604791290533828,
      "min_cooling_factor": 0.10465378785435547,
@@ -1160,7 +1176,8 @@
        "raw_unique_states": 3453,
        "raw_support_overlap": 1384
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 10524900.035
     },
     {
      "dataset": "nltcs",
@@ -1170,7 +1187,6 @@
      "pre_final_proposal_loss": 3059194.5,
      "best_loss": 3042740.5,
      "drift_ratio": 1.0074764837816435,
-     "tail_mean_loss": 3282176.325,
      "final_table_measured_l1": 0.0033889230477822034,
      "best_table_measured_l1": 0.0033791682639096273,
      "min_cooling_factor": 1.0,
@@ -1188,7 +1204,8 @@
        "raw_unique_states": 3084,
        "raw_support_overlap": 1457
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 3282176.325
     },
     {
      "dataset": "nltcs",
@@ -1198,7 +1215,6 @@
      "pre_final_proposal_loss": 1857804.0,
      "best_loss": 1857804.0,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 1992697.465,
      "final_table_measured_l1": 0.0026392246897778077,
      "best_table_measured_l1": 0.0026392246897778077,
      "min_cooling_factor": 1.0,
@@ -1216,7 +1232,8 @@
        "raw_unique_states": 2973,
        "raw_support_overlap": 1465
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 1992697.465
     },
     {
      "dataset": "nltcs",
@@ -1226,7 +1243,6 @@
      "pre_final_proposal_loss": 9200917.0,
      "best_loss": 9179316.5,
      "drift_ratio": 1.0,
-     "tail_mean_loss": 9578717.32,
      "final_table_measured_l1": 0.0062969599463017665,
      "best_table_measured_l1": 0.0062969599463017665,
      "min_cooling_factor": 0.09981519324570894,
@@ -1244,7 +1260,8 @@
        "raw_unique_states": 3496,
        "raw_support_overlap": 1409
       }
-     }
+     },
+     "tail_mean_pre_proposal_loss": 9578717.32
     }
    ],
    "judgment": {
@@ -1296,7 +1313,7 @@
      "103": 696766249.5,
      "104": 693723685.5
     },
-    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；审查（PR #47 意见 1）要求的初始对照基准"
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）；由 scripts/audit_formal_json.py 可独立重建复验"
    },
    "test_evaluation_withdrawn": {
     "reason": "一次实验一份源数据：本实验 queries/marginals/target/n_records全部来自 train，train 源合成表与 test 的比较（含等行数抽样口径）不构成 test 源数据实验，按第三轮审查撤回。test 若要评价须以其为源数据独立建实验。",
@@ -1304,7 +1321,10 @@
      "offline.test",
      "offline_fullsize_invalid",
      "test_reevaluation"
-    ]
+    ],
+    "withdrawn_reference_sha256": {
+     "test": "f9ffa6b74b27dc03bee3203d157ee31079e80b13be40d0c0093d635c25aed523"
+    }
    }
   }
  },
