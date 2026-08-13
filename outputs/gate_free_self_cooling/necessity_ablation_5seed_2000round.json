@@ -643,8 +643,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310597491210242,
        "unmeasured_4way_l1": 0.2500206510887136,
        "binned_joint_tvd": 0.4083076268929001,
@@ -737,8 +739,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5204255311175251,
        "unmeasured_4way_l1": 0.2556650626876214,
        "binned_joint_tvd": 0.8193539149862852,
@@ -831,8 +835,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.531887507331305,
        "unmeasured_4way_l1": 0.2500259358996998,
        "binned_joint_tvd": 0.35422784845324784,
@@ -925,8 +931,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5278879251922691,
        "unmeasured_4way_l1": 0.25739701622543093,
        "binned_joint_tvd": 0.7543377302607883,
@@ -1019,8 +1027,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310576410780438,
        "unmeasured_4way_l1": 0.2500240045029137,
        "binned_joint_tvd": 0.40670198814721814,
@@ -1113,8 +1123,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5204846343966406,
        "unmeasured_4way_l1": 0.2554878198902457,
        "binned_joint_tvd": 0.8208372315376371,
@@ -1207,8 +1219,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318577605025825,
        "unmeasured_4way_l1": 0.2500196535541097,
        "binned_joint_tvd": 0.3458224134594825,
@@ -1301,8 +1315,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5271578396400775,
        "unmeasured_4way_l1": 0.25709936887895785,
        "binned_joint_tvd": 0.7554499168820212,
@@ -1395,8 +1411,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310567041700526,
        "unmeasured_4way_l1": 0.2500198657955148,
        "binned_joint_tvd": 0.40972633517205587,
@@ -1489,8 +1507,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5213443255542903,
        "unmeasured_4way_l1": 0.2557660259240142,
        "binned_joint_tvd": 0.8181176109659967,
@@ -1583,8 +1603,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.531834025500137,
        "unmeasured_4way_l1": 0.2500219882095655,
        "binned_joint_tvd": 0.3546603018128741,
@@ -1677,8 +1699,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5269625723995649,
        "unmeasured_4way_l1": 0.25714525547073447,
        "binned_joint_tvd": 0.7580456301317551,
@@ -1771,8 +1795,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5310844210314607,
        "unmeasured_4way_l1": 0.25002181841644144,
        "binned_joint_tvd": 0.41349615050813077,
@@ -1865,8 +1891,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5215808167464183,
        "unmeasured_4way_l1": 0.2559151467352178,
        "binned_joint_tvd": 0.8172521122111431,
@@ -1959,8 +1987,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318696280038051,
        "unmeasured_4way_l1": 0.2500207572094161,
        "binned_joint_tvd": 0.35602030307792054,
@@ -2053,8 +2083,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5273575571935484,
        "unmeasured_4way_l1": 0.2572835307461389,
        "binned_joint_tvd": 0.7536574240615033,
@@ -2147,8 +2179,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5311460227318863,
        "unmeasured_4way_l1": 0.2500219457612845,
        "binned_joint_tvd": 0.4073782073910641,
@@ -2241,8 +2275,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5194363905057491,
        "unmeasured_4way_l1": 0.2556700503606406,
        "binned_joint_tvd": 0.8218877127709109,
@@ -2335,8 +2371,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5318906303579425,
        "unmeasured_4way_l1": 0.25002116046808576,
        "binned_joint_tvd": 0.3505814629910143,
@@ -2429,8 +2467,10 @@
         9004,
         9005
        ]
-      },
-      "test_fullsize_invalid": {
+      }
+     },
+     "offline_fullsize_invalid": {
+      "test": {
        "unmeasured_3way_l1": 0.5265243336866519,
        "unmeasured_4way_l1": 0.25707145913419094,
        "binned_joint_tvd": 0.7584785609394468,
