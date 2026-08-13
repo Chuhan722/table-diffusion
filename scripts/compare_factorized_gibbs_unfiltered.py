@@ -94,6 +94,83 @@ def _rng_state_sha256(rng):
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _frame_sha256(frame):
+    return hashlib.sha256(
+        frame.to_csv(index=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _frame_records(frame):
+    return [
+        {
+            column: (
+                value.item() if isinstance(value, np.generic) else value
+            )
+            for column, value in row.items()
+        }
+        for row in frame.to_dict(orient="records")
+    ]
+
+
+def _donor_alpha(round_index, rounds):
+    progress = round_index / (rounds - 1) if rounds > 1 else 1.0
+    return 2.0 + 8.0 * progress
+
+
+def _normalize_snapshot_rounds(snapshot_rounds, rounds):
+    if snapshot_rounds is None:
+        return None
+    try:
+        values = list(snapshot_rounds)
+    except TypeError as exc:
+        raise ValueError("snapshot_rounds 必须是轮数序列") from exc
+    normalized = []
+    for value in values:
+        if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+        ):
+            raise ValueError("snapshot_rounds 必须只包含整数")
+        normalized.append(int(value))
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("snapshot_rounds 不得重复")
+    if any(value < 0 or value > rounds for value in normalized):
+        raise ValueError(f"snapshot_rounds 必须位于 0..{rounds}")
+    return tuple(sorted(normalized))
+
+
+def _capture_current_snapshot(
+    state,
+    rng,
+    gibbs_rng,
+    *,
+    state_round,
+    rounds,
+    current_loss,
+    best_loss,
+    temperature,
+    sweeps,
+):
+    alpha_round = min(state_round, rounds - 1)
+    return {
+        "state_round": int(state_round),
+        "state_kind": "current",
+        "source_temperature": float(temperature),
+        "source_sweeps": int(sweeps),
+        "donor_alpha": float(_donor_alpha(alpha_round, rounds)),
+        "current_loss": float(current_loss),
+        "best_loss_so_far_diagnostic_only": float(best_loss),
+        "state_sha256": _frame_sha256(state),
+        "primary_rng_state_sha256": _rng_state_sha256(rng),
+        "gibbs_rng_state_sha256": (
+            _rng_state_sha256(gibbs_rng)
+            if gibbs_rng is not None else None
+        ),
+        "table_columns": list(state.columns),
+        "table_records": _frame_records(state),
+    }
+
+
 def _run_one(
     target,
     queries,
@@ -107,9 +184,17 @@ def _run_one(
     device,
     factor_builder="legacy_rowwise",
     record_state_hashes=False,
+    snapshot_rounds=None,
 ):
     if factor_builder not in ("legacy_rowwise", "compiled_batch"):
         raise ValueError(f"未知因子构造器：{factor_builder!r}")
+    requested_snapshot_rounds = _normalize_snapshot_rounds(
+        snapshot_rounds, rounds
+    )
+    snapshot_round_set = (
+        set(requested_snapshot_rounds)
+        if requested_snapshot_rounds is not None else None
+    )
     rng = np.random.default_rng(seed)
     gibbs_rng = (
         np.random.default_rng(_gibbs_seed(seed)) if sweeps > 0 else None
@@ -129,11 +214,10 @@ def _run_one(
         verbose=False,
     )
     initial_loss = float(compute_loss(target, q))
-    initial_csv_sha256 = hashlib.sha256(
-        state.to_csv(index=False).encode("utf-8")
-    ).hexdigest()
+    initial_csv_sha256 = _frame_sha256(state)
     best_loss = initial_loss
     direction_reference_scale = None
+    direction_reference_scale_round = None
     loss_history = []
     gain_history = []
     changed_cells_history = []
@@ -151,6 +235,22 @@ def _run_one(
     direction_elapsed = 0.0
     state_sha256_history = []
     trajectory_audit_elapsed = 0.0
+    snapshot_capture_elapsed = 0.0
+    state_snapshots = []
+    if snapshot_round_set is not None and 0 in snapshot_round_set:
+        snapshot_start = time.perf_counter()
+        state_snapshots.append(_capture_current_snapshot(
+            state,
+            rng,
+            gibbs_rng,
+            state_round=0,
+            rounds=rounds,
+            current_loss=initial_loss,
+            best_loss=best_loss,
+            temperature=temperature,
+            sweeps=sweeps,
+        ))
+        snapshot_capture_elapsed += time.perf_counter() - snapshot_start
     start = time.perf_counter()
     workload_compile_elapsed = 0.0
     compiled_workload = None
@@ -176,10 +276,7 @@ def _run_one(
             device=device,
             return_tensor=use_torch,
         )
-        progress = (
-            round_index / (rounds - 1) if rounds > 1 else 1.0
-        )
-        alpha = 2.0 + 8.0 * progress
+        alpha = _donor_alpha(round_index, rounds)
         probabilities = compute_sampling_probs(
             fitness,
             distances,
@@ -216,6 +313,7 @@ def _run_one(
             candidate_scale = direction_rms_scale(directions[differs])
             if candidate_scale > 0.0:
                 direction_reference_scale = candidate_scale
+                direction_reference_scale_round = round_index
         effective_strength = (
             temperature / direction_reference_scale
             if direction_reference_scale is not None else 0.0
@@ -285,10 +383,49 @@ def _run_one(
         fitness = proposal_fitness
         if record_state_hashes:
             audit_start = time.perf_counter()
-            state_sha256_history.append(hashlib.sha256(
-                state.to_csv(index=False).encode("utf-8")
-            ).hexdigest())
+            state_sha256_history.append(_frame_sha256(state))
             trajectory_audit_elapsed += time.perf_counter() - audit_start
+        completed_round = round_index + 1
+        if (
+            snapshot_round_set is not None
+            and completed_round in snapshot_round_set
+        ):
+            snapshot_start = time.perf_counter()
+            state_snapshots.append(_capture_current_snapshot(
+                state,
+                rng,
+                gibbs_rng,
+                state_round=completed_round,
+                rounds=rounds,
+                current_loss=proposal_loss,
+                best_loss=best_loss,
+                temperature=temperature,
+                sweeps=sweeps,
+            ))
+            snapshot_elapsed = time.perf_counter() - snapshot_start
+            snapshot_capture_elapsed += snapshot_elapsed
+            trajectory_audit_elapsed += snapshot_elapsed
+
+    if requested_snapshot_rounds is not None:
+        captured_rounds = {
+            snapshot["state_round"] for snapshot in state_snapshots
+        }
+        missing_rounds = sorted(snapshot_round_set - captured_rounds)
+        if missing_rounds:
+            raise RuntimeError(
+                "轨迹提前停止，未生成请求的 current-state 快照："
+                f"{missing_rounds}"
+            )
+        fixed_scale = (
+            float(direction_reference_scale)
+            if direction_reference_scale is not None else None
+        )
+        for snapshot in state_snapshots:
+            snapshot["direction_reference_scale"] = fixed_scale
+            snapshot["direction_reference_scale_round"] = (
+                int(direction_reference_scale_round)
+                if direction_reference_scale_round is not None else None
+            )
 
     final_loss = float(compute_loss(target, q))
     raw_elapsed = time.perf_counter() - start
@@ -370,14 +507,18 @@ def _run_one(
             _rng_state_sha256(gibbs_rng) if gibbs_rng is not None else None
         ),
         "initial_csv_sha256": initial_csv_sha256,
-        "final_csv_sha256": hashlib.sha256(
-            state.to_csv(index=False).encode("utf-8")
-        ).hexdigest(),
+        "final_csv_sha256": _frame_sha256(state),
         "state_sha256_history": state_sha256_history,
         "loss_history": loss_history,
         "gain_history": gain_history,
         "changed_cells_history": changed_cells_history,
     }
+    if requested_snapshot_rounds is not None:
+        result.update({
+            "snapshot_rounds": list(requested_snapshot_rounds),
+            "snapshot_capture_elapsed_sec": snapshot_capture_elapsed,
+            "state_snapshots": state_snapshots,
+        })
     print(
         f"seed={seed:02d} {label:<16} "
         f"{result['factor_builder']:<16} "
