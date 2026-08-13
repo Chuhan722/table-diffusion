@@ -44,16 +44,40 @@ def test_raw_conditional_logit_diagnostics_detect_clip_hits():
         accumulator, logit_clip=30.0
     )
 
-    assert result == {
-        "condition_count": 4,
-        "raw_logit_min": -10.0,
-        "raw_logit_max": 40.0,
-        "raw_logit_abs_max": 40.0,
-        "logit_clip": 30.0,
-        "clip_hit_count": 1,
-        "clip_hit_rate": 0.25,
-        "raw_logit_strictly_inside_clip": False,
-    }
+    assert result["condition_count"] == 4
+    assert result["raw_logit_min"] == -10.0
+    assert result["raw_logit_max"] == 40.0
+    assert result["raw_logit_abs_max"] == 40.0
+    assert result["logit_clip"] == 30.0
+    assert result["clip_hit_count"] == 1
+    assert result["clip_hit_rate"] == 0.25
+    assert result["raw_logit_strictly_inside_clip"] is False
+
+    effective = np.asarray([10.0, 30.0, -10.0, 20.0])
+    expected_probabilities = 1.0 / (1.0 + np.exp(-effective))
+    expected_entropies = -(
+        expected_probabilities * np.log(expected_probabilities)
+        + (1.0 - expected_probabilities)
+        * np.log1p(-expected_probabilities)
+    )
+    assert result["conditional_probability_min"] == pytest.approx(
+        expected_probabilities.min()
+    )
+    assert result["conditional_probability_max"] == pytest.approx(
+        expected_probabilities.max()
+    )
+    assert result[
+        "minimum_binary_outcome_probability"
+    ] == pytest.approx(np.minimum(
+        expected_probabilities, 1.0 - expected_probabilities
+    ).min())
+    assert result["uniform_condition_entropy_mean"] == pytest.approx(
+        expected_entropies.mean()
+    )
+    assert result["uniform_condition_entropy_maximum"] == pytest.approx(
+        np.log(2.0)
+    )
+    assert result["all_conditionals_bidirectional"] is True
 
 
 def test_probe_reads_verified_current_snapshot_without_recalibration(
@@ -146,6 +170,11 @@ def test_probe_reads_verified_current_snapshot_without_recalibration(
     assert logit["condition_count"] > 0
     assert np.isfinite(logit["raw_logit_abs_max"])
     assert 0 <= logit["clip_hit_count"] <= logit["condition_count"]
+    assert 0.0 < logit["conditional_probability_min"] < 1.0
+    assert 0.0 < logit["conditional_probability_max"] < 1.0
+    assert 0.0 < logit["minimum_binary_outcome_probability"] <= 0.5
+    assert 0.0 <= logit["uniform_condition_entropy_mean"] <= np.log(2.0)
+    assert logit["all_conditionals_bidirectional"] is True
 
 
 def test_probe_default_path_keeps_legacy_scale_and_alpha_rules(monkeypatch):

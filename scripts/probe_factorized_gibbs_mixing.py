@@ -325,6 +325,11 @@ def _empty_logit_accumulator():
         "raw_logit_max": None,
         "raw_logit_abs_max": 0.0,
         "clip_hit_count": 0,
+        "conditional_probability_min": None,
+        "conditional_probability_max": None,
+        "minimum_binary_outcome_probability": None,
+        "uniform_condition_entropy_sum": 0.0,
+        "all_conditionals_bidirectional": True,
     }
 
 
@@ -403,6 +408,56 @@ def _accumulate_logit_diagnostics(accumulator, raw_logits, logit_clip):
     accumulator["clip_hit_count"] += int(np.sum(
         np.abs(values) > logit_clip
     ))
+    effective_logits = np.clip(values, -logit_clip, logit_clip)
+    probabilities = np.empty_like(effective_logits)
+    positive = effective_logits >= 0.0
+    probabilities[positive] = 1.0 / (
+        1.0 + np.exp(-effective_logits[positive])
+    )
+    exponentials = np.exp(effective_logits[~positive])
+    probabilities[~positive] = exponentials / (1.0 + exponentials)
+    probability_minimum = float(probabilities.min())
+    probability_maximum = float(probabilities.max())
+    minimum_outcome = float(np.min(np.minimum(
+        probabilities, 1.0 - probabilities
+    )))
+    accumulator["conditional_probability_min"] = (
+        probability_minimum
+        if accumulator["conditional_probability_min"] is None
+        else min(
+            accumulator["conditional_probability_min"],
+            probability_minimum,
+        )
+    )
+    accumulator["conditional_probability_max"] = (
+        probability_maximum
+        if accumulator["conditional_probability_max"] is None
+        else max(
+            accumulator["conditional_probability_max"],
+            probability_maximum,
+        )
+    )
+    accumulator["minimum_binary_outcome_probability"] = (
+        minimum_outcome
+        if accumulator["minimum_binary_outcome_probability"] is None
+        else min(
+            accumulator["minimum_binary_outcome_probability"],
+            minimum_outcome,
+        )
+    )
+    interior = (probabilities > 0.0) & (probabilities < 1.0)
+    entropies = np.zeros_like(probabilities)
+    entropies[interior] = -(
+        probabilities[interior] * np.log(probabilities[interior])
+        + (1.0 - probabilities[interior])
+        * np.log1p(-probabilities[interior])
+    )
+    accumulator["uniform_condition_entropy_sum"] += float(
+        entropies.sum()
+    )
+    accumulator["all_conditionals_bidirectional"] &= bool(
+        np.all(interior)
+    )
 
 
 def _finalize_logit_diagnostics(accumulator, logit_clip):
@@ -419,6 +474,23 @@ def _finalize_logit_diagnostics(accumulator, logit_clip):
         "raw_logit_strictly_inside_clip": bool(
             count == 0
             or accumulator["raw_logit_abs_max"] < logit_clip
+        ),
+        "conditional_probability_min": accumulator[
+            "conditional_probability_min"
+        ],
+        "conditional_probability_max": accumulator[
+            "conditional_probability_max"
+        ],
+        "minimum_binary_outcome_probability": accumulator[
+            "minimum_binary_outcome_probability"
+        ],
+        "uniform_condition_entropy_mean": (
+            float(accumulator["uniform_condition_entropy_sum"] / count)
+            if count else None
+        ),
+        "uniform_condition_entropy_maximum": float(np.log(2.0)),
+        "all_conditionals_bidirectional": bool(
+            accumulator["all_conditionals_bidirectional"]
         ),
     }
 
