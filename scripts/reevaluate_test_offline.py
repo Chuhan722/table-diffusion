@@ -261,7 +261,11 @@ def main():
                         "全表（16181 行）与 test（3236 行）不等行数直接"
                         "比较，混合分布差异与样本量差异；按审查意见撤回"
                     )
-                    run["offline"][ref_name + "_fullsize_invalid"] = stale
+                    # 归档在 offline 之外，避免协议 _judge 把无效口径
+                    # 当作参考表纳入质量判定。
+                    run.setdefault("offline_fullsize_invalid", {})[
+                        ref_name
+                    ] = stale
                 run["offline"][ref_name] = _subsampled_offline(
                     reference, final_table, marginals, domains, triples,
                     args.eval_seeds,
