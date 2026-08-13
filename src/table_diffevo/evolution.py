@@ -62,6 +62,23 @@ from table_diffevo.factorized_diffusion import (
 )
 
 
+def _self_cooling_factor(
+    residual_l1: float,
+    initial_residual_l1: float,
+    exponent: float,
+) -> Tuple[float, float]:
+    """返回 (残差比 r, 冷却因子 r**exponent)。
+
+    r = min(1, residual_l1 / initial_residual_l1)；初始残差为 0 时定义 r = 0
+    （初始即达标，动力学应完全冻结）。两个返回值都落在 [0, 1]。
+    """
+    if initial_residual_l1 > 0.0:
+        ratio = min(1.0, residual_l1 / initial_residual_l1)
+    else:
+        ratio = 0.0
+    return ratio, ratio ** exponent
+
+
 def _rng_state_sha256(rng: np.random.Generator) -> str:
     """返回 RNG 状态的稳定摘要，只用于等价性诊断。"""
     serialized = json.dumps(
@@ -142,6 +159,10 @@ def run_evolution(
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     candidate_budget: Optional[int] = None,
+    residual_self_cooling: Optional[float] = None,
+    self_cooling_monotone: bool = False,
+    self_cooling_stop_ratio: Optional[float] = None,
+    return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -256,6 +277,32 @@ def run_evolution(
 
         用途：为长时间探索实验设置计算成本上限，确保可比性。
 
+    residual_self_cooling : float or None, default None
+        残差自冷却指数（Issue #44 研究机制，默认关闭）。设为正数 p 时，每轮
+        计算残差比 ``r_t = min(1, ||target - q_t||_1 / ||target - q_0||_1)``，
+        并把参与率 ``rho`` 与变异率 ``mu`` 乘以冷却因子 ``c_t = r_t ** p``。
+        扰动幅度随收敛进度自动衰减：残差趋零时动力学自然冻结（零残差为吸收
+        态），无需接受门的棘轮作用。``p=1`` 为线性冷却，``p=2`` 更陡，
+        ``p=0.5`` 更缓。None 时完全关闭，主循环行为与历史逐轨迹一致。
+
+        该机制只作用于扰动幅度（分布侧），不引入任何接受/拒绝判定；与
+        ``tol=inf``（关闭整代接受门）组合即为无门控扩散演化研究配置。
+    self_cooling_monotone : bool, default False
+        机制消融选项。False（默认）：冷却跟随当前残差比，状态回漂时温度回升
+        （复燃）并快速重新收敛；True：使用历史最低残差比，温度只降不升
+        （分布侧棘轮）。dev 定标（test_300x10、seed 42..44、2000 轮）显示
+        单调冷却反而更差（final 96.8 vs 89.2）：温度锁死后偶发劣化步的恢复
+        极慢。保留该开关仅作机制消融对照。两种模式都不读取候选评价。
+    self_cooling_stop_ratio : float or None, default None
+        内在停止阈值（需同时启用 residual_self_cooling）。当残差比
+        ``r_t <= self_cooling_stop_ratio`` 时提前停止，作为达标早停之外的
+        内在收敛停机信号；取值须在 (0, 1)。None 时不启用。
+    return_final_table : bool, default False
+        为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
+        拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
+        DataFrame，不可直接 JSON 序列化，调用方保存诊断前必须自行弹出。
+        默认 False 保持诊断字典可序列化，行为与历史一致。
+
     Returns
     -------
     best_S : pd.DataFrame, shape (n_records, n_attributes)
@@ -281,6 +328,10 @@ def run_evolution(
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
         - direction_evaluation_count: int，实际计算局部方向矩阵的次数
         - candidate_budget_exhausted: bool，是否因达到 candidate_budget 提前停止
+        - self_cooling_history: List[float]，每轮的冷却因子 c_t（关闭时恒 1.0；
+          与 loss_history 逐轮对齐）
+        - self_cooling_stopped: bool，是否因残差比达到 self_cooling_stop_ratio
+          提前停止
         - factorized_gibbs_attempt_diagnostics_history: 每轮每次尝试的因子构造、
           Gibbs 微步和墙钟诊断；不参与接受或早停
         - primary_rng_state_sha256/factorized_gibbs_rng_state_sha256:
@@ -293,7 +344,8 @@ def run_evolution(
 
     Notes
     -----
-    **终止条件：** 残差全 0（达标）、达到 n_rounds、或达到 candidate_budget（若指定）。
+    **终止条件：** 残差全 0（达标）、达到 n_rounds、达到 candidate_budget
+    （若指定）、或残差比达到 self_cooling_stop_ratio（若指定）。
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
     重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
@@ -359,6 +411,46 @@ def run_evolution(
             raise ValueError(f"candidate_budget 必须是正整数或 None，得到 {candidate_budget!r}")
         if candidate_budget <= 0:
             raise ValueError(f"candidate_budget 必须 > 0，得到 {candidate_budget}")
+    if residual_self_cooling is not None:
+        if (
+            isinstance(residual_self_cooling, (bool, np.bool_))
+            or not isinstance(
+                residual_self_cooling,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(residual_self_cooling)
+            or residual_self_cooling <= 0.0
+        ):
+            raise ValueError(
+                "residual_self_cooling 必须是正有限数值或 None，"
+                f"得到 {residual_self_cooling!r}"
+            )
+        residual_self_cooling = float(residual_self_cooling)
+    if residual_self_cooling is not None and not isinstance(
+        self_cooling_monotone, (bool, np.bool_)
+    ):
+        raise ValueError(
+            f"self_cooling_monotone 必须是布尔值，得到 {self_cooling_monotone!r}"
+        )
+    if self_cooling_stop_ratio is not None:
+        if residual_self_cooling is None:
+            raise ValueError(
+                "self_cooling_stop_ratio 需要同时启用 residual_self_cooling"
+            )
+        if (
+            isinstance(self_cooling_stop_ratio, (bool, np.bool_))
+            or not isinstance(
+                self_cooling_stop_ratio,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(self_cooling_stop_ratio)
+            or not 0.0 < self_cooling_stop_ratio < 1.0
+        ):
+            raise ValueError(
+                "self_cooling_stop_ratio 必须位于 (0, 1) 或为 None，"
+                f"得到 {self_cooling_stop_ratio!r}"
+            )
+        self_cooling_stop_ratio = float(self_cooling_stop_ratio)
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -563,6 +655,11 @@ def run_evolution(
     # 又在第一轮重复扫描同一张 S_0。
     initial_q, initial_residual, initial_fitness = _eval_counts_resid_fitness(S)
     initial_loss = compute_loss(target, initial_q)
+    self_cooling_initial_l1 = float(np.abs(target - initial_q).sum())
+    self_cooling_history: List[float] = []
+    self_cooling_stopped = False
+    self_cooling_factor = 1.0
+    self_cooling_min_ratio = 1.0
     state_eval_cache = (
         initial_q, initial_residual, initial_fitness, initial_loss
     )
@@ -592,6 +689,25 @@ def run_evolution(
             q, residual, fitness, loss = state_eval_cache
         loss_history.append(loss)
 
+        # 残差自冷却因子：与 loss_history 逐轮对齐记录；内在停止检查在达标
+        # 检查之后执行。
+        self_cooling_ratio = None
+        if residual_self_cooling is not None:
+            self_cooling_ratio, _ = _self_cooling_factor(
+                float(np.abs(target - q).sum()),
+                self_cooling_initial_l1,
+                residual_self_cooling,
+            )
+            if self_cooling_monotone:
+                self_cooling_min_ratio = min(
+                    self_cooling_min_ratio, self_cooling_ratio
+                )
+                self_cooling_ratio = self_cooling_min_ratio
+            self_cooling_factor = self_cooling_ratio ** residual_self_cooling
+            self_cooling_history.append(self_cooling_factor)
+        else:
+            self_cooling_history.append(1.0)
+
         # 是否在本轮打印进度：log_every=0 每轮打印；否则每 log_every 轮，
         # 且首轮和末轮总打印（长实验也能看到起点和终点）。
         do_log = (
@@ -610,6 +726,22 @@ def run_evolution(
             if loss < best_loss:
                 best_loss = loss
                 best_S = S.copy()
+            break
+
+        # 3b. 残差自冷却内在停止：残差比达到阈值即停机（分布侧停止条件）。
+        if (
+            self_cooling_stop_ratio is not None
+            and self_cooling_ratio is not None
+            and self_cooling_ratio <= self_cooling_stop_ratio
+        ):
+            if do_log:
+                print(
+                    f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | "
+                    f"残差比 {self_cooling_ratio:.4f} 达到内在停止阈值"
+                    f" {self_cooling_stop_ratio}，提前停止"
+                )
+            stopped_early = True
+            self_cooling_stopped = True
             break
 
         # 5-6. 距离 → 抽样概率 → 抽 donor
@@ -802,7 +934,9 @@ def run_evolution(
             if residual_directed_diffusion else {}
         )
         for attempt in range(max_retries + 1):
-            attempt_rho = rho * (retry_rho_decay ** attempt)
+            attempt_rho = (
+                rho * self_cooling_factor * (retry_rho_decay ** attempt)
+            )
             if factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
                     evolve_step_factorized_gibbs(
@@ -813,7 +947,7 @@ def run_evolution(
                         residual,
                         rho=attempt_rho,
                         eta=eta,
-                        mu=mu,
+                        mu=mu * self_cooling_factor,
                         copy_direction_scores=copy_direction_scores,
                         copy_direction_strength=effective_direction_strength,
                         n_sweeps=factorized_gibbs_sweeps,
@@ -854,7 +988,7 @@ def run_evolution(
                     schema,
                     rho=attempt_rho,
                     eta=eta,
-                    mu=mu,
+                    mu=mu * self_cooling_factor,
                     rng=rng,
                     **direction_kwargs,
                 )
@@ -1004,6 +1138,8 @@ def run_evolution(
         "state_evaluation_count": state_evaluation_count,
         "candidate_evaluation_count": candidate_evaluation_count,
         "candidate_budget_exhausted": candidate_budget_exhausted,
+        "self_cooling_history": self_cooling_history,
+        "self_cooling_stopped": self_cooling_stopped,
         "distance_evaluation_count": distance_evaluation_count,
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
@@ -1080,7 +1216,21 @@ def run_evolution(
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None
             ),
+            "residual_self_cooling": (
+                float(residual_self_cooling)
+                if residual_self_cooling is not None else None
+            ),
+            "self_cooling_monotone": (
+                bool(self_cooling_monotone)
+                if residual_self_cooling is not None else None
+            ),
+            "self_cooling_stop_ratio": (
+                float(self_cooling_stop_ratio)
+                if self_cooling_stop_ratio is not None else None
+            ),
         },
     }
+    if return_final_table:
+        diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
     return best_S.reset_index(drop=True), diagnostics
