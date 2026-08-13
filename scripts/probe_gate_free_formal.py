@@ -85,9 +85,13 @@ DATASETS = {
         "marginals": Path("configs/nltcs/init_marginals.json"),
         "n_records": 16181,
         "device": "cuda",
+        # 一次实验一份源数据（第三轮审查）：queries/marginals/target/
+        # n_records 全部来自 train（nltcs.csv 与 train 一致），离线参考
+        # 因此只用 train。test 若要评价必须以其为源数据独立建实验
+        # （queries/marginals/target/n_records=3236 重新构造），不能用
+        # train 源合成表事后对比或抽样修补。
         "references": {
             "train": Path("data/nltcs/nltcs.train.data"),
-            "test": Path("data/nltcs/nltcs.test.data"),
         },
     },
 }
