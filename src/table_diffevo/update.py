@@ -48,11 +48,15 @@
   （从候选池按抽样索引取 donor 的逻辑在上游，见 sampling.sample_donors）
 - ρ、η、μ 随轮次的衰减调度由主循环负责，本函数只接收当前轮的标量值
 """
-from typing import Optional
+from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from table_diffevo.schema import Schema
-from table_diffevo.directional_diffusion import tilted_copy_probabilities
+from table_diffevo.directional_diffusion import (
+    DEFAULT_DIRECTION_LOGIT_CLIP,
+    tilted_copy_probabilities,
+    validate_direction_logit_clip,
+)
 
 
 def evolve_step(
@@ -65,7 +69,9 @@ def evolve_step(
     rng: Optional[np.random.Generator] = None,
     copy_direction_scores: Optional[np.ndarray] = None,
     copy_direction_strength: float = 0.0,
-) -> pd.DataFrame:
+    direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
+    return_diagnostics: bool = False,
+) -> Any:
     """
     全表同步向参考记录靠近一步，生成下一代 S_{t+1}。
 
@@ -91,6 +97,12 @@ def evolve_step(
     copy_direction_strength : float, default 0.0
         非负有限方向强度。0 精确退化到历史固定 η 路径；正值越大，复制概率对
         方向量越敏感。有限强度下负方向仍保留非零复制概率。
+    direction_logit_clip : float or None, default 30
+        残差方向 Bernoulli logit 的显式数值护栏。默认30保持历史语义；None
+        显式关闭护栏。
+    return_diagnostics : bool, default False
+        True 时返回 ``(next_table, diagnostics)``，其中只含不参与决策的公开
+        转移工作量。默认 False 保持历史 DataFrame 返回值。
 
     Returns
     -------
@@ -147,9 +159,14 @@ def evolve_step(
             f"得到 {copy_direction_strength!r}"
         )
     copy_direction_strength = float(copy_direction_strength)
+    direction_logit_clip = validate_direction_logit_clip(
+        direction_logit_clip
+    )
 
     if rng is None:
         rng = np.random.default_rng()
+    if not isinstance(return_diagnostics, (bool, np.bool_)):
+        raise ValueError("return_diagnostics 必须是布尔值")
 
     N = len(current)
     attr_names = schema.attribute_names()
@@ -194,6 +211,7 @@ def evolve_step(
                 eta,
                 direction_scores[:, attr_idx],
                 copy_direction_strength,
+                logit_clip=direction_logit_clip,
             )
             copy_roll = rng.random(N) < copy_probability
         copy_mask = participate & differ & copy_roll
@@ -210,6 +228,11 @@ def evolve_step(
         new_value = _sample_legal_value(schema.get_block(block), rng)
         next_table.at[i, block] = new_value
 
+    if return_diagnostics:
+        return next_table, {
+            "participating_rows": int(participate.sum()),
+            "mutated_rows": int(len(mutate_rows)),
+        }
     return next_table
 
 
