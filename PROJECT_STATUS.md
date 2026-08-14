@@ -2,6 +2,88 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #52 Stage B 正式完成，结论为 no_factor_candidate（2026-08-14）
+
+> 本段取代下面“Stage B 工具已确认、正式实验尚未启动”的暂停点。Stage B 已严格按结果前冻结
+> 记录完成并通过独立审计；G* 虽优于同 tau independent，但未优于 I*=independent tau5，
+> 因此正式停止，不进入 Stage C。
+
+冻结与结果身份：
+
+```text
+tool commit = bab78a377aa49e6a680b91660f579d427e82860a
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290210632
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290453407
+mode = formal
+task count = 30/30 complete
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 470.64 s
+audit elapsed = 0.95 s
+```
+
+正式 Stage B 只运行 Stage A 合格的三个 factor 配置，seeds `200..209`、每条3000轮、末500轮
+current-loss mean 为主指标；同 tau independent 和 I* 均复用已审计 Stage T 轨迹：
+
+| factor | factor late mean | 同 tau independent | 同 tau 差值 / W-T-L | I*=independent tau5 | 相对 I* 差值 / W-T-L |
+|---|---:|---:|---:|---:|---:|
+| tau=1,s8 | 132.3734 | 157.2517 | -24.8783 / 8-0-2 | 68.5089 | +63.8645 / 0-0-10 |
+| tau=2,s8 | 98.9192 | 111.5445 | -12.6253 / 9-0-1 | 68.5089 | +30.4103 / 0-0-10 |
+| tau=3,s16 | **73.3693** | 85.5252 | **-12.1559 / 9-0-1** | 68.5089 | **+4.8604 / 4-0-6** |
+
+factor 排名为 `tau3,s16 < tau2,s8 < tau1,s8`，所以：
+
+```text
+I* = independent tau=5
+G* = factor tau=3,sweeps=16
+point_estimate_better_than_same_tau_independent = true
+point_estimate_better_than_i_star = false
+stage_c_candidate = null
+stage_c_allowed = false
+status = no_factor_candidate
+```
+
+失败位置唯一且清楚：G* 相对同 tau independent tau3 的末500轮均值改善12.1559，9/10 seeds
+改善；但相对 I* 反而高4.8604，只有4/10 seeds改善。按冻结规则不得递补 factor 第二名或追加
+配置。G* 的 final 单点均值为 `63.75`，略低于 I* 的 `64.70`，但主指标是末500轮均值，不能用
+辅助单点翻转决定；AUC 也比 I* 高 `4095.78`。
+
+三个 factor 都优于各自同 tau independent，说明 factor Gibbs 的同温度收益在3000轮仍存在；
+`no_factor_candidate` 的含义不是 factor 完全无效，而是最佳合格 factor 仍未超过更强的高温
+independent tau5。
+
+本结果仍是 horizon-limited 固定预算结果，不能声称达到平衡：
+
+| factor | rounds 2001..2500 | rounds 2501..3000 | 相对变化 | 明显下降 seeds |
+|---|---:|---:|---:|---:|
+| tau=1,s8 | 166.2599 | 132.3734 | -20.06% | 10/10 |
+| tau=2,s8 | 112.9026 | 98.9192 | -12.11% | 7/10 |
+| tau=3,s16 | 81.0142 | 73.3693 | -9.20% | 9/10 |
+
+预注册没有因末段下降而延长 horizon，因此固定预算选择仍为 `no_factor_candidate`。三个 factor
+总 clip hits 均为0；factor 条件最大原始 `abs(logit)` 为 `4.6984/11.2762/16.2638`，全部低于
+clip=30。全部轨迹身份、初态、主 RNG 终点、方向尺度、数值、双向条件和上游哈希门禁通过。
+
+正式产物：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_b_formal_bab78a3_20260814
+protocol SHA：ae9e6848c54a072a742019d31ff6341f9aba80e981ba1d65ae235bcb895d8604
+trajectory scientific SHA：1e01ca87c376a35636bff5fa13762c18b3dfbf340bd2169ef83390179b11c195
+report SHA：5e62a9c21638807d4827b89d476a16903d081d1f1424fea136f12d8074c5151d
+audit SHA：de42e0a7ae2a12f132956cf38525f3bb563e5db78bd4da47a9c5464e18a62c1a
+report size：6,697,968 bytes
+audit size：118,387 bytes
+```
+
+独立 auditor 未导入 Stage B runner，重新绑定 Stage T/A、推导三个 factor 配置，并重算趋势、
+聚合、逐 seed 双对照配对、I*/G* 和 selection，全部一致。
+
+当前禁止运行 seeds `300..319` 的 Stage C，也不得事后增加 tau/sweeps/seeds/horizon。Issue #52
+在本协议下已得到完整可接受的负结果；若后续研究 nltcs、跨 workload、GPU、无限 horizon 或新的
+温度/混合设计，必须另立问题和结果前协议，不能并入本次结果。
+
 ### 最新暂停点：Issue #52 Stage B 工具已确认，正式实验尚未启动（2026-08-14）
 
 > 本段取代下面“Stage A 正式完成、尚未实现 Stage B”的暂停点，记录将与 Stage B 工具作为
