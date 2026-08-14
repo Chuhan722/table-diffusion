@@ -1,6 +1,50 @@
 # 项目进度
 
 ## 当前阶段
+
+### 最新暂停点：Issue #52 Stage A 混合资格实现与 smoke 已确认（2026-08-14）
+
+本轮先把 `origin/master`（含 PR #48）合入研究分支，merge commit 为
+`ea1e4ba`，无冲突；此前正式 Stage T 与48状态库的四个文件哈希均保持不变。随后只完成
+Stage A factor Gibbs 混合资格的实现和缩小 smoke，**没有运行正式 Stage A，也没有启动
+Stage B**。用户已经检查并确认本阶段实现；本节与工具代码共同组成正式运行前的冻结提交，
+该提交本身不包含任何 formal Stage A 结果。
+
+新增/修改内容：
+
+- `scripts/issue52_protocol.py`：冻结 evaluation `tau=1..5`、逐 tau
+  `sweeps=8→16→32`、首次16个状态组全部通过即停止、32失败即不合格的统一规则；正式模式
+  绑定已审计48状态库及其 audit 的文件/协议/scientific SHA。
+- `scripts/run_issue52_stage_a_mixing.py`：只读取已有状态库；逐 tau 真正按顺序增量执行并立即
+  停止；固定同一 state/donor/proposal/address tape；按组计算 TVD 与 expected-direction gap
+  recovery；同时检查零 clip、数值、精确能量和 production Gibbs 同 tape replay；输出不可覆盖的
+  原始逐状态报告和 scientific hash。
+- `scripts/audit_issue52_stage_a_mixing.py`：不导入 Stage A runner，使用审计侧既有独立聚合实现，
+  从 raw proposal 重新计算逐配置 summary、16组 TVD/recovery、共享条件 hash、最小充分 sweeps、
+  停止序列与最终 selection。
+- `tests/test_issue52_stage_a_mixing.py`：覆盖首次8/16通过、到32仍失败、通过后多跑、错误提前停、
+  跳级、缺状态、乱序、共享 tape 篡改和 `sweeps>32` 拒绝，并构造真实 smoke 全链路。
+
+真实 smoke 使用1个 seed/组、16状态、每状态2 proposals，仅验证管线，不是方法证据。它有意跑出
+不同停止分支：`tau=1` 在8通过，`tau=2` 在16通过，`tau=3/4/5` 到32仍不合格；全部已执行
+attempt 的正确性与共享条件门禁通过、clip hits 为0，独立 audit `passed=true`，但
+`formal_result_valid=false`。因此这些 tau/sweeps 数值**不能**替代正式48状态 × 每状态200
+proposals 结果，也不能据此提前淘汰 tau=3/4/5。
+
+最终验证：
+
+```text
+Stage A mixing 新测试：8 passed
+Issue #52 相关链路：31 passed
+全仓库（正式 CPU 研究环境）：960 passed, 7 skipped
+全仓库（CUDA 辅助环境，含13个额外 CUDA 参数化用例）：980 passed
+ruff / py_compile / git diff --check：通过
+```
+
+本实现已经通过用户检查。冻结提交推送后，必须先在 Issue #52 发布绑定该 commit、协议、输入与
+状态库哈希的正式运行前记录；只有记录发布完成后才可运行 formal Stage A 及独立 audit。当前禁止
+追加64/128 sweeps、改门槛、做3000轮 factor 轨迹、Stage B、nltcs 或 GPU 改造。
+
 **当前主线固定仓库原始无噪声配置，研究扩散演化机制本身能否更好地逼近精确
 workload；2-way 最大熵初始化保留为辅助消融，不再作为本阶段主线 baseline。**
 
