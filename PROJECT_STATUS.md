@@ -161,7 +161,63 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-08-15）
+
+### Issue #53 Stage 2B：初始量程采集入口完成，正式预算已冻结
+
+Stage 2B 已把讨论确认的前三项写成显式协议：同时覆盖 `test_300x10` 与 `nltcs`、
+独立核与 8-sweep 三阶因子 Gibbs 核，四格共用同一套后续 detector；固定 exact、
+no-gate、marginal init、scale-invariant donor、`alpha=16`、`rho=0.01`、`eta=0.5`、
+`mu=0.01`、`tau=2` 和双侧 `logit clip=30`。开发 seed 冻结为 200..202，验证 seed
+220..224 在 detector 配置冻结前由程序封存。历史文件名
+`measured_1000query.json` 实际含 1001 条查询，协议按完整冻结文件和 SHA-256 使用，
+不静默删减。
+
+新增 `scripts/collect_issue53_stage2b_range_finding.py`：默认只打印 12 条开发轨迹计划，
+完整检查输入哈希、参数、seed 角色、当前态终点、RNG、轨迹文件和不可覆盖原子落盘。
+正式 development 最大观察预算已在报告单卡预计开销后经用户确认冻结为每条 8000
+轮；它不是收敛阈值，也不执行在线早停。入口拒绝其他轮数，smoke 仅允许未保留
+seed、小表和至多 3 轮。冻结提交前尚未运行 seed 200..202 或 220..224，也未选择
+窗口或阈值。
+
+`s0` 现在由每个 dataset×seed 的独立核 `initial_rms` 参考预检取得首个非零 RMS，
+随后两个核从同一 seed 重启并固定共享该 `s0`；预检状态不进入正式轨迹，任意常数
+回退被拒绝。新增方向 logit 与 Gibbs 条件 logit 的评价/clip 命中只读计数。Gibbs
+在 Stage 2B 显式接入已验证逐步输出等价的 compiled-batch 因子构造，默认生成器仍
+保持旧路径；新主循环接线测试确认 final table、全部 current-state 观测、查询向量和
+主/Gibbs RNG 精确不变。
+
+非正式 seed 999 冒烟中，小表两个核各 2 轮共享 `s0=0.0495288`、S0 和初始化后主
+RNG，轨迹可严格重读，两个 clip 均零命中；compiled 与旧 rowwise 的两轮轨迹和 RNG
+逐字一致。nltcs 的 seed 999 两轮实现等价审计也确认 final table、全部 current-state
+观测、查询向量、主/Gibbs RNG 和关键 diagnostics 精确一致。nltcs 纯性能探针显示旧
+Gibbs 约 6.35 秒/轮；compiled 后冷启动一轮约 0.99 秒，20 轮稳态约 0.676 秒/轮，
+独立核约 0.240 秒/轮。正式 8000 轮预算已获确认，以上探针不参与窗口/阈值校准。
+验证：Stage 2B/参考过程/演化/因子定向测试 250 passed；用不修改共享 Conda 权限的
+临时可执行副本完成全套 1048 passed。所有改动只在本地工作树，未提交、未推送、
+未更新 Issue/PR。
+
 ## 最近变更（2026-08-14）
+
+### Issue #53 Stage 2A：离线收敛回放判据完成本地审查修订（待用户审查）
+
+Stage 2A 仍只交付轨迹与离线回放工具，不接在线早停、不冻结生产窗口/阈值，也不运行
+正式长实验。三窗口、全窗口两两比较、连续两次通过和 S0 排除语义保持不变；L1 判据
+现在显式固定为窗口算术均值与线性分位数 `P90-P10`，并额外输出每窗口 P95 作为过冲
+诊断，不把绝对 L1 高低混入收敛资格。
+
+运动护栏不再使用“任一单元格改变”的合并布尔比例。每个窗口分别计算活跃轮次比例和
+平均改变行比例，三个窗口的最小值必须同时超过调用者显式给出的正阈值；零阈值被
+fail-closed 拒绝。人工轨迹已覆盖完全冻结、大表每轮只改一行、前动后冻、持续漂移、
+稳定充分运动，以及高 L1 但稳定运动仍可收敛，明确区分“收敛”与“质量”。
+
+回放结果契约升为 `issue53-stage2a-replay-v2`，结果绑定完整轨迹内容 SHA-256、查询/目标
+身份、轨迹终止原因和完整检测配置。JSON/NPZ 加载现在拒绝顶层、数组 metadata 和逐状态
+观测中的未知字段；非预算原因结束但未通过回放的轨迹返回
+`terminated_before_qualification`，不再误报为 `collecting`。独立核与因子化 Gibbs 核均
+纳入“开关轨迹不改变最终表、评价次数或 RNG 端点”的回归测试。当前改动仅在本地
+`research/issue-53-stage2-convergence-trace` 工作树，尚未推送或更新 Issue/PR。验证：
+Stage 2A/参考过程/主循环定向测试 159 passed、1 skipped；全套 998 passed、7 skipped。
 
 ### 尺度不变选择 v3：NaN 修复+证据链+归因进分类，主判定三过（PR #48）
 

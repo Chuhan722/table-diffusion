@@ -749,6 +749,98 @@ class TestFactorizedGibbsClosedLoop:
             ]
         )
 
+    def test_compiled_workload_wiring_is_trajectory_exact(self):
+        schema, queries, target = self._schema_queries_target()
+        common = {
+            **self._run_kwargs(),
+            "factorized_gibbs_sweeps": 2,
+            "record_stationarity_trace": True,
+        }
+        legacy, legacy_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_use_compiled_workload=False,
+            **common,
+        )
+        compiled, compiled_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_use_compiled_workload=True,
+            **common,
+        )
+        legacy_trace = legacy_diag.pop("stationarity_trace")
+        compiled_trace = compiled_diag.pop("stationarity_trace")
+
+        pd.testing.assert_frame_equal(compiled, legacy)
+        assert compiled_trace.observations == legacy_trace.observations
+        np.testing.assert_array_equal(
+            compiled_trace.measured_query_answers,
+            legacy_trace.measured_query_answers,
+        )
+        for key in (
+            "current_state_metrics_history",
+            "loss_history",
+            "accept_history",
+            "raw_proposal_gain_history",
+            "initial_table_sha256",
+            "primary_rng_state_sha256",
+            "factorized_gibbs_rng_state_sha256",
+            "factorized_gibbs_microsteps",
+            "factorized_gibbs_conditional_logit_evaluated_count",
+            "factorized_gibbs_conditional_logit_clipped_count",
+        ):
+            assert compiled_diag[key] == legacy_diag[key]
+        assert legacy_diag["params"][
+            "factorized_gibbs_use_compiled_workload"
+        ] is False
+        assert compiled_diag["params"][
+            "factorized_gibbs_use_compiled_workload"
+        ] is True
+        assert all(
+            attempt[0]["factor_builder"] == "legacy_rowwise"
+            for attempt in legacy_diag[
+                "factorized_gibbs_attempt_diagnostics_history"
+            ]
+        )
+        assert all(
+            attempt[0]["factor_builder"] == "compiled_batch"
+            for attempt in compiled_diag[
+                "factorized_gibbs_attempt_diagnostics_history"
+            ]
+        )
+        assert compiled_diag[
+            "factorized_gibbs_workload_compile_elapsed_sec"
+        ] >= 0.0
+
+    def test_direction_clip_hits_are_observed(self):
+        schema, queries, target = self._schema_queries_target()
+        parameters = {
+            **self._run_kwargs(),
+            "n_rounds": 1,
+            "tol": float("inf"),
+            "diffusion_direction_strength": 10.0,
+            "diffusion_direction_normalization": "fixed",
+            "diffusion_direction_reference_scale": 1e-6,
+            "diffusion_direction_logit_clip": 0.1,
+        }
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            **parameters,
+        )
+
+        evaluated = diagnostics[
+            "direction_logit_evaluated_count_history"
+        ][0]
+        clipped = diagnostics[
+            "direction_logit_clipped_count_history"
+        ][0]
+        assert evaluated > 0
+        assert 0 < clipped <= evaluated
+
     def test_factorized_retry_records_every_attempt(self, monkeypatch):
         schema = Schema([
             AttributeBlock(
@@ -925,6 +1017,14 @@ class TestFactorizedGibbsClosedLoop:
             ({"factorized_gibbs_logit_clip": 0.0}, "logit_clip"),
             ({"factorized_gibbs_logit_clip": np.inf}, "logit_clip"),
             ({"factorized_gibbs_logit_clip": True}, "logit_clip"),
+            (
+                {"factorized_gibbs_use_compiled_workload": "yes"},
+                "compiled_workload",
+            ),
+            (
+                {"factorized_gibbs_use_compiled_workload": True},
+                "非零 Gibbs sweep",
+            ),
         ],
     )
     def test_rejects_invalid_factorized_parameters(self, kwargs, message):

@@ -13,7 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,7 @@ from table_diffevo.quality import query_fingerprint
 
 
 STATIONARITY_TRACE_CONTRACT_VERSION = "issue53-stage2a-trace-v1"
-STATIONARITY_REPLAY_CONTRACT_VERSION = "issue53-stage2a-replay-v1"
+STATIONARITY_REPLAY_CONTRACT_VERSION = "issue53-stage2a-replay-v2"
 
 _QUERY_ARRAY_FILENAME = "measured_query_answers.npz"
 _TRACE_METADATA_FILENAME = "stationarity_trace.json"
@@ -68,6 +68,27 @@ _OBSERVATION_KEYS = {
     "factorized_gibbs_rng_state_sha256",
 }
 
+_TRACE_METADATA_KEYS = {
+    "contract_version",
+    "n_records",
+    "query_count",
+    "state_count",
+    "post_round_count",
+    "query_identity_sha256",
+    "target_identity_sha256",
+    "termination_reason",
+    "observations",
+    "query_array",
+}
+
+_QUERY_ARRAY_METADATA_KEYS = {
+    "filename",
+    "key",
+    "shape",
+    "dtype",
+    "sha256",
+}
+
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
@@ -81,6 +102,21 @@ def _strict_json_bytes(value: Any) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _validate_exact_keys(
+    value: Any,
+    expected: set[str],
+    name: str,
+) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} 必须是对象")
+    missing = sorted(expected.difference(value))
+    if missing:
+        raise ValueError(f"{name} 缺少字段：" + ", ".join(missing))
+    unknown = sorted(set(value).difference(expected))
+    if unknown:
+        raise ValueError(f"{name} 包含未知字段：" + ", ".join(unknown))
 
 
 def ordered_query_identity_sha256(
@@ -233,9 +269,7 @@ def _validate_observation(
     *,
     n_records: int,
 ) -> None:
-    missing = sorted(_OBSERVATION_KEYS.difference(observation))
-    if missing:
-        raise ValueError("轨迹观测缺少字段：" + ", ".join(missing))
+    _validate_exact_keys(observation, _OBSERVATION_KEYS, "轨迹观测")
     if observation["phase"] not in {"initial", "post_round"}:
         raise ValueError("轨迹 phase 非法")
 
@@ -309,6 +343,10 @@ def _validate_observation(
         observation["actual_changed_cell_count"] > 0
     ):
         raise ValueError("state_changed 与 actual_changed_cell_count 不一致")
+    if (observation["actual_changed_row_count"] > 0) != (
+        observation["actual_changed_cell_count"] > 0
+    ):
+        raise ValueError("actual changed rows 与 changed cells 不一致")
     if not observation["proposal_accepted"] and (
         observation["applied_attempt_index"] != 0
         or observation["applied_participating_row_count"] != 0
@@ -550,9 +588,13 @@ def load_stationarity_trace(input_dir: str | Path) -> StationarityTrace:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError("无法读取严格 stationarity trace metadata") from exc
+    _validate_exact_keys(metadata, _TRACE_METADATA_KEYS, "trace metadata")
     array_info = metadata.get("query_array")
-    if not isinstance(array_info, dict):
-        raise ValueError("trace metadata 缺少 query_array")
+    _validate_exact_keys(
+        array_info,
+        _QUERY_ARRAY_METADATA_KEYS,
+        "query_array metadata",
+    )
     if array_info.get("filename") != _QUERY_ARRAY_FILENAME:
         raise ValueError("query array 文件名与契约不一致")
     if array_info.get("key") != _QUERY_ARRAY_KEY:
@@ -596,6 +638,27 @@ def load_stationarity_trace(input_dir: str | Path) -> StationarityTrace:
     return trace
 
 
+def _trace_identity_sha256(trace: StationarityTrace) -> str:
+    """Bind one replay result to the exact trace contents it consumed."""
+    answer_bytes = np.ascontiguousarray(
+        trace.measured_query_answers, dtype="<f8"
+    ).tobytes(order="C")
+    identity = {
+        "contract_version": trace.contract_version,
+        "n_records": trace.n_records,
+        "query_identity_sha256": trace.query_identity_sha256,
+        "target_identity_sha256": trace.target_identity_sha256,
+        "termination_reason": trace.termination_reason,
+        "observations": trace.observations,
+        "measured_query_answers": {
+            "shape": list(trace.measured_query_answers.shape),
+            "dtype": "float64",
+            "sha256": _sha256_bytes(answer_bytes),
+        },
+    }
+    return _sha256_bytes(_strict_json_bytes(identity))
+
+
 def _finite_nonnegative(value: Any, name: str) -> float:
     if isinstance(value, bool) or not isinstance(
         value, (int, float, np.integer, np.floating)
@@ -609,23 +672,29 @@ def _finite_nonnegative(value: Any, name: str) -> float:
 
 @dataclass(frozen=True)
 class StationarityDetectorConfig:
-    """Explicit Stage 2A method settings; no production defaults are supplied."""
+    """Explicit Stage 2A method settings; no production defaults are supplied.
+
+    L1 location is the arithmetic window mean. L1 spread is the window
+    P90-P10 inter-percentile range. Movement requires both sustained active
+    rounds and a non-microscopic mean changed-row fraction in every window.
+    """
 
     window_size: int
     query_mean_shift_tolerance: float
     query_p95_shift_tolerance: float
-    l1_location_tolerance: float
-    l1_spread_tolerance: float
+    l1_mean_shift_tolerance: float
+    l1_p90_minus_p10_shift_tolerance: float
     unique_row_rate_tolerance: float
     normalized_row_entropy_tolerance: float
-    minimum_changed_state_rate: float
+    minimum_active_round_rate: float
+    minimum_mean_changed_row_fraction: float
     stall_patience_checks: int
 
     def __post_init__(self) -> None:
         if isinstance(self.window_size, bool) or not isinstance(
             self.window_size, int
-        ) or self.window_size <= 0:
-            raise ValueError("window_size 必须是正整数")
+        ) or self.window_size < 2:
+            raise ValueError("window_size 必须是至少为 2 的整数")
         if isinstance(self.stall_patience_checks, bool) or not isinstance(
             self.stall_patience_checks, int
         ) or self.stall_patience_checks <= 0:
@@ -633,23 +702,44 @@ class StationarityDetectorConfig:
         for name in (
             "query_mean_shift_tolerance",
             "query_p95_shift_tolerance",
-            "l1_location_tolerance",
-            "l1_spread_tolerance",
+            "l1_mean_shift_tolerance",
+            "l1_p90_minus_p10_shift_tolerance",
             "unique_row_rate_tolerance",
             "normalized_row_entropy_tolerance",
         ):
             object.__setattr__(
                 self, name, _finite_nonnegative(getattr(self, name), name)
             )
-        movement_rate = _finite_nonnegative(
-            self.minimum_changed_state_rate,
-            "minimum_changed_state_rate",
-        )
-        if movement_rate > 1.0:
-            raise ValueError("minimum_changed_state_rate 必须位于 [0, 1]")
-        object.__setattr__(
-            self, "minimum_changed_state_rate", movement_rate
-        )
+        for name in (
+            "minimum_active_round_rate",
+            "minimum_mean_changed_row_fraction",
+        ):
+            movement_rate = _finite_nonnegative(getattr(self, name), name)
+            if not 0.0 < movement_rate <= 1.0:
+                raise ValueError(f"{name} 必须位于 (0, 1]")
+            object.__setattr__(self, name, movement_rate)
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            "window_size": self.window_size,
+            "query_mean_shift_tolerance": self.query_mean_shift_tolerance,
+            "query_p95_shift_tolerance": self.query_p95_shift_tolerance,
+            "l1_mean_shift_tolerance": self.l1_mean_shift_tolerance,
+            "l1_p90_minus_p10_shift_tolerance": (
+                self.l1_p90_minus_p10_shift_tolerance
+            ),
+            "unique_row_rate_tolerance": self.unique_row_rate_tolerance,
+            "normalized_row_entropy_tolerance": (
+                self.normalized_row_entropy_tolerance
+            ),
+            "minimum_active_round_rate": self.minimum_active_round_rate,
+            "minimum_mean_changed_row_fraction": (
+                self.minimum_mean_changed_row_fraction
+            ),
+            "stall_patience_checks": self.stall_patience_checks,
+        }
+        json.dumps(result, ensure_ascii=False, allow_nan=False)
+        return result
 
 
 @dataclass
@@ -660,6 +750,8 @@ class StationarityReplayResult:
     candidate_state_index: int | None
     candidate_round_index: int | None
     checks: List[Dict[str, Any]]
+    trace: Dict[str, Any]
+    detector_config: Dict[str, Any]
     contract_version: str = STATIONARITY_REPLAY_CONTRACT_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -668,6 +760,8 @@ class StationarityReplayResult:
             "status": self.status,
             "candidate_state_index": self.candidate_state_index,
             "candidate_round_index": self.candidate_round_index,
+            "trace": self.trace,
+            "detector_config": self.detector_config,
             "checks": self.checks,
         }
         json.dumps(result, ensure_ascii=False, allow_nan=False)
@@ -688,10 +782,12 @@ def _window_summary(
     l1 = np.asarray([row["current_normalized_l1"] for row in rows])
     return {
         "query_mean": np.mean(answers / trace.n_records, axis=0),
-        "l1_location": float(np.mean(l1)),
-        "l1_spread": float(
-            np.percentile(l1, 90) - np.percentile(l1, 10)
+        "l1_mean": float(np.mean(l1)),
+        "l1_p90_minus_p10": float(
+            np.percentile(l1, 90, method="linear")
+            - np.percentile(l1, 10, method="linear")
         ),
+        "l1_p95": float(np.percentile(l1, 95, method="linear")),
         "unique_row_rate": float(
             np.mean([row["unique_row_rate"] for row in rows])
         ),
@@ -716,15 +812,17 @@ def _stability_evidence(
                 - summaries[right_index]["query_mean"]
             )
             query_mean_shifts.append(float(np.mean(shift)))
-            query_p95_shifts.append(float(np.percentile(shift, 95)))
+            query_p95_shifts.append(
+                float(np.percentile(shift, 95, method="linear"))
+            )
 
     query_mean_shift = max(query_mean_shifts)
     query_p95_shift = max(query_p95_shifts)
-    l1_location_shift = _max_pairwise_difference(
-        [summary["l1_location"] for summary in summaries]
+    l1_mean_shift = _max_pairwise_difference(
+        [summary["l1_mean"] for summary in summaries]
     )
-    l1_spread_shift = _max_pairwise_difference(
-        [summary["l1_spread"] for summary in summaries]
+    l1_p90_minus_p10_shift = _max_pairwise_difference(
+        [summary["l1_p90_minus_p10"] for summary in summaries]
     )
     unique_row_rate_shift = _max_pairwise_difference(
         [summary["unique_row_rate"] for summary in summaries]
@@ -732,18 +830,29 @@ def _stability_evidence(
     normalized_row_entropy_shift = _max_pairwise_difference(
         [summary["normalized_row_entropy"] for summary in summaries]
     )
-    evidence_positions = [position for window in windows for position in window]
-    changed_state_rate = float(
-        np.mean([
-            trace.observations[position]["state_changed"]
-            for position in evidence_positions
-        ])
+    window_active_round_rates = []
+    window_mean_changed_row_fractions = []
+    for positions in windows:
+        changed_rows = np.asarray([
+            trace.observations[position]["actual_changed_row_count"]
+            for position in positions
+        ], dtype=float)
+        window_active_round_rates.append(
+            float(np.mean(changed_rows > 0.0))
+        )
+        window_mean_changed_row_fractions.append(
+            float(np.mean(changed_rows / trace.n_records))
+        )
+    minimum_observed_active_round_rate = min(window_active_round_rates)
+    minimum_observed_mean_changed_row_fraction = min(
+        window_mean_changed_row_fractions
     )
     stable = (
         query_mean_shift <= config.query_mean_shift_tolerance
         and query_p95_shift <= config.query_p95_shift_tolerance
-        and l1_location_shift <= config.l1_location_tolerance
-        and l1_spread_shift <= config.l1_spread_tolerance
+        and l1_mean_shift <= config.l1_mean_shift_tolerance
+        and l1_p90_minus_p10_shift
+        <= config.l1_p90_minus_p10_shift_tolerance
         and unique_row_rate_shift <= config.unique_row_rate_tolerance
         and normalized_row_entropy_shift
         <= config.normalized_row_entropy_tolerance
@@ -751,14 +860,35 @@ def _stability_evidence(
     return {
         "query_mean_shift": query_mean_shift,
         "query_p95_shift": query_p95_shift,
-        "l1_location_shift": l1_location_shift,
-        "l1_spread_shift": l1_spread_shift,
+        "l1_mean_shift": l1_mean_shift,
+        "l1_p90_minus_p10_shift": l1_p90_minus_p10_shift,
+        "window_l1_means": [
+            summary["l1_mean"] for summary in summaries
+        ],
+        "window_l1_p90_minus_p10": [
+            summary["l1_p90_minus_p10"] for summary in summaries
+        ],
+        "window_l1_p95": [
+            summary["l1_p95"] for summary in summaries
+        ],
         "unique_row_rate_shift": unique_row_rate_shift,
         "normalized_row_entropy_shift": normalized_row_entropy_shift,
-        "changed_state_rate": changed_state_rate,
+        "window_active_round_rates": window_active_round_rates,
+        "window_mean_changed_row_fractions": (
+            window_mean_changed_row_fractions
+        ),
+        "minimum_observed_active_round_rate": (
+            minimum_observed_active_round_rate
+        ),
+        "minimum_observed_mean_changed_row_fraction": (
+            minimum_observed_mean_changed_row_fraction
+        ),
         "stable": bool(stable),
         "movement_sufficient": bool(
-            changed_state_rate >= config.minimum_changed_state_rate
+            minimum_observed_active_round_rate
+            >= config.minimum_active_round_rate
+            and minimum_observed_mean_changed_row_fraction
+            >= config.minimum_mean_changed_row_fraction
         ),
     }
 
@@ -771,6 +901,33 @@ def replay_stationarity(
     trace.validate()
     if not isinstance(config, StationarityDetectorConfig):
         raise ValueError("config 必须是 StationarityDetectorConfig")
+    trace_descriptor = {
+        "contract_version": trace.contract_version,
+        "trace_identity_sha256": _trace_identity_sha256(trace),
+        "query_identity_sha256": trace.query_identity_sha256,
+        "target_identity_sha256": trace.target_identity_sha256,
+        "n_records": trace.n_records,
+        "query_count": trace.query_count,
+        "state_count": trace.state_count,
+        "post_round_count": trace.post_round_count,
+        "termination_reason": trace.termination_reason,
+    }
+    detector_config = config.to_dict()
+
+    def make_result(
+        status: str,
+        candidate_state_index: int | None,
+        candidate_round_index: int | None,
+    ) -> StationarityReplayResult:
+        return StationarityReplayResult(
+            status=status,
+            candidate_state_index=candidate_state_index,
+            candidate_round_index=candidate_round_index,
+            checks=checks,
+            trace=trace_descriptor,
+            detector_config=detector_config,
+        )
+
     positions = trace.post_round_positions()
     completed_blocks = len(positions) // config.window_size
     checks: List[Dict[str, Any]] = []
@@ -778,7 +935,6 @@ def replay_stationarity(
     insufficient_movement_streak = 0
 
     for block_count in range(3, completed_blocks + 1):
-        block_end = block_count * config.window_size
         windows = []
         for block_index in range(block_count - 3, block_count):
             start = block_index * config.window_size
@@ -813,34 +969,29 @@ def replay_stationarity(
         }
         checks.append(check)
         if moving_stability_streak >= 2:
-            return StationarityReplayResult(
-                status="stationary_qualified",
-                candidate_state_index=check["state_index"],
-                candidate_round_index=check["round_index"],
-                checks=checks,
+            return make_result(
+                "stationary_qualified",
+                check["state_index"],
+                check["round_index"],
             )
         if (
             insufficient_movement_streak
             >= config.stall_patience_checks
         ):
-            return StationarityReplayResult(
-                status="stalled",
-                candidate_state_index=check["state_index"],
-                candidate_round_index=check["round_index"],
-                checks=checks,
+            return make_result(
+                "stalled",
+                check["state_index"],
+                check["round_index"],
             )
 
     if trace.termination_reason in {"max_rounds", "candidate_budget"}:
-        status = "horizon_limited"
+        status = "horizon_reached"
+    elif trace.termination_reason != "in_progress":
+        status = "terminated_before_qualification"
     elif completed_blocks < 3:
         status = "collecting"
     elif checks and checks[-1]["check_status"] == "insufficient_movement":
         status = "insufficient_movement"
     else:
         status = "running"
-    return StationarityReplayResult(
-        status=status,
-        candidate_state_index=None,
-        candidate_round_index=None,
-        checks=checks,
-    )
+    return make_result(status, None, None)

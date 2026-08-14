@@ -1229,6 +1229,8 @@ class TestFactorizedGibbsEvolutionStep:
         )
 
         assert diagnostics["active_gibbs_rows"] == 0
+        assert diagnostics["conditional_logit_evaluated_count"] == 0
+        assert diagnostics["conditional_logit_clipped_count"] == 0
         np.testing.assert_array_equal(
             gibbs_rng.random(20), reference_rng.random(20)
         )
@@ -1312,6 +1314,36 @@ class TestFactorizedGibbsEvolutionStep:
 
         assert diagnostics["direction_logit_clip"] == 7.0
         assert diagnostics["gibbs_logit_clip"] == 11.0
+        assert diagnostics["conditional_logit_evaluated_count"] == (
+            diagnostics["gibbs_microsteps"]
+        )
+        assert 0 <= diagnostics[
+            "conditional_logit_clipped_count"
+        ] <= diagnostics["conditional_logit_evaluated_count"]
+
+    def test_gibbs_clip_hits_are_observed_without_changing_the_guard(self):
+        current, donors = self._tables()
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.full(4, 1_000.0),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.ones((4, 3)),
+            copy_direction_strength=10.0,
+            gibbs_logit_clip=0.1,
+            n_sweeps=2,
+            rng=np.random.default_rng(10),
+            gibbs_rng=np.random.default_rng(11),
+        )
+
+        assert diagnostics["conditional_logit_evaluated_count"] == (
+            diagnostics["gibbs_microsteps"]
+        )
+        assert diagnostics["conditional_logit_clipped_count"] > 0
 
     @pytest.mark.parametrize("eta", [0.0, 1.0])
     def test_nonzero_sweeps_require_open_eta(self, eta):

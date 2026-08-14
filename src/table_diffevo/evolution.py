@@ -60,6 +60,7 @@ from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
 from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
+    compile_mask_workload,
     evolve_step_factorized_gibbs,
 )
 from table_diffevo.stationarity import (
@@ -188,6 +189,7 @@ def run_evolution(
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    factorized_gibbs_use_compiled_workload: bool = False,
     candidate_budget: Optional[int] = None,
     residual_self_cooling: Optional[float] = None,
     self_cooling_monotone: bool = False,
@@ -315,6 +317,9 @@ def run_evolution(
     factorized_gibbs_logit_clip : float or None, default 30
         Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
         float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
+    factorized_gibbs_use_compiled_workload : bool, default False
+        True 时预编译公开 schema/query 结构，并使用与逐行因子构造输出等价的
+        批量条件评价路径。只影响非零 Gibbs sweep 的实现与性能，不改变核。
     candidate_budget : int or None, default None
         可选的全局候选评估次数上限。若指定，演化会在达到此预算时提前停止，
         与 n_rounds 并存（先达到者停止）。
@@ -723,6 +728,22 @@ def run_evolution(
             raise ValueError(f"{name} 必须是非负整数，得到 {value!r}")
     factorized_gibbs_sweeps = int(factorized_gibbs_sweeps)
     factorized_gibbs_max_order = int(factorized_gibbs_max_order)
+    if not isinstance(
+        factorized_gibbs_use_compiled_workload, (bool, np.bool_)
+    ):
+        raise ValueError(
+            "factorized_gibbs_use_compiled_workload 必须是布尔值"
+        )
+    factorized_gibbs_use_compiled_workload = bool(
+        factorized_gibbs_use_compiled_workload
+    )
+    if (
+        factorized_gibbs_use_compiled_workload
+        and factorized_gibbs_sweeps == 0
+    ):
+        raise ValueError(
+            "compiled factorized workload 只允许与非零 Gibbs sweep 一起使用"
+        )
     if factorized_gibbs_max_order > 8:
         raise ValueError("factorized_gibbs_max_order 不得超过绝对护栏 8")
     if factorized_gibbs_logit_clip is not None:
@@ -922,6 +943,8 @@ def run_evolution(
     additive_copy_drift_utilization_history: List[Optional[float]] = []
     effective_direction_strength_history: List[Optional[float]] = []
     direction_reference_scale_history: List[Optional[float]] = []
+    direction_logit_evaluated_count_history: List[int] = []
+    direction_logit_clipped_count_history: List[int] = []
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
@@ -951,6 +974,20 @@ def run_evolution(
     factorized_gibbs_factor_count = 0
     factorized_gibbs_factor_table_entries = 0
     factorized_gibbs_microsteps = 0
+    factorized_gibbs_conditional_logit_evaluated_count = 0
+    factorized_gibbs_conditional_logit_clipped_count = 0
+    factorized_gibbs_workload_compile_elapsed_sec = 0.0
+    factorized_gibbs_compiled_workload = None
+    if factorized_gibbs_use_compiled_workload:
+        compile_start = time.perf_counter()
+        factorized_gibbs_compiled_workload = compile_mask_workload(
+            schema,
+            queries,
+            max_factor_order=factorized_gibbs_max_order,
+        )
+        factorized_gibbs_workload_compile_elapsed_sec = (
+            time.perf_counter() - compile_start
+        )
 
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
@@ -1236,6 +1273,36 @@ def run_evolution(
             direction_reference_scale_history.append(
                 direction_reference_scale
             )
+            direction_logit_evaluated_count_history.append(
+                int(len(active_directions))
+            )
+            if (
+                diffusion_direction_logit_clip is None
+                or not 0.0 < eta < 1.0
+                or effective_direction_strength == 0.0
+                or len(active_directions) == 0
+            ):
+                direction_logit_clipped_count_history.append(0)
+            else:
+                base_logit = float(np.log(eta) - np.log1p(-eta))
+                with np.errstate(over="ignore", invalid="ignore"):
+                    raw_direction_logits = (
+                        base_logit
+                        + effective_direction_strength * active_directions
+                    )
+                direction_logit_clipped_count_history.append(int(
+                    np.count_nonzero(
+                        ~np.isfinite(raw_direction_logits)
+                        | (
+                            raw_direction_logits
+                            < -diffusion_direction_logit_clip
+                        )
+                        | (
+                            raw_direction_logits
+                            > diffusion_direction_logit_clip
+                        )
+                    )
+                ))
             if len(active_directions):
                 active_probabilities = tilted_copy_probabilities(
                     eta,
@@ -1321,6 +1388,8 @@ def run_evolution(
             additive_copy_drift_utilization_history.append(None)
             effective_direction_strength_history.append(None)
             direction_reference_scale_history.append(None)
+            direction_logit_evaluated_count_history.append(0)
+            direction_logit_clipped_count_history.append(0)
 
         # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
         # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
@@ -1368,6 +1437,9 @@ def run_evolution(
                         direction_logit_clip=(
                             diffusion_direction_logit_clip
                         ),
+                        compiled_workload=(
+                            factorized_gibbs_compiled_workload
+                        ),
                     )
                 )
                 attempt_factorized_gibbs_diagnostics.append(
@@ -1394,6 +1466,16 @@ def run_evolution(
                 factorized_gibbs_microsteps += factorized_diagnostics[
                     "gibbs_microsteps"
                 ]
+                factorized_gibbs_conditional_logit_evaluated_count += (
+                    factorized_diagnostics.get(
+                        "conditional_logit_evaluated_count", 0
+                    )
+                )
+                factorized_gibbs_conditional_logit_clipped_count += (
+                    factorized_diagnostics.get(
+                        "conditional_logit_clipped_count", 0
+                    )
+                )
             else:
                 independent_transition_kwargs = dict(direction_kwargs)
                 if (
@@ -1731,6 +1813,12 @@ def run_evolution(
         "direction_reference_scale_history": (
             direction_reference_scale_history
         ),
+        "direction_logit_evaluated_count_history": (
+            direction_logit_evaluated_count_history
+        ),
+        "direction_logit_clipped_count_history": (
+            direction_logit_clipped_count_history
+        ),
         "raw_proposal_gain_history": raw_proposal_gain_history,
         "raw_proposal_linear_gain_history": raw_proposal_linear_gain_history,
         "raw_proposal_quadratic_penalty_history": (
@@ -1761,6 +1849,15 @@ def run_evolution(
             factorized_gibbs_factor_table_entries
         ),
         "factorized_gibbs_microsteps": factorized_gibbs_microsteps,
+        "factorized_gibbs_conditional_logit_evaluated_count": (
+            factorized_gibbs_conditional_logit_evaluated_count
+        ),
+        "factorized_gibbs_conditional_logit_clipped_count": (
+            factorized_gibbs_conditional_logit_clipped_count
+        ),
+        "factorized_gibbs_workload_compile_elapsed_sec": (
+            factorized_gibbs_workload_compile_elapsed_sec
+        ),
         "initial_table_sha256": initial_table_sha256,
         "primary_rng_post_initialization_state_sha256": (
             primary_rng_post_initialization_state_sha256
@@ -1843,6 +1940,9 @@ def run_evolution(
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
+            "factorized_gibbs_use_compiled_workload": (
+                factorized_gibbs_use_compiled_workload
+            ),
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None
             ),

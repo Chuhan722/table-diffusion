@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import table_diffevo.evolution as evolution_module
+import table_diffevo.reference_process as reference_process_module
 from table_diffevo.evolution import run_evolution
 from table_diffevo.queries import (
     evaluate_table,
@@ -15,8 +16,10 @@ from table_diffevo.queries import (
     load_queries,
 )
 from table_diffevo.reference_process import (
+    DIRECTION_SCALE_PREFLIGHT_CONTRACT_VERSION,
     REFERENCE_PROCESS_CONTRACT_VERSION,
     STATIONARITY_CALIBRATION_CONTRACT_VERSION,
+    derive_fixed_direction_reference_scale,
     run_horizon_invariant_evolution,
     run_stationarity_calibration_evolution,
 )
@@ -395,7 +398,10 @@ class TestStationarityCalibrationReference:
         assert diagnostics["termination_reason"] == "max_rounds"
         assert trace.post_round_count == 2
 
-    def test_trace_observation_does_not_change_state_rng_or_evaluations(self):
+    @pytest.mark.parametrize("factorized_gibbs_sweeps", [0, 2])
+    def test_trace_observation_does_not_change_state_rng_or_evaluations(
+        self, factorized_gibbs_sweeps
+    ):
         schema, queries, target, n_records = _binary_problem()
         common = dict(
             target=target,
@@ -420,6 +426,12 @@ class TestStationarityCalibrationReference:
             stop_on_exact_residual=False,
             log_every=100_000,
         )
+        if factorized_gibbs_sweeps:
+            common.update({
+                "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
+                "factorized_gibbs_max_order": 3,
+                "factorized_gibbs_logit_clip": 13.0,
+            })
 
         _, plain = run_evolution(
             record_stationarity_trace=False, **common
@@ -458,6 +470,7 @@ class TestStationarityCalibrationReference:
             assert plain[key] == observed[key]
         assert "stationarity_trace" not in plain
         assert trace.post_round_count == 4
+
 
     def test_zero_change_accepted_proposal_is_a_self_transition(
         self, monkeypatch
@@ -626,6 +639,141 @@ class TestStationarityCalibrationReference:
             trace.measured_query_answers[1],
             trace.measured_query_answers[0],
         )
+
+
+class TestDirectionScalePreflight:
+    def test_scale_is_fixed_and_shared_by_both_kernel_restarts(self):
+        problem = _binary_problem()
+        common = _reference_kwargs(problem)
+        common.pop("diffusion_direction_reference_scale")
+        common["log_every"] = 100_000
+
+        scale, preflight = derive_fixed_direction_reference_scale(
+            max_rounds=3,
+            **common,
+        )
+        assert scale > 0.0
+        assert preflight["contract_version"] == (
+            DIRECTION_SCALE_PREFLIGHT_CONTRACT_VERSION
+        )
+        assert preflight["role"] == (
+            "scale_only_not_part_of_stationarity_trace"
+        )
+        assert 1 <= preflight["first_nonzero_round"] <= 3
+        assert preflight["generator_params"][
+            "diffusion_direction_normalization"
+        ] == "initial_rms"
+        assert preflight["generator_params"][
+            "diffusion_direction_reference_scale"
+        ] is None
+        assert preflight["generator_params"][
+            "factorized_gibbs_sweeps"
+        ] == 0
+        assert preflight["generator_params"][
+            "factorized_gibbs_use_compiled_workload"
+        ] is False
+
+        restarted = []
+        for sweeps in (0, 2):
+            kernel = {}
+            if sweeps:
+                kernel = {
+                    "factorized_gibbs_sweeps": sweeps,
+                    "factorized_gibbs_max_order": 3,
+                    "factorized_gibbs_logit_clip": 13.0,
+                }
+            _, diagnostics, _ = run_stationarity_calibration_evolution(
+                n_rounds=2,
+                diffusion_direction_reference_scale=scale,
+                **common,
+                **kernel,
+            )
+            restarted.append(diagnostics)
+
+        for diagnostics in restarted:
+            assert diagnostics["initial_table_sha256"] == preflight[
+                "initial_table_sha256"
+            ]
+            assert diagnostics[
+                "primary_rng_post_initialization_state_sha256"
+            ] == preflight[
+                "primary_rng_post_initialization_state_sha256"
+            ]
+            assert diagnostics["params"][
+                "diffusion_direction_reference_scale"
+            ] == scale
+            assert len(diagnostics[
+                "direction_logit_evaluated_count_history"
+            ]) == 2
+            assert len(diagnostics[
+                "direction_logit_clipped_count_history"
+            ]) == 2
+            assert all(
+                clipped <= evaluated
+                for clipped, evaluated in zip(
+                    diagnostics[
+                        "direction_logit_clipped_count_history"
+                    ],
+                    diagnostics[
+                        "direction_logit_evaluated_count_history"
+                    ],
+                )
+            )
+        assert restarted[0]["initial_table_sha256"] == restarted[1][
+            "initial_table_sha256"
+        ]
+        assert restarted[0][
+            "factorized_gibbs_conditional_logit_evaluated_count"
+        ] == 0
+        assert restarted[1][
+            "factorized_gibbs_conditional_logit_evaluated_count"
+        ] == restarted[1]["factorized_gibbs_microsteps"]
+
+    def test_preflight_fails_closed_when_no_nonzero_scale(
+        self, monkeypatch
+    ):
+        def no_scale(*args, **kwargs):
+            return pd.DataFrame(), {
+                "direction_reference_scale_history": [None, None],
+            }
+
+        monkeypatch.setattr(
+            reference_process_module,
+            "run_evolution",
+            no_scale,
+        )
+        with pytest.raises(RuntimeError, match="不得以任意常数代替"):
+            derive_fixed_direction_reference_scale(
+                target=np.array([0.0]),
+                queries=[{"conditions": []}],
+                schema=_binary_problem()[0],
+                n_records=4,
+                seed=1,
+                fixed_alpha=16.0,
+                rho=0.01,
+                eta=0.5,
+                mu=0.01,
+                diffusion_direction_strength=2.0,
+                max_rounds=2,
+            )
+
+    @pytest.mark.parametrize("bad", [0, -1, True, 1.5])
+    def test_preflight_budget_must_be_positive_integer(self, bad):
+        schema, queries, target, n_records = _binary_problem()
+        with pytest.raises(ValueError, match="max_rounds"):
+            derive_fixed_direction_reference_scale(
+                target,
+                queries,
+                schema,
+                n_records,
+                1,
+                fixed_alpha=16.0,
+                rho=0.01,
+                eta=0.5,
+                mu=0.01,
+                diffusion_direction_strength=2.0,
+                max_rounds=bad,
+            )
 
 
 class TestHorizonInvariantGuards:

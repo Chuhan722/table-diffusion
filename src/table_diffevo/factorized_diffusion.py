@@ -911,24 +911,52 @@ def _conditional_copy_probability_unchecked(
     strength: float,
     logit_clip: Optional[float],
 ) -> float:
+    probability, _ = _conditional_copy_probability_with_clip_flag_unchecked(
+        model,
+        mask,
+        variable,
+        baseline_probability,
+        base_logit,
+        strength,
+        logit_clip,
+    )
+    return probability
+
+
+def _conditional_copy_probability_with_clip_flag_unchecked(
+    model: SparseMaskEnergy,
+    mask: np.ndarray,
+    variable: int,
+    baseline_probability: float,
+    base_logit: float,
+    strength: float,
+    logit_clip: Optional[float],
+) -> Tuple[float, bool]:
+    """Return one conditional probability and whether clipping changed it."""
     difference = _conditional_energy_difference_unchecked(
         model, mask, variable
     )
     if strength == 0.0 or difference == 0.0:
-        return baseline_probability
+        return baseline_probability, False
     with np.errstate(over="ignore", invalid="ignore"):
         logit = base_logit + strength * difference
     if np.isnan(logit):
         raise ValueError("条件 logit 无法由有限输入稳定计算")
+    clipped = False
     if logit_clip is None:
         if not np.isfinite(logit):
             raise ValueError("条件 logit 超出 float64 可表示范围")
     else:
+        clipped = bool(
+            not np.isfinite(logit)
+            or logit < -logit_clip
+            or logit > logit_clip
+        )
         logit = float(np.clip(logit, -logit_clip, logit_clip))
     if logit >= 0.0:
-        return float(1.0 / (1.0 + np.exp(-logit)))
+        return float(1.0 / (1.0 + np.exp(-logit))), clipped
     exponential = float(np.exp(logit))
-    return exponential / (1.0 + exponential)
+    return exponential / (1.0 + exponential), clipped
 
 
 def conditional_copy_probability(
@@ -988,6 +1016,29 @@ def random_scan_gibbs_mask(
     默认把条件 logit 截到 ``[-30, 30]``，避免有限输入在 float64 中丢失双向支持；
     ``logit_clip=None`` 只用于显式请求未截断的理论条件式。
     """
+    mask, _ = _random_scan_gibbs_mask_with_diagnostics(
+        model,
+        initial_mask,
+        eta,
+        strength,
+        n_steps,
+        rng,
+        logit_clip=logit_clip,
+    )
+    return mask
+
+
+def _random_scan_gibbs_mask_with_diagnostics(
+    model: SparseMaskEnergy,
+    initial_mask: np.ndarray,
+    eta: float,
+    strength: float,
+    n_steps: int,
+    rng: np.random.Generator,
+    *,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Internal random scan with observational clip counters."""
     mask = _validate_mask(
         initial_mask, model.n_active_attributes, "initial_mask"
     ).copy()
@@ -998,22 +1049,32 @@ def random_scan_gibbs_mask(
     if not isinstance(rng, np.random.Generator):
         raise ValueError("rng 必须是 np.random.Generator")
     if steps == 0 or model.n_active_attributes == 0:
-        return mask
+        return mask, {
+            "conditional_logit_evaluated_count": 0,
+            "conditional_logit_clipped_count": 0,
+        }
 
     base_logit = float(np.log(baseline) - np.log1p(-baseline))
+    clipped_count = 0
     for _ in range(steps):
         variable = int(rng.integers(0, model.n_active_attributes))
-        probability = _conditional_copy_probability_unchecked(
-            model,
-            mask,
-            variable,
-            baseline,
-            base_logit,
-            beta,
-            clip,
+        probability, clipped = (
+            _conditional_copy_probability_with_clip_flag_unchecked(
+                model,
+                mask,
+                variable,
+                baseline,
+                base_logit,
+                beta,
+                clip,
+            )
         )
+        clipped_count += int(clipped)
         mask[variable] = rng.random() < probability
-    return mask
+    return mask, {
+        "conditional_logit_evaluated_count": int(steps),
+        "conditional_logit_clipped_count": int(clipped_count),
+    }
 
 
 def propagate_random_scan_distribution(
@@ -1247,6 +1308,8 @@ def evolve_step_factorized_gibbs(
     factor_count = 0
     factor_table_entries = 0
     gibbs_microsteps = 0
+    conditional_logit_evaluated_count = 0
+    conditional_logit_clipped_count = 0
     factor_model_builds = 0
     condition_evaluation_batches = 0
     if sweeps > 0:
@@ -1293,15 +1356,18 @@ def evolve_step_factorized_gibbs(
             ):
                 raise RuntimeError("因子模型的活跃属性顺序与更新 mask 不一致")
             sample_start = time.perf_counter()
-            copy_masks[row_index, active_indices] = random_scan_gibbs_mask(
-                model,
-                copy_masks[row_index, active_indices],
-                eta,
-                strength,
-                sweeps * n_active,
-                gibbs_rng,
-                logit_clip=clip,
+            sampled_mask, sample_diagnostics = (
+                _random_scan_gibbs_mask_with_diagnostics(
+                    model,
+                    copy_masks[row_index, active_indices],
+                    eta,
+                    strength,
+                    sweeps * n_active,
+                    gibbs_rng,
+                    logit_clip=clip,
+                )
             )
+            copy_masks[row_index, active_indices] = sampled_mask
             gibbs_sample_elapsed += time.perf_counter() - sample_start
             active_gibbs_rows += 1
             active_blocks += n_active
@@ -1310,6 +1376,12 @@ def evolve_step_factorized_gibbs(
                 len(factor.values) for factor in model.factors
             )
             gibbs_microsteps += sweeps * n_active
+            conditional_logit_evaluated_count += sample_diagnostics[
+                "conditional_logit_evaluated_count"
+            ]
+            conditional_logit_clipped_count += sample_diagnostics[
+                "conditional_logit_clipped_count"
+            ]
 
     for attr_index, attr in enumerate(attr_names):
         selected = participate & copy_masks[:, attr_index]
@@ -1343,6 +1415,12 @@ def evolve_step_factorized_gibbs(
         "factor_count": factor_count,
         "factor_table_entries": factor_table_entries,
         "gibbs_microsteps": gibbs_microsteps,
+        "conditional_logit_evaluated_count": (
+            conditional_logit_evaluated_count
+        ),
+        "conditional_logit_clipped_count": (
+            conditional_logit_clipped_count
+        ),
         "factor_builder": (
             "not_used"
             if sweeps == 0
