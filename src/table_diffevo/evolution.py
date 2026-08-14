@@ -162,6 +162,10 @@ def run_evolution(
     residual_self_cooling: Optional[float] = None,
     self_cooling_monotone: bool = False,
     self_cooling_stop_ratio: Optional[float] = None,
+    rho_anneal_end: Optional[float] = None,
+    rho_anneal_rounds: Optional[int] = None,
+    selection_scale_invariant: bool = False,
+    selection_scale_invariant_min_spread: float = 1e-3,
     return_final_table: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -297,6 +301,37 @@ def run_evolution(
         内在停止阈值（需同时启用 residual_self_cooling）。当残差比
         ``r_t <= self_cooling_stop_ratio`` 时提前停止，作为达标早停之外的
         内在收敛停机信号；取值须在 (0, 1)。None 时不启用。
+    rho_anneal_end : float or None, default None
+        时间驱动的几何 rho 退火终点（Issue #44 机制迭代，默认关闭）。设为
+        (0, rho] 内的值时，第 t 轮（t 从 0 起）的参与率为
+        ``rho_t = rho * (rho_anneal_end / rho) ** (t / (n_rounds - 1))``，
+        即从 ``rho`` 几何插值到 ``rho_anneal_end``——扩散模型意义上的盲
+        噪声时间表（noise schedule）：调度只依赖轮次进度，不读取残差或任何
+        候选评价，因而不存在残差反馈的过早冻结死锁。``rho_anneal_end ==
+        rho`` 时每轮值恒为 rho（浮点上与关闭一致）。与
+        ``residual_self_cooling`` 可组合：冷却因子乘在退火后的 rho_t 上。
+        None 时完全关闭，rho 恒定，行为与历史逐轨迹一致。
+    rho_anneal_rounds : int or None, default None
+        两段式调度的快降段轮数 K（需同时启用 rho_anneal_end）。指定时退火
+        进度按 ``min(1, t / K)`` 计算：前 K 轮从 ``rho`` 几何降温到
+        ``rho_anneal_end``，之后恒定在 ``rho_anneal_end`` 深潜。None 时
+        退火进度铺满全程 ``n_rounds``。动机：无门恒定动力学的噪声地板随
+        rho 近似线性抬升，而到达高温地板只需少量轮数——快降段之后把预算
+        留给低温深潜。仍是纯时间驱动的盲调度，不读取残差或候选评价。
+    selection_scale_invariant : bool, default False
+        尺度不变选择（仅 distance_mode='geometric'；Issue #44 机制迭代）。
+        True 时 donor 选择 logits 先做行内标准化再乘 alpha：选择压力的
+        有效温度恒等于 alpha，与联合分数行内离散度的绝对尺度解耦，消除
+        种群同质化导致的晚期选择退化（否则需要靠调大 alpha 补偿）。纯
+        分布侧机制：不读取候选评价、不引入接受/拒绝。False 保持历史行为。
+        开启且 exclude_self=True 时行统计只在非自身候选上计算（第三轮
+        审查修正）；启用时诊断新增 ``donor_top_share_history``（每轮被选
+        最多的 donor 占比，选择集中度监控）。
+    selection_scale_invariant_min_spread : float, default 1e-3
+        尺度不变选择的低信号保护下限（需 selection_scale_invariant=True）。
+        行内标准差低于该值时按该值截断：放大倍数有界
+        （alpha/min_spread），离散度趋零时选择平滑退化为均匀，避免把
+        噪声级微小差异放大成极端选择偏好。必须为正有限数。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -451,6 +486,63 @@ def run_evolution(
                 f"得到 {self_cooling_stop_ratio!r}"
             )
         self_cooling_stop_ratio = float(self_cooling_stop_ratio)
+    if rho_anneal_end is not None:
+        if (
+            isinstance(rho_anneal_end, (bool, np.bool_))
+            or not isinstance(
+                rho_anneal_end,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(rho_anneal_end)
+            or not 0.0 < rho_anneal_end <= rho
+        ):
+            raise ValueError(
+                "rho_anneal_end 必须位于 (0, rho] 或为 None，"
+                f"得到 {rho_anneal_end!r}（rho={rho}）"
+            )
+        rho_anneal_end = float(rho_anneal_end)
+    if rho_anneal_rounds is not None:
+        if rho_anneal_end is None:
+            raise ValueError(
+                "rho_anneal_rounds 需要同时启用 rho_anneal_end"
+            )
+        if (
+            isinstance(rho_anneal_rounds, (bool, np.bool_))
+            or not isinstance(rho_anneal_rounds, (int, np.integer))
+            or rho_anneal_rounds < 1
+        ):
+            raise ValueError(
+                "rho_anneal_rounds 必须是正整数或 None，"
+                f"得到 {rho_anneal_rounds!r}"
+            )
+        rho_anneal_rounds = int(rho_anneal_rounds)
+    if not isinstance(selection_scale_invariant, (bool, np.bool_)):
+        raise ValueError(
+            "selection_scale_invariant 必须是布尔值，"
+            f"得到 {selection_scale_invariant!r}"
+        )
+    selection_scale_invariant = bool(selection_scale_invariant)
+    if selection_scale_invariant and distance_mode != "geometric":
+        raise ValueError(
+            "selection_scale_invariant 仅支持 distance_mode='geometric'，"
+            f"得到 {distance_mode!r}"
+        )
+    if (
+        isinstance(selection_scale_invariant_min_spread, (bool, np.bool_))
+        or not isinstance(
+            selection_scale_invariant_min_spread,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(selection_scale_invariant_min_spread)
+        or selection_scale_invariant_min_spread <= 0
+    ):
+        raise ValueError(
+            "selection_scale_invariant_min_spread 必须是正有限数，"
+            f"得到 {selection_scale_invariant_min_spread!r}"
+        )
+    selection_scale_invariant_min_spread = float(
+        selection_scale_invariant_min_spread
+    )
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -604,6 +696,11 @@ def run_evolution(
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
+    rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
+    donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
+    row_max_prob_mean_history: List[float] = []  # 逐行最大概率均值（每轮）
+    row_max_prob_max_history: List[float] = []  # 逐行最大概率最大值（每轮）
+    effective_donors_mean_history: List[float] = []  # exp(行熵)均值（每轮）
     copy_direction_mean_history: List[Optional[float]] = []
     copy_direction_positive_rate_history: List[Optional[float]] = []
     copy_direction_negative_rate_history: List[Optional[float]] = []
@@ -677,6 +774,19 @@ def run_evolution(
             progress = 1.0
         alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
+
+        # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
+        # 或候选评价。关闭时 rho_t 恒等于 rho，逐轨迹等价于历史行为。
+        # rho_anneal_rounds 指定时为两段式：前 K 轮快降，其后恒定深潜。
+        if rho_anneal_end is not None:
+            if rho_anneal_rounds is not None:
+                anneal_progress = min(1.0, t / rho_anneal_rounds)
+            else:
+                anneal_progress = progress
+            rho_t = rho * (rho_anneal_end / rho) ** anneal_progress
+        else:
+            rho_t = rho
+        rho_schedule_history.append(rho_t)
 
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
@@ -765,11 +875,43 @@ def run_evolution(
             # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
             # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
             exclude_self=exclude_self,
+            scale_invariant=selection_scale_invariant,
+            scale_invariant_min_spread=selection_scale_invariant_min_spread,
         )
         donor_idx = sample_donors(probs, rng, device=device)
+        # 逐行选择集中度诊断（第二轮审查意见 4）：全局 top share 不能
+        # 判断单行 softmax 是否接近确定性——即使每行都以 99.9% 概率选
+        # 各自不同的 donor，全局 top share 仍可能很低。补充逐行最大
+        # 概率与概率熵（有效 donor 数 = exp(熵)），在设备上归约成标量
+        # 后回传。只在尺度不变选择启用时记录。
+        if selection_scale_invariant:
+            if use_torch:
+                import torch
+                row_max = probs.max(dim=1).values
+                safe = torch.clamp(probs, min=1e-30)
+                row_entropy = -(probs * torch.log(safe)).sum(dim=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(torch.exp(row_entropy).mean())
+                )
+            else:
+                row_max = probs.max(axis=1)
+                safe = np.clip(probs, 1e-30, None)
+                row_entropy = -(probs * np.log(safe)).sum(axis=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(np.exp(row_entropy).mean())
+                )
         # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
         del probs
         donors = S.iloc[donor_idx].reset_index(drop=True)
+        # 全局集中度（第三轮审查）：被选最多的 donor 占比。
+        if selection_scale_invariant:
+            donor_top_share_history.append(
+                float(np.bincount(donor_idx).max() / len(donor_idx))
+            )
 
         # 诊断：记录选中 donor 的适应度和距离
         N = len(S)  # 记录数
@@ -935,7 +1077,7 @@ def run_evolution(
         )
         for attempt in range(max_retries + 1):
             attempt_rho = (
-                rho * self_cooling_factor * (retry_rho_decay ** attempt)
+                rho_t * self_cooling_factor * (retry_rho_decay ** attempt)
             )
             if factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
@@ -1095,6 +1237,11 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
+        "rho_schedule_history": rho_schedule_history,
+        "donor_top_share_history": donor_top_share_history,
+        "row_max_prob_mean_history": row_max_prob_mean_history,
+        "row_max_prob_max_history": row_max_prob_max_history,
+        "effective_donors_mean_history": effective_donors_mean_history,
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history
@@ -1227,6 +1374,18 @@ def run_evolution(
             "self_cooling_stop_ratio": (
                 float(self_cooling_stop_ratio)
                 if self_cooling_stop_ratio is not None else None
+            ),
+            "rho_anneal_end": (
+                float(rho_anneal_end) if rho_anneal_end is not None else None
+            ),
+            "rho_anneal_rounds": (
+                int(rho_anneal_rounds)
+                if rho_anneal_rounds is not None else None
+            ),
+            "selection_scale_invariant": bool(selection_scale_invariant),
+            "selection_scale_invariant_min_spread": (
+                float(selection_scale_invariant_min_spread)
+                if selection_scale_invariant else None
             ),
         },
     }
