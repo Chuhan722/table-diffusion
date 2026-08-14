@@ -1,0 +1,1712 @@
+{
+ "protocol": {
+  "hypothesis": "尺度不变选择解决无门低温选择退化；配置对齐后门在主指标上冗余",
+  "seeds": [
+   100,
+   101,
+   102,
+   103,
+   104
+  ],
+  "rounds": 2000,
+  "frozen_si_alpha": 16.0,
+  "arms": {
+   "no_gate_si": {
+    "tol": "inf",
+    "selection_scale_invariant": true,
+    "selection_scale_invariant_min_spread": 0.001,
+    "alpha_min": 16.0,
+    "alpha_max": 16.0
+   },
+   "gate_si": {
+    "tol": 1e-09,
+    "selection_scale_invariant": true,
+    "selection_scale_invariant_min_spread": 0.001,
+    "alpha_min": 16.0,
+    "alpha_max": 16.0
+   },
+   "no_gate_legacy": {
+    "tol": "inf",
+    "alpha_min": 2.0,
+    "alpha_max": 10.0
+   },
+   "gate_legacy": {
+    "tol": 1e-09,
+    "alpha_min": 2.0,
+    "alpha_max": 10.0
+   },
+   "no_gate_legacy_a16": {
+    "tol": "inf",
+    "alpha_min": 16.0,
+    "alpha_max": 16.0
+   }
+  },
+  "shared_params": {
+   "rho": 0.01,
+   "beta": 1.0,
+   "h": 0.8,
+   "eta": 0.5,
+   "mu": 0.01,
+   "lambda_param": 0.5,
+   "delta": 0.05,
+   "winsorize_quantiles": [
+    0.01,
+    0.99
+   ],
+   "distance_mode": "geometric",
+   "init_method": "marginal",
+   "residual_directed_diffusion": true,
+   "diffusion_direction_strength": 2.0,
+   "diffusion_direction_normalization": "initial_rms",
+   "exclude_self": true
+  },
+  "primary_metric": "final_table_measured_l1",
+  "thresholds": {
+   "mechanism_max_ratio": 0.6,
+   "attribution_max_ratio": 0.9,
+   "attribution_min_wins": 4,
+   "redundancy_max_ratio": 1.1,
+   "quality_risk_rel": 0.05
+  },
+  "dev_calibration_note": "si alpha=16 与 min_spread=1e-3 由 dev seed 42..44 定标冻结；dev 种子不进正式种子集；支持集唯一状态数与 donor集中度为观察指标（dev 已知高锐度收窄支持集）",
+  "frozen_min_spread": 0.001
+ },
+ "environment": {
+  "git_commit": "cf4564c9c618e813bcd0a62f9acd8448628eee0a",
+  "git_worktree_clean_including_untracked": true,
+  "python": "3.9.21",
+  "numpy": "1.26.4",
+  "pandas": "2.2.3",
+  "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+  "argv": [
+   "scripts/probe_scale_invariant_formal.py",
+   "--out",
+   "outputs/gate_free_self_cooling/formal_scale_invariant_v3_5seed_2000round.json"
+  ],
+  "started_at": "2026-08-14T08:49:24.973671+08:00"
+ },
+ "protocol_deviations": [],
+ "formal": true,
+ "public_input_sha256": {
+  "nltcs": {
+   "schema": "5765de90ea97bb6617c960f9cf81fee97ca4975296bfdd67686667729cc4e7f4",
+   "queries": "b34eb2d5a16ce1deeafbdcda7af9a9b971a490e59df0099d7c7c55ce70f0468f",
+   "marginals": "a5e63ea80c49cfb1ac7cdb88662ce54641f4dab33ac60bda53e332cd123ea25e"
+  },
+  "test_300x10": {
+   "schema": "58087cbba7eb90e82974bc9ffc2222510705b97599f00ae207765e03b60cf792",
+   "queries": "7cccd58400a8e7bf74aed6efe01069f3142dde166b37a39cd3d18408b8cecb88",
+   "marginals": "1e0fb0413c5ed53907a760d491fda84aec8162642a39cf8eadc577d7d1ec9ee4"
+  }
+ },
+ "datasets": {
+  "nltcs": {
+   "reference_sha256": {
+    "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30"
+   },
+   "initial_state": {
+    "measured_l1_mean": 0.06327612193751492,
+    "measured_l1_by_seed": {
+     "100": 0.06323791775865195,
+     "101": 0.06336540907951822,
+     "102": 0.06326860211045367,
+     "103": 0.06333528037996242,
+     "104": 0.0631734003589884
+    },
+    "loss_by_seed": {
+     "100": 693835300.0,
+     "101": 696478560.5,
+     "102": 693978150.5,
+     "103": 696766249.5,
+     "104": 693723685.5
+    },
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）"
+   },
+   "runs": [
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 542000.5,
+     "final_loss": 524811.0,
+     "final_table_measured_l1": 0.001050429701316544,
+     "best_loss": 450078.0,
+     "best_table_measured_l1": 0.0009589322981573151,
+     "donor_top_share_max": 0.025029355416846918,
+     "row_max_prob_mean_final": 0.037681251764297485,
+     "row_max_prob_max_overall": 0.9998161196708679,
+     "effective_donors_mean_final": 1611.1644287109375,
+     "tail_mean_pre_proposal_loss": 611227.975,
+     "final_table_sha256": "fb77ea7171163de4bae08658ae9d6d1abe10f35b1d66047c65d0149175072eb5",
+     "elapsed_sec": 452.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0015161825707222668,
+       "unmeasured_4way_l1": 0.0017130770317378067,
+       "raw_joint_tvd": 0.25455781472096906,
+       "binned_joint_tvd": 0.25455781472096906,
+       "raw_unique_states": 2081,
+       "raw_support_overlap": 1265
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 565776.0,
+     "final_loss": 565776.0,
+     "final_table_measured_l1": 0.0013335653901749942,
+     "best_loss": 565776.0,
+     "best_table_measured_l1": 0.0013335653901749942,
+     "donor_top_share_max": 0.04153018972869415,
+     "row_max_prob_mean_final": 0.02484200894832611,
+     "row_max_prob_max_overall": 0.9998161196708679,
+     "effective_donors_mean_final": 1066.225830078125,
+     "tail_mean_pre_proposal_loss": 565776.0,
+     "final_table_sha256": "76545e26c08f79d8f33930067228727709a3a615a8debcd07838636787bfa995",
+     "elapsed_sec": 243.1,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0017181830641924373,
+       "unmeasured_4way_l1": 0.0016752834181454168,
+       "raw_joint_tvd": 0.2501699524133243,
+       "binned_joint_tvd": 0.2501699524133243,
+       "raw_unique_states": 2685,
+       "raw_support_overlap": 1289
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3277713.5,
+     "final_loss": 3265578.5,
+     "final_table_measured_l1": 0.0034222621825365784,
+     "best_loss": 3241592.0,
+     "best_table_measured_l1": 0.0034265221830885265,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 3434895.345,
+     "final_table_sha256": "61b2819f5331be9a0ab430154752965f069febf97b3e1ba55f9f69d32dea12a9",
+     "elapsed_sec": 426.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003896687419873944,
+       "unmeasured_4way_l1": 0.003231689282844959,
+       "raw_joint_tvd": 0.28119399295469993,
+       "binned_joint_tvd": 0.28119399295469993,
+       "raw_unique_states": 3058,
+       "raw_support_overlap": 1407
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2109013.0,
+     "final_loss": 2109013.0,
+     "final_table_measured_l1": 0.00283333254101439,
+     "best_loss": 2109013.0,
+     "best_table_measured_l1": 0.00283333254101439,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 2276603.26,
+     "final_table_sha256": "60affb0f631ce4bc25cbcf846d9ed85eac6012b5dcbe5876aeefd000ddf9267e",
+     "elapsed_sec": 322.9,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0031700664904368374,
+       "unmeasured_4way_l1": 0.0026748404552619375,
+       "raw_joint_tvd": 0.2640751498671281,
+       "binned_joint_tvd": 0.2640751498671281,
+       "raw_unique_states": 3007,
+       "raw_support_overlap": 1437
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy_a16",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1151351.0,
+     "final_loss": 1150047.0,
+     "final_table_measured_l1": 0.0018692141552286165,
+     "best_loss": 986660.5,
+     "best_table_measured_l1": 0.0017604915324462942,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1163423.36,
+     "final_table_sha256": "eb9a0189d251903d46114a599da721d17b6c0a75b6021e7a75d287c056e64b68",
+     "elapsed_sec": 517.7,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0021967729324272826,
+       "unmeasured_4way_l1": 0.002055354570650288,
+       "raw_joint_tvd": 0.2549286199864038,
+       "binned_joint_tvd": 0.2549286199864038,
+       "raw_unique_states": 2716,
+       "raw_support_overlap": 1410
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 576933.0,
+     "final_loss": 568060.0,
+     "final_table_measured_l1": 0.0010293149159721065,
+     "best_loss": 411068.0,
+     "best_table_measured_l1": 0.0009041079432278988,
+     "donor_top_share_max": 0.027995797540325072,
+     "row_max_prob_mean_final": 0.026771603152155876,
+     "row_max_prob_max_overall": 0.9999999403953552,
+     "effective_donors_mean_final": 1823.6129150390625,
+     "tail_mean_pre_proposal_loss": 613239.215,
+     "final_table_sha256": "76a577732cec88e495578f951b7c3dad7c8fd5c3d54370d3b849fa707e14f216",
+     "elapsed_sec": 561.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.001487858469682235,
+       "unmeasured_4way_l1": 0.0016487294147049414,
+       "raw_joint_tvd": 0.2580804647425994,
+       "binned_joint_tvd": 0.2580804647425994,
+       "raw_unique_states": 2123,
+       "raw_support_overlap": 1235
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 630291.5,
+     "final_loss": 630291.5,
+     "final_table_measured_l1": 0.001387587136304768,
+     "best_loss": 630291.5,
+     "best_table_measured_l1": 0.001387587136304768,
+     "donor_top_share_max": 0.016377232556702304,
+     "row_max_prob_mean_final": 0.026900511234998703,
+     "row_max_prob_max_overall": 0.9999999403953552,
+     "effective_donors_mean_final": 2014.632568359375,
+     "tail_mean_pre_proposal_loss": 672925.38,
+     "final_table_sha256": "af6f81d937e26d4640eb4ad3d2b435899da982c9be55b58bad177dd317f370ab",
+     "elapsed_sec": 243.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0017875411991537494,
+       "unmeasured_4way_l1": 0.0017422371985594282,
+       "raw_joint_tvd": 0.2549286199864038,
+       "binned_joint_tvd": 0.2549286199864038,
+       "raw_unique_states": 2739,
+       "raw_support_overlap": 1279
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3274776.5,
+     "final_loss": 3301938.0,
+     "final_table_measured_l1": 0.0035274039352897273,
+     "best_loss": 3245214.5,
+     "best_table_measured_l1": 0.003515858716402564,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 3510978.935,
+     "final_table_sha256": "f460dc2696adce7b741104a883d36baee920674d8d62745ebdb38ad0055c49a7",
+     "elapsed_sec": 429.4,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003927790842846239,
+       "unmeasured_4way_l1": 0.003220037949813613,
+       "raw_joint_tvd": 0.278660156974229,
+       "binned_joint_tvd": 0.278660156974229,
+       "raw_unique_states": 3026,
+       "raw_support_overlap": 1400
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1838904.0,
+     "final_loss": 1838904.0,
+     "final_table_measured_l1": 0.002610701207821287,
+     "best_loss": 1838904.0,
+     "best_table_measured_l1": 0.002610701207821287,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1949340.76,
+     "final_table_sha256": "739b2c31a01c834585ca50d4267ff9d5dbf83d16b49847a2edabd2909ab9f151",
+     "elapsed_sec": 323.4,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0030026982219428463,
+       "unmeasured_4way_l1": 0.0025598084784012724,
+       "raw_joint_tvd": 0.25950188492676596,
+       "binned_joint_tvd": 0.25950188492676596,
+       "raw_unique_states": 2957,
+       "raw_support_overlap": 1428
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy_a16",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1100319.5,
+     "final_loss": 1098511.5,
+     "final_table_measured_l1": 0.001838406325150037,
+     "best_loss": 921969.5,
+     "best_table_measured_l1": 0.0017254237018157665,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1122217.22,
+     "final_table_sha256": "46e585473701a0efbb0ab628469ad0ee96329134888d6f3d0d35e0fd938fc528",
+     "elapsed_sec": 420.8,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.002180784024232689,
+       "unmeasured_4way_l1": 0.002003490221539168,
+       "raw_joint_tvd": 0.2491811383721649,
+       "binned_joint_tvd": 0.2491811383721649,
+       "raw_unique_states": 2710,
+       "raw_support_overlap": 1398
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 486918.5,
+     "final_loss": 476157.0,
+     "final_table_measured_l1": 0.000981158387993565,
+     "best_loss": 408369.5,
+     "best_table_measured_l1": 0.0009140479445157772,
+     "donor_top_share_max": 0.02107409925220938,
+     "row_max_prob_mean_final": 0.037785112857818604,
+     "row_max_prob_max_overall": 0.9996745586395264,
+     "effective_donors_mean_final": 1520.66748046875,
+     "tail_mean_pre_proposal_loss": 556354.05,
+     "final_table_sha256": "a225aee8dae4747c25f4c2378160682a4bf7e7a8fea63993b66e70747c3fe5d4",
+     "elapsed_sec": 453.3,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.001463016328141612,
+       "unmeasured_4way_l1": 0.001657290703857665,
+       "raw_joint_tvd": 0.25097336382176627,
+       "binned_joint_tvd": 0.25097336382176627,
+       "raw_unique_states": 2112,
+       "raw_support_overlap": 1286
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 596843.5,
+     "final_loss": 596843.5,
+     "final_table_measured_l1": 0.0013821540921225737,
+     "best_loss": 596843.5,
+     "best_table_measured_l1": 0.0013821540921225737,
+     "donor_top_share_max": 0.05055311785427353,
+     "row_max_prob_mean_final": 0.02029954455792904,
+     "row_max_prob_max_overall": 0.9995518326759338,
+     "effective_donors_mean_final": 826.0618286132812,
+     "tail_mean_pre_proposal_loss": 596843.5,
+     "final_table_sha256": "ca637bc99bb984ef27d187a615c2ccaed5a53bbe2a295c95c5b9b46e145fa9da",
+     "elapsed_sec": 244.7,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.001768398228991082,
+       "unmeasured_4way_l1": 0.0017279669684496335,
+       "raw_joint_tvd": 0.24881033310673015,
+       "binned_joint_tvd": 0.24881033310673015,
+       "raw_unique_states": 2670,
+       "raw_support_overlap": 1304
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3320751.5,
+     "final_loss": 3297417.5,
+     "final_table_measured_l1": 0.003445723055141509,
+     "best_loss": 3297417.5,
+     "best_table_measured_l1": 0.003445723055141509,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 3543056.5,
+     "final_table_sha256": "28e959a11322283a6ea87dcf9905609fb4578bfda6f3f41430d77ac63e3c9089",
+     "elapsed_sec": 429.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0038552005750760593,
+       "unmeasured_4way_l1": 0.0032074061220900107,
+       "raw_joint_tvd": 0.2811321920771275,
+       "binned_joint_tvd": 0.2811321920771275,
+       "raw_unique_states": 3045,
+       "raw_support_overlap": 1430
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2058888.0,
+     "final_loss": 2056036.5,
+     "final_table_measured_l1": 0.002753133400188588,
+     "best_loss": 2056036.5,
+     "best_table_measured_l1": 0.002753133400188588,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 2203282.23,
+     "final_table_sha256": "bd3b072d9b60500bc94c6bfd30c740b0ff007e333dc76ff7352e6ebbab31b4ec",
+     "elapsed_sec": 325.4,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0030944470740438532,
+       "unmeasured_4way_l1": 0.002637450075417445,
+       "raw_joint_tvd": 0.2650639639082875,
+       "binned_joint_tvd": 0.2650639639082875,
+       "raw_unique_states": 2990,
+       "raw_support_overlap": 1446
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy_a16",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1176217.0,
+     "final_loss": 1197115.5,
+     "final_table_measured_l1": 0.0019259524234494878,
+     "best_loss": 993458.0,
+     "best_table_measured_l1": 0.0017717897947797212,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1192598.585,
+     "final_table_sha256": "251a874b95f07ebe3fd1aa0a8ab2e30df2ac5da5e66fbcf7065089dccb9c5c1d",
+     "elapsed_sec": 420.4,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0022502983008755896,
+       "unmeasured_4way_l1": 0.0020683089853722075,
+       "raw_joint_tvd": 0.24485507694209258,
+       "binned_joint_tvd": 0.24485507694209258,
+       "raw_unique_states": 2751,
+       "raw_support_overlap": 1421
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 536670.5,
+     "final_loss": 545774.5,
+     "final_table_measured_l1": 0.0010702479647538667,
+     "best_loss": 409036.0,
+     "best_table_measured_l1": 0.0009174435971296487,
+     "donor_top_share_max": 0.01742784747543415,
+     "row_max_prob_mean_final": 0.024973144754767418,
+     "row_max_prob_max_overall": 0.9995852112770081,
+     "effective_donors_mean_final": 1944.6461181640625,
+     "tail_mean_pre_proposal_loss": 578417.295,
+     "final_table_sha256": "efbea91af5d01aa47eae9b6be6aad77d41580e2b93a137fd8b1920ce751be836",
+     "elapsed_sec": 454.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0015393383821017412,
+       "unmeasured_4way_l1": 0.0016333725757587078,
+       "raw_joint_tvd": 0.25474321735368644,
+       "binned_joint_tvd": 0.25474321735368644,
+       "raw_unique_states": 2139,
+       "raw_support_overlap": 1288
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 683318.0,
+     "final_loss": 683318.0,
+     "final_table_measured_l1": 0.0014372871427441602,
+     "best_loss": 683318.0,
+     "best_table_measured_l1": 0.0014372871427441602,
+     "donor_top_share_max": 0.02416414313083246,
+     "row_max_prob_mean_final": 0.020231978967785835,
+     "row_max_prob_max_overall": 0.9998619556427002,
+     "effective_donors_mean_final": 948.4835205078125,
+     "tail_mean_pre_proposal_loss": 683318.0,
+     "final_table_sha256": "4ad6ac68ae60cdd5a79497082573ffaa6367efdb6bd5157bb6a27f59d3dac6e6",
+     "elapsed_sec": 243.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0017995172661315357,
+       "unmeasured_4way_l1": 0.0017113961836939403,
+       "raw_joint_tvd": 0.25950188492676607,
+       "binned_joint_tvd": 0.25950188492676607,
+       "raw_unique_states": 2706,
+       "raw_support_overlap": 1293
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3485045.0,
+     "final_loss": 3457333.0,
+     "final_table_measured_l1": 0.0035490126337416367,
+     "best_loss": 3457333.0,
+     "best_table_measured_l1": 0.0035490126337416367,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 3647718.17,
+     "final_table_sha256": "69be7ef6fb702758505bfd866e635a56f59c6390b68be50f34ce731c84625399",
+     "elapsed_sec": 428.6,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.003975523354907638,
+       "unmeasured_4way_l1": 0.0033127902009615125,
+       "raw_joint_tvd": 0.2837278289351709,
+       "binned_joint_tvd": 0.2837278289351709,
+       "raw_unique_states": 3052,
+       "raw_support_overlap": 1437
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 2043473.5,
+     "final_loss": 2043473.5,
+     "final_table_measured_l1": 0.0028012899281671297,
+     "best_loss": 2043473.5,
+     "best_table_measured_l1": 0.0028012899281671297,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 2234698.805,
+     "final_table_sha256": "7ec151a97b80b94e5a3af51fb4f3c5cfa6356609adefaa020be4359579bfae6e",
+     "elapsed_sec": 331.7,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0031301410624548303,
+       "unmeasured_4way_l1": 0.002642717581534713,
+       "raw_joint_tvd": 0.2666707867251715,
+       "binned_joint_tvd": 0.2666707867251715,
+       "raw_unique_states": 3017,
+       "raw_support_overlap": 1455
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy_a16",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1102898.5,
+     "final_loss": 1109466.5,
+     "final_table_measured_l1": 0.0018409993689642659,
+     "best_loss": 972525.5,
+     "best_table_measured_l1": 0.0017391297905481207,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1122496.935,
+     "final_table_sha256": "13fe4b13365d1f4e414fe8592405531f058c3eedc926ca883ae284eb308db719",
+     "elapsed_sec": 421.8,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.002152772206555833,
+       "unmeasured_4way_l1": 0.0019853913931072325,
+       "raw_joint_tvd": 0.25041715592361413,
+       "binned_joint_tvd": 0.25041715592361413,
+       "raw_unique_states": 2688,
+       "raw_support_overlap": 1406
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 481366.0,
+     "final_loss": 467813.5,
+     "final_table_measured_l1": 0.0009168879448837424,
+     "best_loss": 407900.5,
+     "best_table_measured_l1": 0.0008940444636631522,
+     "donor_top_share_max": 0.027624992274890302,
+     "row_max_prob_mean_final": 0.0277900118380785,
+     "row_max_prob_max_overall": 0.9996605515480042,
+     "effective_donors_mean_final": 1730.9508056640625,
+     "tail_mean_pre_proposal_loss": 548713.065,
+     "final_table_sha256": "c464830447130da2d986afa592162d76d9095042cc8f2776d011fb2b24acaabd",
+     "elapsed_sec": 453.1,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0013683788549312308,
+       "unmeasured_4way_l1": 0.0015387994058966184,
+       "raw_joint_tvd": 0.25054075767875905,
+       "binned_joint_tvd": 0.25054075767875905,
+       "raw_unique_states": 2147,
+       "raw_support_overlap": 1277
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 624669.5,
+     "final_loss": 624669.5,
+     "final_table_measured_l1": 0.0014532775795985733,
+     "best_loss": 624669.5,
+     "best_table_measured_l1": 0.0014532775795985733,
+     "donor_top_share_max": 0.021753908905506457,
+     "row_max_prob_mean_final": 0.026459824293851852,
+     "row_max_prob_max_overall": 0.9996605515480042,
+     "effective_donors_mean_final": 752.6763305664062,
+     "tail_mean_pre_proposal_loss": 624669.5,
+     "final_table_sha256": "847b1ad9a263199693ab68ce571f4a13c4c3842bee1af1df688012b082fc046d",
+     "elapsed_sec": 244.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0017308617687373687,
+       "unmeasured_4way_l1": 0.0016551981329343665,
+       "raw_joint_tvd": 0.2533835980470923,
+       "binned_joint_tvd": 0.2533835980470923,
+       "raw_unique_states": 2760,
+       "raw_support_overlap": 1294
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3059194.5,
+     "final_loss": 3065489.5,
+     "final_table_measured_l1": 0.0033889230477822034,
+     "best_loss": 3042740.5,
+     "best_table_measured_l1": 0.0033791682639096273,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 3282176.325,
+     "final_table_sha256": "70ca30ce6703bd9227b76c33f28537c683c1b7b699c8f9143320d8893a06ad30",
+     "elapsed_sec": 432.2,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0038375877933929524,
+       "unmeasured_4way_l1": 0.0031904490818494904,
+       "raw_joint_tvd": 0.2775477411779247,
+       "binned_joint_tvd": 0.2775477411779247,
+       "raw_unique_states": 3084,
+       "raw_support_overlap": 1457
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1857804.0,
+     "final_loss": 1857804.0,
+     "final_table_measured_l1": 0.0026392246897778077,
+     "best_loss": 1857804.0,
+     "best_table_measured_l1": 0.0026392246897778077,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1992697.465,
+     "final_table_sha256": "c86e153af8df7d6579ebaa3e4a4c63945be4693cd8ba24faee18aca9a9fa3948",
+     "elapsed_sec": 332.0,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0029849136844099927,
+       "unmeasured_4way_l1": 0.002503788699403927,
+       "raw_joint_tvd": 0.2573388542117298,
+       "binned_joint_tvd": 0.2573388542117298,
+       "raw_unique_states": 2973,
+       "raw_support_overlap": 1465
+      }
+     }
+    },
+    {
+     "dataset": "nltcs",
+     "arm": "no_gate_legacy_a16",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 1142337.0,
+     "final_loss": 1153534.0,
+     "final_table_measured_l1": 0.001892551549556679,
+     "best_loss": 999376.5,
+     "best_table_measured_l1": 0.0017750619691167249,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 1183176.22,
+     "final_table_sha256": "e9ff7ac7fe516e8d5e9e1157d85006749bd453e8ad90d7979f74b02a80e9b9a8",
+     "elapsed_sec": 453.9,
+     "offline": {
+      "train": {
+       "unmeasured_3way_l1": 0.0022071719684210317,
+       "unmeasured_4way_l1": 0.0019932183723822064,
+       "raw_joint_tvd": 0.2535071998022372,
+       "binned_joint_tvd": 0.2535071998022372,
+       "raw_unique_states": 2732,
+       "raw_support_overlap": 1394
+      }
+     }
+    }
+   ],
+   "judgment": {
+    "arm_means": {
+     "no_gate_si": 0.0010096077829839648,
+     "gate_si": 0.001398774268189014,
+     "no_gate_legacy": 0.003466664970898331,
+     "gate_legacy": 0.0027275363533938403,
+     "no_gate_legacy_a16": 0.0018734247644698171
+    },
+    "mechanism": {
+     "ratio": 0.29123315678305683,
+     "threshold": 0.6,
+     "passed": true,
+     "no_gate_si_wins": 5
+    },
+    "standardization_attribution": {
+     "ratio": 0.5389102365526196,
+     "threshold": 0.9,
+     "min_wins": 4,
+     "wins": 5,
+     "passed": true
+    },
+    "gate_redundancy": {
+     "ratio": 0.7217803515152584,
+     "threshold": 1.1,
+     "passed": true
+    },
+    "quality": {
+     "train.unmeasured_3way_l1": {
+      "no_gate_si": 0.0014749549211158172,
+      "gate_legacy": 0.003076453306657672,
+      "relative_change": -0.5205664529593523,
+      "flagged": false
+     },
+     "train.unmeasured_4way_l1": {
+      "no_gate_si": 0.001638253826391148,
+      "gate_legacy": 0.0026037210580038593,
+      "relative_change": -0.3708028663995544,
+      "flagged": false
+     },
+     "train.binned_joint_tvd": {
+      "no_gate_si": 0.25377912366355604,
+      "gate_legacy": 0.2625301279278166,
+      "relative_change": -0.033333333333333375,
+      "flagged": false
+     },
+     "train.raw_unique_states": {
+      "no_gate_si": 2120.4,
+      "gate_legacy": 2988.8,
+      "observational": true
+     }
+    },
+    "any_quality_risk": false,
+    "classification": "supports_scale_invariant_selection"
+   }
+  },
+  "test_300x10": {
+   "reference_sha256": {
+    "reference": "c211133455c4fdd19f01f34eca511cf089667452d038265897eec15b5b84baeb"
+   },
+   "initial_state": {
+    "measured_l1_mean": 0.017666666666666667,
+    "measured_l1_by_seed": {
+     "100": 0.019266666666666668,
+     "101": 0.017733333333333334,
+     "102": 0.0156,
+     "103": 0.015933333333333334,
+     "104": 0.0198
+    },
+    "loss_by_seed": {
+     "100": 2556.5,
+     "101": 2272.0,
+     "102": 1834.0,
+     "103": 1855.5,
+     "104": 2501.5
+    },
+    "note": "n_rounds=0 的 marginal 初始化状态（种子相关）"
+   },
+   "runs": [
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 44.0,
+     "final_loss": 41.5,
+     "final_table_measured_l1": 0.003,
+     "best_loss": 19.5,
+     "best_table_measured_l1": 0.0019333333333333331,
+     "donor_top_share_max": 0.24333333333333335,
+     "row_max_prob_mean_final": 0.6008708980301094,
+     "row_max_prob_max_overall": 0.9999999813220014,
+     "effective_donors_mean_final": 3.583888344289127,
+     "tail_mean_pre_proposal_loss": 42.455,
+     "final_table_sha256": "6d2f352cc1df3b48e14377d1175994fadfe6f0e06d00f538dacf928d13b962c2",
+     "elapsed_sec": 54.5,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.013116214610968124,
+       "unmeasured_4way_l1": 0.005916803503010398,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9833333333333334,
+       "raw_unique_states": 255,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_si",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 6.5,
+     "final_loss": 6.5,
+     "final_table_measured_l1": 0.0008666666666666667,
+     "best_loss": 6.5,
+     "best_table_measured_l1": 0.0008666666666666667,
+     "donor_top_share_max": 0.24,
+     "row_max_prob_mean_final": 0.5117159935282536,
+     "row_max_prob_max_overall": 0.9999999720568394,
+     "effective_donors_mean_final": 4.593541994726157,
+     "tail_mean_pre_proposal_loss": 6.8,
+     "final_table_sha256": "9c4bbf65828e3b7f4b9940a15808958072d84bd32496189be4e374d909c4157f",
+     "elapsed_sec": 26.8,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.010892892496535338,
+       "unmeasured_4way_l1": 0.005296989600437876,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9833333333333334,
+       "raw_unique_states": 263,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 174.5,
+     "final_loss": 173.5,
+     "final_table_measured_l1": 0.0066,
+     "best_loss": 89.5,
+     "best_table_measured_l1": 0.005,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 208.41,
+     "final_table_sha256": "059380054cfe656f8e810b24ba8f43f3439e09cc3b6d04a556a6de6d03cacc8a",
+     "elapsed_sec": 60.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.010739127565498581,
+       "unmeasured_4way_l1": 0.00515008210180624,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9866666666666668,
+       "raw_unique_states": 286,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_legacy",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 10.0,
+     "final_loss": 10.0,
+     "final_table_measured_l1": 0.0010666666666666667,
+     "best_loss": 10.0,
+     "best_table_measured_l1": 0.0010666666666666667,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 10.26,
+     "final_table_sha256": "0d34e5bfd44a9c5c940673c7ee051ab67385e8d428b5b559ce1af6b1f0270e9d",
+     "elapsed_sec": 29.3,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.009849534745594931,
+       "unmeasured_4way_l1": 0.004871154898741105,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9833333333333334,
+       "raw_unique_states": 295,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy_a16",
+     "seed": 100,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 37.0,
+     "final_loss": 37.0,
+     "final_table_measured_l1": 0.0031999999999999997,
+     "best_loss": 25.0,
+     "best_table_measured_l1": 0.002533333333333333,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 52.265,
+     "final_table_sha256": "e2542f2860d9c9a536908a9dc6111ff0af7ba445196ab36479871061862fd2da",
+     "elapsed_sec": 57.5,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.011907873028443212,
+       "unmeasured_4way_l1": 0.005573289545703339,
+       "raw_joint_tvd": 0.9966666666666667,
+       "binned_joint_tvd": 0.9800000000000001,
+       "raw_unique_states": 261,
+       "raw_support_overlap": 1
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 32.0,
+     "final_loss": 32.0,
+     "final_table_measured_l1": 0.0028,
+     "best_loss": 16.0,
+     "best_table_measured_l1": 0.0018666666666666669,
+     "donor_top_share_max": 0.26666666666666666,
+     "row_max_prob_mean_final": 0.48343267480950913,
+     "row_max_prob_max_overall": 0.9999999477705109,
+     "effective_donors_mean_final": 4.975883050395252,
+     "tail_mean_pre_proposal_loss": 38.79,
+     "final_table_sha256": "d154d54bfc8c7ab8b98c0f1c0b780fea2dbdf84791413069bf2683f03dc8ac22",
+     "elapsed_sec": 55.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.014869002837721901,
+       "unmeasured_4way_l1": 0.006501368363437328,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9800000000000001,
+       "raw_unique_states": 233,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_si",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 7.0,
+     "final_loss": 7.0,
+     "final_table_measured_l1": 0.0007999999999999999,
+     "best_loss": 7.0,
+     "best_table_measured_l1": 0.0007999999999999999,
+     "donor_top_share_max": 0.23,
+     "row_max_prob_mean_final": 0.6346375857537706,
+     "row_max_prob_max_overall": 0.9999988211203543,
+     "effective_donors_mean_final": 3.2001033793155087,
+     "tail_mean_pre_proposal_loss": 7.0,
+     "final_table_sha256": "49217b7baedddadd4196fb1153ad208e9ee9fb4937d1988c49fe121bb8542566",
+     "elapsed_sec": 27.6,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01071273015244506,
+       "unmeasured_4way_l1": 0.005240503557744937,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.98,
+       "raw_unique_states": 263,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 141.5,
+     "final_loss": 141.5,
+     "final_table_measured_l1": 0.006333333333333333,
+     "best_loss": 77.0,
+     "best_table_measured_l1": 0.004266666666666667,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 131.625,
+     "final_table_sha256": "4f8010c23be68398ad26e3f46ed7ca4dac1a793c7d692347e273ceef302ad4b6",
+     "elapsed_sec": 60.4,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.011101432059658153,
+       "unmeasured_4way_l1": 0.005290202517788724,
+       "raw_joint_tvd": 0.9966666666666667,
+       "binned_joint_tvd": 0.99,
+       "raw_unique_states": 290,
+       "raw_support_overlap": 1
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_legacy",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 11.5,
+     "final_loss": 11.5,
+     "final_table_measured_l1": 0.0014,
+     "best_loss": 11.5,
+     "best_table_measured_l1": 0.0014,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 11.5,
+     "final_table_sha256": "dcbaefc94ac912b7a64802f14f8f1f16487de8fc9d92814098e8da367121312e",
+     "elapsed_sec": 29.3,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.009584900679733386,
+       "unmeasured_4way_l1": 0.004765626710454297,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9766666666666668,
+       "raw_unique_states": 294,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy_a16",
+     "seed": 101,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 61.5,
+     "final_loss": 61.5,
+     "final_table_measured_l1": 0.004066666666666666,
+     "best_loss": 35.0,
+     "best_table_measured_l1": 0.002666666666666667,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 61.06,
+     "final_table_sha256": "1b90fd34866c8e39f08a427e62df71976499b7c5e6e3c4ec0927f19c72304ea3",
+     "elapsed_sec": 56.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.011804263182208143,
+       "unmeasured_4way_l1": 0.005487246852764094,
+       "raw_joint_tvd": 0.9966666666666667,
+       "binned_joint_tvd": 0.9766666666666668,
+       "raw_unique_states": 266,
+       "raw_support_overlap": 1
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 34.0,
+     "final_loss": 35.0,
+     "final_table_measured_l1": 0.0029333333333333334,
+     "best_loss": 18.0,
+     "best_table_measured_l1": 0.0017333333333333335,
+     "donor_top_share_max": 0.26,
+     "row_max_prob_mean_final": 0.5581555377746045,
+     "row_max_prob_max_overall": 0.9999998403947582,
+     "effective_donors_mean_final": 4.187737801318466,
+     "tail_mean_pre_proposal_loss": 39.38,
+     "final_table_sha256": "85fee5d3f5d51761f1b97046a98ecf0900918a50240395c36e196cdb7e66020a",
+     "elapsed_sec": 55.4,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01236190853296377,
+       "unmeasured_4way_l1": 0.0057162561576354675,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9766666666666667,
+       "raw_unique_states": 261,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_si",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 6.5,
+     "final_loss": 6.5,
+     "final_table_measured_l1": 0.0006,
+     "best_loss": 6.5,
+     "best_table_measured_l1": 0.0006,
+     "donor_top_share_max": 0.21333333333333335,
+     "row_max_prob_mean_final": 0.5085769311969943,
+     "row_max_prob_max_overall": 0.9999994409081421,
+     "effective_donors_mean_final": 4.754225843043208,
+     "tail_mean_pre_proposal_loss": 6.52,
+     "final_table_sha256": "8757a25cb687f86241948fb859f64919b3bc13e3d2872eabbc667d4239e1d851",
+     "elapsed_sec": 27.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01031610902131591,
+       "unmeasured_4way_l1": 0.005108045977011494,
+       "raw_joint_tvd": 0.9966666666666668,
+       "binned_joint_tvd": 0.99,
+       "raw_unique_states": 252,
+       "raw_support_overlap": 1
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 123.0,
+     "final_loss": 125.0,
+     "final_table_measured_l1": 0.0054666666666666665,
+     "best_loss": 60.5,
+     "best_table_measured_l1": 0.0042,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 121.755,
+     "final_table_sha256": "7ae651966f86c993fc42e3ea2a62c55e0dd56c737a8802cd0b0e3e836dc19597",
+     "elapsed_sec": 59.4,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.0106058206295783,
+       "unmeasured_4way_l1": 0.005076518883415435,
+       "raw_joint_tvd": 1.0000000000000002,
+       "binned_joint_tvd": 0.9866666666666668,
+       "raw_unique_states": 281,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_legacy",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 14.0,
+     "final_loss": 14.0,
+     "final_table_measured_l1": 0.0013333333333333335,
+     "best_loss": 14.0,
+     "best_table_measured_l1": 0.0013333333333333335,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 14.0,
+     "final_table_sha256": "acd7d8fc573068f45f5efcbee0bb73f8a78902328d678c70a95eb1104aaf7a64",
+     "elapsed_sec": 27.4,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.010199300468554082,
+       "unmeasured_4way_l1": 0.004936179529282977,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9900000000000001,
+       "raw_unique_states": 287,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy_a16",
+     "seed": 102,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 60.5,
+     "final_loss": 60.5,
+     "final_table_measured_l1": 0.0035333333333333336,
+     "best_loss": 30.0,
+     "best_table_measured_l1": 0.002666666666666667,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 69.775,
+     "final_table_sha256": "3a15cd7abed2157cadb503b9996fd944be3cc8c816d617ee85d1c519b0df627b",
+     "elapsed_sec": 57.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.0119111727050749,
+       "unmeasured_4way_l1": 0.005531910235358511,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9700000000000002,
+       "raw_unique_states": 268,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 30.0,
+     "final_loss": 30.0,
+     "final_table_measured_l1": 0.0028,
+     "best_loss": 16.5,
+     "best_table_measured_l1": 0.0018000000000000002,
+     "donor_top_share_max": 0.2866666666666667,
+     "row_max_prob_mean_final": 0.5751167317272474,
+     "row_max_prob_max_overall": 0.9999998696310788,
+     "effective_donors_mean_final": 3.912677441970797,
+     "tail_mean_pre_proposal_loss": 30.0,
+     "final_table_sha256": "05dfdcb5d84b9ae4f3da1f5ea50dc3402512209b994bbc5ba30426a1b6189deb",
+     "elapsed_sec": 56.0,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.012353329373721376,
+       "unmeasured_4way_l1": 0.00581784345922277,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9800000000000001,
+       "raw_unique_states": 236,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_si",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3.5,
+     "final_loss": 3.5,
+     "final_table_measured_l1": 0.0004666666666666667,
+     "best_loss": 3.5,
+     "best_table_measured_l1": 0.0004666666666666667,
+     "donor_top_share_max": 0.2966666666666667,
+     "row_max_prob_mean_final": 0.4716956118772783,
+     "row_max_prob_max_overall": 0.9999977519608488,
+     "effective_donors_mean_final": 4.976527495154593,
+     "tail_mean_pre_proposal_loss": 3.85,
+     "final_table_sha256": "06fe4280c295809d1ab394eb9dedde92b2d19b2be3b93b60a45e2c19ffcb6d90",
+     "elapsed_sec": 26.3,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01085593611826041,
+       "unmeasured_4way_l1": 0.005236781609195403,
+       "raw_joint_tvd": 1.0000000000000002,
+       "binned_joint_tvd": 0.9633333333333335,
+       "raw_unique_states": 266,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 112.0,
+     "final_loss": 109.5,
+     "final_table_measured_l1": 0.0051333333333333335,
+     "best_loss": 67.0,
+     "best_table_measured_l1": 0.004266666666666667,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 107.335,
+     "final_table_sha256": "37225b2600589bb708f38871e941655c7e1c316ab2c6d14861026744aec2e527",
+     "elapsed_sec": 60.5,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.010561604962713654,
+       "unmeasured_4way_l1": 0.00504696223316913,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9900000000000001,
+       "raw_unique_states": 284,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_legacy",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 10.5,
+     "final_loss": 10.5,
+     "final_table_measured_l1": 0.0012666666666666666,
+     "best_loss": 10.5,
+     "best_table_measured_l1": 0.0012666666666666666,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 11.955,
+     "final_table_sha256": "7c0a08bdf036ab56caf7968ebe70dfc3f6a9048c22bb3e8e59f80f84cfe66106",
+     "elapsed_sec": 28.6,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.00899359862733452,
+       "unmeasured_4way_l1": 0.004518883415435139,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9800000000000001,
+       "raw_unique_states": 295,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy_a16",
+     "seed": 103,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 65.5,
+     "final_loss": 58.0,
+     "final_table_measured_l1": 0.0037333333333333337,
+     "best_loss": 26.0,
+     "best_table_measured_l1": 0.002533333333333333,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 50.55,
+     "final_table_sha256": "941d517ab2b1bb2a290a4cf2f556b52dff28211ef7c39115b3b00d47acbb7d68",
+     "elapsed_sec": 56.9,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.012042499835016169,
+       "unmeasured_4way_l1": 0.005497318007662835,
+       "raw_joint_tvd": 0.9933333333333335,
+       "binned_joint_tvd": 0.9766666666666668,
+       "raw_unique_states": 268,
+       "raw_support_overlap": 2
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 40.5,
+     "final_loss": 38.0,
+     "final_table_measured_l1": 0.0031999999999999997,
+     "best_loss": 16.5,
+     "best_table_measured_l1": 0.0019333333333333331,
+     "donor_top_share_max": 0.2966666666666667,
+     "row_max_prob_mean_final": 0.5566748330260617,
+     "row_max_prob_max_overall": 0.9999999796137427,
+     "effective_donors_mean_final": 3.9472408780592243,
+     "tail_mean_pre_proposal_loss": 35.95,
+     "final_table_sha256": "e38a45658f84d97ce1733d96fbc834191c9058458d9311653838a5836653aeee",
+     "elapsed_sec": 55.7,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01289117666468686,
+       "unmeasured_4way_l1": 0.005960591133004925,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9933333333333334,
+       "raw_unique_states": 233,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_si",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 3.5,
+     "final_loss": 3.5,
+     "final_table_measured_l1": 0.0004666666666666667,
+     "best_loss": 3.5,
+     "best_table_measured_l1": 0.0004666666666666667,
+     "donor_top_share_max": 0.2966666666666667,
+     "row_max_prob_mean_final": 0.5088567768938408,
+     "row_max_prob_max_overall": 0.9999999463199465,
+     "effective_donors_mean_final": 4.760086874603662,
+     "tail_mean_pre_proposal_loss": 3.875,
+     "final_table_sha256": "4438f5626e092bee2fcd63474fb6580f79c02c46475b49a06f0f40eca18bd5f9",
+     "elapsed_sec": 29.2,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01144129875272223,
+       "unmeasured_4way_l1": 0.005484181718664477,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9733333333333334,
+       "raw_unique_states": 247,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 132.0,
+     "final_loss": 133.0,
+     "final_table_measured_l1": 0.0061333333333333335,
+     "best_loss": 68.5,
+     "best_table_measured_l1": 0.0042,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 103.53,
+     "final_table_sha256": "7b94c0e17cdd3a710a12d99535eca901433b631f9792abf90201a13b9711c723",
+     "elapsed_sec": 59.8,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.010590642117072526,
+       "unmeasured_4way_l1": 0.005006020799124248,
+       "raw_joint_tvd": 0.9966666666666667,
+       "binned_joint_tvd": 0.9800000000000001,
+       "raw_unique_states": 283,
+       "raw_support_overlap": 1
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "gate_legacy",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 16.5,
+     "final_loss": 16.5,
+     "final_table_measured_l1": 0.0016666666666666668,
+     "best_loss": 16.5,
+     "best_table_measured_l1": 0.0016666666666666668,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 17.145,
+     "final_table_sha256": "9fd80fb83c051101c849e63782aa0df3444cffef2b1257440948e096d8363dcf",
+     "elapsed_sec": 28.8,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.009706328779779581,
+       "unmeasured_4way_l1": 0.004800218938149972,
+       "raw_joint_tvd": 1.0,
+       "binned_joint_tvd": 0.9833333333333334,
+       "raw_unique_states": 290,
+       "raw_support_overlap": 0
+      }
+     }
+    },
+    {
+     "dataset": "test_300x10",
+     "arm": "no_gate_legacy_a16",
+     "seed": 104,
+     "rounds_run": 2000,
+     "candidate_evaluations": 2000,
+     "pre_final_proposal_loss": 78.5,
+     "final_loss": 72.0,
+     "final_table_measured_l1": 0.0041333333333333335,
+     "best_loss": 36.5,
+     "best_table_measured_l1": 0.003,
+     "donor_top_share_max": null,
+     "row_max_prob_mean_final": null,
+     "row_max_prob_max_overall": null,
+     "effective_donors_mean_final": null,
+     "tail_mean_pre_proposal_loss": 80.76,
+     "final_table_sha256": "6913c38861d50e3079311010a6b1c64c9af5424dbd936237aafcda4a5883c2ce",
+     "elapsed_sec": 57.8,
+     "offline": {
+      "reference": {
+       "unmeasured_3way_l1": 0.01181152247079786,
+       "unmeasured_4way_l1": 0.005544170771756979,
+       "raw_joint_tvd": 0.9966666666666668,
+       "binned_joint_tvd": 0.9866666666666668,
+       "raw_unique_states": 269,
+       "raw_support_overlap": 1
+      }
+     }
+    }
+   ],
+   "judgment": {
+    "arm_means": {
+     "no_gate_si": 0.0029466666666666664,
+     "gate_si": 0.00064,
+     "no_gate_legacy": 0.005933333333333334,
+     "gate_legacy": 0.0013466666666666666,
+     "no_gate_legacy_a16": 0.0037333333333333337
+    },
+    "mechanism": {
+     "ratio": 0.496629213483146,
+     "threshold": 0.6,
+     "passed": true,
+     "no_gate_si_wins": 5
+    },
+    "standardization_attribution": {
+     "ratio": 0.7892857142857141,
+     "threshold": 0.9,
+     "min_wins": 4,
+     "wins": 5,
+     "passed": true
+    },
+    "gate_redundancy": {
+     "ratio": 4.604166666666666,
+     "threshold": 1.1,
+     "passed": false
+    },
+    "quality": {
+     "reference.unmeasured_3way_l1": {
+      "no_gate_si": 0.013118326404012406,
+      "gate_legacy": 0.009666732660199299,
+      "relative_change": 0.3570589841616605,
+      "flagged": true
+     },
+     "reference.unmeasured_4way_l1": {
+      "no_gate_si": 0.005982572523262178,
+      "gate_legacy": 0.0047784126984126984,
+      "relative_change": 0.2519999633454597,
+      "flagged": true
+     },
+     "reference.binned_joint_tvd": {
+      "no_gate_si": 0.9826666666666666,
+      "gate_legacy": 0.9826666666666668,
+      "relative_change": -2.259612668843602e-16,
+      "flagged": false
+     },
+     "reference.raw_unique_states": {
+      "no_gate_si": 243.6,
+      "gate_legacy": 292.2,
+      "observational": true
+     }
+    },
+    "any_quality_risk": true,
+    "classification": "mechanism_gain_gate_not_redundant"
+   }
+  }
+ }
+}
