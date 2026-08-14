@@ -170,7 +170,8 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 正式、拒绝覆盖、参考表生成后读取、全输入 SHA-256、原生
 initial_state、tail 改名、tol="inf"）、标准化归因参与最终分类、
 逐行集中度诊断（row_max_prob/有效 donor 数）、v1/v2 归档非正式。
-专项 21+5 项，全套 918 通过。
+本次隔离复核：尺度不变相关 26 项、rho 退火 23 项；全套 898 passed、
+7 skipped（905 collected）。
 
 **v3 正式结果**（三次预注册 Issue #44 评论 5288095498，五臂、种子
 100..104、formal=true）：nltcs **supports_scale_invariant_selection**
@@ -189,8 +190,8 @@ mechanism_gain_gate_not_redundant（门仍强+高阶风险，如实）。
 第一轮审查（PR #48）指出五处实现/协议问题，全部修复：低信号保护
 `scale_invariant_min_spread`（放大倍数有界、低离散度平滑退化均匀）、
 exclude_self 行统计只在非自身候选上计算（numpy/torch 同步）、donor
-集中度监控（dev 实测 top_share 峰值 2.2% 无坍缩）、best_loss 改用主
-循环值、nltcs 离线参考限定 train（一次实验一份源数据）、formal 标志
+全局 top_share 监控（当时的"无坍缩"判断已由 v3 逐行诊断撤回）、
+best_loss 改用主循环值、nltcs 离线参考限定 train（一次实验一份源数据）、formal 标志
 校验协议参数、any_quality_risk 纳入分类、单变量归因臂
 no_gate_legacy_a16。专项测试 18 项，全套 906 通过。
 

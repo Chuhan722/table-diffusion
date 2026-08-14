@@ -58,6 +58,9 @@ def test_allow_dirty_forces_informal_even_with_formal_params(
 def test_clean_tree_formal_params_is_formal(
     formal_module, monkeypatch, tmp_path
 ):
+    assert formal_module.OUTPUT_PATH.name == (
+        "formal_scale_invariant_v3_5seed_2000round.json"
+    )
     payload = _run_main(
         formal_module, monkeypatch, tmp_path,
         argv=[], dirty=False,

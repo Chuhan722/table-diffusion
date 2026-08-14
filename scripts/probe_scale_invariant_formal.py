@@ -42,11 +42,11 @@ v2 修订（第一轮审查后；v1 输出归档 *.prefix_legacy.json）：
 3. 质量风险带：train 未测量 3/4-way 与分箱 TVD 相对 gate_legacy 劣化
    >5% 报警；报警时 supports 降级为 supports_with_quality_risk；支持集
    唯一状态数与 donor 集中度为观察指标。
-分类：判定 1+2 均过且无风险 = supports_scale_invariant_selection（1b
-另行独立报告，不并入分类）；1+2 过但有风险 = supports_with_quality_risk；
-仅 1 过 = mechanism_gain_gate_not_redundant；仅 2 过 =
-gate_redundant_no_gain；均不过 = not_supported。test_300x10 辅助独立
-判定，不合并结论。
+分类：判定 1+1b+2 均过 = supports_scale_invariant_selection；判定 1+2
+过但 1b 不过 = supports_combined_config_only；仅 1 过 =
+mechanism_gain_gate_not_redundant；仅 2 过 = gate_redundant_no_gain；均不
+过 = not_supported。supports 分类遇质量风险时追加 _with_quality_risk；
+test_300x10 辅助独立判定，不合并结论。
 
 种子 100..104；2000 轮；生成只读公开输入，参考表仅在全部生成完成后
 离线读取。
@@ -146,7 +146,7 @@ ARMS = {
 
 OUTPUT_PATH = Path(
     "outputs/gate_free_self_cooling/"
-    f"formal_scale_invariant_v2_{len(FORMAL_SEEDS)}seed_{FORMAL_ROUNDS}round"
+    f"formal_scale_invariant_v3_{len(FORMAL_SEEDS)}seed_{FORMAL_ROUNDS}round"
     ".json"
 )
 
@@ -504,7 +504,7 @@ def _judge(runs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--datasets", nargs="+", choices=sorted(DATASETS), 
+        "--datasets", nargs="+", choices=sorted(DATASETS),
         default=sorted(DATASETS),
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=FORMAL_SEEDS)
