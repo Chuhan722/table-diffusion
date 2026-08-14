@@ -14,7 +14,10 @@ from typing import Literal, Optional, Sequence
 
 import numpy as np
 
-from scripts import compare_factorized_gibbs_unfiltered as trajectory
+if __package__:
+    from scripts import compare_factorized_gibbs_unfiltered as trajectory
+else:
+    import compare_factorized_gibbs_unfiltered as trajectory
 from table_diffevo.experiment_parallel import run_ordered_process_tasks
 
 
