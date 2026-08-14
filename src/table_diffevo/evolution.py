@@ -41,6 +41,7 @@ import pandas as pd
 from table_diffevo.schema import Schema
 from table_diffevo.queries import evaluate_table
 from table_diffevo.objective import compute_residual, compute_loss
+from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
@@ -93,6 +94,28 @@ def _table_sha256(frame: pd.DataFrame) -> str:
     """返回合成表 CSV 表示的摘要，只用于复现诊断。"""
     serialized = frame.to_csv(index=False).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+def _current_state_metrics(
+    target: np.ndarray,
+    current: np.ndarray,
+    n_records: int,
+    squared_loss: float,
+    *,
+    state_index: int,
+    round_index: int,
+    phase: str,
+) -> Dict[str, Any]:
+    """构造一个不消费 RNG/查询评价的 current-state 观测点。"""
+    return {
+        "state_index": int(state_index),
+        "round": int(round_index),
+        "phase": phase,
+        "current_normalized_l1": compute_normalized_l1(
+            target, current, n_records
+        ),
+        "current_squared_loss": float(squared_loss),
+    }
 
 
 def _factorized_gibbs_seed(seed: int) -> int:
@@ -346,6 +369,12 @@ def run_evolution(
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
         - best_loss: float，最优 loss
+        - current_state_metrics_history: List[dict]，初始 current state 与
+          每个实际轮后 current state 的 normalized L1/平方 loss。每项
+          显式记录 state_index、round 和 phase；在 proposal 前提前停止
+          时不伪造重复状态
+        - final_current_normalized_l1/final_current_squared_loss:
+          最终 current table 的两个权威终态指标
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
@@ -763,6 +792,17 @@ def run_evolution(
     state_evaluation_count += 1
     best_S = S.copy()
     best_loss = initial_loss
+    current_state_metrics_history: List[Dict[str, Any]] = [
+        _current_state_metrics(
+            target,
+            initial_q,
+            n_records,
+            initial_loss,
+            state_index=0,
+            round_index=0,
+            phase="initial",
+        )
+    ]
 
     for t in range(n_rounds):
         rounds_run = t + 1
@@ -1177,6 +1217,19 @@ def run_evolution(
             attempt_factorized_gibbs_diagnostics
         )
 
+        post_round_q = proposal_q if accepted else q
+        current_state_metrics_history.append(
+            _current_state_metrics(
+                target,
+                post_round_q,
+                n_records,
+                current_loss,
+                state_index=len(current_state_metrics_history),
+                round_index=t + 1,
+                phase="post_round",
+            )
+        )
+
         if accepted:
             # S 已替换为 proposal，旧表对应的所有缓存立即失效。显式删除本地距离
             # 引用，避免下一轮计算新矩阵时旧矩阵仍占一份设备内存。
@@ -1223,10 +1276,25 @@ def run_evolution(
     normalized_l1_median = float(np.median(per_query_nl1))
     normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
     normalized_l1_max = float(np.max(per_query_nl1))
+    final_current_metrics = current_state_metrics_history[-1]
 
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
+        "best_loss_diagnostic_only": best_loss,
+        "normalized_l1_at_best_squared_loss_diagnostic_only": (
+            normalized_l1_error
+        ),
+        "current_state_metrics_history": current_state_metrics_history,
+        "current_state_transition_count": (
+            len(current_state_metrics_history) - 1
+        ),
+        "final_current_normalized_l1": final_current_metrics[
+            "current_normalized_l1"
+        ],
+        "final_current_squared_loss": final_current_metrics[
+            "current_squared_loss"
+        ],
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "accept_history": accept_history,
