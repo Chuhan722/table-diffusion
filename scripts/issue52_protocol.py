@@ -37,6 +37,33 @@ FORMAL_STAGE_A_STATE_LIBRARY_PROTOCOL_SHA256 = (
 FORMAL_STAGE_A_STATE_LIBRARY_SCIENTIFIC_SHA256 = (
     "bd18e9691427a2023af7dfad9bcc7fbdb5c2ce882a2a8a84a8a1ca4fd6dd2462"
 )
+FORMAL_STAGE_A_MIXING_ARTIFACT_SHA256 = {
+    "report": (
+        "52654a455d42a0899194878789aa4690"
+        "b3527c5482a6e4c2d5475b59df835b09"
+    ),
+    "audit": (
+        "6b4b76af01dc2ed3b267f8047e8edefe"
+        "f84e5fc1049d7aa5974af6ab8286a741"
+    ),
+}
+FORMAL_STAGE_A_MIXING_PROTOCOL_SHA256 = (
+    "e0259b1c614aa49ed79f4d7dec61829ae0b46233e77a14e127b39af93c62e17d"
+)
+FORMAL_STAGE_A_MIXING_SCIENTIFIC_SHA256 = (
+    "56d5a470a891e99c985503514d7092e385805d1b6900cb46e1da4995fb0c2e0d"
+)
+FORMAL_STAGE_A_MIXING_SELECTION = {
+    "minimal_sufficient_sweeps": {
+        "tau_1": 8,
+        "tau_2": 8,
+        "tau_3": 16,
+        "tau_4": None,
+        "tau_5": None,
+    },
+    "qualified_temperatures": [1.0, 2.0, 3.0],
+    "unqualified_temperatures": [4.0, 5.0],
+}
 
 STAGE_A_EVALUATION_TEMPERATURES = INDEPENDENT_TEMPERATURES
 STAGE_A_CANDIDATE_SWEEPS = (8, 16, 32)
@@ -247,5 +274,103 @@ def stage_a_mixing_protocol(mode):
         ),
         "worker_count_is_nonscientific": True,
         "max_workers_allowed": MAX_WORKERS,
+        "input_sha256": dict(EXPECTED_INPUT_SHA256),
+    }
+
+
+def stage_b_protocol(mode):
+    """Freeze the Stage B factor long-horizon comparison and selection."""
+    stage_t = stage_t_protocol(mode)
+    if mode not in MODE_CONFIG:
+        raise ValueError("mode 必须是 smoke 或 formal")
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "issue": 52,
+        "stage": "B_factor_long_horizon",
+        "mode": mode,
+        "dataset": DATASET,
+        "stage_t_report_format": "issue52_stage_t_report_v1",
+        "stage_t_audit_format": "issue52_stage_t_audit_v1",
+        "expected_stage_t_artifact_sha256": (
+            dict(FORMAL_STAGE_T_ARTIFACT_SHA256)
+            if mode == "formal" else None
+        ),
+        "stage_a_report_format": "issue52_stage_a_mixing_report_v1",
+        "stage_a_audit_format": "issue52_stage_a_mixing_audit_v1",
+        "expected_stage_a_artifact_sha256": (
+            dict(FORMAL_STAGE_A_MIXING_ARTIFACT_SHA256)
+            if mode == "formal" else None
+        ),
+        "expected_stage_a_protocol_sha256": (
+            FORMAL_STAGE_A_MIXING_PROTOCOL_SHA256
+            if mode == "formal" else None
+        ),
+        "expected_stage_a_scientific_sha256": (
+            FORMAL_STAGE_A_MIXING_SCIENTIFIC_SHA256
+            if mode == "formal" else None
+        ),
+        "eligible_factor_source": (
+            "bound_stage_a_minimal_sufficient_sweeps"
+        ),
+        "expected_formal_stage_a_selection": (
+            {
+                "minimal_sufficient_sweeps": dict(
+                    FORMAL_STAGE_A_MIXING_SELECTION[
+                        "minimal_sufficient_sweeps"
+                    ]
+                ),
+                "qualified_temperatures": list(
+                    FORMAL_STAGE_A_MIXING_SELECTION[
+                        "qualified_temperatures"
+                    ]
+                ),
+                "unqualified_temperatures": list(
+                    FORMAL_STAGE_A_MIXING_SELECTION[
+                        "unqualified_temperatures"
+                    ]
+                ),
+            }
+            if mode == "formal" else None
+        ),
+        "stage_b_seeds": list(stage_t["stage_t_seeds"]),
+        "rounds": stage_t["rounds"],
+        "trend_checkpoints": list(stage_t["trend_checkpoints"]),
+        "late_window_size": stage_t["late_window_size"],
+        "primary_metric": stage_t["primary_metric"],
+        "clear_descent_relative_threshold": (
+            CLEAR_DESCENT_RELATIVE_THRESHOLD
+        ),
+        "clear_descent_is_diagnostic_only": True,
+        "factor_builder": "compiled_batch",
+        "factor_builder_changes_science": False,
+        "i_star_source": "bound_stage_t_late_mean_ranking",
+        "expected_formal_i_star": (
+            "independent_tau_5" if mode == "formal" else None
+        ),
+        "g_star_rule": (
+            "lowest factor late-window current-loss mean; exact ties use "
+            "fewer sweeps then lower tau"
+        ),
+        "candidate_gate": (
+            "G* point estimate must be lower than both the same-tau "
+            "independent and I*; otherwise no_factor_candidate"
+        ),
+        "ranking_tie_breakers": [
+            "late_window_current_loss_mean",
+            "fewer_sweeps",
+            "lower_temperature",
+        ],
+        "no_reselection": True,
+        "rho": RHO,
+        "eta": ETA,
+        "trajectory_mu": TRAJECTORY_MU,
+        "logit_clip": LOGIT_CLIP,
+        "device": DEVICE,
+        "max_workers_allowed": MAX_WORKERS,
+        "worker_count_is_nonscientific": True,
+        "current_state_primary": True,
+        "generation_acceptance": False,
+        "best_state_diagnostic_only": True,
+        "snapshots_disabled": True,
         "input_sha256": dict(EXPECTED_INPUT_SHA256),
     }

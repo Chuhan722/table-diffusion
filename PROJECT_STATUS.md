@@ -2,6 +2,86 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #52 Stage B 工具已确认，正式实验尚未启动（2026-08-14）
+
+> 本段取代下面“Stage A 正式完成、尚未实现 Stage B”的暂停点，记录将与 Stage B 工具作为
+> 同一个冻结提交。当前完成范围只有 runner、独立 auditor、真实全链路 smoke 和回归测试；
+> **本提交不包含任何正式3000轮 factor 结果，也不授权跳过 Issue 运行前记录。**
+
+本轮新增：
+
+```text
+scripts/run_issue52_stage_b.py
+scripts/audit_issue52_stage_b.py
+tests/test_issue52_stage_b.py
+scripts/issue52_protocol.py 中的 Stage B 冻结协议与正式上游哈希
+```
+
+Stage B 正式输入和判定已按 Issue #52 正文落成代码：
+
+1. Stage T report/audit 与 Stage A report/audit 都按文件 SHA、格式、协议、审计状态和科学哈希
+   绑定；正式模式只接受既有正式产物。Stage A 的正式 report 很大，runner/auditor 通过已冻结
+   文件 SHA 和小型独立 audit 读取 selection，不重复把335MB raw proposal 全量载入内存。
+2. factor 配置不手写重新选择，而是从 Stage A 已审计的 `minimal_sufficient_sweeps` 推导。正式
+   集合严格为 `tau=1,s8`、`tau=2,s8`、`tau=3,s16`；tau=4/5 不运行。
+3. 只运行 factor 轨迹；同 tau independent 与 I* 都直接复用已审计 Stage T 的
+   seeds `200..209` 原始轨迹，不重复计算 independent。正式 horizon、检查点和主指标仍是
+   3000 rounds、每500轮检查、rounds 2501..3000 current-loss mean。
+4. I* 从绑定的 Stage T late-mean 排名重算，正式固定得到 `independent_tau_5`。G* 在合格
+   factor 中先按 late mean，精确并列再按 sweeps 少、tau 小排序。
+5. 只有 G* 点估计同时低于同 tau independent 与 I* 才输出
+   `factor_candidate_selected` 并允许 Stage C；否则固定为 `no_factor_candidate`。Stage B 不提前
+   加入胜率或置信区间，也不递补第二名；这些更严格条件仍只属于 Stage C。
+6. factor 长轨迹使用已验证等价、速度更合适的 `compiled_batch` 构造路径和 NumPy/CPU，最多
+   8 workers；每条轨迹继续检查相同初态、主 RNG 终点、方向固定尺度、独立/factor 条件数值、
+   完整轮数和表/RNG 哈希。worker 数只影响墙钟时间。
+7. 独立 auditor 不导入 Stage B runner；它重新绑定两个上游、推导配置、重算 factor 趋势与
+   聚合、逐 seed 的同 tau/I* 配对、I*/G* 和最终停止状态，并核验 trajectory scientific SHA。
+
+真实 smoke 串起了 Stage T → 状态库 → Stage A → Stage B。smoke 的 Stage A 因样本极小只给出
+`tau=1,s8` 与 `tau=2,s16` 两个管线配置，因此 Stage B 正确只执行2条 factor 轨迹（seed 9903、
+12 rounds），没有重新运行5条 independent。1 worker 与2 workers 的全部非计时科学字段完全
+一致：
+
+```text
+trajectory scientific SHA = 76a5c8f7a0e3ab71663f843115333fd5574d0d9e783aaf99d1ae469314d84620
+all identity gates = true
+audit passed = true
+runner/audit formal_result_valid = false
+```
+
+smoke 判定分支临时得到：
+
+```text
+I* = independent tau=5，late mean=1697.25
+G* = factor tau=2,s16，late mean=1383.50
+vs same-tau independent tau=2：-409.00
+vs I*：-313.75
+status = factor_candidate_selected
+```
+
+这些数只有1 seed、12 rounds，而且 factor 配置本身也来自每状态2 proposals 的 smoke Stage A；
+它们只证明配置派生、配对和选择分支能工作，**不是任何正式效果证据，也不能预告正式 G***。
+两条 smoke factor 轨迹的独立方向与 Gibbs 条件总 clip hits 均为0。
+
+专项和回归：
+
+```text
+Stage B 新专项：6 passed
+Issue #52 全链路：33 passed
+全仓库：966 passed, 7 skipped
+ruff / py_compile / git diff --check：通过
+```
+
+测试覆盖正式协议与四个冻结产物哈希、只运行 Stage A 合格 factor、I* 复算、G* 的 late
+mean/sweeps/tau 排序、双点估计门槛、无递补、串并行等价、不可覆盖，以及轨迹 history、配对、
+selection 和上游 SHA 篡改拒绝。
+
+用户已经检查并确认本阶段设计与 smoke。冻结顺序必须保持为：本节与工具同一 commit 推送，随后
+在 Issue #52 发布绑定该 commit、四个上游哈希和正式命令的运行前记录；只有记录发布成功且再次
+明确继续后，才可启动 formal Stage B。当前不得运行正式3000轮、Stage C、nltcs、GPU 或新增
+tau/sweeps。
+
 ### 最新暂停点：Issue #52 Stage A 混合资格正式完成并审计通过（2026-08-14）
 
 > 本段取代下面“实现与 smoke 已确认”的暂停点。Stage A 已严格按结果前冻结记录完成；
