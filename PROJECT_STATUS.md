@@ -2,6 +2,74 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #52 Stage A 混合资格正式完成并审计通过（2026-08-14）
+
+> 本段取代下面“实现与 smoke 已确认”的暂停点。Stage A 已严格按结果前冻结记录完成；
+> 尚未实现或运行 Stage B。下一步只能先设计并审查 Stage B 工具，不能直接启动3000轮 factor
+> 轨迹。
+
+冻结与结果身份：
+
+```text
+tool commit = 5d25864c9845b1bba67ffb87ae5b7e1bd92c6073
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289850550
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289918247
+mode = formal
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 444.02 s
+audit elapsed = 18.26 s
+```
+
+正式实验读取已审计的48状态库（16组、每组3 seeds），每状态每 attempt 200 proposals；
+共实际执行10个 attempt、480个 state-attempts、96,000个 raw state-proposal bundles。严格按每个
+tau 的 `8→16→32` 序列运行，首次全部组通过即停，32失败即不合格。结果：
+
+| tau | 实际执行 | 决定处最差组 TVD | 决定处最差 gap recovery | 资格 |
+|---:|---|---:|---:|---|
+| 1 | 8 | 0.003855 | 99.266% | qualified，最小8 |
+| 2 | 8 | 0.031897 | 96.611% | qualified，最小8 |
+| 3 | 8→16 | 0.042889 | 96.373% | qualified，最小16 |
+| 4 | 8→16→32 | 0.050535 | 95.923% | 32上限仍不合格 |
+| 5 | 8→16→32 | 0.061061 | 95.172% | 32上限仍不合格 |
+
+因此 Stage B 的 factor 资格集合已经冻结为：
+
+```text
+factor tau=1, sweeps=8
+factor tau=2, sweeps=8
+factor tau=3, sweeps=16
+```
+
+tau=4/5 的失败都只来自 `initial` 状态组的 TVD；gap recovery 已通过，其他15个中晚期组
+全部通过。tau=4,s32 的未舍入值为 `0.0505347729 > 0.05`，虽然只超出
+`0.00053477`，仍必须按冻结规则判失败；不得四舍五入改判、追加64/128或放宽门槛。tau=5,s32
+为 `0.0610613188`。tau=3 的 initial TVD 从8 sweep 的 `0.057311` 降至16 sweep 的
+`0.042889`，所以16是首次充分值。
+
+数值与实现门禁全部通过：最大因子能量误差 `1.11e-16`、one-hot误差 `5.55e-17`；
+tau=1..5 最大原始 `abs(logit)` 为 `5.695/11.391/17.086/22.781/28.477`，全部低于
+clip=30且总 clip hits=0。production/exact replay 共核验283,950次、22,741,632微步，
+mismatch=0；同一 tau 的不同 sweeps 的共享条件/tape hash 均唯一且一致。独立 auditor 重新计算
+proposal summary、16组 TVD/recovery、停止序列和 selection，全部一致。
+
+产物与哈希：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_a_mixing_formal_5d25864_20260814
+protocol SHA：e0259b1c614aa49ed79f4d7dec61829ae0b46233e77a14e127b39af93c62e17d
+execution scientific SHA：56d5a470a891e99c985503514d7092e385805d1b6900cb46e1da4995fb0c2e0d
+report SHA：52654a455d42a0899194878789aa4690b3527c5482a6e4c2d5475b59df835b09
+audit SHA：6b4b76af01dc2ed3b267f8047e8edefef84e5fc1049d7aa5974af6ab8286a741
+report size：335,058,715 bytes
+```
+
+结论边界：Stage A 只决定混合资格，不比较外层3000轮效果、不选择 G*，也不说明 independent
+tau=4/5 无效。下一步若继续，应先实现 Stage B：只运行上述三个合格 factor 配置，复用
+seeds 200..209、3000 rounds、Stage T 检查点和主指标，再与同 tau independent 及 Stage T 的
+I* 比较。Stage B 的 runner/auditor、结果前冻结记录和正式输出目前都不存在。
+
 ### 最新暂停点：Issue #52 Stage A 混合资格实现与 smoke 已确认（2026-08-14）
 
 本轮先把 `origin/master`（含 PR #48）合入研究分支，merge commit 为
