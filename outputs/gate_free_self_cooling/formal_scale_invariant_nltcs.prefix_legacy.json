@@ -77,7 +77,7 @@
   ],
   "started_at": "2026-08-13T02:11:21.128875+08:00"
  },
- "formal": true,
+ "formal": false,
  "datasets": {
   "nltcs": {
    "runs": [
@@ -2272,5 +2272,9 @@
   "regenerated_tables_sha256_verified": true,
   "git_commit": "ff072a0d383cacf83a2ec6723bc5f2cd581f033c",
   "reevaluated_at": "2026-08-13T13:46:01.185295+08:00"
+ },
+ "informal_superseded": {
+  "reason": "v1：exclude_self 统计含自身 + 无低信号保护 + 含已撤回的 test 评价口径，被 v2/v3 依次取代",
+  "superseded_by": "formal_scale_invariant_v3_5seed_2000round.json"
  }
 }

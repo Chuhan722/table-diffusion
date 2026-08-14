@@ -348,6 +348,13 @@ def compute_sampling_probs(
                 row_std = log_A.std(axis=1, keepdims=True)
             denom = np.maximum(row_std, scale_invariant_min_spread)
             logits = alpha * (log_A - row_mean) / denom
+            if exclude_self:
+                # NaN 漏洞修复（第二轮审查意见 1）：自身条目必须在 softmax
+                # 前以 -inf 移出支撑。否则自身分数占优时（标准化放大后
+                # logit 差可超过 float 下溢阈），其余合法 donor 概率全部
+                # 下溢为 0，事后清零自身再归一化就是 0/0 → NaN。前置
+                # -inf 与"softmax 后清零重归一化"在不下溢时数学等价。
+                logits[idx, idx] = -np.inf
         else:
             logits = alpha * log_A  # (N, K)
 
@@ -496,6 +503,12 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
                 row_std = log_A.std(dim=1, keepdim=True, unbiased=False)
             denom = torch.clamp(row_std, min=scale_invariant_min_spread)
             logits = alpha * (log_A - row_mean) / denom
+            if exclude_self:
+                # NaN 漏洞修复（第二轮审查意见 1）：softmax 前置 -inf，
+                # 语义与 numpy 路径一致（防自身占优时其余 donor 全下溢）。
+                n_rows = logits.shape[0]
+                eye_idx = torch.arange(n_rows, device=logits.device)
+                logits[eye_idx, eye_idx] = float("-inf")
         else:
             logits = alpha * log_A  # (N, K)
 

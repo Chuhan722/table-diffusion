@@ -698,6 +698,9 @@ def run_evolution(
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
     donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
+    row_max_prob_mean_history: List[float] = []  # 逐行最大概率均值（每轮）
+    row_max_prob_max_history: List[float] = []  # 逐行最大概率最大值（每轮）
+    effective_donors_mean_history: List[float] = []  # exp(行熵)均值（每轮）
     copy_direction_mean_history: List[Optional[float]] = []
     copy_direction_positive_rate_history: List[Optional[float]] = []
     copy_direction_negative_rate_history: List[Optional[float]] = []
@@ -876,11 +879,35 @@ def run_evolution(
             scale_invariant_min_spread=selection_scale_invariant_min_spread,
         )
         donor_idx = sample_donors(probs, rng, device=device)
+        # 逐行选择集中度诊断（第二轮审查意见 4）：全局 top share 不能
+        # 判断单行 softmax 是否接近确定性——即使每行都以 99.9% 概率选
+        # 各自不同的 donor，全局 top share 仍可能很低。补充逐行最大
+        # 概率与概率熵（有效 donor 数 = exp(熵)），在设备上归约成标量
+        # 后回传。只在尺度不变选择启用时记录。
+        if selection_scale_invariant:
+            if use_torch:
+                import torch
+                row_max = probs.max(dim=1).values
+                safe = torch.clamp(probs, min=1e-30)
+                row_entropy = -(probs * torch.log(safe)).sum(dim=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(torch.exp(row_entropy).mean())
+                )
+            else:
+                row_max = probs.max(axis=1)
+                safe = np.clip(probs, 1e-30, None)
+                row_entropy = -(probs * np.log(safe)).sum(axis=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(np.exp(row_entropy).mean())
+                )
         # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
         del probs
         donors = S.iloc[donor_idx].reset_index(drop=True)
-        # 选择集中度监控（第三轮审查）：被选最多的 donor 占比。只在尺度
-        # 不变选择启用时记录（高锐度下的同质化风险监控）。
+        # 全局集中度（第三轮审查）：被选最多的 donor 占比。
         if selection_scale_invariant:
             donor_top_share_history.append(
                 float(np.bincount(donor_idx).max() / len(donor_idx))
@@ -1212,6 +1239,9 @@ def run_evolution(
         "accepted_rho_history": accepted_rho_history,
         "rho_schedule_history": rho_schedule_history,
         "donor_top_share_history": donor_top_share_history,
+        "row_max_prob_mean_history": row_max_prob_mean_history,
+        "row_max_prob_max_history": row_max_prob_max_history,
+        "effective_donors_mean_history": effective_donors_mean_history,
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history

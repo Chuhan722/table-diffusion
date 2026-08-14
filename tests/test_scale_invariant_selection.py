@@ -288,3 +288,63 @@ class TestThirdRoundReviewProtections:
         table = diag["final_table"]
         assert len(table) == 8
         assert list(table.columns) == schema.attribute_names()
+
+
+class TestSelfDominantNaNRegression:
+    """第二轮审查意见 1：自身占优时的 NaN 漏洞回归（双路径）。
+
+    场景：合法 donor 分数几乎相同（微小离散度），自身距离恒 0 使自身
+    分数在行内占优。标准化放大（alpha/min_spread 可达数千倍）后自身
+    logit 与其余 donor 的差可超过 float 下溢阈：若 softmax 仍含自身，
+    其余概率全部下溢为 0，事后清零自身再归一化即 0/0 → NaN。
+    """
+
+    @staticmethod
+    def _self_dominant_inputs(n=6):
+        rng = np.random.default_rng(5)
+        # 非自身相似度几乎相同（微小噪声），自身距离 0 → 分数极端占优
+        distances = np.full((n, n), 0.85) + rng.uniform(
+            -1e-6, 1e-6, size=(n, n)
+        )
+        np.fill_diagonal(distances, 0.0)
+        return np.zeros(n), distances
+
+    @pytest.mark.parametrize("device", ["numpy", "cpu"])
+    def test_no_nan_and_valid_distribution(self, device):
+        if device == "cpu":
+            pytest.importorskip("torch")
+        fitness, distances = self._self_dominant_inputs()
+        probs = compute_sampling_probs(
+            fitness, distances, distance_mode="geometric",
+            lambda_param=LAMBDA, alpha=16.0, delta=DELTA, device=device,
+            scale_invariant=True, scale_invariant_min_spread=1e-3,
+            exclude_self=True,
+        )
+        probs = np.asarray(probs)
+        assert np.all(np.isfinite(probs)), "概率矩阵含 NaN/inf"
+        assert probs.sum(axis=1) == pytest.approx(np.ones(len(probs)))
+        assert np.diagonal(probs) == pytest.approx(np.zeros(len(probs)))
+        # 其余合法 donor 分数几乎相同 → 概率应接近均匀（1/(n-1)）
+        n = probs.shape[0]
+        off_diag = probs[~np.eye(n, dtype=bool)].reshape(n, n - 1)
+        assert off_diag == pytest.approx(
+            np.full_like(off_diag, 1.0 / (n - 1)), abs=1e-2
+        )
+
+    def test_numpy_torch_agree_on_self_dominant_case(self):
+        pytest.importorskip("torch")
+        fitness, distances = self._self_dominant_inputs()
+        kwargs = dict(
+            distance_mode="geometric", lambda_param=LAMBDA, alpha=16.0,
+            delta=DELTA, scale_invariant=True,
+            scale_invariant_min_spread=1e-3, exclude_self=True,
+        )
+        p_np = compute_sampling_probs(
+            fitness, distances, device="numpy", **kwargs)
+        p_t = compute_sampling_probs(
+            fitness, distances, device="cpu", **kwargs)
+        # 微小离散度（1e-6 级噪声）位于 float32 精度边缘，标准化放大了
+        # float32/float64 的表示差（docstring 已声明的已知精度差异）；
+        # 本测试断言的是双路径同为有限值且同接近均匀，容差放宽到 1e-3。
+        assert np.all(np.isfinite(np.asarray(p_t)))
+        assert p_np == pytest.approx(np.asarray(p_t), abs=1e-3)

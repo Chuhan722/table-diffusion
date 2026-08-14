@@ -1,7 +1,21 @@
 #!/usr/bin/env python
-"""尺度不变选择正式实验 v2（预注册协议修订版，Issue #44 机制迭代阶段二）。
+"""尺度不变选择正式实验 v3（预注册协议修订版，Issue #44 机制迭代阶段二）。
 
-v2 修订（第一轮审查后重新预注册；v1 输出归档 *.prefix_legacy.json）：
+v3 修订（第二轮审查后重新预注册；v1/v2 输出均归档为非正式历史）：
+- NaN 漏洞修复：scale_invariant+exclude_self 时对角 logit 在 softmax 前
+  置 -inf（自身占优时其余 donor 下溢 → 0/0 → NaN，双路径回归测试）；
+- 证据链对齐 #45/#47：--allow-dirty 无条件 formal=false、输出存在拒绝
+  覆盖、参考表只在生成结束后读取（生成前只用 queries record_count 元
+  信息校验）、记录 schema/queries/marginals/参考表 SHA-256、原生输出
+  initial_state、tail_mean_pre_proposal_loss 口径改名、tol=inf 记录为
+  "inf" 字符串；
+- 标准化归因参与最终分类：supports_scale_invariant_selection 要求
+  attribution 通过，否则 supports_combined_config_only；质量风险改为
+  分类后缀 _with_quality_risk；
+- 逐行集中度诊断：row_max_prob（均值/最大）、有效 donor 数
+  exp(行熵)——全局 top share 不能判断单行确定性选择。
+
+v2 修订（第一轮审查后；v1 输出归档 *.prefix_legacy.json）：
 - 代码修复：exclude_self 行统计顺序（标准化统计只在非自身候选上计算）、
   低信号保护 min_spread（放大倍数有界、低离散度平滑退化均匀）；
 - 单变量归因臂 no_gate_legacy_a16（不标准化 + alpha≡16）：把"标准化
@@ -186,17 +200,43 @@ def _run_dataset(name, spec, seeds, rounds):
     target = np.asarray([q["result"] for q in queries], dtype=float)
     n_records = spec["n_records"]
     columns_check = schema.attribute_names()
-    # 源数据一致性校验（v2）：参考表行数必须等于 n_records（一次实验
-    # 一份源数据；行数不匹配的参考不允许进入协议）。
-    for ref_name, ref_path in spec["references"].items():
-        ref_frame = _load_reference(ref_path, columns_check)
-        if len(ref_frame) != n_records:
-            raise RuntimeError(
-                f"[{name}] 参考 {ref_name} 行数 {len(ref_frame)} 与"
-                f" n_records {n_records} 不一致，违反源数据规则"
-            )
-        if list(ref_frame.columns) != columns_check:
-            raise RuntimeError(f"[{name}] 参考 {ref_name} 列名不一致")
+    # 源数据一致性校验（v3）：生成前只允许用公开元信息——查询文件顶层
+    # record_count 必须与 n_records 一致（真实参考表在全部生成结束后才
+    # 读取并二次校验，不得提前打开，见第二轮审查意见 2）。
+    with open(spec["queries"], "r", encoding="utf-8") as handle:
+        query_meta = json.load(handle)
+    meta_count = query_meta.get("record_count")
+    if meta_count is not None and int(meta_count) != n_records:
+        raise RuntimeError(
+            f"[{name}] queries record_count {meta_count} 与 n_records "
+            f"{n_records} 不一致，违反源数据规则"
+        )
+    # initial_state 原生输出（只依赖公开输入的 n_rounds=0 状态；
+    # scripts/audit_formal_json.py 可独立复验）。
+    init_l1_by_seed = {}
+    init_loss_by_seed = {}
+    for seed in seeds:
+        _, diag0 = run_evolution(
+            target=target, queries=queries, schema=schema,
+            n_records=n_records, n_rounds=0, seed=seed,
+            marginals=marginals, log_every=-1, device=spec["device"],
+            return_final_table=True,
+            **SHARED_PARAMS, **next(iter(ARMS.values())),
+        )
+        table0 = diag0.pop("final_table")
+        q0 = evaluate_table(table0, queries)
+        init_loss_by_seed[str(seed)] = float(compute_loss(q0, target))
+        init_l1_by_seed[str(seed)] = float(
+            compute_normalized_l1(q0, target, n_records=n_records)
+        )
+    initial_state = {
+        "measured_l1_mean": float(
+            np.mean(list(init_l1_by_seed.values()))
+        ),
+        "measured_l1_by_seed": init_l1_by_seed,
+        "loss_by_seed": init_loss_by_seed,
+        "note": "n_rounds=0 的 marginal 初始化状态（种子相关）",
+    }
     runs = []
     tables = {}
     for seed in seeds:
@@ -247,7 +287,24 @@ def _run_dataset(name, spec, seeds, rounds):
                     float(max(diag["donor_top_share_history"]))
                     if diag.get("donor_top_share_history") else None
                 ),
-                "tail_mean_loss": float(np.mean(losses[-100:])),
+                # 逐行集中度诊断（第二轮审查意见 4）：全局 top share 不能
+                # 判断单行 softmax 是否接近确定性。
+                "row_max_prob_mean_final": (
+                    float(diag["row_max_prob_mean_history"][-1])
+                    if diag.get("row_max_prob_mean_history") else None
+                ),
+                "row_max_prob_max_overall": (
+                    float(max(diag["row_max_prob_max_history"]))
+                    if diag.get("row_max_prob_max_history") else None
+                ),
+                "effective_donors_mean_final": (
+                    float(diag["effective_donors_mean_history"][-1])
+                    if diag.get("effective_donors_mean_history") else None
+                ),
+                # 口径注记：loss_history 为 round-start/pre-proposal 状态窗口。
+                "tail_mean_pre_proposal_loss": float(
+                    np.mean(losses[-100:])
+                ),
                 "final_table_sha256": _frame_sha256(final_table),
                 "elapsed_sec": round(elapsed, 1),
             })
@@ -266,6 +323,15 @@ def _run_dataset(name, spec, seeds, rounds):
         ref_name: _load_reference(path, columns)
         for ref_name, path in spec["references"].items()
     }
+    # 参考表形状二次校验（离线阶段，生成已全部结束）。
+    for ref_name, reference in references.items():
+        if len(reference) != n_records:
+            raise RuntimeError(
+                f"[{name}] 参考 {ref_name} 行数 {len(reference)} 与"
+                f" n_records {n_records} 不一致，违反源数据规则"
+            )
+        if list(reference.columns) != columns:
+            raise RuntimeError(f"[{name}] 参考 {ref_name} 列名不一致")
     for run in runs:
         table = tables[(run["seed"], run["arm"])]
         run["offline"] = {}
@@ -287,7 +353,11 @@ def _run_dataset(name, spec, seeds, rounds):
                     metrics["raw_joint"]["support_overlap"]
                 ),
             }
-    return runs
+    reference_sha256 = {
+        ref_name: _sha256_file(path)
+        for ref_name, path in spec["references"].items()
+    }
+    return runs, initial_state, reference_sha256
 
 
 def _arm_mean(runs, arm, metric):
@@ -381,19 +451,21 @@ def _judge(runs):
             "observational": True,
         }
 
-    # v2：质量风险纳入分类——两判定过但有风险时降级，避免"结论支持、
-    # 同时质量报警"的矛盾表述。
-    if mechanism_passed and redundancy_passed:
-        if any_quality_risk:
-            classification = "supports_with_quality_risk"
-        else:
-            classification = "supports_scale_invariant_selection"
+    # v3：标准化归因参与最终分类（第二轮审查意见 3）——分类名要支持
+    # "尺度不变机制"，归因判定必须通过；机制+冗余过但归因不过时只能
+    # 宣称"组合配置有效"。质量风险仍触发降级后缀。
+    if mechanism_passed and redundancy_passed and attribution_passed:
+        classification = "supports_scale_invariant_selection"
+    elif mechanism_passed and redundancy_passed:
+        classification = "supports_combined_config_only"
     elif mechanism_passed:
         classification = "mechanism_gain_gate_not_redundant"
     elif redundancy_passed:
         classification = "gate_redundant_no_gain"
     else:
         classification = "not_supported"
+    if any_quality_risk and classification.startswith("supports"):
+        classification += "_with_quality_risk"
 
     return {
         "arm_means": {
@@ -409,7 +481,8 @@ def _judge(runs):
             "passed": mechanism_passed,
             "no_gate_si_wins": per_seed_wins,
         },
-        # 独立报告，不并入分类：隔离"标准化本身"vs"alpha 数值"的贡献。
+        # v3 起参与最终分类（supports_scale_invariant_selection 要求
+        # 归因通过）：隔离"标准化本身"vs"alpha 数值"的贡献。
         "standardization_attribution": {
             "ratio": attribution_ratio,
             "threshold": ATTRIBUTION_MAX_RATIO,
@@ -449,6 +522,10 @@ def main():
             print("工作树不干净（含未跟踪文件）。正式运行要求干净树；"
                   "调试可加 --allow-dirty（产物标记 formal=false）。")
             sys.exit(1)
+    out_path = Path(args.out)
+    if out_path.exists():
+        print(f"输出已存在，不覆盖：{out_path}")
+        sys.exit(1)
 
     # v2：formal 标志同时校验协议参数与预注册一致——种子、轮数、数据集
     # 任何偏离都强制 formal=false，防止非正式运行被误标记。
@@ -462,6 +539,13 @@ def main():
             f"datasets={sorted(args.datasets)} != {sorted(DATASETS)}"
         )
 
+    # --allow-dirty 无条件强制非正式（与 #45/#47 规范对齐）：脏树试跑
+    # 即使协议参数与预注册一致也不得标记为正式产物。
+    formal_flag = (
+        environment["git_worktree_clean_including_untracked"]
+        and not protocol_deviations
+        and not args.allow_dirty
+    )
     payload = {
         "protocol": {
             "hypothesis": (
@@ -473,7 +557,8 @@ def main():
             "frozen_si_alpha": FROZEN_SI_ALPHA,
             "arms": {
                 arm: {
-                    k: (None if isinstance(v, float) and np.isinf(v) else v)
+                    # tol=inf 显式记录为 "inf" 字符串（None 含义不清）。
+                    k: ("inf" if isinstance(v, float) and np.isinf(v) else v)
                     for k, v in extra.items()
                 }
                 for arm, extra in ARMS.items()
@@ -499,10 +584,14 @@ def main():
         },
         "environment": environment,
         "protocol_deviations": protocol_deviations,
-        "formal": (
-            environment["git_worktree_clean_including_untracked"]
-            and not protocol_deviations
-        ),
+        "formal": formal_flag,
+        "public_input_sha256": {
+            name: {
+                key: _sha256_file(DATASETS[name][key])
+                for key in ("schema", "queries", "marginals")
+            }
+            for name in args.datasets
+        },
         "datasets": {},
     }
     if protocol_deviations:
@@ -510,20 +599,23 @@ def main():
 
     for name in args.datasets:
         spec = DATASETS[name]
-        runs = _run_dataset(name, spec, args.seeds, args.rounds)
+        runs, initial_state, reference_sha256 = _run_dataset(
+            name, spec, args.seeds, args.rounds
+        )
         judgment = _judge(runs)
         payload["datasets"][name] = {
+            "reference_sha256": reference_sha256,
+            "initial_state": initial_state,
             "runs": runs,
             "judgment": judgment,
         }
         print(f"== {name}: {json.dumps(judgment, ensure_ascii=False, indent=1)}",
               flush=True)
 
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
-    print("output=" + str(out))
-    print("sha256=" + _sha256_file(out))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
+    print("output=" + str(out_path))
+    print("sha256=" + _sha256_file(out_path))
 
 
 if __name__ == "__main__":
