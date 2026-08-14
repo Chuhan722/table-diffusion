@@ -20,7 +20,8 @@ import numpy as np
 
 from table_diffevo.evolution import run_evolution
 from table_diffevo.marginals import load_marginals
-from table_diffevo.queries import load_queries
+from table_diffevo.objective import compute_loss
+from table_diffevo.queries import load_queries, evaluate_table
 from table_diffevo.schema import load_schema
 
 SCHEMA_PATH = Path("configs/test_300x10/schema.yaml")
@@ -77,13 +78,19 @@ def main():
             _, diag = run_evolution(
                 target=target, queries=queries, schema=schema, n_records=300,
                 n_rounds=args.rounds, seed=seed, marginals=marginals,
-                log_every=0, **SHARED_PARAMS, **extra,
+                log_every=0, return_final_table=True,
+                **SHARED_PARAMS, **extra,
             )
             losses = diag["loss_history"]
+            # 终态口径（第四轮审查）：loss_history[-1] 是最后一次 proposal
+            # 之前的状态；final_loss 必须从真实最终表重算。
+            final_table = diag.pop("final_table")
+            final_q = evaluate_table(final_table, queries)
             rows.append({
                 "seed": int(seed),
                 "arm": arm,
-                "final_loss": float(losses[-1]),
+                "final_loss": float(compute_loss(target, final_q)),
+                "pre_final_proposal_loss": float(losses[-1]),
                 "best_loss": float(diag["best_loss"]),
                 "tail_mean_loss": float(np.mean(losses[-args.tail:])),
                 "min_cooling_factor": float(

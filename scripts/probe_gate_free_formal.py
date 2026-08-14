@@ -31,7 +31,8 @@
   有门存在 +11%~17% 恶化与唯一状态数下降（复制搅动），正式运行将按上述
   质量判定如实分类，不因此调整门槛。
 - 隐私边界：生成阶段只读取公开 schema、查询、marginals 与公开记录数；真实
-  参考表（test_300x10.csv；nltcs train/test 划分）只在全部生成结束后离线评价。
+  参考表（test_300x10.csv；nltcs 只用 train——一次实验一份源数据）只在
+  全部生成结束后离线评价。
 
 正式运行要求工作树（含未跟踪文件）干净、输出拒绝覆盖，记录 commit、公开输入
 哈希与环境。
@@ -204,7 +205,11 @@ def _run_dataset(name, spec, seeds, rounds):
                 "drift_ratio": float(
                     final_loss / diag["best_loss"]
                 ) if diag["best_loss"] > 0 else 1.0,
-                "tail_mean_loss": float(np.mean(losses[-TAIL_WINDOW:])),
+                # 口径注记：loss_history 是每轮 round-start（最后一次 proposal 之前）
+                # 的状态，窗口不含末轮接受后的真实终态，故命名 pre_proposal。
+                "tail_mean_pre_proposal_loss": float(
+                    np.mean(losses[-TAIL_WINDOW:])
+                ),
                 "final_table_measured_l1": float(
                     compute_normalized_l1(target, final_q, n_records)
                 ),
