@@ -62,6 +62,12 @@ from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     evolve_step_factorized_gibbs,
 )
+from table_diffevo.stationarity import (
+    StationarityTrace,
+    build_stationarity_observation,
+    ordered_query_identity_sha256,
+    target_answer_identity_sha256,
+)
 
 
 def _self_cooling_factor(
@@ -198,6 +204,8 @@ def run_evolution(
         DEFAULT_DIRECTION_LOGIT_CLIP
     ),
     record_transition_clocks: bool = False,
+    record_stationarity_trace: bool = False,
+    stop_on_exact_residual: bool = True,
     horizon_invariant: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -384,6 +392,15 @@ def run_evolution(
     record_transition_clocks : bool, default False
         是否记录逐 attempt 参与行、实际改单元格、查询空间移动和逐轮状态/RNG
         哈希。只增加观测计算，不参与生成决策。
+    record_stationarity_trace : bool, default False
+        是否附加 Issue #53 Stage 2A current-state 轨迹对象。轨迹保存初态和每个
+        真实 post-round 的查询答案、多样性、实际状态运动、工作量和哈希；不重算
+        查询、不消费 RNG。该对象不是 JSON，调用方持久化前必须从 diagnostics
+        弹出。默认关闭以保持旧诊断和开销。
+    stop_on_exact_residual : bool, default True
+        是否保留历史 ``residual == 0`` 的 proposal 前早停。Stage 2 校准入口会
+        显式关闭，因为精确命中 measured target 不等于长期 current-state 稳定。
+        默认 True 保持 legacy 行为。
     horizon_invariant : bool, default False
         启用 Issue #53 fail-closed 门禁，拒绝与总预算耦合或持续变化的配置。
 
@@ -522,11 +539,15 @@ def run_evolution(
     residual_directed_diffusion = bool(residual_directed_diffusion)
     for value, name in (
         (record_transition_clocks, "record_transition_clocks"),
+        (record_stationarity_trace, "record_stationarity_trace"),
+        (stop_on_exact_residual, "stop_on_exact_residual"),
         (horizon_invariant, "horizon_invariant"),
     ):
         if not isinstance(value, (bool, np.bool_)):
             raise ValueError(f"{name} 必须是布尔值")
     record_transition_clocks = bool(record_transition_clocks)
+    record_stationarity_trace = bool(record_stationarity_trace)
+    stop_on_exact_residual = bool(stop_on_exact_residual)
     horizon_invariant = bool(horizon_invariant)
     if candidate_budget is not None:
         if isinstance(candidate_budget, bool) or not isinstance(candidate_budget, (int, np.integer)):
@@ -867,7 +888,9 @@ def run_evolution(
         S = init_synthetic_table(n_records, schema, rng)
         initialization_diagnostics = {"method": "random"}
     initial_table_sha256 = (
-        _table_sha256(S) if residual_directed_diffusion else None
+        _table_sha256(S)
+        if residual_directed_diffusion or record_stationarity_trace
+        else None
     )
     primary_rng_post_initialization_state_sha256 = _rng_state_sha256(rng)
 
@@ -903,9 +926,12 @@ def run_evolution(
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
     transition_clock_history: List[Dict[str, Any]] = []
+    stationarity_observations: List[Dict[str, Any]] = []
+    stationarity_query_answers: List[np.ndarray] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
+    termination_reason: Optional[str] = None
     stopped_early = False
     candidate_budget_exhausted = False
     rounds_run = 0
@@ -962,6 +988,41 @@ def run_evolution(
             phase="initial",
         )
     ]
+    if record_stationarity_trace:
+        stationarity_query_answers.append(
+            np.asarray(initial_q, dtype=float).copy()
+        )
+        stationarity_observations.append(
+            build_stationarity_observation(
+                frame=S,
+                target=target,
+                current_query_answers=initial_q,
+                n_records=n_records,
+                squared_loss=initial_loss,
+                state_index=0,
+                round_index=0,
+                phase="initial",
+                proposal_attempt_count=0,
+                proposal_accepted=False,
+                applied_attempt_index=0,
+                attempted_participating_row_count=0,
+                applied_participating_row_count=0,
+                actual_changed_row_count=0,
+                actual_changed_cell_count=0,
+                actual_changed_query_count=0,
+                normalized_query_l1_movement_mean=0.0,
+                gibbs_microstep_count_attempted=0,
+                gibbs_microstep_count_applied=0,
+                candidate_evaluation_count_cumulative=0,
+                current_table_sha256=initial_table_sha256,
+                primary_rng_state_sha256=(
+                    primary_rng_post_initialization_state_sha256
+                ),
+                factorized_gibbs_rng_state_sha256=(
+                    factorized_gibbs_initial_rng_state_sha256
+                ),
+            )
+        )
 
     for t in range(n_rounds):
         rounds_run = t + 1
@@ -1031,10 +1092,11 @@ def run_evolution(
         )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
-        if np.all(residual == 0):
+        if stop_on_exact_residual and np.all(residual == 0):
             if do_log:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
+            termination_reason = "exact_residual"
             # 达标的当前表即最优
             if loss < best_loss:
                 best_loss = loss
@@ -1055,6 +1117,7 @@ def run_evolution(
                 )
             stopped_early = True
             self_cooling_stopped = True
+            termination_reason = "self_cooling_ratio"
             break
 
         # 5-6. 距离 → 抽样概率 → 抽 donor
@@ -1340,7 +1403,7 @@ def run_evolution(
                     independent_transition_kwargs["direction_logit_clip"] = (
                         diffusion_direction_logit_clip
                     )
-                if record_transition_clocks:
+                if record_transition_clocks or record_stationarity_trace:
                     independent_transition_kwargs["return_diagnostics"] = True
                 independent_result = evolve_step(
                     S,
@@ -1352,7 +1415,7 @@ def run_evolution(
                     rng=rng,
                     **independent_transition_kwargs,
                 )
-                if record_transition_clocks:
+                if record_transition_clocks or record_stationarity_trace:
                     proposal, independent_diagnostics = independent_result
                 else:
                     proposal = independent_result
@@ -1368,7 +1431,7 @@ def run_evolution(
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
-            if record_transition_clocks:
+            if record_transition_clocks or record_stationarity_trace:
                 changed = (
                     proposal.reset_index(drop=True)
                     .ne(S.reset_index(drop=True))
@@ -1380,6 +1443,7 @@ def run_evolution(
                     else independent_diagnostics
                 )
                 query_l1_movement = float(np.abs(delta_q).sum())
+                changed_query_count = int(np.count_nonzero(delta_q))
                 attempt_transition_clocks.append({
                     "attempt": int(attempt + 1),
                     "participating_rows": int(
@@ -1391,6 +1455,10 @@ def run_evolution(
                     "normalized_query_l1_movement": float(
                         query_l1_movement / n_records
                     ),
+                    "normalized_query_l1_movement_mean": float(
+                        np.mean(np.abs(delta_q)) / n_records
+                    ),
+                    "changed_queries": changed_query_count,
                     "query_l2_squared_movement": float(
                         np.dot(delta_q, delta_q)
                     ),
@@ -1442,6 +1510,90 @@ def run_evolution(
                 phase="post_round",
             )
         )
+        post_current_table_sha256 = None
+        post_primary_rng_state_sha256 = None
+        post_factorized_gibbs_rng_state_sha256 = None
+        if record_transition_clocks or record_stationarity_trace:
+            post_current_table_sha256 = _table_sha256(S)
+            post_primary_rng_state_sha256 = _rng_state_sha256(rng)
+            post_factorized_gibbs_rng_state_sha256 = (
+                _rng_state_sha256(factorized_gibbs_rng)
+                if factorized_gibbs_rng is not None else None
+            )
+
+        if record_stationarity_trace:
+            attempted_participating_rows = sum(
+                row["participating_rows"]
+                for row in attempt_transition_clocks
+            )
+            attempted_gibbs_microsteps = sum(
+                row["gibbs_microsteps"]
+                for row in attempt_transition_clocks
+            )
+            applied_clock = (
+                attempt_transition_clocks[accepted_attempt - 1]
+                if accepted else None
+            )
+            stationarity_query_answers.append(
+                np.asarray(post_round_q, dtype=float).copy()
+            )
+            stationarity_observations.append(
+                build_stationarity_observation(
+                    frame=S,
+                    target=target,
+                    current_query_answers=post_round_q,
+                    n_records=n_records,
+                    squared_loss=current_loss,
+                    state_index=len(current_state_metrics_history) - 1,
+                    round_index=t + 1,
+                    phase="post_round",
+                    proposal_attempt_count=proposal_attempts,
+                    proposal_accepted=accepted,
+                    applied_attempt_index=accepted_attempt,
+                    attempted_participating_row_count=(
+                        attempted_participating_rows
+                    ),
+                    applied_participating_row_count=(
+                        applied_clock["participating_rows"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_row_count=(
+                        applied_clock["changed_rows"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_cell_count=(
+                        applied_clock["changed_cells"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_query_count=(
+                        applied_clock["changed_queries"]
+                        if applied_clock is not None else 0
+                    ),
+                    normalized_query_l1_movement_mean=(
+                        applied_clock[
+                            "normalized_query_l1_movement_mean"
+                        ]
+                        if applied_clock is not None else 0.0
+                    ),
+                    gibbs_microstep_count_attempted=(
+                        attempted_gibbs_microsteps
+                    ),
+                    gibbs_microstep_count_applied=(
+                        applied_clock["gibbs_microsteps"]
+                        if applied_clock is not None else 0
+                    ),
+                    candidate_evaluation_count_cumulative=(
+                        candidate_evaluation_count
+                    ),
+                    current_table_sha256=post_current_table_sha256,
+                    primary_rng_state_sha256=(
+                        post_primary_rng_state_sha256
+                    ),
+                    factorized_gibbs_rng_state_sha256=(
+                        post_factorized_gibbs_rng_state_sha256
+                    ),
+                )
+            )
         if record_transition_clocks:
             transition_clock_history.append({
                 "state_index": len(current_state_metrics_history) - 1,
@@ -1451,11 +1603,12 @@ def run_evolution(
                 "candidate_evaluation_count_cumulative": int(
                     candidate_evaluation_count
                 ),
-                "post_current_table_sha256": _table_sha256(S),
-                "primary_rng_state_sha256": _rng_state_sha256(rng),
+                "post_current_table_sha256": post_current_table_sha256,
+                "primary_rng_state_sha256": (
+                    post_primary_rng_state_sha256
+                ),
                 "factorized_gibbs_rng_state_sha256": (
-                    _rng_state_sha256(factorized_gibbs_rng)
-                    if factorized_gibbs_rng is not None else None
+                    post_factorized_gibbs_rng_state_sha256
                 ),
             })
 
@@ -1482,10 +1635,14 @@ def run_evolution(
 
         # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
         if candidate_budget_exhausted:
+            termination_reason = "candidate_budget"
             if do_log or log_every > 0:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | "
                       f"达到候选预算 {candidate_budget} 提前停止")
             break
+
+    if termination_reason is None:
+        termination_reason = "max_rounds"
 
     elapsed_sec = time.perf_counter() - loop_start
     sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
@@ -1528,6 +1685,7 @@ def run_evolution(
         ],
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
+        "termination_reason": termination_reason,
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
@@ -1713,9 +1871,22 @@ def run_evolution(
                 if selection_scale_invariant else None
             ),
             "record_transition_clocks": record_transition_clocks,
+            "record_stationarity_trace": record_stationarity_trace,
+            "stop_on_exact_residual": stop_on_exact_residual,
             "horizon_invariant": horizon_invariant,
         },
     }
+    if record_stationarity_trace:
+        diagnostics["stationarity_trace"] = StationarityTrace(
+            n_records=int(n_records),
+            query_identity_sha256=ordered_query_identity_sha256(queries),
+            target_identity_sha256=target_answer_identity_sha256(target),
+            observations=stationarity_observations,
+            measured_query_answers=np.stack(
+                stationarity_query_answers, axis=0
+            ),
+            termination_reason=termination_reason,
+        )
     if return_final_table:
         diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 

@@ -63,6 +63,7 @@ class TestBasics:
         assert "final_current_squared_loss" in diag
         assert "rounds_run" in diag
         assert "stopped_early" in diag
+        assert "termination_reason" in diag
         assert "accept_history" in diag
         # 计时字段（扫描时估时/对比用）
         assert "elapsed_sec" in diag
@@ -132,6 +133,7 @@ class TestTermination:
         )
         assert diag["candidate_budget_exhausted"] is True
         assert diag["candidate_evaluation_count"] == budget
+        assert diag["termination_reason"] == "candidate_budget"
         # 因预算而非 n_rounds 停止：轮数应远少于 n_rounds
         assert diag["rounds_run"] < 200
 
@@ -419,6 +421,7 @@ class TestStateCache:
         )
 
         assert diag["rounds_run"] == 0
+        assert diag["termination_reason"] == "max_rounds"
         assert diag["loss_history"] == []
         assert diag["best_loss"] == pytest.approx(0.5)
         assert diag["state_evaluation_count"] == 1
@@ -452,6 +455,7 @@ class TestStateCache:
 
         assert diag["rounds_run"] == 1
         assert diag["stopped_early"] is True
+        assert diag["termination_reason"] == "exact_residual"
         assert diag["best_loss"] == 0.0
         assert diag["state_evaluation_count"] == 1
         assert diag["distance_evaluation_count"] == 0
