@@ -33,6 +33,9 @@ STATIONARITY_V2_SUBBLOCK_SUMMARY_CONTRACT_VERSION = (
 STATIONARITY_V2_SUBBLOCK_COLLECTION_CONTRACT_VERSION = (
     "issue53-stage2-v2-subblock-collection-v1"
 )
+STATIONARITY_V2_CANDIDATE_EVIDENCE_CONTRACT_VERSION = (
+    "issue53-stage2-v2-candidate-evidence-v1"
+)
 V2_CURRENT_SUBBLOCK_ROUND_CANDIDATE = 100
 V2_CANDIDATE_BLOCK_COUNT = 3
 V2_SUBBLOCKS_PER_BLOCK = 4
@@ -296,6 +299,75 @@ class V2ScalarEvidence:
         return self.outlier_strength
 
 
+@dataclass(frozen=True)
+class V2QueryDistributionSummary:
+    """Finite query distribution plus explicit positive-infinity evidence.
+
+    Zero residual scales can legitimately produce positive infinity in T or
+    O.  Those values are never silently dropped into an ordinary mean or
+    percentile: finite values are summarized separately and infinity locations
+    remain explicit.
+    """
+
+    value_count: int
+    finite_count: int
+    positive_infinity_count: int
+    finite_mean: float | None
+    finite_p95: float | None
+    finite_maximum: float | None
+    finite_maximum_query_index: int | None
+    first_positive_infinity_query_index: int | None
+
+    @property
+    def overall_maximum(self) -> float | None:
+        """Overall maximum, including explicit positive infinity."""
+
+        if self.positive_infinity_count:
+            return inf
+        return self.finite_maximum
+
+    @property
+    def overall_maximum_query_index(self) -> int | None:
+        """First query attaining the overall maximum（最大值查询编号）."""
+
+        if self.positive_infinity_count:
+            return self.first_positive_infinity_query_index
+        return self.finite_maximum_query_index
+
+
+@dataclass(frozen=True)
+class V2CandidateEvidence:
+    """Raw 12-subblock evidence with no pass/fail interpretation."""
+
+    query_identity_sha256: str
+    target_identity_sha256: str
+    n_records: int
+    query_count: int
+    subblock_round_count: int
+    first_subblock_number: int
+    last_subblock_number: int
+    start_round_index: int
+    end_round_index: int
+    subblocks: tuple[V2SubblockSummary, ...]
+    per_query_evidence: tuple[V2ScalarEvidence, ...]
+    query_absolute_direction_change: V2QueryDistributionSummary
+    query_trend_strength: V2QueryDistributionSummary
+    query_outlier_strength: V2QueryDistributionSummary
+    query_zero_scale_count: int
+    l1_level_evidence: V2ScalarEvidence
+    l1_spread_evidence: V2ScalarEvidence
+    unique_row_rate_evidence: V2ScalarEvidence
+    normalized_row_entropy_evidence: V2ScalarEvidence
+    active_round_rate_evidence: V2ScalarEvidence
+    changed_row_fraction_evidence: V2ScalarEvidence
+    changed_query_fraction_evidence: V2ScalarEvidence
+    normalized_query_movement_evidence: V2ScalarEvidence
+    contract_version: str = field(
+        default=STATIONARITY_V2_CANDIDATE_EVIDENCE_CONTRACT_VERSION,
+        init=False,
+    )
+
+
 def _coerce_subblock_values(
     subblock_values: Sequence[float] | np.ndarray,
 ) -> np.ndarray:
@@ -393,4 +465,240 @@ def compute_v2_scalar_evidence(
         maximum_absolute_residual=maximum_absolute_residual,
         outlier_strength=float(outlier_strength),
         zero_scale=zero_scale,
+    )
+
+
+def _summarize_query_distribution(
+    values: Sequence[float],
+) -> V2QueryDistributionSummary:
+    """Summarize nonnegative values without hiding positive infinity."""
+
+    array = np.asarray(values, dtype=np.float64)
+    if array.ndim != 1 or array.size == 0:
+        raise ValueError("query evidence distribution must be non-empty and 1D")
+    if np.any(np.isnan(array)) or np.any(np.isneginf(array)):
+        raise ValueError("query evidence distribution contains invalid values")
+    if np.any(array < 0.0):
+        raise ValueError("query evidence distribution must be nonnegative")
+
+    finite_mask = np.isfinite(array)
+    finite_indices = np.flatnonzero(finite_mask)
+    positive_infinity_indices = np.flatnonzero(np.isposinf(array))
+    if finite_indices.size:
+        finite_values = array[finite_indices]
+        local_maximum_index = int(np.argmax(finite_values))
+        finite_maximum_query_index = int(
+            finite_indices[local_maximum_index]
+        )
+        finite_mean: float | None = float(np.mean(finite_values))
+        finite_p95: float | None = float(
+            np.percentile(finite_values, 95, method="linear")
+        )
+        finite_maximum: float | None = float(
+            finite_values[local_maximum_index]
+        )
+    else:
+        finite_mean = None
+        finite_p95 = None
+        finite_maximum = None
+        finite_maximum_query_index = None
+
+    return V2QueryDistributionSummary(
+        value_count=int(array.size),
+        finite_count=int(finite_indices.size),
+        positive_infinity_count=int(positive_infinity_indices.size),
+        finite_mean=finite_mean,
+        finite_p95=finite_p95,
+        finite_maximum=finite_maximum,
+        finite_maximum_query_index=finite_maximum_query_index,
+        first_positive_infinity_query_index=(
+            int(positive_infinity_indices[0])
+            if positive_infinity_indices.size
+            else None
+        ),
+    )
+
+
+def _candidate_subblocks(
+    collection: V2SubblockCollection,
+    *,
+    first_subblock_number: int,
+) -> tuple[V2SubblockSummary, ...]:
+    """Select and validate one block-aligned group of 12 subblocks."""
+
+    if not isinstance(collection, V2SubblockCollection):
+        raise ValueError("collection must be a V2SubblockCollection")
+    if collection.contract_version != (
+        STATIONARITY_V2_SUBBLOCK_COLLECTION_CONTRACT_VERSION
+    ):
+        raise ValueError("unsupported V2 subblock collection contract")
+    if isinstance(first_subblock_number, bool) or not isinstance(
+        first_subblock_number, (int, np.integer)
+    ):
+        raise ValueError("first_subblock_number must be an integer")
+    first = int(first_subblock_number)
+    if first <= 0:
+        raise ValueError("first_subblock_number must be positive")
+    if (first - 1) % V2_SUBBLOCKS_PER_BLOCK != 0:
+        raise ValueError(
+            "first_subblock_number must align to a four-subblock boundary"
+        )
+
+    start = first - 1
+    end = start + V2_SCALAR_EVIDENCE_POINT_COUNT
+    if end > collection.complete_subblock_count:
+        raise ValueError(
+            "candidate evidence requires 12 complete subblocks from the "
+            "requested start"
+        )
+    selected = collection.subblocks[start:end]
+
+    if collection.query_count <= 0 or collection.n_records <= 0:
+        raise ValueError("collection record and query counts must be positive")
+    if collection.subblock_round_count < 2:
+        raise ValueError("collection subblock duration must be at least 2")
+
+    previous_end_round: int | None = None
+    bounded_rate_fields = (
+        "unique_row_rate_mean",
+        "normalized_row_entropy_mean",
+        "active_round_rate",
+        "mean_changed_row_fraction",
+        "mean_changed_query_fraction",
+    )
+    nonnegative_fields = (
+        "l1_mean",
+        "l1_p90_minus_p10",
+        "mean_normalized_query_l1_movement",
+    )
+    for offset, summary in enumerate(selected):
+        if not isinstance(summary, V2SubblockSummary):
+            raise ValueError("candidate contains an invalid subblock summary")
+        if summary.contract_version != (
+            STATIONARITY_V2_SUBBLOCK_SUMMARY_CONTRACT_VERSION
+        ):
+            raise ValueError("unsupported V2 subblock summary contract")
+        expected_number = first + offset
+        if summary.subblock_number != expected_number:
+            raise ValueError("candidate subblock numbers must be consecutive")
+        if summary.round_count != collection.subblock_round_count:
+            raise ValueError("candidate subblocks must have one common duration")
+        if summary.end_round_index - summary.start_round_index + 1 != (
+            summary.round_count
+        ):
+            raise ValueError("candidate subblock round range is inconsistent")
+        if (
+            previous_end_round is not None
+            and summary.start_round_index != previous_end_round + 1
+        ):
+            raise ValueError("candidate subblock round ranges must be contiguous")
+        previous_end_round = summary.end_round_index
+
+        query_values = np.asarray(
+            summary.normalized_query_mean, dtype=np.float64
+        )
+        if query_values.shape != (collection.query_count,):
+            raise ValueError("candidate query summary width is inconsistent")
+        if not np.all(np.isfinite(query_values)) or np.any(
+            (query_values < 0.0) | (query_values > 1.0)
+        ):
+            raise ValueError(
+                "candidate normalized query summaries must lie in [0, 1]"
+            )
+
+        for field_name in bounded_rate_fields:
+            value = float(getattr(summary, field_name))
+            if not np.isfinite(value) or not 0.0 <= value <= 1.0 + 1e-12:
+                raise ValueError(
+                    f"candidate {field_name} must lie in [0, 1]"
+                )
+        for field_name in nonnegative_fields:
+            value = float(getattr(summary, field_name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"candidate {field_name} must be finite and nonnegative"
+                )
+
+    return tuple(selected)
+
+
+def compute_v2_candidate_evidence(
+    collection: V2SubblockCollection,
+    *,
+    first_subblock_number: int,
+) -> V2CandidateEvidence:
+    """Compute threshold-free evidence for one aligned 12-subblock group.
+
+    Each ordered query keeps its identity across all 12 subblocks and receives
+    its own R/D/S/T/O evidence before any cross-query aggregation.  Absolute D
+    cannot cancel across opposing queries.  Finite T/O distributions and their
+    positive-infinity counts remain separate so zero-scale evidence is not
+    hidden or converted to an arbitrary epsilon.
+
+    This function does not correct query maxima for query count, compare any
+    threshold, inspect a confirmation block, or emit a convergence state.
+    """
+
+    subblocks = _candidate_subblocks(
+        collection,
+        first_subblock_number=first_subblock_number,
+    )
+    query_values = np.asarray(
+        [summary.normalized_query_mean for summary in subblocks],
+        dtype=np.float64,
+    )
+    per_query_evidence = tuple(
+        compute_v2_scalar_evidence(query_values[:, query_index])
+        for query_index in range(collection.query_count)
+    )
+
+    def scalar_field(field_name: str) -> V2ScalarEvidence:
+        return compute_v2_scalar_evidence([
+            float(getattr(summary, field_name)) for summary in subblocks
+        ])
+
+    absolute_direction_change = _summarize_query_distribution([
+        abs(evidence.D) for evidence in per_query_evidence
+    ])
+    trend_strength = _summarize_query_distribution([
+        evidence.T for evidence in per_query_evidence
+    ])
+    outlier_strength = _summarize_query_distribution([
+        evidence.O for evidence in per_query_evidence
+    ])
+
+    return V2CandidateEvidence(
+        query_identity_sha256=collection.query_identity_sha256,
+        target_identity_sha256=collection.target_identity_sha256,
+        n_records=collection.n_records,
+        query_count=collection.query_count,
+        subblock_round_count=collection.subblock_round_count,
+        first_subblock_number=subblocks[0].subblock_number,
+        last_subblock_number=subblocks[-1].subblock_number,
+        start_round_index=subblocks[0].start_round_index,
+        end_round_index=subblocks[-1].end_round_index,
+        subblocks=subblocks,
+        per_query_evidence=per_query_evidence,
+        query_absolute_direction_change=absolute_direction_change,
+        query_trend_strength=trend_strength,
+        query_outlier_strength=outlier_strength,
+        query_zero_scale_count=sum(
+            evidence.zero_scale for evidence in per_query_evidence
+        ),
+        l1_level_evidence=scalar_field("l1_mean"),
+        l1_spread_evidence=scalar_field("l1_p90_minus_p10"),
+        unique_row_rate_evidence=scalar_field("unique_row_rate_mean"),
+        normalized_row_entropy_evidence=scalar_field(
+            "normalized_row_entropy_mean"
+        ),
+        active_round_rate_evidence=scalar_field("active_round_rate"),
+        changed_row_fraction_evidence=scalar_field(
+            "mean_changed_row_fraction"
+        ),
+        changed_query_fraction_evidence=scalar_field(
+            "mean_changed_query_fraction"
+        ),
+        normalized_query_movement_evidence=scalar_field(
+            "mean_normalized_query_l1_movement"
+        ),
     )

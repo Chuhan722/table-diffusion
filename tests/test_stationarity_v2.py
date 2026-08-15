@@ -2,24 +2,30 @@ from __future__ import annotations
 
 import hashlib
 import math
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from table_diffevo.stationarity import (
+    STATIONARITY_TRACE_CONTRACT_VERSION,
     StationarityTrace,
     build_stationarity_observation,
 )
 from table_diffevo.stationarity_v2 import (
     MAD_NORMAL_CONSISTENCY_FACTOR,
+    STATIONARITY_V2_CANDIDATE_EVIDENCE_CONTRACT_VERSION,
     STATIONARITY_V2_SCALAR_EVIDENCE_CONTRACT_VERSION,
     STATIONARITY_V2_SUBBLOCK_COLLECTION_CONTRACT_VERSION,
     STATIONARITY_V2_SUBBLOCK_SUMMARY_CONTRACT_VERSION,
     V2_CURRENT_SUBBLOCK_ROUND_CANDIDATE,
     V2_PAIRWISE_SLOPE_COUNT,
     V2_SCALAR_EVIDENCE_POINT_COUNT,
+    V2SubblockCollection,
+    V2SubblockSummary,
     collect_v2_subblock_summaries,
+    compute_v2_candidate_evidence,
     compute_v2_scalar_evidence,
 )
 
@@ -147,6 +153,80 @@ def _make_v2_trace(
         observations=observations,
         measured_query_answers=np.stack(all_answers),
         termination_reason="max_rounds",
+    )
+
+
+def _make_candidate_collection(
+    normalized_query_means: list[list[float]],
+    *,
+    metric_overrides: dict[str, list[float]] | None = None,
+    subblock_round_count: int = 100,
+) -> V2SubblockCollection:
+    query_values = np.asarray(normalized_query_means, dtype=np.float64)
+    if query_values.ndim != 2:
+        raise ValueError("normalized_query_means must be 2D")
+    subblock_count, query_count = query_values.shape
+    defaults = {
+        "l1_mean": [0.25] * subblock_count,
+        "l1_p90_minus_p10": [0.05] * subblock_count,
+        "unique_row_rate_mean": [0.8] * subblock_count,
+        "normalized_row_entropy_mean": [0.7] * subblock_count,
+        "active_round_rate": [0.9] * subblock_count,
+        "mean_changed_row_fraction": [0.1] * subblock_count,
+        "mean_changed_query_fraction": [0.2] * subblock_count,
+        "mean_normalized_query_l1_movement": [0.001] * subblock_count,
+    }
+    if metric_overrides:
+        unknown = sorted(set(metric_overrides).difference(defaults))
+        if unknown:
+            raise ValueError(f"unknown metric override: {unknown}")
+        defaults.update(metric_overrides)
+    for name, values in defaults.items():
+        if len(values) != subblock_count:
+            raise ValueError(f"{name} has the wrong length")
+
+    subblocks = tuple(
+        V2SubblockSummary(
+            subblock_number=index + 1,
+            start_round_index=index * subblock_round_count + 1,
+            end_round_index=(index + 1) * subblock_round_count,
+            round_count=subblock_round_count,
+            normalized_query_mean=tuple(
+                float(value) for value in query_values[index]
+            ),
+            l1_mean=float(defaults["l1_mean"][index]),
+            l1_p90_minus_p10=float(
+                defaults["l1_p90_minus_p10"][index]
+            ),
+            unique_row_rate_mean=float(
+                defaults["unique_row_rate_mean"][index]
+            ),
+            normalized_row_entropy_mean=float(
+                defaults["normalized_row_entropy_mean"][index]
+            ),
+            active_round_rate=float(defaults["active_round_rate"][index]),
+            mean_changed_row_fraction=float(
+                defaults["mean_changed_row_fraction"][index]
+            ),
+            mean_changed_query_fraction=float(
+                defaults["mean_changed_query_fraction"][index]
+            ),
+            mean_normalized_query_l1_movement=float(
+                defaults["mean_normalized_query_l1_movement"][index]
+            ),
+        )
+        for index in range(subblock_count)
+    )
+    return V2SubblockCollection(
+        trace_contract_version=STATIONARITY_TRACE_CONTRACT_VERSION,
+        query_identity_sha256="5" * 64,
+        target_identity_sha256="6" * 64,
+        n_records=100,
+        query_count=query_count,
+        post_round_count=subblock_count * subblock_round_count,
+        subblock_round_count=subblock_round_count,
+        trailing_post_round_count=0,
+        subblocks=subblocks,
     )
 
 
@@ -316,6 +396,221 @@ def test_subblock_collector_requires_the_existing_trace_contract() -> None:
         collect_v2_subblock_summaries(
             object(),  # type: ignore[arg-type]
             subblock_round_count=100,
+        )
+
+
+def test_candidate_integration_preserves_opposing_query_directions() -> None:
+    block_answers = [
+        [2.0 + 0.5 * index, 12.0 - 0.5 * index]
+        for index in range(12)
+    ]
+    post_answers = [
+        values
+        for block in block_answers
+        for values in (block, block)
+    ]
+    trace = _make_v2_trace(
+        post_answers,
+        n_records=16,
+        changed_rows_per_round=[1] * len(post_answers),
+    )
+    collection = collect_v2_subblock_summaries(
+        trace,
+        subblock_round_count=2,
+    )
+
+    evidence = compute_v2_candidate_evidence(
+        collection,
+        first_subblock_number=1,
+    )
+
+    assert evidence.contract_version == (
+        STATIONARITY_V2_CANDIDATE_EVIDENCE_CONTRACT_VERSION
+    )
+    assert evidence.first_subblock_number == 1
+    assert evidence.last_subblock_number == 12
+    assert evidence.start_round_index == 1
+    assert evidence.end_round_index == 24
+    assert evidence.subblock_round_count == 2
+    assert evidence.per_query_evidence[0].D == pytest.approx(0.34375)
+    assert evidence.per_query_evidence[1].D == pytest.approx(-0.34375)
+    assert evidence.l1_level_evidence.D == 0.0
+
+    direction = evidence.query_absolute_direction_change
+    assert direction.value_count == 2
+    assert direction.finite_count == 2
+    assert direction.positive_infinity_count == 0
+    assert direction.finite_mean == pytest.approx(0.34375)
+    assert direction.finite_p95 == pytest.approx(0.34375)
+    assert direction.finite_maximum == pytest.approx(0.34375)
+    assert direction.overall_maximum == pytest.approx(0.34375)
+    assert direction.overall_maximum_query_index == 0
+
+    trend = evidence.query_trend_strength
+    assert trend.finite_count == 0
+    assert trend.positive_infinity_count == 2
+    assert trend.finite_mean is None
+    assert math.isinf(trend.overall_maximum)
+    assert trend.overall_maximum_query_index == 0
+    assert evidence.query_zero_scale_count == 2
+    assert not hasattr(evidence, "stable")
+    assert not hasattr(evidence, "converged")
+
+
+def test_sparse_query_drift_survives_mean_and_p95_dilution() -> None:
+    query_values = np.full((12, 21), 0.5)
+    query_values[:, 20] = [
+        0.125 + 0.03125 * index for index in range(12)
+    ]
+    collection = _make_candidate_collection(query_values.tolist())
+
+    evidence = compute_v2_candidate_evidence(
+        collection,
+        first_subblock_number=1,
+    )
+
+    direction = evidence.query_absolute_direction_change
+    assert direction.finite_count == 21
+    assert direction.finite_mean == pytest.approx(0.34375 / 21)
+    assert direction.finite_p95 == 0.0
+    assert direction.finite_maximum == pytest.approx(0.34375)
+    assert direction.finite_maximum_query_index == 20
+    assert direction.overall_maximum_query_index == 20
+
+    trend = evidence.query_trend_strength
+    assert trend.finite_count == 20
+    assert trend.positive_infinity_count == 1
+    assert trend.finite_mean == 0.0
+    assert trend.finite_p95 == 0.0
+    assert trend.first_positive_infinity_query_index == 20
+    assert trend.overall_maximum_query_index == 20
+    assert evidence.query_zero_scale_count == 21
+
+
+def test_l1_level_and_within_subblock_spread_remain_separate() -> None:
+    query_values = [[0.5]] * 12
+    spread = [0.0625 + 0.015625 * index for index in range(12)]
+    collection = _make_candidate_collection(
+        query_values,
+        metric_overrides={
+            "l1_mean": [0.25] * 12,
+            "l1_p90_minus_p10": spread,
+        },
+    )
+
+    evidence = compute_v2_candidate_evidence(
+        collection,
+        first_subblock_number=1,
+    )
+
+    assert evidence.l1_level_evidence.R == 0.25
+    assert evidence.l1_level_evidence.D == 0.0
+    assert evidence.l1_level_evidence.T == 0.0
+    assert evidence.l1_spread_evidence.subblock_values == pytest.approx(
+        spread
+    )
+    assert evidence.l1_spread_evidence.D == pytest.approx(0.171875)
+    assert math.isinf(evidence.l1_spread_evidence.T)
+
+
+def test_query_spike_is_outlier_evidence_not_directional_drift() -> None:
+    query_values = np.full((12, 2), 0.5)
+    query_values[5, 1] = 0.625
+    collection = _make_candidate_collection(query_values.tolist())
+
+    evidence = compute_v2_candidate_evidence(
+        collection,
+        first_subblock_number=1,
+    )
+
+    assert evidence.per_query_evidence[1].D == 0.0
+    assert evidence.per_query_evidence[1].T == 0.0
+    assert math.isinf(evidence.per_query_evidence[1].O)
+    assert evidence.query_trend_strength.positive_infinity_count == 0
+    assert evidence.query_outlier_strength.finite_count == 1
+    assert evidence.query_outlier_strength.positive_infinity_count == 1
+    assert (
+        evidence.query_outlier_strength.overall_maximum_query_index == 1
+    )
+
+
+def test_movement_level_distinguishes_motion_from_freezing_without_status() -> None:
+    query_values = [[0.5]] * 12
+    moving = compute_v2_candidate_evidence(
+        _make_candidate_collection(query_values),
+        first_subblock_number=1,
+    )
+    frozen = compute_v2_candidate_evidence(
+        _make_candidate_collection(
+            query_values,
+            metric_overrides={
+                "active_round_rate": [0.0] * 12,
+                "mean_changed_row_fraction": [0.0] * 12,
+                "mean_changed_query_fraction": [0.0] * 12,
+                "mean_normalized_query_l1_movement": [0.0] * 12,
+            },
+        ),
+        first_subblock_number=1,
+    )
+
+    assert moving.active_round_rate_evidence.R == pytest.approx(0.9)
+    assert moving.active_round_rate_evidence.D == 0.0
+    assert moving.changed_row_fraction_evidence.R == pytest.approx(0.1)
+    assert frozen.active_round_rate_evidence.R == 0.0
+    assert frozen.changed_row_fraction_evidence.R == 0.0
+    assert frozen.changed_query_fraction_evidence.R == 0.0
+    assert frozen.normalized_query_movement_evidence.R == 0.0
+    assert not hasattr(frozen, "stalled")
+
+
+def test_candidate_can_advance_only_by_complete_four_subblock_blocks() -> None:
+    collection = _make_candidate_collection([[0.5]] * 16)
+
+    evidence = compute_v2_candidate_evidence(
+        collection,
+        first_subblock_number=5,
+    )
+
+    assert evidence.first_subblock_number == 5
+    assert evidence.last_subblock_number == 16
+    assert evidence.start_round_index == 401
+    assert evidence.end_round_index == 1600
+
+    with pytest.raises(ValueError, match="four-subblock boundary"):
+        compute_v2_candidate_evidence(
+            collection,
+            first_subblock_number=2,
+        )
+    with pytest.raises(ValueError, match="12 complete subblocks"):
+        compute_v2_candidate_evidence(
+            _make_candidate_collection([[0.5]] * 12),
+            first_subblock_number=5,
+        )
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "1"])
+def test_invalid_candidate_start_is_rejected(value: object) -> None:
+    with pytest.raises(ValueError, match="first_subblock_number"):
+        compute_v2_candidate_evidence(
+            _make_candidate_collection([[0.5]] * 12),
+            first_subblock_number=value,  # type: ignore[arg-type]
+        )
+
+
+def test_candidate_rejects_inconsistent_query_width() -> None:
+    collection = _make_candidate_collection([[0.5]] * 12)
+    bad_summary = replace(
+        collection.subblocks[4],
+        normalized_query_mean=(0.5, 0.5),
+    )
+    bad_subblocks = list(collection.subblocks)
+    bad_subblocks[4] = bad_summary
+    bad_collection = replace(collection, subblocks=tuple(bad_subblocks))
+
+    with pytest.raises(ValueError, match="query summary width"):
+        compute_v2_candidate_evidence(
+            bad_collection,
+            first_subblock_number=1,
         )
 
 
