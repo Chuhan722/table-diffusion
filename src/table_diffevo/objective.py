@@ -33,6 +33,19 @@
 
 代码保留 σ/κ 接口（默认无噪声），为将来进入 DP 阶段铺路。
 
+## 残差几何（geometry 参数，Issue #57）
+
+绝对几何（默认）把每单位计数残差视为等价，是 L2 计数损失的梯度口径；
+它会把优化力气集中在大计数查询上，而评价指标（每查询平均归一化 L1）
+对所有查询等权。相对几何把残差除以目标计数（带下限保护），近似
+KL/最大熵拟合的梯度口径，稀有查询的推动力按其相对误差放大：
+
+    absolute:  ε_j = sign(raw_j) · magnitude_j / N
+    relative:  ε_j = sign(raw_j) · magnitude_j / max(y_j, floor) / N
+
+其中 magnitude 是噪声容忍后的残差幅度（容忍先于相对化，σ/κ 语义不变）。
+floor > 0 防止 y_j 极小或为 0 时分母爆炸。
+
 ## 与其他模块的分工（temp.md 三层分离思想）
 
 - objective.py（本模块）：目标衡量——当前状态离目标多远
@@ -43,12 +56,17 @@ from typing import Optional
 import numpy as np
 
 
+RESIDUAL_GEOMETRIES = ("absolute", "relative")
+
+
 def compute_residual(
     target: np.ndarray,
     current: np.ndarray,
     n_records: int,
     sigma: Optional[np.ndarray] = None,
     kappa: float = 1.0,
+    geometry: str = "absolute",
+    geometry_floor: float = 8.0,
 ) -> np.ndarray:
     """
     计算比例残差 ε_j。
@@ -65,16 +83,27 @@ def compute_residual(
         各查询的噪声标准差。None 表示无噪声（σ=0，容忍区为 0）
     kappa : float
         噪声容忍系数。|残差| < κσ 时视为已达标，残差归零
+    geometry : str, default "absolute"
+        残差几何。"absolute"：现状口径 ε = sign·magnitude/N（L2 计数损失
+        梯度）；"relative"：ε = sign·magnitude/max(y,floor)/N（近似 KL
+        梯度，稀有查询推动力按相对误差放大）。相对化只使用公开 target
+        计数做归一化，不引入新信息流。
+    geometry_floor : float, default 8.0
+        relative 几何的分母下限（计数单位），防止 y 极小或为 0 时分母
+        爆炸。仅 geometry="relative" 时使用，必须 > 0。
 
     Returns
     -------
     np.ndarray, shape (m,)
-        比例残差向量 ε，落在 [-1, 1] 区间
+        比例残差向量 ε。absolute 几何落在 [-1, 1]；relative 几何幅度
+        上界为 1/floor（分子 magnitude ≤ N、分母 ≥ floor·N），整体
+        常数尺度由下游选择核/方向场归一化吸收
 
     Raises
     ------
     ValueError
-        n_records <= 0，或 target 与 current 形状不一致
+        n_records <= 0，target 与 current 形状不一致，geometry 非法，
+        或 geometry_floor <= 0
 
     Examples
     --------
@@ -88,6 +117,16 @@ def compute_residual(
 
     if n_records <= 0:
         raise ValueError(f"n_records 必须为正数，收到: {n_records}")
+
+    if geometry not in RESIDUAL_GEOMETRIES:
+        raise ValueError(
+            f"geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
+            f"得到 {geometry!r}"
+        )
+    if geometry == "relative" and not geometry_floor > 0:
+        raise ValueError(
+            f"geometry_floor 必须 > 0，得到 {geometry_floor!r}"
+        )
 
     if target.shape != current.shape:
         raise ValueError(
@@ -109,7 +148,10 @@ def compute_residual(
             )
         magnitude = np.maximum(np.abs(raw) - kappa * sigma, 0.0)
 
-    # 恢复方向并归一化为比例
+    # 恢复方向并归一化为比例；relative 几何先按目标计数相对化
+    # （容忍先于相对化：magnitude 已是容忍后的幅度，σ/κ 语义不变）
+    if geometry == "relative":
+        magnitude = magnitude / np.maximum(target, geometry_floor)
     epsilon = np.sign(raw) * magnitude / n_records
 
     return epsilon

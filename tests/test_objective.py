@@ -226,3 +226,104 @@ def test_loss_ordering_matches_proportional():
     q1 = np.array([90, 190, 45])   # 偏差较小
     q2 = np.array([70, 160, 20])   # 偏差较大
     assert compute_loss(target, q1) < compute_loss(target, q2)
+
+
+# ---- 残差几何（Issue #57）----
+
+def test_geometry_absolute_explicit_matches_default():
+    """显式 geometry='absolute' 与默认调用逐位一致（向后兼容）"""
+    target = np.array([180.0, 95.0, 42.0])
+    current = np.array([170.0, 100.0, 42.0])
+    default = compute_residual(target, current, n_records=300)
+    explicit = compute_residual(
+        target, current, n_records=300, geometry="absolute"
+    )
+    np.testing.assert_array_equal(default, explicit)
+
+
+def test_geometry_relative_hand_computed():
+    """relative 几何手算锚定：ε = raw / max(y, floor) / N"""
+    target = np.array([100.0, 4.0, 0.0])
+    current = np.array([90.0, 8.0, 3.0])
+    # raw = [10, -4, -3]; 分母 max(y, 8) = [100, 8, 8]
+    expected = np.array([10.0 / 100, -4.0 / 8, -3.0 / 8]) / 300
+    result = compute_residual(
+        target, current, n_records=300,
+        geometry="relative", geometry_floor=8.0,
+    )
+    np.testing.assert_allclose(result, expected)
+
+
+def test_geometry_relative_amplifies_rare_queries():
+    """同样的计数残差，稀有查询的相对残差幅度更大"""
+    target = np.array([5000.0, 50.0])
+    current = np.array([4990.0, 40.0])  # 都差 10 个计数
+    r = compute_residual(
+        target, current, n_records=16181, geometry="relative"
+    )
+    assert abs(r[1]) > abs(r[0]) * 50  # 5000/50 = 100 倍分母差
+
+
+def test_geometry_relative_floor_protects_small_targets():
+    """target < floor 时分母用 floor，target=0 不产生除零"""
+    target = np.array([0.0, 2.0])
+    current = np.array([5.0, 2.0])
+    r = compute_residual(
+        target, current, n_records=100,
+        geometry="relative", geometry_floor=8.0,
+    )
+    assert np.all(np.isfinite(r))
+    np.testing.assert_allclose(r[0], -5.0 / 8.0 / 100)
+
+
+def test_geometry_relative_tolerance_before_relativization():
+    """σ/κ 容忍先于相对化：容忍后为零的分量保持零"""
+    target = np.array([100.0, 100.0])
+    current = np.array([95.0, 80.0])  # 残差 5、20
+    sigma = np.array([10.0, 10.0])
+    r = compute_residual(
+        target, current, n_records=300, sigma=sigma, kappa=1.0,
+        geometry="relative",
+    )
+    assert r[0] == 0.0  # |5| < κσ=10 → 容忍归零
+    # 第二个：raw=+20，max(20-10,0)=10 → +10/max(100,8)/300
+    np.testing.assert_allclose(r[1], 10.0 / 100.0 / 300)
+
+
+def test_geometry_relative_zero_when_exact():
+    """精确匹配时 relative 残差为零（零点与 absolute 相同）"""
+    target = np.array([100.0, 50.0])
+    r = compute_residual(target, target.copy(), n_records=300,
+                         geometry="relative")
+    np.testing.assert_array_equal(r, np.zeros(2))
+
+
+def test_geometry_invalid_name_raises():
+    """非法 geometry 报错"""
+    with pytest.raises(ValueError, match="geometry 必须是"):
+        compute_residual(
+            np.array([1.0]), np.array([1.0]), n_records=10,
+            geometry="chi2",
+        )
+
+
+def test_geometry_floor_nonpositive_raises():
+    """relative 下 floor <= 0 报错"""
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError, match="geometry_floor 必须 > 0"):
+            compute_residual(
+                np.array([1.0]), np.array([1.0]), n_records=10,
+                geometry="relative", geometry_floor=bad,
+            )
+
+
+def test_geometry_floor_ignored_for_absolute():
+    """absolute 几何不使用 floor（非法 floor 也不报错、结果不变）"""
+    target = np.array([100.0])
+    current = np.array([90.0])
+    r1 = compute_residual(target, current, n_records=300)
+    r2 = compute_residual(
+        target, current, n_records=300,
+        geometry="absolute", geometry_floor=-5.0,
+    )
+    np.testing.assert_array_equal(r1, r2)

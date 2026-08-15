@@ -323,6 +323,8 @@ def evaluate_vectorized(
     device: Literal["numpy", "cuda", "cpu"] = "numpy",
     want_fitness: bool = True,
     verbose: bool = True,
+    residual_geometry: str = "absolute",
+    residual_geometry_floor: float = 8.0,
 ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
     """
     向量化 + 分块评价：一次掩码扫描同时拿到计数 q、残差 ε 和 fitness。
@@ -362,6 +364,11 @@ def evaluate_vectorized(
         返回的 residual 和 fitness 均为 None。
     verbose : bool, default True
         回退组非空时是否打印提醒。
+    residual_geometry : str, default "absolute"
+        残差几何，透传给 objective.compute_residual（"absolute" 现状
+        口径 / "relative" 相对残差口径），影响返回的 residual 与 fitness。
+    residual_geometry_floor : float, default 8.0
+        relative 几何的分母下限，透传给 objective.compute_residual。
 
     Returns
     -------
@@ -427,7 +434,8 @@ def evaluate_vectorized(
         """给定这批查询的原始下标，算它们的加权残差 wr（依赖已填好的 q[orig]）。"""
         sig = None if sigma is None else np.asarray(sigma)[orig]
         r = compute_residual(
-            np.asarray(target)[orig], q[orig], n_records, sigma=sig, kappa=kappa
+            np.asarray(target)[orig], q[orig], n_records, sigma=sig, kappa=kappa,
+            geometry=residual_geometry, geometry_floor=residual_geometry_floor,
         )
         return np.asarray(weights)[orig] * r
 
@@ -447,6 +455,7 @@ def evaluate_vectorized(
         _handle_fallback(
             df, queries, fallback_idx, q, wr_full, fitness_accum,
             want_fitness, N, n_records, target, weights, sigma, kappa,
+            residual_geometry, residual_geometry_floor,
         )
 
     residual = fitness = None
@@ -458,7 +467,8 @@ def evaluate_vectorized(
         # 残差整体重算一次（与 compute_residual 完全一致，返回给主循环用）
         sig = None if sigma is None else np.asarray(sigma)
         residual = compute_residual(
-            np.asarray(target), q, n_records, sigma=sig, kappa=kappa
+            np.asarray(target), q, n_records, sigma=sig, kappa=kappa,
+            geometry=residual_geometry, geometry_floor=residual_geometry_floor,
         )
 
     return q, residual, fitness
@@ -718,6 +728,7 @@ def _run_batches_torch(
 def _handle_fallback(
     df, queries, fallback_idx, q, wr_full, fitness_accum,
     want_fitness, N, n_records, target, weights, sigma, kappa,
+    residual_geometry="absolute", residual_geometry_floor=8.0,
 ):
     """
     回退组：用旧 evaluate_table 逐查询算（保证正确），计数填回原位置。
@@ -735,6 +746,8 @@ def _handle_fallback(
             r = compute_residual(
                 np.asarray(target)[qi:qi+1], q[qi:qi+1], n_records,
                 sigma=sig, kappa=kappa,
+                geometry=residual_geometry,
+                geometry_floor=residual_geometry_floor,
             )[0]
             wr_qi = float(np.asarray(weights)[qi]) * r
             wr_full[qi] = wr_qi
