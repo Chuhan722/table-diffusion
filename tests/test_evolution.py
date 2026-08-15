@@ -3,12 +3,15 @@
 
 锚定主循环的结构、终止条件、复现性、方向正确性。
 """
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
-from table_diffevo.schema import Schema, AttributeBlock
-from table_diffevo.evolution import run_evolution
+
 import table_diffevo.evolution as evolution_module
+from table_diffevo.evolution import run_evolution
+from table_diffevo.schema import AttributeBlock, Schema
 
 
 def make_toy_schema():
@@ -55,14 +58,30 @@ class TestBasics:
         )
         assert "loss_history" in diag
         assert "best_loss" in diag
+        assert "current_state_metrics_history" in diag
+        assert "final_current_normalized_l1" in diag
+        assert "final_current_squared_loss" in diag
         assert "rounds_run" in diag
         assert "stopped_early" in diag
+        assert "termination_reason" in diag
         assert "accept_history" in diag
         # 计时字段（扫描时估时/对比用）
         assert "elapsed_sec" in diag
         assert "sec_per_round" in diag
         assert diag["elapsed_sec"] > 0
         assert diag["sec_per_round"] > 0
+
+    def test_default_diagnostics_remain_json_serializable(self):
+        """current-state 标量历史不破坏默认 JSON 诊断。"""
+        schema = make_toy_schema()
+        queries = make_toy_queries()
+        target = np.array([30, 40, 50])
+        _, diag = run_evolution(
+            target, queries, schema, n_records=100, n_rounds=3, seed=0
+        )
+
+        assert "final_table" not in diag
+        json.dumps(diag, allow_nan=False)
 
     def test_target_length_mismatch(self):
         """target 长度与查询数不一致报错"""
@@ -114,6 +133,7 @@ class TestTermination:
         )
         assert diag["candidate_budget_exhausted"] is True
         assert diag["candidate_evaluation_count"] == budget
+        assert diag["termination_reason"] == "candidate_budget"
         # 因预算而非 n_rounds 停止：轮数应远少于 n_rounds
         assert diag["rounds_run"] < 200
 
@@ -401,10 +421,23 @@ class TestStateCache:
         )
 
         assert diag["rounds_run"] == 0
+        assert diag["termination_reason"] == "max_rounds"
         assert diag["loss_history"] == []
         assert diag["best_loss"] == pytest.approx(0.5)
         assert diag["state_evaluation_count"] == 1
         assert diag["distance_evaluation_count"] == 0
+        assert diag["current_state_metrics_history"] == [
+            {
+                "state_index": 0,
+                "round": 0,
+                "phase": "initial",
+                "current_normalized_l1": pytest.approx(0.25),
+                "current_squared_loss": pytest.approx(0.5),
+            }
+        ]
+        assert diag["current_state_transition_count"] == 0
+        assert diag["final_current_normalized_l1"] == pytest.approx(0.25)
+        assert diag["final_current_squared_loss"] == pytest.approx(0.5)
 
     def test_initially_converged_stops_before_distance(self, monkeypatch):
         """初始表已达标时只用状态缓存完成终止检查，不计算距离。"""
@@ -422,9 +455,17 @@ class TestStateCache:
 
         assert diag["rounds_run"] == 1
         assert diag["stopped_early"] is True
+        assert diag["termination_reason"] == "exact_residual"
         assert diag["best_loss"] == 0.0
         assert diag["state_evaluation_count"] == 1
         assert diag["distance_evaluation_count"] == 0
+        # 在 proposal 之前达标：只有 S0，不伪造一个 S1。
+        assert [row["round"] for row in diag[
+            "current_state_metrics_history"
+        ]] == [0]
+        assert diag["current_state_transition_count"] == 0
+        assert diag["final_current_normalized_l1"] == 0.0
+        assert diag["final_current_squared_loss"] == 0.0
 
     def test_rejected_rounds_reuse_state_and_distance(self, monkeypatch):
         """连续拒绝时只评价一次当前表和一次距离，但每轮仍重新抽样。"""
@@ -485,6 +526,23 @@ class TestStateCache:
             "distance": 1,
             "probs": 3,
         }
+        history = diag["current_state_metrics_history"]
+        assert [row["state_index"] for row in history] == [0, 1, 2, 3]
+        assert [row["round"] for row in history] == [0, 1, 2, 3]
+        assert [row["phase"] for row in history] == [
+            "initial",
+            "post_round",
+            "post_round",
+            "post_round",
+        ]
+        # 三次拒绝都是 Markov self-transition，current 指标不变。
+        assert [row["current_normalized_l1"] for row in history] == (
+            [pytest.approx(0.25)] * 4
+        )
+        assert [row["current_squared_loss"] for row in history] == (
+            [pytest.approx(0.5)] * 4
+        )
+        assert diag["current_state_transition_count"] == 3
 
     def test_accepted_round_invalidates_state_and_distance(self, monkeypatch):
         """接受提案后，下一轮必须重新评价新表并重算距离。"""
@@ -518,6 +576,14 @@ class TestStateCache:
         assert diag["state_evaluation_count"] == 2
         assert diag["distance_evaluation_count"] == 2
         assert diag["best_loss"] == pytest.approx(0.5)
+        history = diag["current_state_metrics_history"]
+        assert [row["round"] for row in history] == [0, 1, 2]
+        assert [row["current_squared_loss"] for row in history] == pytest.approx(
+            [2.0, 0.5, 0.5]
+        )
+        assert [row["current_normalized_l1"] for row in history] == (
+            pytest.approx([0.5, 0.25, 0.25])
+        )
 
 
 class TestIntegration:
@@ -682,6 +748,98 @@ class TestFactorizedGibbsClosedLoop:
                 "factorized_gibbs_attempt_diagnostics_history"
             ]
         )
+
+    def test_compiled_workload_wiring_is_trajectory_exact(self):
+        schema, queries, target = self._schema_queries_target()
+        common = {
+            **self._run_kwargs(),
+            "factorized_gibbs_sweeps": 2,
+            "record_stationarity_trace": True,
+        }
+        legacy, legacy_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_use_compiled_workload=False,
+            **common,
+        )
+        compiled, compiled_diag = run_evolution(
+            target,
+            queries,
+            schema,
+            factorized_gibbs_use_compiled_workload=True,
+            **common,
+        )
+        legacy_trace = legacy_diag.pop("stationarity_trace")
+        compiled_trace = compiled_diag.pop("stationarity_trace")
+
+        pd.testing.assert_frame_equal(compiled, legacy)
+        assert compiled_trace.observations == legacy_trace.observations
+        np.testing.assert_array_equal(
+            compiled_trace.measured_query_answers,
+            legacy_trace.measured_query_answers,
+        )
+        for key in (
+            "current_state_metrics_history",
+            "loss_history",
+            "accept_history",
+            "raw_proposal_gain_history",
+            "initial_table_sha256",
+            "primary_rng_state_sha256",
+            "factorized_gibbs_rng_state_sha256",
+            "factorized_gibbs_microsteps",
+            "factorized_gibbs_conditional_logit_evaluated_count",
+            "factorized_gibbs_conditional_logit_clipped_count",
+        ):
+            assert compiled_diag[key] == legacy_diag[key]
+        assert legacy_diag["params"][
+            "factorized_gibbs_use_compiled_workload"
+        ] is False
+        assert compiled_diag["params"][
+            "factorized_gibbs_use_compiled_workload"
+        ] is True
+        assert all(
+            attempt[0]["factor_builder"] == "legacy_rowwise"
+            for attempt in legacy_diag[
+                "factorized_gibbs_attempt_diagnostics_history"
+            ]
+        )
+        assert all(
+            attempt[0]["factor_builder"] == "compiled_batch"
+            for attempt in compiled_diag[
+                "factorized_gibbs_attempt_diagnostics_history"
+            ]
+        )
+        assert compiled_diag[
+            "factorized_gibbs_workload_compile_elapsed_sec"
+        ] >= 0.0
+
+    def test_direction_clip_hits_are_observed(self):
+        schema, queries, target = self._schema_queries_target()
+        parameters = {
+            **self._run_kwargs(),
+            "n_rounds": 1,
+            "tol": float("inf"),
+            "diffusion_direction_strength": 10.0,
+            "diffusion_direction_normalization": "fixed",
+            "diffusion_direction_reference_scale": 1e-6,
+            "diffusion_direction_logit_clip": 0.1,
+        }
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            **parameters,
+        )
+
+        evaluated = diagnostics[
+            "direction_logit_evaluated_count_history"
+        ][0]
+        clipped = diagnostics[
+            "direction_logit_clipped_count_history"
+        ][0]
+        assert evaluated > 0
+        assert 0 < clipped <= evaluated
 
     def test_factorized_retry_records_every_attempt(self, monkeypatch):
         schema = Schema([
@@ -859,6 +1017,14 @@ class TestFactorizedGibbsClosedLoop:
             ({"factorized_gibbs_logit_clip": 0.0}, "logit_clip"),
             ({"factorized_gibbs_logit_clip": np.inf}, "logit_clip"),
             ({"factorized_gibbs_logit_clip": True}, "logit_clip"),
+            (
+                {"factorized_gibbs_use_compiled_workload": "yes"},
+                "compiled_workload",
+            ),
+            (
+                {"factorized_gibbs_use_compiled_workload": True},
+                "非零 Gibbs sweep",
+            ),
         ],
     )
     def test_rejects_invalid_factorized_parameters(self, kwargs, message):

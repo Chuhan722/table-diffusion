@@ -423,8 +423,22 @@ Issue #49 已按预注册协议完成 Stage T/A、Stage B 和最终确认，三�
 或重选配置。该结论仅限固定 1000 轮预算，不代表长期收敛结果。
 
 当前版本仍是无噪声原型，不是 DP：尚未实现 ε/δ、噪声机制、accountant、私有
-查询选择和带噪一致性。独立方法 QDTE 只作为效果标杆；在统一 target、初始化信息
-和计算预算前，不能声称本方法已经达到或超过 QDTE。
+查询选择和带噪一致性。
+
+## 最近变更（2026-08-15）
+
+### PR #55 审查同步：保留 PR #51 诊断并完成 Stage 0/1 增量复核
+
+PR #55 已合并最新 `origin/master=9685179`。唯一人工冲突位于 factor Gibbs
+演化函数的说明文字；合并结果同时保留 PR #51 的 `condition_observer`、实际条件
+logit/概率诊断及其 RNG 不变性测试，以及 PR #55 的 `direction_logit_clip` 与
+`gibbs_logit_clip` 分离配置和身份诊断。master 新增的 Issue #49 正式里程碑也已
+保留，没有回退既有生成路径。
+
+按审查建议清理了 `PROJECT_STATUS.md` 中的外部项目名称。合并后定向回归为
+`317 passed, 1 skipped`，全仓为 `991 passed, 7 skipped`；`compileall` 与
+`git diff --check` 通过。本次只解决分支同步与文档问题，没有运行效果实验、修改
+Stage 0/1 契约或进入 Issue #53 的后续阶段。
 
 ## 怎么跑 / 指定 GPU
 一键跑（默认用卡 0）：
@@ -442,7 +456,279 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
 
+## 最近变更（2026-08-15）
+
+### Issue #53 Stage 2B：正式开发轨迹完成；无阈值量程报告入口完成
+
+Stage 2B 已把讨论确认的前三项写成显式协议：同时覆盖 `test_300x10` 与 `nltcs`、
+独立核与 8-sweep 三阶因子 Gibbs 核，四格共用同一套后续 detector；固定 exact、
+no-gate、marginal init、scale-invariant donor、`alpha=16`、`rho=0.01`、`eta=0.5`、
+`mu=0.01`、`tau=2` 和双侧 `logit clip=30`。开发 seed 冻结为 200..202，验证 seed
+220..224 在 detector 配置冻结前由程序封存。历史文件名
+`measured_1000query.json` 实际含 1001 条查询，协议按完整冻结文件和 SHA-256 使用，
+不静默删减。
+
+新增 `scripts/collect_issue53_stage2b_range_finding.py`：默认只打印 12 条开发轨迹计划，
+完整检查输入哈希、参数、seed 角色、当前态终点、RNG、轨迹文件和不可覆盖原子落盘。
+正式 development 最大观察预算已在报告单卡预计开销后经用户确认冻结为每条 8000
+轮；它不是收敛阈值，也不执行在线早停。入口拒绝其他轮数，smoke 仅允许未保留
+seed、小表和至多 3 轮。生成提交 `d87503e`、协议
+`483fd48ff88f050a7935eeb8cd4eb05e74607c1067800da39669516aa1d4b12b` 上的 12 条
+development 轨迹现已全部跑满并严格重读：2 dataset × 2 kernel × seed 200..202，
+每条 8001 个当前状态，共 209 MB、记录运行时间 4.90 小时；validation seed
+220..224 未读取。六个 dataset×seed 配对均共享 s0/S0/初始化后 RNG，方向与 Gibbs
+条件 logit 的正式 clip 命中总数都为 0。
+
+`s0` 现在由每个 dataset×seed 的独立核 `initial_rms` 参考预检取得首个非零 RMS，
+随后两个核从同一 seed 重启并固定共享该 `s0`；预检状态不进入正式轨迹，任意常数
+回退被拒绝。新增方向 logit 与 Gibbs 条件 logit 的评价/clip 命中只读计数。Gibbs
+在 Stage 2B 显式接入已验证逐步输出等价的 compiled-batch 因子构造，默认生成器仍
+保持旧路径；新主循环接线测试确认 final table、全部 current-state 观测、查询向量和
+主/Gibbs RNG 精确不变。
+
+非正式 seed 999 冒烟中，小表两个核各 2 轮共享 `s0=0.0495288`、S0 和初始化后主
+RNG，轨迹可严格重读，两个 clip 均零命中；compiled 与旧 rowwise 的两轮轨迹和 RNG
+逐字一致。nltcs 的 seed 999 两轮实现等价审计也确认 final table、全部 current-state
+观测、查询向量、主/Gibbs RNG 和关键 diagnostics 精确一致。nltcs 纯性能探针显示旧
+Gibbs 约 6.35 秒/轮；compiled 后冷启动一轮约 0.99 秒，20 轮稳态约 0.676 秒/轮，
+独立核约 0.240 秒/轮。正式 8000 轮预算已获确认，以上探针不参与窗口/阈值校准。
+
+新增 `collect_stationarity_range_evidence()` 与
+`scripts/analyze_issue53_stage2b_range_finding.py`，固定候选窗口
+`100/200/400/800/1000`，复用 Stage 2A 的三相邻窗口、全窗口两两比较公式，但 API
+没有 detector config/阈值参数，输出也 fail-closed 禁止稳定、运动充分、停滞、候选
+停止轮次等分类字段。正式 report 入口严格审计 12 个 manifest、trace 哈希、生成提交、
+协议、配对 s0/S0/RNG、轮数和 seed 角色，拒绝 validation seed、脏工作树和覆盖已有
+目录；发布 1776 条 range check、96012 条 current-state 描述、纯描述性 JSON 与 9 张
+图。正式 report 已从干净分析提交 `35955cb` 生成到
+`outputs/issue53_stage2b_range_report/`：12 个被列入 manifest 的产物逐一重算哈希通过，
+共 18 MB；source generator 仍绑定 `d87503e`，无阈值/分类字段，validation seed 仍未
+读取。量程图显示四个 cell 的 current L1 均先快速下降再持续波动，运动护栏量在后段
+保持非零；这些只是描述性观察，尚未冻结窗口、阈值或给出任何收敛轮次。
+
+在以上无阈值报告之后，已与用户逐项确认开发候选校准协议：统一 `W=400`；只用
+development seed `200..202` 中完整落在 `6001..8000` 的检查终点
+`7200/7600/8000`，共 12 轨迹 × 3 检查 = 36 行；六个稳定性上限按每个
+dataset×kernel cell 的线性 P95 后取四格最大值，两项运动性下限按每格线性 P05 后
+取四格最小值，不加人工倍数或舍入；连续两次稳定且运动充分才合格，稳定但运动不足的
+停滞耐心为四次。候选停止后的开发审计同样按窗口重叠语义，只有连续四次稳定性失败才
+记为持续再漂移，避免单个异常块在三个相邻检查中被重复计数。
+
+新增 `scripts/calibrate_issue53_stage2b_detector.py`，没有阈值覆盖入口，严格复用 12 条
+正式 development 输入审计并拒绝 validation seed、脏工作树和覆盖输出；正式候选报告
+已从干净分析提交 `58c0386` 生成到
+`outputs/issue53_stage2b_detector_calibration/`。候选公共配置为：查询均值变化上限
+`0.0022331667`、查询 P95 变化上限 `0.0054885833`、L1 均值变化上限
+`0.0004866`、L1 P90-P10 宽度变化上限 `0.00044`、唯一行比例变化上限
+`0.0558866667`、归一化行熵变化上限 `0.0192478344`、活跃轮次比例下限
+`0.8625`、平均改变行比例下限 `0.0057487176`、停滞耐心 `4`。
+
+开发完整回放发布 36 行阈值来源和 216 行全预算检查：12/12 均为
+`stationary_qualified`，其中 11 条候选停止在 2000 轮、1 条在 2400 轮；0 条停滞，
+候选停止后最大连续不稳定为 0..2，0 条触发四连败持续再漂移，开发分类为
+`candidate_supported_on_development`。三项产物哈希复算通过，报告 manifest SHA-256
+为 `faa7c821804ea8de98a50069745ef906996ca51dbb00bdab7bc862f2945c1d8e`；该报告生成时
+validation seed `220..224` 仍未读取，候选配置尚未冻结，也尚未接入在线停止。
+
+用户审查开发结果后已同意将上述候选冻结为 validation 配置。新增
+`scripts/issue53_stage2b_validation_protocol.py`，完整精度绑定生成提交 `d87503e`、
+原生成协议 `483fd48f…`、校准分析提交 `58c0386` 以及正式校准报告/36 行来源/216 行
+回放三个产物哈希；冻结配置 SHA-256 为
+`f3789ddbbec63b66bf8f7b21e08268a0e46aad5ed2e6601c67524d988d9cb1b9`，完整验证协议
+SHA-256 为 `7c6d345dc559298dafd4a28eb5a2c1f08742133f660bbbef67b0347c726e8921`。
+
+封存验证范围固定为 2 dataset × 2 kernel × seed `220..224` 共 20 条，每条必须跑满
+8000 轮以保留候选停止后的反事实尾部，总预算 160000 轮；采集时不在线早停。硬门禁为
+20/20 `stationary_qualified`、0 条 `stalled`、0 条停止后四连败持续再漂移，不允许
+cell 特例；验证一旦失败即拒绝本配置、退休这些 seed 并重新设计，禁止用同一验证结果
+调阈值。当前入口只有 plan 模式，不能读取 validation 轨迹或启动生成；正式单卡运行
+仍须先向用户报告 GPU 与预计开销并再次取得明确确认。validation 数据截至目前仍未读取，
+在线自动停止仍未接入。
+
+用户随后明确批准启动 8000 轮封存验证，并要求在线 detector 留待另行讨论。新增独立
+`scripts/collect_issue53_stage2b_validation.py`：collect 必须显式确认冻结协议完整 SHA，
+要求干净工作树和恰好一张可见 CUDA GPU；20 条按固定顺序运行，每条轨迹原子落盘并可
+严格审计续跑，完整集合结束前不执行 detector replay 或发布部分分类。执行器全套回归
+1080 passed 后固定在提交 `0388997`，并于 `2026-08-15T10:55:31+08:00` 从独立 detached
+worktree `/home/chuhan/projects/table-diffusion-issue53-validation-run` 正式启动；物理 GPU 1
+通过 `CUDA_VISIBLE_DEVICES=1` 成为唯一可见卡。正式输出写入
+`outputs/issue53_stage2b_validation/`，运行日志为
+`outputs/issue53_stage2b_validation_run.log`；预计墙钟约 8.5..9 小时。validation seed
+现已正式解封，后续禁止修改或根据部分结果调节 detector；截至本记录只确认进程健康，
+未执行任何部分 detector 分类。
+
+在不读取 validation 中间结果、不修改冻结配置和运行 worktree 的前提下，已并行完成一项
+纯人工轨迹反例审查。审查严格使用冻结的 `W=400`、1001 个查询、`N=1000` 和完整 replay：
+当仅 1/1001 个查询的四个窗口均值依次为 `0.1/0.3/0.5/0.7`、其余查询不变时，三个窗口
+最大两两单查询漂移达到 `0.4`，但跨查询 mean 被稀释为 `0.0003996004`，线性 P95 为
+`0`，整体 L1 均值漂移同为 `0.0003996004`；六项稳定性与两项运动性均通过，detector
+在 1200/1600 两次连续通过后错误给出 `stationary_qualified`。两个查询等幅反向移动的
+反例也在 1600 轮错误合格，且整体 L1 漂移恰为 `0`。稳定对照按预期在 1600 轮合格；
+全体查询单块尖峰对照则连续三次被识别为不稳定，尖峰离开三个窗口并重新连续通过后才在
+3200 轮合格。该审查使用满足 trace 契约但非生成器实跑的构造轨迹，因此证明的是当前
+`query mean + query P95` 在逻辑上不足以排除稀疏查询漂移，不证明正式生成轨迹中已经发生
+该事件。当前 detector、校准报告和正在运行的 validation 协议均未改动；下一步需先讨论
+是否引入对所有查询一视同仁的最坏查询漂移护栏，再决定新配置的校准与新 seed 验证。
+
+为只测量该护栏的开发自然量程，新增
+`scripts/analyze_issue53_stage2b_query_max_range.py`。入口固定复用原校准的 `W=400`、
+`6001..8000` 与终点 `7200/7600/8000`，严格审计 12 条 development 输入并拒绝
+validation；每个检查对三个窗口全部两两计算逐查询归一化窗口均值漂移，输出其中最大值、
+对应查询坐标和窗口对，同时复算并逐项核对现有 query mean/P95 公式。入口没有阈值、配置、
+分类、候选停止或生成重跑参数，正式输出要求干净工作树且不可覆盖。新增契约测试覆盖 21 个
+查询中单坐标漂移令线性 P95 为零而 max 保持 `0.4`、全部三组窗口对以及脏树先验拒绝；
+相关 14 项测试通过。正式报告已从干净分析提交 `1505fd5` 发布到
+`outputs/issue53_stage2b_query_max_range/`：36 行证据完整覆盖四格各 9 行，终点严格为
+`7200/7600/8000`；test 的查询数为 50、nltcs 为 1001。`query_max_shift` 全局范围为
+`0.0015501205..0.007825`、全局线性 P95 为 `0.0077875`；四格线性 P95 分别为 nltcs
+Gibbs `0.002673506`、nltcs independent `0.0030212904`、test Gibbs
+`0.0074966667`、test independent `0.0078083333`。若后续机械沿用“四格 P95 后取最大”
+规则，其描述性包络值为 `0.0078083333`，但本步骤没有把它选择为阈值，也没有修改 detector。
+CSV/JSON 哈希分别为 `0556945c2a09d08e45f747bdc53bf11ccbb0ebfe21adeeabd04e88bee26f9092`
+与 `70390c99f6cdac24568db35f502356601cf70d1a0721bec68d99b235b1439d9a`，逐项复算通过；
+source audit 明确记录 `sealed_validation_seeds_read=false`。这些量程来自固定完整 workload 的
+晚期开发轨迹，尚不能替代增量查询场景验证。
+
+在用户确认采用上述护栏候选后，新增独立的
+`QueryMaxStationarityDetectorConfig`、`collect_query_max_stationarity_range_evidence()`
+与 `replay_query_max_stationarity()`；原 `StationarityDetectorConfig`、原无阈值证据入口、
+原 replay 契约和冻结 validation 协议均保持原样，新版使用单独的
+`issue53-stage2b-query-max-*-v1` 契约，避免旧验证静默获得新规则。新增稀疏单查询漂移反例
+确认旧版仍会合格而新版拒绝，稳定且运动充分的对照仍合格，并逐字段确认新版除新增
+`query_max_shift` 外不改变旧证据。
+
+新增 `scripts/calibrate_issue53_stage2b_query_max_detector.py`：只从 12 条 development
+轨迹的既定 36 行晚期证据按“四格各线性 P95、再取最大”自动导出 max 上限，原版冻结配置
+作为不可变 base；随后配对回放原版与新版全部 8000 轮，并审计停止后四连败再漂移。入口
+没有阈值覆盖、validation 读取、生成重跑或在线停止参数。相关 71 项测试先行通过；全套
+回归首次仅因共享 Conda Python 无执行位导致两个需要 `sys.executable` 的子进程测试无法
+启动，使用不修改共享权限的临时可执行副本重跑后为 `1097 passed`。正式 development
+候选报告已从干净实现提交 `c55b703` 发布到
+`outputs/issue53_stage2b_query_max_calibration/`：36 行校准证据与 216 行全预算检查均严格
+覆盖预定范围，自动导出的公共 `query_max_shift_tolerance` 为
+`0.007808333333333567`，原冻结配置的其余字段逐项不变。新版回放 12/12 均为
+`stationary_qualified`，停止轮次由原版 11 条 2000、1 条 2400 变为 10 条 2000、2 条
+2400；仅 `test_300x10/seed_200/factorized_gibbs` 推迟 400 轮，其余 11 条不变。0 条
+停滞、0 条持续再漂移；停止后最大连续不稳定分别为 6 条 0、2 条 1、4 条 2，均未达到
+四连败门禁。随后补充的两个稀疏查询反向变化与单块全体尖峰恢复测试确认：新版拒绝前者，
+后者在异常块退出三窗口并重新连续两次通过后正常合格；相关 49 项定向测试通过。
+
+正式 query-max 报告 manifest、报告、36 行证据和 216 行全回放哈希依次为
+`b7b2906c59f7d0b5668f3d68380a14cefc5df62c91942200c047138b0ba85658`、
+`23f6acbcce5f7bae45edcbb4f3f76e6bf804abfcfb63936287da0ba45c8c249c`、
+`bd2e2d8a19c67ba94289bb256a4caa0eed4292b0a9b886d8da0294fd64deda96`、
+`a5db9728fa59787125be1da117b80668dac82cd43ac7b42d48595138d95dad9a`，逐项复算通过；
+报告明确记录旧冻结 detector 未修改、无在线停止、无生成重跑、无 validation seed 访问。
+该结果支持 query-max 开发候选，但尚未把它冻结为新版 validation 配置。
+
+冻结 V1 的正式 validation 轨迹采集已于 `2026-08-15 18:57 +08:00` 完成：20/20 条
+轨迹均跑满 8000 轮，总计 160000 轮，采集器逐条重审 trace 哈希、完整预算、无门控
+proposal 全应用、终态和配对 `s0/S0/初始化后 RNG` 后才发布集合 manifest。正式输入仍为
+`outputs/issue53_stage2b_validation/`，collection manifest SHA-256 为
+`cdb58df5d6ebcc0ea0892ace2244889448cb62e3ba7a4174259fe4c3c5fd4e92`；其中仍明确记录
+`detector_replay_performed=false` 与 `partial_validation_classification_read=false`。采集阶段
+没有提前查看任一轨迹的收敛分类，也没有根据 validation seed 调整冻结配置。
+
+新增 `scripts/replay_issue53_stage2b_validation.py` 作为冻结 V1 唯一正式解封入口。默认
+`plan` 不读取 validation 轨迹；`report` 没有阈值覆盖参数，必须同时显式确认冻结协议完整
+SHA-256 和上述 collection manifest SHA-256，并要求干净工作树。正式回放前会重新审计
+集合字段、20 个 cell 与 run manifest 哈希、采集提交、8000 轮预算、trace 哈希和十组配对
+绑定，再用唯一冻结配置回放；每条轨迹同时保留完整 18 个 `W=400` 检查，审计候选停止后
+连续四次不稳定再漂移，并把 20/20 合格、零停滞、零持续再漂移交给既有冻结门禁统一判定。
+失败轨迹的停滞轮次单独记录，不会冒充合格候选停止轮次。正式产物将原子、不可覆盖地发布
+报告、20 行轨迹结果、360 行全预算检查及带哈希 manifest；该入口不重跑生成器、不接在线
+停止，也不使用 query-max 候选或绝对 L1 质量作为停止条件。
+
+新增正式回放契约测试覆盖协议/集合双哈希确认、脏工作树先验拒绝、run manifest 篡改、
+采集阶段提前分类标记、跨核配对不一致、真实 V1 公式的 20 条通过、停滞字段归一化、候选后
+四连败再漂移以及结果原子落盘。专项 13 项、相关冻结协议/采集/校准/基础收敛 69 项均通过；
+CPU 全套回归为 `1092 passed, 7 skipped`。入口实现固定在本地提交 `a69c499`，随后从该
+干净提交显式确认冻结协议 SHA 与 collection manifest SHA，执行了一次不可覆盖的正式
+`report` 回放。
+
+正式 V1 validation 分类为 `does_not_support_frozen_detector_on_validation`。20/20 条轨迹都
+曾满足“连续两次稳定且运动充分”：18 条候选停止轮次为 2000，2 条为 2400；停滞为 0。
+失败只来自预注册的停止后持续再漂移门禁：`test_300x10 / seed 220 / factorized_gibbs` 在
+候选轮次 2000 后，于检查终点 5600..7600 出现 6 次连续稳定性失败。前四次由 L1
+`P90-P10` 宽度变化超过 `0.00044` 触发，后两次由 L1 窗口均值变化超过 `0.0004866`
+触发；运动护栏始终通过。8000 轮检查重新稳定不撤销“曾连续至少四次再漂移”的冻结门禁。
+其余 19 条均未达到四连败，唯一失败轨迹令持续再漂移计数为 1，因此硬门禁整体失败。
+
+正式报告位于 `outputs/issue53_stage2b_v1_validation_replay/`，20 行轨迹结果和 360 行完整
+检查均已发布并逐项重算哈希。report manifest、报告、轨迹 CSV、完整检查 CSV 的 SHA-256
+依次为 `bb4de0d6cfee9257eb3f4c2045ed1011b55e36bbf5c2f72b712c5b952e96b324`、
+`dcccefff9ae2237f0be3298ef53e3d9df2dbb621537a5c278ca6f41c91c306b7`、
+`ff945cf8b29ed86a316e643210934fbc37a66ac01b121813f4bad4f0eaefaaff`、
+`3c3e21a9914e532693b18672667bb20aa63fffcf7fbafb19e87a234748bdf51e`。按冻结协议，V1 配置
+被拒绝，validation seed `220..224` 对后续配置正式验证作废且不得用于回调阈值；当前不能
+把 V1 接入在线停止。query-max 仍只是 development 候选，也不能在这批 seed 上补做正式
+验证。下一步应先区分“候选停止过早”与“判据对正常长期波动过敏”的设计问题，冻结新版
+方法后再使用全新的 validation seed。
+
+对该失败所做的只读事后诊断没有发现实现、封存输入或异构服务器问题：正式 replay 与原始
+400 轮块统计逐项一致，失败配对均来自同一 RTX 4090 环境，方向及 Gibbs 条件 clip 仍为零，
+运动护栏全程通过。异常轨迹的候选证据区间 `801..2000` L1 均值为 `0.00295911`，候选后
+`2001..8000` 为 `0.00291260`，最后 2000 轮为 `0.00292033`，最后一个 400 轮块为
+`0.00287450`；候选后块均值线性斜率近零且略向下。因此现有证据不支持“loss 持续向坏处
+漂移”，更像一次随后恢复的局部波动形态变化。5600..6800 的四连败来自相邻块 L1
+`P90-P10` 宽度在约 `0.00073..0.00127` 间切换，7200..7600 则由一个 L1 均值较高块
+造成，8000 已恢复稳定。
+
+主要设计矛盾在统计口径而非某个核的代码：开发校准每个 cell 只用 3 seed × 3 个晚期检查
+共 9 行估计单检查 P95，但验证实际要求六项稳定性指标在总计 298 个候选后检查中不得形成
+任何四连败；这些检查还因三窗口滚动而高度相关。development 小表候选后已有 12/89 个
+不稳定检查，validation 小表进一步为 32/149，而 nltcs 在 development 和 validation 均为
+0。统一绝对阈值由小表噪声最大的 cell 主导，相对 nltcs 各 cell 的晚期 P95 已宽松约
+3.95..17.32 倍，说明当前“一套绝对阈值覆盖不同 N/查询数”并不真正尺度无关。小表
+`N=300,Q=50` 的 normalized L1 单计数粒度为 `1/(NQ)=0.00006667`，宽度阈值
+`0.00044` 实际夹在约 6 与 7 个离散粒度之间，也会放大边界敏感性。
+
+另一个信号是 development 与 validation 共 32 条轨迹全部在 2000 或 2400 轮合格，候选
+规则几乎退化为固定 burn-in；“连续两次”检查共享三分之二窗口，并不是两份独立稳定证据。
+但仅增加连续次数也不能根治：本次异常在候选后曾连续稳定多个检查，直到 5600 才出现并在
+8000 恢复。当前最合理判断是 V1 的单检查量程校准、重叠连续语义和“长期不得出现一次局部
+波动”的验证目标没有共同控制误停风险；不能据此认定 Gibbs 核未收敛，也没有足够 seed 将
+问题归因给 Gibbs。query-max 不直接处理本次 L1 波动。以上诊断不改变正式失败结论，也不
+用于回调 validation seed `220..224` 的阈值。
+
+为准备把 Stage 2 V1 作为独立研究 PR 归档，新增
+`docs/进度/Issue53_Stage2_V1收敛检测器总结.md`，集中整理 Stage 2A 轨迹语义、V1 三窗口
+判据、development 校准、封存 validation、query-max 补充边界、正式负结果、失败诊断和
+全部关键产物哈希。文档明确区分“V1 detector 被否决”与“生成核是否收敛/质量是否足够”，
+并明确 V2 不进入本 PR。当前仍未 push 或创建新 PR。
+
+为使该堆叠 PR 基于 PR #55 的最新审核状态，已在不改写上述正式证据提交 SHA 的前提下，
+普通合入 `origin/research/issue-53-current-state-contract=b765233`。唯一内容冲突位于 factor
+Gibbs 条件采样：解决结果在同一次条件计算中同时保留 PR #51 的截断前 logit/概率/熵
+observer 与 Stage 2 的实际 clip-change 计数，不增加 RNG 消耗或改变采样概率；边界测试明确
+区分“`abs(raw_logit) >= clip` 的资格命中”和“数值确实被 clip 改变”两种统计。合并后
+factor 专项 `63 passed`、Stage 2/相关 Gibbs 定向 `278 passed`、全仓 `1147 passed`。
+本次同步没有重跑正式实验、修改冻结协议、读取新 seed、push 或创建 PR。
+
+验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
+所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
+
 ## 最近变更（2026-08-14）
+
+### Issue #53 Stage 2A：离线收敛回放判据完成本地审查修订（待用户审查）
+
+Stage 2A 仍只交付轨迹与离线回放工具，不接在线早停、不冻结生产窗口/阈值，也不运行
+正式长实验。三窗口、全窗口两两比较、连续两次通过和 S0 排除语义保持不变；L1 判据
+现在显式固定为窗口算术均值与线性分位数 `P90-P10`，并额外输出每窗口 P95 作为过冲
+诊断，不把绝对 L1 高低混入收敛资格。
+
+运动护栏不再使用“任一单元格改变”的合并布尔比例。每个窗口分别计算活跃轮次比例和
+平均改变行比例，三个窗口的最小值必须同时超过调用者显式给出的正阈值；零阈值被
+fail-closed 拒绝。人工轨迹已覆盖完全冻结、大表每轮只改一行、前动后冻、持续漂移、
+稳定充分运动，以及高 L1 但稳定运动仍可收敛，明确区分“收敛”与“质量”。
+
+回放结果契约升为 `issue53-stage2a-replay-v2`，结果绑定完整轨迹内容 SHA-256、查询/目标
+身份、轨迹终止原因和完整检测配置。JSON/NPZ 加载现在拒绝顶层、数组 metadata 和逐状态
+观测中的未知字段；非预算原因结束但未通过回放的轨迹返回
+`terminated_before_qualification`，不再误报为 `collecting`。独立核与因子化 Gibbs 核均
+纳入“开关轨迹不改变最终表、评价次数或 RNG 端点”的回归测试。当前改动仅在本地
+`research/issue-53-stage2-convergence-trace` 工作树，尚未推送或更新 Issue/PR。验证：
+Stage 2A/参考过程/主循环定向测试 159 passed、1 skipped；全套 998 passed、7 skipped。
 
 ### 尺度不变选择 v3：NaN 修复+证据链+归因进分类，主判定三过（PR #48）
 
@@ -1047,8 +1333,9 @@ worker 目录均原样保留。
 4 个主题文件。父分支对曲率更新器的代码变化仅修正 0-sweep 未计算诊断，不经过本实验固定的
 8-sweep 路径。当前干净合并提交 `fe99279` 上完整重放 seed 0 的两条 1000 轮轨迹，
 预检、baseline 和 candidate 去除方向/因子/Gibbs/总墙钟四个计时字段后，分别与
-原正式输出精确一致。动力学专项 18 项、相关 qdte `222 passed, 2 skipped`、相关
-gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。qdte 全量唯一失败是该环境未安装
+原正式输出精确一致。动力学专项 18 项、相关独立 Python 3.11 环境
+`222 passed, 2 skipped`、相关 gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。
+独立 Python 3.11 环境全量唯一失败是该环境未安装
 torch 而对应测试未按能力跳过；排除该不适用用例后 `510 passed, 28 skipped,
 1 deselected`。重放 JSON 位于
 `outputs/generation_curvature_dynamics/replay_seed0_1000r_tau2_sweep8_fe99279.json`，
@@ -1097,8 +1384,8 @@ seed 独立重放全部随机
 诊断边界后，重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。PR #22 合入后，
 本分支又以普通 merge 同步 `master=eac317b`；父 HEAD 与合并后主分支代码树相同，
 最新正式重跑去除环境和计时字段后与上一版整份 JSON 精确一致。专项测试 52 项、
-相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项通过、
-2 项跳过。最新正式 JSON 位于
+相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；独立 Python 3.11 环境
+相关 174 项通过、2 项跳过。最新正式 JSON 位于
 `outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`，
 大小 11,326,345 字节，SHA-256 为
 `43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。完整公式、
@@ -1132,7 +1419,8 @@ Issue #18。
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
 定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
-完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
+完整 CPU/torch/CUDA 489 项通过；独立 Python 3.11 环境相关 81 项通过（另 2 项
+跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
 护栏。同步最新主分支并收紧正式元数据门禁后的重跑与上一版非决策字段精确
 一致。正式 6,876,791 字节 JSON 的
@@ -1171,7 +1459,8 @@ normalized L1 为 `0.0030167→0.0027767`（-7.96%），只作次要描述。
 `rho`，也不回到方向门槛。
 
 **验证与输出：** 闭环针对性测试 53 项、加因子模块共 94 项、完整
-CPU/torch/CUDA 452 项、qdte 相关测试 92 项通过（另 2 项按环境跳过）。正式输出包含
+CPU/torch/CUDA 452 项、独立 Python 3.11 环境相关测试 92 项通过（另 2 项按环境
+跳过）。正式输出包含
 40 张 300×10 合成表、81 份 JSON；
 数值有限性、文件数、参数、哈希、配对差和 5051/30450 个离线高阶单元格均已独立
 复核。迁移到数值护栏后的 20 种子 candidate 重放又审计了 1,311,408 次条件更新，
@@ -1262,7 +1551,8 @@ mask，并构造 `q_joint(M) ∝ q0(M) exp(beta U(M))`。有限温度不设置�
 loss/TVD 或跨 workload 改善。精确枚举不是可扩展算法，不能直接设为默认。
 
 **验证：** 新增测试与既有方向/更新测试共 **116 passed**；完整 gsd
-CPU/torch/CUDA 测试 **384 passed**；qdte 主循环 **25 passed, 1 skipped**。
+CPU/torch/CUDA 测试 **384 passed**；独立 Python 3.11 环境主循环
+**25 passed, 1 skipped**。
 公式、匹配规则、命令、环境、原始输出和全部失败 proposal 见
 `docs/设计/联合属性块扩散核.md`。关联 Issue #12；本变更已在 PR #11 合入后从
 最新 `master` 独立整理，不包含后续因子 Gibbs 实现。
@@ -1312,8 +1602,9 @@ Bernoulli 核 KL”的唯一闭式最优解。其期望漂移
 SHA-256 分别保持
 `1ef835d9...570a00a` 与 `c8c93554...12b6c`，共享轨迹和质量指标相同。
 新旧冻结探针共同的 10,800 行逐提案指标最大绝对差也为 0。
-针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，qdte 主循环
-测试 **25 passed, 1 skipped**。公式、数值截断边界、完整命令、环境和输出位置见
+针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，独立
+Python 3.11 环境主循环测试 **25 passed, 1 skipped**。公式、数值截断边界、完整
+命令、环境和输出位置见
 `docs/设计/扩散核温度熵漂移极限.md`。关联 Issue #10；方向计算性能仍由 Issue #7
 独立跟踪。
 
@@ -1385,8 +1676,8 @@ active direction 矩阵的 RMS，固定后不再逐轮更新，使残差收缩�
 
 **等价与边界：** 三枚关闭机制的 nltcs baseline 成品与历史 CSV 哈希逐种子相同，
 共享决策轨迹相同；donor 距离诊断最大非决策微差 `2.98e-8`。完整测试
-**343 passed**，qdte 环境定向主循环测试 **25 passed, 1 skipped**。当前未建模
-多块合取协同，也未建立与 QDTE 的统一跨仓库协议；仓库仍不是 DP。
+**343 passed**，独立 Python 3.11 环境定向主循环测试 **25 passed, 1 skipped**。
+当前未建模多块合取协同，也未建立统一的跨方法对照协议；仓库仍不是 DP。
 
 详细公式、失败结果、命令口径、输出目录和限制见
 `docs/设计/残差驱动正向扩散算子.md`。关联 Issue #6；方向计算性能问题见 Issue #7。

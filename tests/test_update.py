@@ -209,6 +209,66 @@ class TestValidation:
         with pytest.raises(ValueError, match="行数.*不一致"):
             evolve_step(current, donors.head(2), schema)
 
+    @pytest.mark.parametrize("value", [0.0, np.inf, True, "30"])
+    def test_direction_logit_clip_is_validated(self, value):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match="logit_clip"):
+            evolve_step(
+                current,
+                donors,
+                schema,
+                direction_logit_clip=value,
+            )
+
+    def test_return_diagnostics_requires_boolean(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        with pytest.raises(ValueError, match="return_diagnostics"):
+            evolve_step(
+                current,
+                donors,
+                schema,
+                return_diagnostics="yes",
+            )
+
+
+class TestTransitionDiagnostics:
+    def test_observation_preserves_table_and_rng_stream(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        plain_rng = np.random.default_rng(20260814)
+        observed_rng = np.random.default_rng(20260814)
+
+        plain = evolve_step(
+            current,
+            donors,
+            schema,
+            rho=1.0,
+            eta=0.4,
+            mu=0.0,
+            rng=plain_rng,
+        )
+        observed, diagnostics = evolve_step(
+            current,
+            donors,
+            schema,
+            rho=1.0,
+            eta=0.4,
+            mu=0.0,
+            rng=observed_rng,
+            return_diagnostics=True,
+        )
+
+        pd.testing.assert_frame_equal(observed, plain)
+        np.testing.assert_array_equal(
+            observed_rng.random(20), plain_rng.random(20)
+        )
+        assert diagnostics == {
+            "participating_rows": len(current),
+            "mutated_rows": 0,
+        }
+
 
 class TestIntegration:
     """与上游模块的集成"""

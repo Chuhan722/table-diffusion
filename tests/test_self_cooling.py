@@ -6,7 +6,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import table_diffevo.evolution as evolution_module
 from table_diffevo.evolution import _self_cooling_factor, run_evolution
+from table_diffevo.metrics import compute_normalized_l1
+from table_diffevo.objective import compute_loss
+from table_diffevo.queries import evaluate_table
 from table_diffevo.schema import AttributeBlock, Schema
 
 
@@ -174,6 +178,88 @@ class TestSelfCoolingIntegration:
             diag["loss_history"][-1] == diag["best_loss"]
         )
 
+    def test_current_state_contract_preserves_frozen_gate_free_trajectory(
+        self, monkeypatch
+    ):
+        """Stage 0 仪表不能改变任何一轮表、RNG 或旧诊断。"""
+        original_evolve_step = evolution_module.evolve_step
+        post_round_sha256 = []
+
+        def observed_evolve_step(*args, **kwargs):
+            proposal = original_evolve_step(*args, **kwargs)
+            post_round_sha256.append(_table_hash(proposal))
+            return proposal
+
+        monkeypatch.setattr(
+            evolution_module, "evolve_step", observed_evolve_step
+        )
+        best, diag = _run(
+            n_rounds=12,
+            rho=0.3,
+            mu=0.05,
+            seed=0,
+            n_records=30,
+            target=np.asarray([25.0, 6.0, 5.0]),
+            tol=float("inf"),
+            return_final_table=True,
+        )
+
+        assert post_round_sha256 == [
+            "c1f7ece7e56f41ad64494a62a4d7bd6711649f640488c890e7caf8dcd0f6dfea",
+            "cd6ca7f7e87752e0dbc1c1d90b371327596874cc761abff76b349dc4b1482802",
+            "81c1533e77c455474ce568f1403c856216a1d546bf74823daf1ec33b6ca4d457",
+            "7ec0bf79a09a6ef1901b9fc6f0677c5cf964dcde23933f2f7bb307d76017870f",
+            "d5fb12f2e1724ac95a92c94296c6a8c6c4312c16529de42b994b44720d1c48a4",
+            "26885c30bc6920ac45775bef73290e670364d2954a21ec522fca8239ba14032d",
+            "82a1ba5016780fba50c6c72b4ed85096543129c44f5dc3f6fceb7b0ee1e9a1b9",
+            "426eaf75e168e27cc0654ff81e0b09f4fe82e16add07ffee555ae0957627764c",
+            "1f6c2ae5972a98990a4ee6b167c8cf76a9d461b784b3fd5bdaddaa19fe41f3fb",
+            "1f6c2ae5972a98990a4ee6b167c8cf76a9d461b784b3fd5bdaddaa19fe41f3fb",
+            "194d623a3bd1c851655d0c6a62bfbb7f11fbc7159a04bb428474e1975c3bd09f",
+            "71a5760dad836b3cd749beebe8472c6716f8d54cfcf235addf8c52a7baab48b0",
+        ]
+        assert _table_hash(best) == (
+            "d5fb12f2e1724ac95a92c94296c6a8c6c4312c16529de42b994b44720d1c48a4"
+        )
+        assert _table_hash(diag["final_table"]) == (
+            "71a5760dad836b3cd749beebe8472c6716f8d54cfcf235addf8c52a7baab48b0"
+        )
+        assert diag["loss_history"] == [
+            49.0, 39.0, 39.0, 17.5, 10.5, 1.0,
+            1.5, 6.0, 3.0, 1.0, 1.0, 3.0,
+        ]
+        assert diag["accept_history"] == [True] * 12
+        assert diag["primary_rng_state_sha256"] == (
+            "81de95ec548a6dd03c5d6d20594c7a8767a06038aae79f7bd17d9ee847a9d499"
+        )
+        assert diag["state_evaluation_count"] == 12
+        assert diag["candidate_evaluation_count"] == 12
+        assert diag["best_loss"] == 1.0
+        assert diag["best_loss_diagnostic_only"] == 1.0
+
+        history = diag["current_state_metrics_history"]
+        assert [row["state_index"] for row in history] == list(range(13))
+        assert [row["round"] for row in history] == list(range(13))
+        assert [row["phase"] for row in history] == [
+            "initial", *(["post_round"] * 12)
+        ]
+        assert [row["current_squared_loss"] for row in history] == (
+            pytest.approx([
+                49.0, 39.0, 39.0, 17.5, 10.5, 1.0, 1.5,
+                6.0, 3.0, 1.0, 1.0, 3.0, 2.5,
+            ])
+        )
+
+        _, queries, _ = _tiny_problem()
+        target = np.asarray([25.0, 6.0, 5.0])
+        final_q = evaluate_table(diag["final_table"], queries)
+        expected_l1 = compute_normalized_l1(target, final_q, 30)
+        expected_loss = compute_loss(target, final_q)
+        assert history[-1]["current_normalized_l1"] == expected_l1
+        assert history[-1]["current_squared_loss"] == expected_loss
+        assert diag["final_current_normalized_l1"] == expected_l1
+        assert diag["final_current_squared_loss"] == expected_loss
+
     def test_final_table_absent_by_default(self):
         _, diag = _run()
 
@@ -182,9 +268,6 @@ class TestSelfCoolingIntegration:
     def test_final_table_loss_is_authoritative_terminal_metric(self):
         # loss_history[-1] 记录的是最后一次 proposal 之前的状态；最后一轮
         # 接受后最终表已变化。终态统计必须从 final_table 重算（审查意见）。
-        from table_diffevo.objective import compute_loss
-        from table_diffevo.queries import evaluate_table
-
         _, diag = _run(
             n_rounds=12, rho=0.3, mu=0.05, seed=0, n_records=30,
             target=np.asarray([25.0, 6.0, 5.0]), tol=float("inf"),

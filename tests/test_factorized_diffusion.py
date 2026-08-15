@@ -1006,6 +1006,10 @@ class TestFactorizedGibbsEvolutionStep:
         assert logit["clip_hit_count"] == 1
         assert logit["raw_logit_strictly_inside_clip"] is False
         assert logit["all_conditionals_bidirectional"] is True
+        assert diagnostics["conditional_logit_evaluated_count"] == 1
+        # The eligibility diagnostic treats the boundary as a hit, while
+        # the Stage 2 counter records only values changed by clipping.
+        assert diagnostics["conditional_logit_clipped_count"] == 0
 
     def test_same_primary_and_gibbs_seeds_are_reproducible(self):
         current, donors = self._tables()
@@ -1298,6 +1302,8 @@ class TestFactorizedGibbsEvolutionStep:
         )
 
         assert diagnostics["active_gibbs_rows"] == 0
+        assert diagnostics["conditional_logit_evaluated_count"] == 0
+        assert diagnostics["conditional_logit_clipped_count"] == 0
         np.testing.assert_array_equal(
             gibbs_rng.random(20), reference_rng.random(20)
         )
@@ -1338,6 +1344,86 @@ class TestFactorizedGibbsEvolutionStep:
                 gibbs_rng=np.random.default_rng(1),
                 gibbs_logit_clip=0.0,
             )
+
+    @pytest.mark.parametrize("value", [0.0, np.inf, True, "30"])
+    def test_direction_logit_clip_is_always_validated(self, value):
+        current, donors = self._tables()
+        with pytest.raises(ValueError, match="logit_clip"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                _three_bit_schema(),
+                _three_bit_queries(),
+                np.ones(4),
+                rho=1.0,
+                eta=0.5,
+                mu=0.0,
+                copy_direction_scores=np.ones((4, 3)),
+                copy_direction_strength=0.3,
+                direction_logit_clip=value,
+                n_sweeps=0,
+                rng=np.random.default_rng(0),
+            )
+
+    def test_direction_and_gibbs_clips_have_separate_identity(self):
+        current, donors = self._tables()
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.ones((4, 3)),
+            copy_direction_strength=0.3,
+            direction_logit_clip=7.0,
+            gibbs_logit_clip=11.0,
+            n_sweeps=1,
+            rng=np.random.default_rng(0),
+            gibbs_rng=np.random.default_rng(1),
+        )
+
+        assert diagnostics["direction_logit_clip"] == 7.0
+        assert diagnostics["gibbs_logit_clip"] == 11.0
+        assert diagnostics["conditional_logit_evaluated_count"] == (
+            diagnostics["gibbs_microsteps"]
+        )
+        assert 0 <= diagnostics[
+            "conditional_logit_clipped_count"
+        ] <= diagnostics["conditional_logit_evaluated_count"]
+
+    def test_gibbs_clip_hits_are_observed_without_changing_the_guard(self):
+        current, donors = self._tables()
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.full(4, 1_000.0),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.ones((4, 3)),
+            copy_direction_strength=10.0,
+            gibbs_logit_clip=0.1,
+            n_sweeps=2,
+            rng=np.random.default_rng(10),
+            gibbs_rng=np.random.default_rng(11),
+        )
+
+        assert diagnostics["conditional_logit_evaluated_count"] == (
+            diagnostics["gibbs_microsteps"]
+        )
+        assert diagnostics["conditional_logit_clipped_count"] > 0
+        logit = diagnostics["factor_conditional_logit_diagnostics"]
+        assert logit["condition_count"] == diagnostics[
+            "conditional_logit_evaluated_count"
+        ]
+        assert logit["clip_hit_count"] >= diagnostics[
+            "conditional_logit_clipped_count"
+        ]
 
     @pytest.mark.parametrize("eta", [0.0, 1.0])
     def test_nonzero_sweeps_require_open_eta(self, eta):
