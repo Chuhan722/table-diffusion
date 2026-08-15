@@ -396,6 +396,12 @@ CPU 全套回归为 `1092 passed, 7 skipped`。入口实现固定在本地提交
 问题归因给 Gibbs。query-max 不直接处理本次 L1 波动。以上诊断不改变正式失败结论，也不
 用于回调 validation seed `220..224` 的阈值。
 
+为准备把 Stage 2 V1 作为独立研究 PR 归档，新增
+`docs/进度/Issue53_Stage2_V1收敛检测器总结.md`，集中整理 Stage 2A 轨迹语义、V1 三窗口
+判据、development 校准、封存 validation、query-max 补充边界、正式负结果、失败诊断和
+全部关键产物哈希。文档明确区分“V1 detector 被否决”与“生成核是否收敛/质量是否足够”，
+并明确 V2 不进入本 PR。当前仍未 push 或创建新 PR。
+
 验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
 所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
