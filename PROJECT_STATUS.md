@@ -250,8 +250,20 @@ cell 特例；验证一旦失败即拒绝本配置、退休这些 seed 并重新
 仍须先向用户报告 GPU 与预计开销并再次取得明确确认。validation 数据截至目前仍未读取，
 在线自动停止仍未接入。
 
-验证：冻结协议相关定向测试 76 passed；用不修改共享 Conda 权限的临时可执行副本完成
-全套 1074 passed。所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
+用户随后明确批准启动 8000 轮封存验证，并要求在线 detector 留待另行讨论。新增独立
+`scripts/collect_issue53_stage2b_validation.py`：collect 必须显式确认冻结协议完整 SHA，
+要求干净工作树和恰好一张可见 CUDA GPU；20 条按固定顺序运行，每条轨迹原子落盘并可
+严格审计续跑，完整集合结束前不执行 detector replay 或发布部分分类。执行器全套回归
+1080 passed 后固定在提交 `0388997`，并于 `2026-08-15T10:55:31+08:00` 从独立 detached
+worktree `/home/chuhan/projects/table-diffusion-issue53-validation-run` 正式启动；物理 GPU 1
+通过 `CUDA_VISIBLE_DEVICES=1` 成为唯一可见卡。正式输出写入
+`outputs/issue53_stage2b_validation/`，运行日志为
+`outputs/issue53_stage2b_validation_run.log`；预计墙钟约 8.5..9 小时。validation seed
+现已正式解封，后续禁止修改或根据部分结果调节 detector；截至本记录只确认进程健康，
+未执行任何部分 detector 分类。
+
+验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
+所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
 ## 最近变更（2026-08-14）
 
