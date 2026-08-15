@@ -232,11 +232,26 @@ dataset×kernel cell 的线性 P95 后取四格最大值，两项运动性下限
 `stationary_qualified`，其中 11 条候选停止在 2000 轮、1 条在 2400 轮；0 条停滞，
 候选停止后最大连续不稳定为 0..2，0 条触发四连败持续再漂移，开发分类为
 `candidate_supported_on_development`。三项产物哈希复算通过，报告 manifest SHA-256
-为 `faa7c821804ea8de98a50069745ef906996ca51dbb00bdab7bc862f2945c1d8e`；validation
-seed `220..224` 仍未读取，候选配置尚未冻结为验证配置，也尚未接入在线停止。
+为 `faa7c821804ea8de98a50069745ef906996ca51dbb00bdab7bc862f2945c1d8e`；该报告生成时
+validation seed `220..224` 仍未读取，候选配置尚未冻结，也尚未接入在线停止。
 
-验证：新增校准入口后相关定向测试 44 passed；用不修改共享 Conda 权限的临时可执行
-副本完成全套 1060 passed。所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
+用户审查开发结果后已同意将上述候选冻结为 validation 配置。新增
+`scripts/issue53_stage2b_validation_protocol.py`，完整精度绑定生成提交 `d87503e`、
+原生成协议 `483fd48f…`、校准分析提交 `58c0386` 以及正式校准报告/36 行来源/216 行
+回放三个产物哈希；冻结配置 SHA-256 为
+`f3789ddbbec63b66bf8f7b21e08268a0e46aad5ed2e6601c67524d988d9cb1b9`，完整验证协议
+SHA-256 为 `7c6d345dc559298dafd4a28eb5a2c1f08742133f660bbbef67b0347c726e8921`。
+
+封存验证范围固定为 2 dataset × 2 kernel × seed `220..224` 共 20 条，每条必须跑满
+8000 轮以保留候选停止后的反事实尾部，总预算 160000 轮；采集时不在线早停。硬门禁为
+20/20 `stationary_qualified`、0 条 `stalled`、0 条停止后四连败持续再漂移，不允许
+cell 特例；验证一旦失败即拒绝本配置、退休这些 seed 并重新设计，禁止用同一验证结果
+调阈值。当前入口只有 plan 模式，不能读取 validation 轨迹或启动生成；正式单卡运行
+仍须先向用户报告 GPU 与预计开销并再次取得明确确认。validation 数据截至目前仍未读取，
+在线自动停止仍未接入。
+
+验证：冻结协议相关定向测试 76 passed；用不修改共享 Conda 权限的临时可执行副本完成
+全套 1074 passed。所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
 ## 最近变更（2026-08-14）
 
