@@ -362,6 +362,85 @@ def test_query_max_guard_keeps_stable_moving_control():
     assert result.candidate_round_index == 8
 
 
+def test_query_max_guard_rejects_sparse_opposing_drift_with_flat_l1():
+    vectors = []
+    for left, right in (
+        (1.0, 7.0),
+        (1.0, 7.0),
+        (3.0, 5.0),
+        (3.0, 5.0),
+        (5.0, 3.0),
+        (5.0, 3.0),
+        (7.0, 1.0),
+        (7.0, 1.0),
+    ):
+        vector = np.zeros(101)
+        vector[7] = left
+        vector[83] = right
+        vectors.append(vector)
+    trace = _make_trace(vectors, moving=True, n_records=10)
+    base_changes = {
+        "query_mean_shift_tolerance": 0.1,
+        "query_p95_shift_tolerance": 0.01,
+        "l1_mean_shift_tolerance": 0.1,
+        "l1_p90_minus_p10_shift_tolerance": 0.1,
+        "unique_row_rate_tolerance": 1.0,
+        "normalized_row_entropy_tolerance": 1.0,
+    }
+
+    original = replay_stationarity(trace, _config(**base_changes))
+    extended = replay_query_max_stationarity(
+        trace,
+        _query_max_config(
+            query_max_shift_tolerance=0.01,
+            **base_changes,
+        ),
+    )
+
+    assert original.status == "stationary_qualified"
+    assert all(check["query_p95_shift"] == 0.0 for check in original.checks)
+    assert all(check["l1_mean_shift"] == 0.0 for check in original.checks)
+    assert extended.status == "horizon_reached"
+    assert all(check["query_max_shift"] == pytest.approx(0.4) for check in (
+        extended.checks
+    ))
+
+
+def test_query_max_guard_recovers_after_one_broad_spike_block():
+    base = np.ones(21)
+    spike = np.full(21, 3.0)
+    vectors = [
+        value
+        for block in (base, base, base, spike, base, base, base, base)
+        for value in (block, block)
+    ]
+    trace = _make_trace(vectors, moving=True, n_records=10)
+
+    result = replay_query_max_stationarity(
+        trace,
+        _query_max_config(
+            query_max_shift_tolerance=0.01,
+            query_mean_shift_tolerance=0.01,
+            query_p95_shift_tolerance=0.01,
+            l1_mean_shift_tolerance=0.01,
+            l1_p90_minus_p10_shift_tolerance=0.01,
+            unique_row_rate_tolerance=1.0,
+            normalized_row_entropy_tolerance=1.0,
+        ),
+    )
+
+    assert [check["stable"] for check in result.checks] == [
+        True,
+        False,
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert result.status == "stationary_qualified"
+    assert result.candidate_round_index == 16
+
+
 def test_query_max_range_evidence_extends_but_does_not_change_old_fields():
     vectors = []
     for value in (1.0, 1.0, 3.0, 3.0, 5.0, 5.0):

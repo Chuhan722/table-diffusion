@@ -308,7 +308,23 @@ source audit 明确记录 `sealed_validation_seeds_read=false`。这些量程来
 没有阈值覆盖、validation 读取、生成重跑或在线停止参数。相关 71 项测试先行通过；全套
 回归首次仅因共享 Conda Python 无执行位导致两个需要 `sys.executable` 的子进程测试无法
 启动，使用不修改共享权限的临时可执行副本重跑后为 `1097 passed`。正式 development
-候选报告尚待从干净实现提交发布。
+候选报告已从干净实现提交 `c55b703` 发布到
+`outputs/issue53_stage2b_query_max_calibration/`：36 行校准证据与 216 行全预算检查均严格
+覆盖预定范围，自动导出的公共 `query_max_shift_tolerance` 为
+`0.007808333333333567`，原冻结配置的其余字段逐项不变。新版回放 12/12 均为
+`stationary_qualified`，停止轮次由原版 11 条 2000、1 条 2400 变为 10 条 2000、2 条
+2400；仅 `test_300x10/seed_200/factorized_gibbs` 推迟 400 轮，其余 11 条不变。0 条
+停滞、0 条持续再漂移；停止后最大连续不稳定分别为 6 条 0、2 条 1、4 条 2，均未达到
+四连败门禁。随后补充的两个稀疏查询反向变化与单块全体尖峰恢复测试确认：新版拒绝前者，
+后者在异常块退出三窗口并重新连续两次通过后正常合格；相关 49 项定向测试通过。
+
+正式 query-max 报告 manifest、报告、36 行证据和 216 行全回放哈希依次为
+`b7b2906c59f7d0b5668f3d68380a14cefc5df62c91942200c047138b0ba85658`、
+`23f6acbcce5f7bae45edcbb4f3f76e6bf804abfcfb63936287da0ba45c8c249c`、
+`bd2e2d8a19c67ba94289bb256a4caa0eed4292b0a9b886d8da0294fd64deda96`、
+`a5db9728fa59787125be1da117b80668dac82cd43ac7b42d48595138d95dad9a`，逐项复算通过；
+报告明确记录旧冻结 detector 未修改、无在线停止、无生成重跑、无 validation seed 访问。
+该结果支持 query-max 开发候选，但尚未把它冻结为新版 validation 配置。
 
 验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
 所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
