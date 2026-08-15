@@ -41,11 +41,13 @@ import pandas as pd
 from table_diffevo.schema import Schema
 from table_diffevo.queries import evaluate_table
 from table_diffevo.objective import compute_residual, compute_loss
+from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.directional_diffusion import (
+    DEFAULT_DIRECTION_LOGIT_CLIP,
     additive_copy_drift_diagnostics,
     bernoulli_entropy,
     bernoulli_kl,
@@ -93,6 +95,28 @@ def _table_sha256(frame: pd.DataFrame) -> str:
     """返回合成表 CSV 表示的摘要，只用于复现诊断。"""
     serialized = frame.to_csv(index=False).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+def _current_state_metrics(
+    target: np.ndarray,
+    current: np.ndarray,
+    n_records: int,
+    squared_loss: float,
+    *,
+    state_index: int,
+    round_index: int,
+    phase: str,
+) -> Dict[str, Any]:
+    """构造一个不消费 RNG/查询评价的 current-state 观测点。"""
+    return {
+        "state_index": int(state_index),
+        "round": int(round_index),
+        "phase": phase,
+        "current_normalized_l1": compute_normalized_l1(
+            target, current, n_records
+        ),
+        "current_squared_loss": float(squared_loss),
+    }
 
 
 def _factorized_gibbs_seed(seed: int) -> int:
@@ -167,6 +191,14 @@ def run_evolution(
     selection_scale_invariant: bool = False,
     selection_scale_invariant_min_spread: float = 1e-3,
     return_final_table: bool = False,
+    alpha_schedule_mode: str = "legacy_linear_horizon",
+    fixed_alpha: Optional[float] = None,
+    diffusion_direction_reference_scale: Optional[float] = None,
+    diffusion_direction_logit_clip: Optional[float] = (
+        DEFAULT_DIRECTION_LOGIT_CLIP
+    ),
+    record_transition_clocks: bool = False,
+    horizon_invariant: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -233,6 +265,7 @@ def run_evolution(
     alpha_min, alpha_max : float, default 2.0, 10.0
         （geometric 模式）动态锐度调度的起止值，α_t 从 α_min 线性升到 α_max
         （早期平缓探索、后期锐利收敛）。推荐 2→10（实验最优配置）。
+        仅在 alpha_schedule_mode='legacy_linear_horizon' 时生效。
     exclude_self : bool, default True
         是否禁止记录抽到自己（对角线屏蔽）。主循环候选池=全表（全对全），
         抽到自己=该行本轮不变、对演化零贡献。默认 True 屏蔽之；传 False
@@ -261,7 +294,9 @@ def run_evolution(
         - 'none'：直接使用原始比例残差方向量；
         - 'initial_rms'：用本次运行首个非零方向矩阵的 RMS 固定定标。此时
           diffusion_direction_strength 是无量纲初始温度，后续残差变小时倾斜自然
-          冷却，不逐轮重新标准化。
+          冷却，不逐轮重新标准化；
+        - 'fixed'：使用显式 diffusion_direction_reference_scale，跨预算与链
+          不重新估计。
     factorized_gibbs_sweeps : int, default 0
         每条参与记录在独立定向初始 mask 后执行的随机扫描 Gibbs sweep 数。0 完全
         保留既有独立单块更新；正数只允许与 residual_directed_diffusion 一起启用。
@@ -337,6 +372,20 @@ def run_evolution(
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
         DataFrame，不可直接 JSON 序列化，调用方保存诊断前必须自行弹出。
         默认 False 保持诊断字典可序列化，行为与历史一致。
+    alpha_schedule_mode : str, default 'legacy_linear_horizon'
+        legacy 模式保持按总轮数插值的旧语义；'fixed' 要求 fixed_alpha，且每轮
+        alpha 完全相同。
+    fixed_alpha : float or None, default None
+        fixed alpha 模式的显式有限非负值。
+    diffusion_direction_reference_scale : float or None, default None
+        fixed 方向归一化使用的正有限共享尺度 s0。
+    diffusion_direction_logit_clip : float or None, default 30
+        independent 方向 Bernoulli logit 的显式护栏；默认保持历史30。
+    record_transition_clocks : bool, default False
+        是否记录逐 attempt 参与行、实际改单元格、查询空间移动和逐轮状态/RNG
+        哈希。只增加观测计算，不参与生成决策。
+    horizon_invariant : bool, default False
+        启用 Issue #53 fail-closed 门禁，拒绝与总预算耦合或持续变化的配置。
 
     Returns
     -------
@@ -346,6 +395,12 @@ def run_evolution(
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
         - best_loss: float，最优 loss
+        - current_state_metrics_history: List[dict]，初始 current state 与
+          每个实际轮后 current state 的 normalized L1/平方 loss。每项
+          显式记录 state_index、round 和 phase；在 proposal 前提前停止
+          时不伪造重复状态
+        - final_current_normalized_l1/final_current_squared_loss:
+          最终 current table 的两个权威终态指标
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
@@ -428,6 +483,29 @@ def run_evolution(
             f"'pairwise_maxent'，得到 {init_method!r}"
         )
 
+    if alpha_schedule_mode not in (
+        "legacy_linear_horizon", "fixed"
+    ):
+        raise ValueError(
+            "alpha_schedule_mode 必须是 'legacy_linear_horizon' 或 "
+            f"'fixed'，得到 {alpha_schedule_mode!r}"
+        )
+    if alpha_schedule_mode == "fixed":
+        if (
+            isinstance(fixed_alpha, (bool, np.bool_))
+            or not isinstance(
+                fixed_alpha, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(fixed_alpha)
+            or fixed_alpha < 0.0
+        ):
+            raise ValueError("fixed 模式要求 fixed_alpha 是有限非负数值")
+        fixed_alpha = float(fixed_alpha)
+    elif fixed_alpha is not None:
+        raise ValueError(
+            "fixed_alpha 只允许与 alpha_schedule_mode='fixed' 一起使用"
+        )
+
     if isinstance(max_retries, bool) or not isinstance(max_retries, (int, np.integer)):
         raise ValueError(f"max_retries 必须是非负整数，得到 {max_retries!r}")
     if max_retries < 0:
@@ -441,6 +519,15 @@ def run_evolution(
             "residual_directed_diffusion 必须是布尔值，"
             f"得到 {residual_directed_diffusion!r}"
         )
+    residual_directed_diffusion = bool(residual_directed_diffusion)
+    for value, name in (
+        (record_transition_clocks, "record_transition_clocks"),
+        (horizon_invariant, "horizon_invariant"),
+    ):
+        if not isinstance(value, (bool, np.bool_)):
+            raise ValueError(f"{name} 必须是布尔值")
+    record_transition_clocks = bool(record_transition_clocks)
+    horizon_invariant = bool(horizon_invariant)
     if candidate_budget is not None:
         if isinstance(candidate_budget, bool) or not isinstance(candidate_budget, (int, np.integer)):
             raise ValueError(f"candidate_budget 必须是正整数或 None，得到 {candidate_budget!r}")
@@ -557,10 +644,51 @@ def run_evolution(
             f"得到 {diffusion_direction_strength!r}"
         )
     diffusion_direction_strength = float(diffusion_direction_strength)
-    if diffusion_direction_normalization not in ("none", "initial_rms"):
+    if diffusion_direction_normalization not in (
+        "none", "initial_rms", "fixed"
+    ):
         raise ValueError(
-            "diffusion_direction_normalization 必须是 'none' 或 "
-            f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
+            "diffusion_direction_normalization 必须是 'none'、"
+            f"'initial_rms' 或 'fixed'，得到 "
+            f"{diffusion_direction_normalization!r}"
+        )
+    if diffusion_direction_normalization == "fixed":
+        if (
+            isinstance(diffusion_direction_reference_scale, (bool, np.bool_))
+            or not isinstance(
+                diffusion_direction_reference_scale,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(diffusion_direction_reference_scale)
+            or diffusion_direction_reference_scale <= 0.0
+        ):
+            raise ValueError(
+                "fixed 方向归一化要求 "
+                "diffusion_direction_reference_scale 是正有限数值"
+            )
+        diffusion_direction_reference_scale = float(
+            diffusion_direction_reference_scale
+        )
+    elif diffusion_direction_reference_scale is not None:
+        raise ValueError(
+            "diffusion_direction_reference_scale 只允许与 "
+            "diffusion_direction_normalization='fixed' 一起使用"
+        )
+    if diffusion_direction_logit_clip is not None:
+        if (
+            isinstance(diffusion_direction_logit_clip, (bool, np.bool_))
+            or not isinstance(
+                diffusion_direction_logit_clip,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(diffusion_direction_logit_clip)
+            or diffusion_direction_logit_clip <= 0.0
+        ):
+            raise ValueError(
+                "diffusion_direction_logit_clip 必须是正有限数值或 None"
+            )
+        diffusion_direction_logit_clip = float(
+            diffusion_direction_logit_clip
         )
     for value, name in (
         (factorized_gibbs_sweeps, "factorized_gibbs_sweeps"),
@@ -621,6 +749,62 @@ def run_evolution(
             raise ValueError(
                 "factorized Gibbs 要求 eta 是 (0, 1) 内的有限数值，"
                 f"得到 {eta!r}"
+            )
+
+    if horizon_invariant:
+        violations = []
+        if (
+            isinstance(n_rounds, (bool, np.bool_))
+            or not isinstance(n_rounds, (int, np.integer))
+            or n_rounds <= 0
+        ):
+            violations.append("n_rounds 必须是正整数最大预算")
+        if (
+            isinstance(n_records, (bool, np.bool_))
+            or not isinstance(n_records, (int, np.integer))
+            or n_records <= 0
+        ):
+            violations.append("n_records 必须是正整数")
+        if (
+            isinstance(seed, (bool, np.bool_))
+            or not isinstance(seed, (int, np.integer))
+        ):
+            violations.append("seed 必须是显式整数")
+        for value, name in ((rho, "rho"), (eta, "eta"), (mu, "mu")):
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(
+                    value, (int, float, np.integer, np.floating)
+                )
+                or not np.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                violations.append(f"{name} 必须是 [0, 1] 内的固定标量")
+        if distance_mode != "geometric":
+            violations.append("distance_mode 必须是 geometric")
+        if alpha_schedule_mode != "fixed":
+            violations.append("alpha 必须使用 fixed 模式")
+        if residual_directed_diffusion and (
+            diffusion_direction_normalization != "fixed"
+        ):
+            violations.append("残差方向必须使用 fixed s0")
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(
+                tol, (int, float, np.integer, np.floating)
+            )
+            or not np.isposinf(tol)
+        ):
+            violations.append("tol 必须是正无穷以关闭整代门控")
+        if max_retries != 0:
+            violations.append("max_retries 必须为0")
+        if residual_self_cooling is not None:
+            violations.append("residual_self_cooling 必须关闭")
+        if rho_anneal_end is not None:
+            violations.append("rho_anneal_end 必须关闭")
+        if violations:
+            raise ValueError(
+                "horizon_invariant 配置不合格：" + "；".join(violations)
             )
 
     rng = np.random.default_rng(seed)
@@ -718,6 +902,7 @@ def run_evolution(
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    transition_clock_history: List[Dict[str, Any]] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
@@ -729,7 +914,10 @@ def run_evolution(
     distance_evaluation_count = 0
     direction_evaluation_count = 0
     direction_evaluation_elapsed_sec = 0.0
-    direction_reference_scale: Optional[float] = None
+    direction_reference_scale: Optional[float] = (
+        diffusion_direction_reference_scale
+        if diffusion_direction_normalization == "fixed" else None
+    )
     factorized_gibbs_factor_build_elapsed_sec = 0.0
     factorized_gibbs_sample_elapsed_sec = 0.0
     factorized_gibbs_active_rows = 0
@@ -763,16 +951,31 @@ def run_evolution(
     state_evaluation_count += 1
     best_S = S.copy()
     best_loss = initial_loss
+    current_state_metrics_history: List[Dict[str, Any]] = [
+        _current_state_metrics(
+            target,
+            initial_q,
+            n_records,
+            initial_loss,
+            state_index=0,
+            round_index=0,
+            phase="initial",
+        )
+    ]
 
     for t in range(n_rounds):
         rounds_run = t + 1
 
-        # 计算当前轮的动态锐度 α_t（geometric 模式用）
-        if n_rounds > 1:
-            progress = t / (n_rounds - 1)
+        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed
+        # 模式完全不读取 n_rounds，供 Issue #53 前缀不变参考过程使用。
+        if alpha_schedule_mode == "fixed":
+            alpha_t = fixed_alpha
         else:
-            progress = 1.0
-        alpha_t = alpha_min + (alpha_max - alpha_min) * progress
+            if n_rounds > 1:
+                progress = t / (n_rounds - 1)
+            else:
+                progress = 1.0
+            alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
 
         # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
@@ -957,7 +1160,7 @@ def run_evolution(
                 candidate_scale = direction_rms_scale(active_directions)
                 if candidate_scale > 0.0:
                     direction_reference_scale = candidate_scale
-            if diffusion_direction_normalization == "initial_rms":
+            if diffusion_direction_normalization in ("initial_rms", "fixed"):
                 effective_direction_strength = (
                     diffusion_direction_strength / direction_reference_scale
                     if direction_reference_scale is not None else 0.0
@@ -975,6 +1178,7 @@ def run_evolution(
                     eta,
                     active_directions,
                     effective_direction_strength,
+                    logit_clip=diffusion_direction_logit_clip,
                 )
                 negative_mask = active_directions < 0.0
                 positive_mask = active_directions > 0.0
@@ -1067,6 +1271,7 @@ def run_evolution(
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
         attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
+        attempt_transition_clocks: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
             {
@@ -1097,6 +1302,9 @@ def run_evolution(
                         gibbs_rng=factorized_gibbs_rng,
                         max_factor_order=factorized_gibbs_max_order,
                         gibbs_logit_clip=factorized_gibbs_logit_clip,
+                        direction_logit_clip=(
+                            diffusion_direction_logit_clip
+                        ),
                     )
                 )
                 attempt_factorized_gibbs_diagnostics.append(
@@ -1124,7 +1332,17 @@ def run_evolution(
                     "gibbs_microsteps"
                 ]
             else:
-                proposal = evolve_step(
+                independent_transition_kwargs = dict(direction_kwargs)
+                if (
+                    diffusion_direction_logit_clip
+                    != DEFAULT_DIRECTION_LOGIT_CLIP
+                ):
+                    independent_transition_kwargs["direction_logit_clip"] = (
+                        diffusion_direction_logit_clip
+                    )
+                if record_transition_clocks:
+                    independent_transition_kwargs["return_diagnostics"] = True
+                independent_result = evolve_step(
                     S,
                     donors,
                     schema,
@@ -1132,8 +1350,13 @@ def run_evolution(
                     eta=eta,
                     mu=mu * self_cooling_factor,
                     rng=rng,
-                    **direction_kwargs,
+                    **independent_transition_kwargs,
                 )
+                if record_transition_clocks:
+                    proposal, independent_diagnostics = independent_result
+                else:
+                    proposal = independent_result
+                    independent_diagnostics = None
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
@@ -1145,6 +1368,36 @@ def run_evolution(
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
+            if record_transition_clocks:
+                changed = (
+                    proposal.reset_index(drop=True)
+                    .ne(S.reset_index(drop=True))
+                    .to_numpy(dtype=bool)
+                )
+                kernel_diagnostics = (
+                    factorized_diagnostics
+                    if factorized_gibbs_sweeps > 0
+                    else independent_diagnostics
+                )
+                query_l1_movement = float(np.abs(delta_q).sum())
+                attempt_transition_clocks.append({
+                    "attempt": int(attempt + 1),
+                    "participating_rows": int(
+                        kernel_diagnostics["participating_rows"]
+                    ),
+                    "changed_rows": int(np.any(changed, axis=1).sum()),
+                    "changed_cells": int(changed.sum()),
+                    "query_l1_movement": query_l1_movement,
+                    "normalized_query_l1_movement": float(
+                        query_l1_movement / n_records
+                    ),
+                    "query_l2_squared_movement": float(
+                        np.dot(delta_q, delta_q)
+                    ),
+                    "gibbs_microsteps": int(
+                        kernel_diagnostics.get("gibbs_microsteps", 0)
+                    ),
+                })
 
             # 候选预算是硬上限：本次候选已被评估并计入，若刚好触边，就先标记
             # 耗尽。这必须在接受/拒绝分支之前判定——否则接受路径的 break 会绕过
@@ -1176,6 +1429,35 @@ def run_evolution(
         factorized_gibbs_attempt_diagnostics_history.append(
             attempt_factorized_gibbs_diagnostics
         )
+
+        post_round_q = proposal_q if accepted else q
+        current_state_metrics_history.append(
+            _current_state_metrics(
+                target,
+                post_round_q,
+                n_records,
+                current_loss,
+                state_index=len(current_state_metrics_history),
+                round_index=t + 1,
+                phase="post_round",
+            )
+        )
+        if record_transition_clocks:
+            transition_clock_history.append({
+                "state_index": len(current_state_metrics_history) - 1,
+                "round": int(t + 1),
+                "attempts": attempt_transition_clocks,
+                "accepted_attempt": int(accepted_attempt),
+                "candidate_evaluation_count_cumulative": int(
+                    candidate_evaluation_count
+                ),
+                "post_current_table_sha256": _table_sha256(S),
+                "primary_rng_state_sha256": _rng_state_sha256(rng),
+                "factorized_gibbs_rng_state_sha256": (
+                    _rng_state_sha256(factorized_gibbs_rng)
+                    if factorized_gibbs_rng is not None else None
+                ),
+            })
 
         if accepted:
             # S 已替换为 proposal，旧表对应的所有缓存立即失效。显式删除本地距离
@@ -1223,10 +1505,27 @@ def run_evolution(
     normalized_l1_median = float(np.median(per_query_nl1))
     normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
     normalized_l1_max = float(np.max(per_query_nl1))
+    final_current_metrics = current_state_metrics_history[-1]
 
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
+        "best_loss_diagnostic_only": best_loss,
+        "normalized_l1_at_best_squared_loss_diagnostic_only": (
+            normalized_l1_error
+        ),
+        "current_state_metrics_history": current_state_metrics_history,
+        "current_state_transition_count": (
+            len(current_state_metrics_history) - 1
+        ),
+        "transition_clock_history": transition_clock_history,
+        "transition_clock_count": len(transition_clock_history),
+        "final_current_normalized_l1": final_current_metrics[
+            "current_normalized_l1"
+        ],
+        "final_current_squared_loss": final_current_metrics[
+            "current_squared_loss"
+        ],
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "accept_history": accept_history,
@@ -1340,8 +1639,27 @@ def run_evolution(
             "distance_mode": distance_mode,
             "p": p if distance_mode == 'multiplicative' else None,
             "lambda": lambda_param if distance_mode == 'geometric' else None,
-            "alpha_min": alpha_min if distance_mode == 'geometric' else None,
-            "alpha_max": alpha_max if distance_mode == 'geometric' else None,
+            "alpha_min": (
+                alpha_min
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "legacy_linear_horizon"
+                else None
+            ),
+            "alpha_max": (
+                alpha_max
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "legacy_linear_horizon"
+                else None
+            ),
+            "alpha_schedule_mode": (
+                alpha_schedule_mode
+                if distance_mode == "geometric" else None
+            ),
+            "fixed_alpha": (
+                fixed_alpha
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "fixed" else None
+            ),
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
             "exclude_self": exclude_self,
@@ -1356,6 +1674,13 @@ def run_evolution(
             "diffusion_direction_strength": diffusion_direction_strength,
             "diffusion_direction_normalization": (
                 diffusion_direction_normalization
+            ),
+            "diffusion_direction_reference_scale": (
+                diffusion_direction_reference_scale
+                if diffusion_direction_normalization == "fixed" else None
+            ),
+            "diffusion_direction_logit_clip": (
+                diffusion_direction_logit_clip
             ),
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
@@ -1387,6 +1712,8 @@ def run_evolution(
                 float(selection_scale_invariant_min_spread)
                 if selection_scale_invariant else None
             ),
+            "record_transition_clocks": record_transition_clocks,
+            "horizon_invariant": horizon_invariant,
         },
     }
     if return_final_table:

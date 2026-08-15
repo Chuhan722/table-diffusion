@@ -13,7 +13,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from table_diffevo.directional_diffusion import tilted_copy_probabilities
+from table_diffevo.directional_diffusion import (
+    DEFAULT_DIRECTION_LOGIT_CLIP,
+    tilted_copy_probabilities,
+    validate_direction_logit_clip,
+)
 from table_diffevo.joint_diffusion import enumerate_copy_masks
 from table_diffevo.queries import _coerce_to_column_type, eval_condition
 from table_diffevo.schema import Schema
@@ -1141,6 +1145,7 @@ def evolve_step_factorized_gibbs(
     max_factor_order: int = 3,
     gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     compiled_workload: Optional[CompiledMaskWorkload] = None,
+    direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
 
@@ -1154,7 +1159,8 @@ def evolve_step_factorized_gibbs(
     recipient/donor 不同的记录批量评价查询条件；不传则保留旧逐行构造路径。
 
     返回的诊断只记录公开生成过程的工作量、实际条件 logit、概率和墙钟，不评价
-    loss，也不参与更新决策。
+    loss，也不参与更新决策。``direction_logit_clip`` 控制共同的独立定向初始
+    mask，``gibbs_logit_clip`` 只控制后续 factor 条件 Gibbs；两者分别显式记录。
     """
     for value, name in ((rho, "rho"), (eta, "eta"), (mu, "mu")):
         if (
@@ -1170,6 +1176,7 @@ def evolve_step_factorized_gibbs(
     eta = float(eta)
     mu = float(mu)
     strength = _validate_strength(copy_direction_strength)
+    direction_clip = validate_direction_logit_clip(direction_logit_clip)
     sweeps = _validate_nonnegative_integer(n_sweeps, "n_sweeps")
     maximum_order = _validate_nonnegative_integer(
         max_factor_order, "max_factor_order"
@@ -1250,6 +1257,7 @@ def evolve_step_factorized_gibbs(
                 eta,
                 direction_scores[:, attr_index],
                 strength,
+                logit_clip=direction_clip,
             )
         copy_masks[:, attr_index] = (
             rng.random(n_records) < copy_probabilities
@@ -1444,6 +1452,8 @@ def evolve_step_factorized_gibbs(
 
     diagnostics = {
         "participating_rows": int(participate.sum()),
+        "direction_logit_clip": direction_clip,
+        "gibbs_logit_clip": clip,
         "active_gibbs_rows": active_gibbs_rows,
         "active_blocks": active_blocks,
         "factor_count": factor_count,

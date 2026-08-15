@@ -14,6 +14,24 @@ from table_diffevo.schema import Schema
 from table_diffevo.vectorized_eval import evaluate_directional_potential
 
 
+DEFAULT_DIRECTION_LOGIT_CLIP = 30.0
+
+
+def validate_direction_logit_clip(
+    value: Optional[float],
+) -> Optional[float]:
+    if value is None:
+        return None
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not np.isfinite(value)
+        or value <= 0.0
+    ):
+        raise ValueError("logit_clip 必须是正有限数值或 None")
+    return float(value)
+
+
 def direction_rms_scale(direction_scores: np.ndarray) -> float:
     """返回有限方向量的数值稳定 RMS，用于无量纲温度定标。
 
@@ -39,6 +57,7 @@ def tilted_copy_probabilities(
     eta: float,
     direction_scores: np.ndarray,
     strength: float,
+    logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
 ) -> np.ndarray:
     """用方向量连续倾斜 Bernoulli 复制概率。
 
@@ -46,8 +65,9 @@ def tilted_copy_probabilities(
 
     ``logit(p) = logit(eta) + strength * direction``。
 
-    中性方向显式返回 eta；数值 logit 截断到 [-30, 30]，避免有限输入在浮点下
-    变成精确 0/1，从而保留正反方向支持。eta 的 0/1 端点保持原语义。
+    中性方向显式返回 eta；默认把数值 logit 截断到 [-30, 30]，避免有限输入
+    在浮点下变成精确 0/1，从而保留正反方向支持。显式传入 None 可关闭护栏；
+    eta 的 0/1 端点保持原语义。
     """
     if (
         isinstance(eta, (bool, np.bool_))
@@ -75,6 +95,7 @@ def tilted_copy_probabilities(
 
     eta = float(eta)
     strength = float(strength)
+    clip = validate_direction_logit_clip(logit_clip)
     if eta <= 0.0:
         return np.zeros_like(scores, dtype=float)
     if eta >= 1.0:
@@ -83,9 +104,16 @@ def tilted_copy_probabilities(
         return np.full_like(scores, eta, dtype=float)
 
     base_logit = np.log(eta) - np.log1p(-eta)
-    with np.errstate(over="ignore"):
+    with np.errstate(over="ignore", invalid="ignore"):
         tilted_logits = base_logit + strength * scores
-    logits = np.clip(tilted_logits, -30.0, 30.0)
+    if np.any(np.isnan(tilted_logits)):
+        raise ValueError("倾斜 logit 无法由有限输入稳定计算")
+    if clip is None:
+        if not np.all(np.isfinite(tilted_logits)):
+            raise ValueError("倾斜 logit 超出 float64 可表示范围")
+        logits = tilted_logits
+    else:
+        logits = np.clip(tilted_logits, -clip, clip)
     probs = np.empty_like(logits, dtype=float)
     positive = logits >= 0.0
     probs[positive] = 1.0 / (1.0 + np.exp(-logits[positive]))

@@ -1339,6 +1339,49 @@ class TestFactorizedGibbsEvolutionStep:
                 gibbs_logit_clip=0.0,
             )
 
+    @pytest.mark.parametrize("value", [0.0, np.inf, True, "30"])
+    def test_direction_logit_clip_is_always_validated(self, value):
+        current, donors = self._tables()
+        with pytest.raises(ValueError, match="logit_clip"):
+            evolve_step_factorized_gibbs(
+                current,
+                donors,
+                _three_bit_schema(),
+                _three_bit_queries(),
+                np.ones(4),
+                rho=1.0,
+                eta=0.5,
+                mu=0.0,
+                copy_direction_scores=np.ones((4, 3)),
+                copy_direction_strength=0.3,
+                direction_logit_clip=value,
+                n_sweeps=0,
+                rng=np.random.default_rng(0),
+            )
+
+    def test_direction_and_gibbs_clips_have_separate_identity(self):
+        current, donors = self._tables()
+        _, diagnostics = evolve_step_factorized_gibbs(
+            current,
+            donors,
+            _three_bit_schema(),
+            _three_bit_queries(),
+            np.ones(4),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            copy_direction_scores=np.ones((4, 3)),
+            copy_direction_strength=0.3,
+            direction_logit_clip=7.0,
+            gibbs_logit_clip=11.0,
+            n_sweeps=1,
+            rng=np.random.default_rng(0),
+            gibbs_rng=np.random.default_rng(1),
+        )
+
+        assert diagnostics["direction_logit_clip"] == 7.0
+        assert diagnostics["gibbs_logit_clip"] == 11.0
+
     @pytest.mark.parametrize("eta", [0.0, 1.0])
     def test_nonzero_sweeps_require_open_eta(self, eta):
         current, donors = self._tables()
