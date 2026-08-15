@@ -326,6 +326,31 @@ source audit 明确记录 `sealed_validation_seeds_read=false`。这些量程来
 报告明确记录旧冻结 detector 未修改、无在线停止、无生成重跑、无 validation seed 访问。
 该结果支持 query-max 开发候选，但尚未把它冻结为新版 validation 配置。
 
+冻结 V1 的正式 validation 轨迹采集已于 `2026-08-15 18:57 +08:00` 完成：20/20 条
+轨迹均跑满 8000 轮，总计 160000 轮，采集器逐条重审 trace 哈希、完整预算、无门控
+proposal 全应用、终态和配对 `s0/S0/初始化后 RNG` 后才发布集合 manifest。正式输入仍为
+`outputs/issue53_stage2b_validation/`，collection manifest SHA-256 为
+`cdb58df5d6ebcc0ea0892ace2244889448cb62e3ba7a4174259fe4c3c5fd4e92`；其中仍明确记录
+`detector_replay_performed=false` 与 `partial_validation_classification_read=false`。采集阶段
+没有提前查看任一轨迹的收敛分类，也没有根据 validation seed 调整冻结配置。
+
+新增 `scripts/replay_issue53_stage2b_validation.py` 作为冻结 V1 唯一正式解封入口。默认
+`plan` 不读取 validation 轨迹；`report` 没有阈值覆盖参数，必须同时显式确认冻结协议完整
+SHA-256 和上述 collection manifest SHA-256，并要求干净工作树。正式回放前会重新审计
+集合字段、20 个 cell 与 run manifest 哈希、采集提交、8000 轮预算、trace 哈希和十组配对
+绑定，再用唯一冻结配置回放；每条轨迹同时保留完整 18 个 `W=400` 检查，审计候选停止后
+连续四次不稳定再漂移，并把 20/20 合格、零停滞、零持续再漂移交给既有冻结门禁统一判定。
+失败轨迹的停滞轮次单独记录，不会冒充合格候选停止轮次。正式产物将原子、不可覆盖地发布
+报告、20 行轨迹结果、360 行全预算检查及带哈希 manifest；该入口不重跑生成器、不接在线
+停止，也不使用 query-max 候选或绝对 L1 质量作为停止条件。
+
+新增正式回放契约测试覆盖协议/集合双哈希确认、脏工作树先验拒绝、run manifest 篡改、
+采集阶段提前分类标记、跨核配对不一致、真实 V1 公式的 20 条通过、停滞字段归一化、候选后
+四连败再漂移以及结果原子落盘。专项 13 项、相关冻结协议/采集/校准/基础收敛 69 项均通过；
+CPU 全套回归为 `1092 passed, 7 skipped`。当前只完成入口实现和封存输入哈希确认，尚未执行
+`report` 模式、尚未产生或读取正式 V1 validation 分类；下一步是在本地干净提交上先展示
+正式命令与输入身份，再执行一次不可覆盖回放。
+
 验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
 所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
