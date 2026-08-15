@@ -1,6 +1,280 @@
 # 项目进度
 
 ## 当前阶段
+
+### 最新暂停点：Issue #52 Stage B 正式完成，结论为 no_factor_candidate（2026-08-14）
+
+> 本段取代下面“Stage B 工具已确认、正式实验尚未启动”的暂停点。Stage B 已严格按结果前冻结
+> 记录完成并通过独立审计；G* 虽优于同 tau independent，但未优于 I*=independent tau5，
+> 因此正式停止，不进入 Stage C。
+
+冻结与结果身份：
+
+```text
+tool commit = bab78a377aa49e6a680b91660f579d427e82860a
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290210632
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290453407
+mode = formal
+task count = 30/30 complete
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 470.64 s
+audit elapsed = 0.95 s
+```
+
+正式 Stage B 只运行 Stage A 合格的三个 factor 配置，seeds `200..209`、每条3000轮、末500轮
+current-loss mean 为主指标；同 tau independent 和 I* 均复用已审计 Stage T 轨迹：
+
+| factor | factor late mean | 同 tau independent | 同 tau 差值 / W-T-L | I*=independent tau5 | 相对 I* 差值 / W-T-L |
+|---|---:|---:|---:|---:|---:|
+| tau=1,s8 | 132.3734 | 157.2517 | -24.8783 / 8-0-2 | 68.5089 | +63.8645 / 0-0-10 |
+| tau=2,s8 | 98.9192 | 111.5445 | -12.6253 / 9-0-1 | 68.5089 | +30.4103 / 0-0-10 |
+| tau=3,s16 | **73.3693** | 85.5252 | **-12.1559 / 9-0-1** | 68.5089 | **+4.8604 / 4-0-6** |
+
+factor 排名为 `tau3,s16 < tau2,s8 < tau1,s8`，所以：
+
+```text
+I* = independent tau=5
+G* = factor tau=3,sweeps=16
+point_estimate_better_than_same_tau_independent = true
+point_estimate_better_than_i_star = false
+stage_c_candidate = null
+stage_c_allowed = false
+status = no_factor_candidate
+```
+
+失败位置唯一且清楚：G* 相对同 tau independent tau3 的末500轮均值改善12.1559，9/10 seeds
+改善；但相对 I* 反而高4.8604，只有4/10 seeds改善。按冻结规则不得递补 factor 第二名或追加
+配置。G* 的 final 单点均值为 `63.75`，略低于 I* 的 `64.70`，但主指标是末500轮均值，不能用
+辅助单点翻转决定；AUC 也比 I* 高 `4095.78`。
+
+三个 factor 都优于各自同 tau independent，说明 factor Gibbs 的同温度收益在3000轮仍存在；
+`no_factor_candidate` 的含义不是 factor 完全无效，而是最佳合格 factor 仍未超过更强的高温
+independent tau5。
+
+本结果仍是 horizon-limited 固定预算结果，不能声称达到平衡：
+
+| factor | rounds 2001..2500 | rounds 2501..3000 | 相对变化 | 明显下降 seeds |
+|---|---:|---:|---:|---:|
+| tau=1,s8 | 166.2599 | 132.3734 | -20.06% | 10/10 |
+| tau=2,s8 | 112.9026 | 98.9192 | -12.11% | 7/10 |
+| tau=3,s16 | 81.0142 | 73.3693 | -9.20% | 9/10 |
+
+预注册没有因末段下降而延长 horizon，因此固定预算选择仍为 `no_factor_candidate`。三个 factor
+总 clip hits 均为0；factor 条件最大原始 `abs(logit)` 为 `4.6984/11.2762/16.2638`，全部低于
+clip=30。全部轨迹身份、初态、主 RNG 终点、方向尺度、数值、双向条件和上游哈希门禁通过。
+
+正式产物：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_b_formal_bab78a3_20260814
+protocol SHA：ae9e6848c54a072a742019d31ff6341f9aba80e981ba1d65ae235bcb895d8604
+trajectory scientific SHA：1e01ca87c376a35636bff5fa13762c18b3dfbf340bd2169ef83390179b11c195
+report SHA：5e62a9c21638807d4827b89d476a16903d081d1f1424fea136f12d8074c5151d
+audit SHA：de42e0a7ae2a12f132956cf38525f3bb563e5db78bd4da47a9c5464e18a62c1a
+report size：6,697,968 bytes
+audit size：118,387 bytes
+```
+
+独立 auditor 未导入 Stage B runner，重新绑定 Stage T/A、推导三个 factor 配置，并重算趋势、
+聚合、逐 seed 双对照配对、I*/G* 和 selection，全部一致。
+
+当前禁止运行 seeds `300..319` 的 Stage C，也不得事后增加 tau/sweeps/seeds/horizon。Issue #52
+在本协议下已得到完整可接受的负结果；若后续研究 nltcs、跨 workload、GPU、无限 horizon 或新的
+温度/混合设计，必须另立问题和结果前协议，不能并入本次结果。
+
+### 最新暂停点：Issue #52 Stage B 工具已确认，正式实验尚未启动（2026-08-14）
+
+> 本段取代下面“Stage A 正式完成、尚未实现 Stage B”的暂停点，记录将与 Stage B 工具作为
+> 同一个冻结提交。当前完成范围只有 runner、独立 auditor、真实全链路 smoke 和回归测试；
+> **本提交不包含任何正式3000轮 factor 结果，也不授权跳过 Issue 运行前记录。**
+
+本轮新增：
+
+```text
+scripts/run_issue52_stage_b.py
+scripts/audit_issue52_stage_b.py
+tests/test_issue52_stage_b.py
+scripts/issue52_protocol.py 中的 Stage B 冻结协议与正式上游哈希
+```
+
+Stage B 正式输入和判定已按 Issue #52 正文落成代码：
+
+1. Stage T report/audit 与 Stage A report/audit 都按文件 SHA、格式、协议、审计状态和科学哈希
+   绑定；正式模式只接受既有正式产物。Stage A 的正式 report 很大，runner/auditor 通过已冻结
+   文件 SHA 和小型独立 audit 读取 selection，不重复把335MB raw proposal 全量载入内存。
+2. factor 配置不手写重新选择，而是从 Stage A 已审计的 `minimal_sufficient_sweeps` 推导。正式
+   集合严格为 `tau=1,s8`、`tau=2,s8`、`tau=3,s16`；tau=4/5 不运行。
+3. 只运行 factor 轨迹；同 tau independent 与 I* 都直接复用已审计 Stage T 的
+   seeds `200..209` 原始轨迹，不重复计算 independent。正式 horizon、检查点和主指标仍是
+   3000 rounds、每500轮检查、rounds 2501..3000 current-loss mean。
+4. I* 从绑定的 Stage T late-mean 排名重算，正式固定得到 `independent_tau_5`。G* 在合格
+   factor 中先按 late mean，精确并列再按 sweeps 少、tau 小排序。
+5. 只有 G* 点估计同时低于同 tau independent 与 I* 才输出
+   `factor_candidate_selected` 并允许 Stage C；否则固定为 `no_factor_candidate`。Stage B 不提前
+   加入胜率或置信区间，也不递补第二名；这些更严格条件仍只属于 Stage C。
+6. factor 长轨迹使用已验证等价、速度更合适的 `compiled_batch` 构造路径和 NumPy/CPU，最多
+   8 workers；每条轨迹继续检查相同初态、主 RNG 终点、方向固定尺度、独立/factor 条件数值、
+   完整轮数和表/RNG 哈希。worker 数只影响墙钟时间。
+7. 独立 auditor 不导入 Stage B runner；它重新绑定两个上游、推导配置、重算 factor 趋势与
+   聚合、逐 seed 的同 tau/I* 配对、I*/G* 和最终停止状态，并核验 trajectory scientific SHA。
+
+真实 smoke 串起了 Stage T → 状态库 → Stage A → Stage B。smoke 的 Stage A 因样本极小只给出
+`tau=1,s8` 与 `tau=2,s16` 两个管线配置，因此 Stage B 正确只执行2条 factor 轨迹（seed 9903、
+12 rounds），没有重新运行5条 independent。1 worker 与2 workers 的全部非计时科学字段完全
+一致：
+
+```text
+trajectory scientific SHA = 76a5c8f7a0e3ab71663f843115333fd5574d0d9e783aaf99d1ae469314d84620
+all identity gates = true
+audit passed = true
+runner/audit formal_result_valid = false
+```
+
+smoke 判定分支临时得到：
+
+```text
+I* = independent tau=5，late mean=1697.25
+G* = factor tau=2,s16，late mean=1383.50
+vs same-tau independent tau=2：-409.00
+vs I*：-313.75
+status = factor_candidate_selected
+```
+
+这些数只有1 seed、12 rounds，而且 factor 配置本身也来自每状态2 proposals 的 smoke Stage A；
+它们只证明配置派生、配对和选择分支能工作，**不是任何正式效果证据，也不能预告正式 G***。
+两条 smoke factor 轨迹的独立方向与 Gibbs 条件总 clip hits 均为0。
+
+专项和回归：
+
+```text
+Stage B 新专项：6 passed
+Issue #52 全链路：33 passed
+全仓库：966 passed, 7 skipped
+ruff / py_compile / git diff --check：通过
+```
+
+测试覆盖正式协议与四个冻结产物哈希、只运行 Stage A 合格 factor、I* 复算、G* 的 late
+mean/sweeps/tau 排序、双点估计门槛、无递补、串并行等价、不可覆盖，以及轨迹 history、配对、
+selection 和上游 SHA 篡改拒绝。
+
+用户已经检查并确认本阶段设计与 smoke。冻结顺序必须保持为：本节与工具同一 commit 推送，随后
+在 Issue #52 发布绑定该 commit、四个上游哈希和正式命令的运行前记录；只有记录发布成功且再次
+明确继续后，才可启动 formal Stage B。当前不得运行正式3000轮、Stage C、nltcs、GPU 或新增
+tau/sweeps。
+
+### 最新暂停点：Issue #52 Stage A 混合资格正式完成并审计通过（2026-08-14）
+
+> 本段取代下面“实现与 smoke 已确认”的暂停点。Stage A 已严格按结果前冻结记录完成；
+> 尚未实现或运行 Stage B。下一步只能先设计并审查 Stage B 工具，不能直接启动3000轮 factor
+> 轨迹。
+
+冻结与结果身份：
+
+```text
+tool commit = 5d25864c9845b1bba67ffb87ae5b7e1bd92c6073
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289850550
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289918247
+mode = formal
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 444.02 s
+audit elapsed = 18.26 s
+```
+
+正式实验读取已审计的48状态库（16组、每组3 seeds），每状态每 attempt 200 proposals；
+共实际执行10个 attempt、480个 state-attempts、96,000个 raw state-proposal bundles。严格按每个
+tau 的 `8→16→32` 序列运行，首次全部组通过即停，32失败即不合格。结果：
+
+| tau | 实际执行 | 决定处最差组 TVD | 决定处最差 gap recovery | 资格 |
+|---:|---|---:|---:|---|
+| 1 | 8 | 0.003855 | 99.266% | qualified，最小8 |
+| 2 | 8 | 0.031897 | 96.611% | qualified，最小8 |
+| 3 | 8→16 | 0.042889 | 96.373% | qualified，最小16 |
+| 4 | 8→16→32 | 0.050535 | 95.923% | 32上限仍不合格 |
+| 5 | 8→16→32 | 0.061061 | 95.172% | 32上限仍不合格 |
+
+因此 Stage B 的 factor 资格集合已经冻结为：
+
+```text
+factor tau=1, sweeps=8
+factor tau=2, sweeps=8
+factor tau=3, sweeps=16
+```
+
+tau=4/5 的失败都只来自 `initial` 状态组的 TVD；gap recovery 已通过，其他15个中晚期组
+全部通过。tau=4,s32 的未舍入值为 `0.0505347729 > 0.05`，虽然只超出
+`0.00053477`，仍必须按冻结规则判失败；不得四舍五入改判、追加64/128或放宽门槛。tau=5,s32
+为 `0.0610613188`。tau=3 的 initial TVD 从8 sweep 的 `0.057311` 降至16 sweep 的
+`0.042889`，所以16是首次充分值。
+
+数值与实现门禁全部通过：最大因子能量误差 `1.11e-16`、one-hot误差 `5.55e-17`；
+tau=1..5 最大原始 `abs(logit)` 为 `5.695/11.391/17.086/22.781/28.477`，全部低于
+clip=30且总 clip hits=0。production/exact replay 共核验283,950次、22,741,632微步，
+mismatch=0；同一 tau 的不同 sweeps 的共享条件/tape hash 均唯一且一致。独立 auditor 重新计算
+proposal summary、16组 TVD/recovery、停止序列和 selection，全部一致。
+
+产物与哈希：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_a_mixing_formal_5d25864_20260814
+protocol SHA：e0259b1c614aa49ed79f4d7dec61829ae0b46233e77a14e127b39af93c62e17d
+execution scientific SHA：56d5a470a891e99c985503514d7092e385805d1b6900cb46e1da4995fb0c2e0d
+report SHA：52654a455d42a0899194878789aa4690b3527c5482a6e4c2d5475b59df835b09
+audit SHA：6b4b76af01dc2ed3b267f8047e8edefef84e5fc1049d7aa5974af6ab8286a741
+report size：335,058,715 bytes
+```
+
+结论边界：Stage A 只决定混合资格，不比较外层3000轮效果、不选择 G*，也不说明 independent
+tau=4/5 无效。下一步若继续，应先实现 Stage B：只运行上述三个合格 factor 配置，复用
+seeds 200..209、3000 rounds、Stage T 检查点和主指标，再与同 tau independent 及 Stage T 的
+I* 比较。Stage B 的 runner/auditor、结果前冻结记录和正式输出目前都不存在。
+
+### 最新暂停点：Issue #52 Stage A 混合资格实现与 smoke 已确认（2026-08-14）
+
+本轮先把 `origin/master`（含 PR #48）合入研究分支，merge commit 为
+`ea1e4ba`，无冲突；此前正式 Stage T 与48状态库的四个文件哈希均保持不变。随后只完成
+Stage A factor Gibbs 混合资格的实现和缩小 smoke，**没有运行正式 Stage A，也没有启动
+Stage B**。用户已经检查并确认本阶段实现；本节与工具代码共同组成正式运行前的冻结提交，
+该提交本身不包含任何 formal Stage A 结果。
+
+新增/修改内容：
+
+- `scripts/issue52_protocol.py`：冻结 evaluation `tau=1..5`、逐 tau
+  `sweeps=8→16→32`、首次16个状态组全部通过即停止、32失败即不合格的统一规则；正式模式
+  绑定已审计48状态库及其 audit 的文件/协议/scientific SHA。
+- `scripts/run_issue52_stage_a_mixing.py`：只读取已有状态库；逐 tau 真正按顺序增量执行并立即
+  停止；固定同一 state/donor/proposal/address tape；按组计算 TVD 与 expected-direction gap
+  recovery；同时检查零 clip、数值、精确能量和 production Gibbs 同 tape replay；输出不可覆盖的
+  原始逐状态报告和 scientific hash。
+- `scripts/audit_issue52_stage_a_mixing.py`：不导入 Stage A runner，使用审计侧既有独立聚合实现，
+  从 raw proposal 重新计算逐配置 summary、16组 TVD/recovery、共享条件 hash、最小充分 sweeps、
+  停止序列与最终 selection。
+- `tests/test_issue52_stage_a_mixing.py`：覆盖首次8/16通过、到32仍失败、通过后多跑、错误提前停、
+  跳级、缺状态、乱序、共享 tape 篡改和 `sweeps>32` 拒绝，并构造真实 smoke 全链路。
+
+真实 smoke 使用1个 seed/组、16状态、每状态2 proposals，仅验证管线，不是方法证据。它有意跑出
+不同停止分支：`tau=1` 在8通过，`tau=2` 在16通过，`tau=3/4/5` 到32仍不合格；全部已执行
+attempt 的正确性与共享条件门禁通过、clip hits 为0，独立 audit `passed=true`，但
+`formal_result_valid=false`。因此这些 tau/sweeps 数值**不能**替代正式48状态 × 每状态200
+proposals 结果，也不能据此提前淘汰 tau=3/4/5。
+
+最终验证：
+
+```text
+Stage A mixing 新测试：8 passed
+Issue #52 相关链路：31 passed
+全仓库（正式 CPU 研究环境）：960 passed, 7 skipped
+全仓库（CUDA 辅助环境，含13个额外 CUDA 参数化用例）：980 passed
+ruff / py_compile / git diff --check：通过
+```
+
+本实现已经通过用户检查。冻结提交推送后，必须先在 Issue #52 发布绑定该 commit、协议、输入与
+状态库哈希的正式运行前记录；只有记录发布完成后才可运行 formal Stage A 及独立 audit。当前禁止
+追加64/128 sweeps、改门槛、做3000轮 factor 轨迹、Stage B、nltcs 或 GPU 改造。
+
 **当前主线固定仓库原始无噪声配置，研究扩散演化机制本身能否更好地逼近精确
 workload；2-way 最大熵初始化保留为辅助消融，不再作为本阶段主线 baseline。**
 
