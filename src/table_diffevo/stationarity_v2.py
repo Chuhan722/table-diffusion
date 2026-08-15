@@ -1,13 +1,16 @@
-"""Threshold-free scalar evidence for the Issue #53 V2 detector.
+"""Threshold-free evidence primitives for the Issue #53 V2 detector.
 
-This module implements only the mathematical summary of one V2 candidate
-window.  It deliberately does not contain thresholds, convergence states, or
-stopping decisions.  Those policy choices belong to a later layer and must be
-calibrated separately from this evidence contract.
+This module implements only trajectory summaries and mathematical evidence.
+It deliberately does not contain thresholds, convergence states, or stopping
+decisions.  Those policy choices belong to a later layer and must be calibrated
+separately from these evidence contracts.
 
-The candidate window contains three 400-round blocks, each represented by four
-100-round subblock summaries.  Therefore this primitive accepts exactly 12
-ordered scalar values.
+The current research candidate uses 100-round subblocks, but the low-level
+collector requires the duration explicitly and records it in its output.  A
+future production detector must freeze one data-independent rule; it must not
+silently select a duration from a dataset name.  The scalar primitive remains
+duration-agnostic: it accepts exactly 12 ordered summaries, corresponding to
+three blocks of four subblocks each.
 """
 
 from __future__ import annotations
@@ -18,10 +21,19 @@ from typing import Sequence
 
 import numpy as np
 
+from table_diffevo.stationarity import StationarityTrace
+
 
 STATIONARITY_V2_SCALAR_EVIDENCE_CONTRACT_VERSION = (
     "issue53-stage2-v2-scalar-evidence-v1"
 )
+STATIONARITY_V2_SUBBLOCK_SUMMARY_CONTRACT_VERSION = (
+    "issue53-stage2-v2-subblock-summary-v1"
+)
+STATIONARITY_V2_SUBBLOCK_COLLECTION_CONTRACT_VERSION = (
+    "issue53-stage2-v2-subblock-collection-v1"
+)
+V2_CURRENT_SUBBLOCK_ROUND_CANDIDATE = 100
 V2_CANDIDATE_BLOCK_COUNT = 3
 V2_SUBBLOCKS_PER_BLOCK = 4
 V2_SCALAR_EVIDENCE_POINT_COUNT = (
@@ -33,6 +45,186 @@ V2_PAIRWISE_SLOPE_COUNT = (
     // 2
 )
 MAD_NORMAL_CONSISTENCY_FACTOR = 1.4826
+
+
+@dataclass(frozen=True)
+class V2SubblockSummary:
+    """Source-free summaries of one complete, contiguous post-round block."""
+
+    subblock_number: int
+    start_round_index: int
+    end_round_index: int
+    round_count: int
+    normalized_query_mean: tuple[float, ...]
+    l1_mean: float
+    l1_p90_minus_p10: float
+    unique_row_rate_mean: float
+    normalized_row_entropy_mean: float
+    active_round_rate: float
+    mean_changed_row_fraction: float
+    mean_changed_query_fraction: float
+    mean_normalized_query_l1_movement: float
+    contract_version: str = field(
+        default=STATIONARITY_V2_SUBBLOCK_SUMMARY_CONTRACT_VERSION,
+        init=False,
+    )
+
+
+@dataclass(frozen=True)
+class V2SubblockCollection:
+    """Complete subblocks plus an explicit, never-summarized trailing tail."""
+
+    trace_contract_version: str
+    query_identity_sha256: str
+    target_identity_sha256: str
+    n_records: int
+    query_count: int
+    post_round_count: int
+    subblock_round_count: int
+    trailing_post_round_count: int
+    subblocks: tuple[V2SubblockSummary, ...]
+    contract_version: str = field(
+        default=STATIONARITY_V2_SUBBLOCK_COLLECTION_CONTRACT_VERSION,
+        init=False,
+    )
+
+    @property
+    def complete_subblock_count(self) -> int:
+        """Number of complete, non-overlapping subblocks（完整小块数）."""
+
+        return len(self.subblocks)
+
+
+def _validate_subblock_round_count(subblock_round_count: int) -> int:
+    if isinstance(subblock_round_count, bool) or not isinstance(
+        subblock_round_count, (int, np.integer)
+    ):
+        raise ValueError("subblock_round_count must be an integer")
+    normalized = int(subblock_round_count)
+    if normalized < 2:
+        raise ValueError("subblock_round_count must be at least 2")
+    return normalized
+
+
+def _summarize_v2_subblock(
+    trace: StationarityTrace,
+    positions: Sequence[int],
+    *,
+    subblock_number: int,
+) -> V2SubblockSummary:
+    """Summarize one already-validated complete subblock."""
+
+    rows = [trace.observations[position] for position in positions]
+    round_indices = [int(row["round_index"]) for row in rows]
+    expected_round_indices = list(
+        range(round_indices[0], round_indices[0] + len(round_indices))
+    )
+    if round_indices != expected_round_indices:
+        raise ValueError("V2 subblock post_round values must be contiguous")
+
+    position_array = np.asarray(positions, dtype=np.int64)
+    normalized_answers = (
+        trace.measured_query_answers[position_array] / trace.n_records
+    )
+    l1_values = np.asarray(
+        [row["current_normalized_l1"] for row in rows],
+        dtype=np.float64,
+    )
+
+    return V2SubblockSummary(
+        subblock_number=int(subblock_number),
+        start_round_index=round_indices[0],
+        end_round_index=round_indices[-1],
+        round_count=len(rows),
+        normalized_query_mean=tuple(
+            float(value) for value in np.mean(normalized_answers, axis=0)
+        ),
+        l1_mean=float(np.mean(l1_values)),
+        l1_p90_minus_p10=float(
+            np.percentile(l1_values, 90, method="linear")
+            - np.percentile(l1_values, 10, method="linear")
+        ),
+        unique_row_rate_mean=float(
+            np.mean([row["unique_row_rate"] for row in rows])
+        ),
+        normalized_row_entropy_mean=float(
+            np.mean([row["normalized_row_entropy"] for row in rows])
+        ),
+        active_round_rate=float(
+            np.mean([row["actual_changed_row_count"] > 0 for row in rows])
+        ),
+        mean_changed_row_fraction=float(
+            np.mean([
+                row["actual_changed_row_count"] / trace.n_records
+                for row in rows
+            ])
+        ),
+        mean_changed_query_fraction=float(
+            np.mean([
+                row["actual_changed_query_count"] / trace.query_count
+                for row in rows
+            ])
+        ),
+        mean_normalized_query_l1_movement=float(
+            np.mean([
+                row["normalized_query_l1_movement_mean"] for row in rows
+            ])
+        ),
+    )
+
+
+def collect_v2_subblock_summaries(
+    trace: StationarityTrace,
+    *,
+    subblock_round_count: int,
+) -> V2SubblockCollection:
+    """Collect non-overlapping V2 summaries without thresholds or decisions.
+
+    ``subblock_round_count`` is intentionally required: 100 rounds is the
+    current hypothesis, not an implicit universal constant.  Every complete
+    subblock contains exactly that many consecutive ``post_round`` states and
+    the initial state is never included.  An incomplete tail is not averaged;
+    its length is returned explicitly for online callers to keep collecting.
+
+    This analysis seam may be used to compare candidate durations on
+    development traces.  A production protocol must freeze a single common
+    rule before validation and must not dispatch on dataset identity.
+    """
+
+    if not isinstance(trace, StationarityTrace):
+        raise ValueError("trace must be a StationarityTrace")
+    trace.validate()
+    normalized_round_count = _validate_subblock_round_count(
+        subblock_round_count
+    )
+
+    post_round_positions = trace.post_round_positions()
+    complete_subblock_count, trailing_post_round_count = divmod(
+        len(post_round_positions), normalized_round_count
+    )
+    subblocks = []
+    for subblock_index in range(complete_subblock_count):
+        start = subblock_index * normalized_round_count
+        end = start + normalized_round_count
+        subblocks.append(
+            _summarize_v2_subblock(
+                trace,
+                post_round_positions[start:end],
+                subblock_number=subblock_index + 1,
+            )
+        )
+
+    return V2SubblockCollection(
+        trace_contract_version=trace.contract_version,
+        query_identity_sha256=trace.query_identity_sha256,
+        target_identity_sha256=trace.target_identity_sha256,
+        n_records=trace.n_records,
+        query_count=trace.query_count,
+        post_round_count=trace.post_round_count,
+        subblock_round_count=normalized_round_count,
+        trailing_post_round_count=trailing_post_round_count,
+        subblocks=tuple(subblocks),
+    )
 
 
 @dataclass(frozen=True)
