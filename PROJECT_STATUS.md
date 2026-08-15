@@ -163,7 +163,7 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 
 ## 最近变更（2026-08-15）
 
-### Issue #53 Stage 2B：初始量程采集入口完成，正式预算已冻结
+### Issue #53 Stage 2B：正式开发轨迹完成；无阈值量程报告入口完成
 
 Stage 2B 已把讨论确认的前三项写成显式协议：同时覆盖 `test_300x10` 与 `nltcs`、
 独立核与 8-sweep 三阶因子 Gibbs 核，四格共用同一套后续 detector；固定 exact、
@@ -177,8 +177,12 @@ no-gate、marginal init、scale-invariant donor、`alpha=16`、`rho=0.01`、`eta
 完整检查输入哈希、参数、seed 角色、当前态终点、RNG、轨迹文件和不可覆盖原子落盘。
 正式 development 最大观察预算已在报告单卡预计开销后经用户确认冻结为每条 8000
 轮；它不是收敛阈值，也不执行在线早停。入口拒绝其他轮数，smoke 仅允许未保留
-seed、小表和至多 3 轮。冻结提交前尚未运行 seed 200..202 或 220..224，也未选择
-窗口或阈值。
+seed、小表和至多 3 轮。生成提交 `d87503e`、协议
+`483fd48ff88f050a7935eeb8cd4eb05e74607c1067800da39669516aa1d4b12b` 上的 12 条
+development 轨迹现已全部跑满并严格重读：2 dataset × 2 kernel × seed 200..202，
+每条 8001 个当前状态，共 209 MB、记录运行时间 4.90 小时；validation seed
+220..224 未读取。六个 dataset×seed 配对均共享 s0/S0/初始化后 RNG，方向与 Gibbs
+条件 logit 的正式 clip 命中总数都为 0。
 
 `s0` 现在由每个 dataset×seed 的独立核 `initial_rms` 参考预检取得首个非零 RMS，
 随后两个核从同一 seed 重启并固定共享该 `s0`；预检状态不进入正式轨迹，任意常数
@@ -193,9 +197,18 @@ RNG，轨迹可严格重读，两个 clip 均零命中；compiled 与旧 rowwise
 观测、查询向量、主/Gibbs RNG 和关键 diagnostics 精确一致。nltcs 纯性能探针显示旧
 Gibbs 约 6.35 秒/轮；compiled 后冷启动一轮约 0.99 秒，20 轮稳态约 0.676 秒/轮，
 独立核约 0.240 秒/轮。正式 8000 轮预算已获确认，以上探针不参与窗口/阈值校准。
-验证：Stage 2B/参考过程/演化/因子定向测试 250 passed；用不修改共享 Conda 权限的
-临时可执行副本完成全套 1048 passed。所有改动只在本地工作树，未提交、未推送、
-未更新 Issue/PR。
+
+新增 `collect_stationarity_range_evidence()` 与
+`scripts/analyze_issue53_stage2b_range_finding.py`，固定候选窗口
+`100/200/400/800/1000`，复用 Stage 2A 的三相邻窗口、全窗口两两比较公式，但 API
+没有 detector config/阈值参数，输出也 fail-closed 禁止稳定、运动充分、停滞、候选
+停止轮次等分类字段。正式 report 入口严格审计 12 个 manifest、trace 哈希、生成提交、
+协议、配对 s0/S0/RNG、轮数和 seed 角色，拒绝 validation seed、脏工作树和覆盖已有
+目录；发布 1776 条 range check、96012 条 current-state 描述、纯描述性 JSON 与 9 张
+图。脏工作树只读演练已确认上述规模，尚未发布正式 report，待本提交后从干净版本生成。
+
+验证：量程/Stage 2B 定向测试 57 passed；用不修改共享 Conda 权限的临时可执行副本
+完成全套 1054 passed。所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
 ## 最近变更（2026-08-14）
 

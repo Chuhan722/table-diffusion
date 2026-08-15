@@ -24,6 +24,9 @@ from table_diffevo.quality import query_fingerprint
 
 STATIONARITY_TRACE_CONTRACT_VERSION = "issue53-stage2a-trace-v1"
 STATIONARITY_REPLAY_CONTRACT_VERSION = "issue53-stage2a-replay-v2"
+STATIONARITY_RANGE_EVIDENCE_CONTRACT_VERSION = (
+    "issue53-stage2b-range-evidence-v1"
+)
 
 _QUERY_ARRAY_FILENAME = "measured_query_answers.npz"
 _TRACE_METADATA_FILENAME = "stationarity_trace.json"
@@ -794,15 +797,22 @@ def _window_summary(
         "normalized_row_entropy": float(
             np.mean([row["normalized_row_entropy"] for row in rows])
         ),
+        "active_round_rate": float(np.mean([
+            row["actual_changed_row_count"] > 0 for row in rows
+        ])),
+        "mean_changed_row_fraction": float(np.mean([
+            row["actual_changed_row_count"] / trace.n_records
+            for row in rows
+        ])),
     }
 
 
-def _stability_evidence(
-    trace: StationarityTrace,
-    windows: Sequence[Sequence[int]],
-    config: StationarityDetectorConfig,
+def _range_evidence_from_summaries(
+    summaries: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    summaries = [_window_summary(trace, positions) for positions in windows]
+    """Return threshold-free evidence for exactly three state windows."""
+    if len(summaries) != 3:
+        raise ValueError("量程证据必须恰好比较三个窗口")
     query_mean_shifts = []
     query_p95_shifts = []
     for left_index in range(len(summaries)):
@@ -830,32 +840,15 @@ def _stability_evidence(
     normalized_row_entropy_shift = _max_pairwise_difference(
         [summary["normalized_row_entropy"] for summary in summaries]
     )
-    window_active_round_rates = []
-    window_mean_changed_row_fractions = []
-    for positions in windows:
-        changed_rows = np.asarray([
-            trace.observations[position]["actual_changed_row_count"]
-            for position in positions
-        ], dtype=float)
-        window_active_round_rates.append(
-            float(np.mean(changed_rows > 0.0))
-        )
-        window_mean_changed_row_fractions.append(
-            float(np.mean(changed_rows / trace.n_records))
-        )
+    window_active_round_rates = [
+        summary["active_round_rate"] for summary in summaries
+    ]
+    window_mean_changed_row_fractions = [
+        summary["mean_changed_row_fraction"] for summary in summaries
+    ]
     minimum_observed_active_round_rate = min(window_active_round_rates)
     minimum_observed_mean_changed_row_fraction = min(
         window_mean_changed_row_fractions
-    )
-    stable = (
-        query_mean_shift <= config.query_mean_shift_tolerance
-        and query_p95_shift <= config.query_p95_shift_tolerance
-        and l1_mean_shift <= config.l1_mean_shift_tolerance
-        and l1_p90_minus_p10_shift
-        <= config.l1_p90_minus_p10_shift_tolerance
-        and unique_row_rate_shift <= config.unique_row_rate_tolerance
-        and normalized_row_entropy_shift
-        <= config.normalized_row_entropy_tolerance
     )
     return {
         "query_mean_shift": query_mean_shift,
@@ -883,14 +876,105 @@ def _stability_evidence(
         "minimum_observed_mean_changed_row_fraction": (
             minimum_observed_mean_changed_row_fraction
         ),
-        "stable": bool(stable),
-        "movement_sufficient": bool(
-            minimum_observed_active_round_rate
-            >= config.minimum_active_round_rate
-            and minimum_observed_mean_changed_row_fraction
-            >= config.minimum_mean_changed_row_fraction
-        ),
     }
+
+
+def _range_evidence(
+    trace: StationarityTrace,
+    windows: Sequence[Sequence[int]],
+) -> Dict[str, Any]:
+    summaries = [_window_summary(trace, positions) for positions in windows]
+    return _range_evidence_from_summaries(summaries)
+
+
+def _stability_evidence(
+    trace: StationarityTrace,
+    windows: Sequence[Sequence[int]],
+    config: StationarityDetectorConfig,
+) -> Dict[str, Any]:
+    evidence = _range_evidence(trace, windows)
+    evidence["stable"] = bool(
+        evidence["query_mean_shift"]
+        <= config.query_mean_shift_tolerance
+        and evidence["query_p95_shift"]
+        <= config.query_p95_shift_tolerance
+        and evidence["l1_mean_shift"]
+        <= config.l1_mean_shift_tolerance
+        and evidence["l1_p90_minus_p10_shift"]
+        <= config.l1_p90_minus_p10_shift_tolerance
+        and evidence["unique_row_rate_shift"]
+        <= config.unique_row_rate_tolerance
+        and evidence["normalized_row_entropy_shift"]
+        <= config.normalized_row_entropy_tolerance
+    )
+    evidence["movement_sufficient"] = bool(
+        evidence["minimum_observed_active_round_rate"]
+        >= config.minimum_active_round_rate
+        and evidence["minimum_observed_mean_changed_row_fraction"]
+        >= config.minimum_mean_changed_row_fraction
+    )
+    return evidence
+
+
+def collect_stationarity_range_evidence(
+    trace: StationarityTrace,
+    window_sizes: Sequence[int],
+) -> List[Dict[str, Any]]:
+    """Collect block-aligned three-window evidence without thresholds.
+
+    This Stage 2B entry point deliberately has no detector configuration and
+    returns no pass/fail, stationarity, or stall classification.  Its formulas
+    and block alignment are shared with :func:`replay_stationarity` so range
+    finding cannot silently measure a different statistic from the detector.
+    """
+    trace.validate()
+    sizes = list(window_sizes)
+    if not sizes:
+        raise ValueError("window_sizes 不能为空")
+    for window_size in sizes:
+        if isinstance(window_size, bool) or not isinstance(
+            window_size, (int, np.integer)
+        ) or int(window_size) < 2:
+            raise ValueError("每个 window_size 必须是至少为 2 的整数")
+    normalized_sizes = [int(value) for value in sizes]
+    if len(set(normalized_sizes)) != len(normalized_sizes):
+        raise ValueError("window_sizes 不得重复")
+
+    positions = trace.post_round_positions()
+    checks: List[Dict[str, Any]] = []
+    for window_size in normalized_sizes:
+        completed_blocks = len(positions) // window_size
+        block_positions = [
+            positions[
+                block_index * window_size:(block_index + 1) * window_size
+            ]
+            for block_index in range(completed_blocks)
+        ]
+        block_summaries = [
+            _window_summary(trace, block) for block in block_positions
+        ]
+        for block_count in range(3, completed_blocks + 1):
+            windows = block_positions[block_count - 3:block_count]
+            summaries = block_summaries[block_count - 3:block_count]
+            terminal_position = windows[-1][-1]
+            terminal_observation = trace.observations[terminal_position]
+            round_ranges = [
+                [
+                    int(trace.observations[window[0]]["round_index"]),
+                    int(trace.observations[window[-1]]["round_index"]),
+                ]
+                for window in windows
+            ]
+            checks.append({
+                "completed_block_count": int(block_count),
+                "window_size": int(window_size),
+                "state_index": int(terminal_observation["state_index"]),
+                "round_index": int(terminal_observation["round_index"]),
+                "window_round_ranges": round_ranges,
+                **_range_evidence_from_summaries(summaries),
+            })
+    json.dumps(checks, ensure_ascii=False, allow_nan=False)
+    return checks
 
 
 def replay_stationarity(

@@ -7,11 +7,13 @@ import pandas as pd
 import pytest
 
 from table_diffevo.stationarity import (
+    STATIONARITY_RANGE_EVIDENCE_CONTRACT_VERSION,
     STATIONARITY_REPLAY_CONTRACT_VERSION,
     STATIONARITY_TRACE_CONTRACT_VERSION,
     StationarityDetectorConfig,
     StationarityTrace,
     build_stationarity_observation,
+    collect_stationarity_range_evidence,
     load_stationarity_trace,
     ordered_query_identity_sha256,
     replay_stationarity,
@@ -324,6 +326,63 @@ def test_detector_evidence_uses_explicit_all_pairwise_formulas():
     )
     assert check["minimum_observed_active_round_rate"] == 1.0
     assert check["minimum_observed_mean_changed_row_fraction"] == 1.0
+
+
+def test_threshold_free_range_evidence_matches_replay_formulas():
+    trace = _make_trace(
+        [
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 0.0],
+            [6.0, 0.0],
+        ],
+        moving=True,
+        termination_reason="in_progress",
+        n_records=10,
+    )
+    raw_check = collect_stationarity_range_evidence(trace, [2])[0]
+    replay_check = replay_stationarity(
+        trace,
+        _config(
+            query_mean_shift_tolerance=1.0,
+            query_p95_shift_tolerance=1.0,
+            l1_mean_shift_tolerance=1.0,
+            l1_p90_minus_p10_shift_tolerance=1.0,
+            unique_row_rate_tolerance=1.0,
+            normalized_row_entropy_tolerance=1.0,
+        ),
+    ).checks[0]
+
+    assert STATIONARITY_RANGE_EVIDENCE_CONTRACT_VERSION.endswith("-v1")
+    assert raw_check["window_round_ranges"] == [[1, 2], [3, 4], [5, 6]]
+    assert raw_check["round_index"] == 6
+    forbidden = {
+        "stable",
+        "movement_sufficient",
+        "check_status",
+        "moving_stability_streak",
+        "insufficient_movement_streak",
+    }
+    assert forbidden.isdisjoint(raw_check)
+    for key, value in raw_check.items():
+        if key != "window_round_ranges":
+            assert replay_check[key] == value
+    signature = inspect.signature(collect_stationarity_range_evidence)
+    assert set(signature.parameters) == {"trace", "window_sizes"}
+
+
+def test_threshold_free_range_grid_is_ordered_and_validated():
+    trace = _make_trace([[2.0, 1.0]] * 10, moving=True)
+
+    checks = collect_stationarity_range_evidence(trace, [2, 3])
+
+    assert [row["window_size"] for row in checks] == [2, 2, 2, 3]
+    assert [row["round_index"] for row in checks] == [6, 8, 10, 9]
+    for invalid in ([], [1], [True], [2, 2]):
+        with pytest.raises(ValueError):
+            collect_stationarity_range_evidence(trace, invalid)
 
 
 def test_replay_is_exactly_deterministic():
