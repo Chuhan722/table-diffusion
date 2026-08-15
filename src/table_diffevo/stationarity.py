@@ -27,6 +27,12 @@ STATIONARITY_REPLAY_CONTRACT_VERSION = "issue53-stage2a-replay-v2"
 STATIONARITY_RANGE_EVIDENCE_CONTRACT_VERSION = (
     "issue53-stage2b-range-evidence-v1"
 )
+STATIONARITY_QUERY_MAX_RANGE_EVIDENCE_CONTRACT_VERSION = (
+    "issue53-stage2b-query-max-range-evidence-v1"
+)
+STATIONARITY_QUERY_MAX_REPLAY_CONTRACT_VERSION = (
+    "issue53-stage2b-query-max-replay-v1"
+)
 
 _QUERY_ARRAY_FILENAME = "measured_query_answers.npz"
 _TRACE_METADATA_FILENAME = "stationarity_trace.json"
@@ -745,6 +751,40 @@ class StationarityDetectorConfig:
         return result
 
 
+@dataclass(frozen=True)
+class QueryMaxStationarityDetectorConfig:
+    """Versioned extension that adds a worst-query drift guard.
+
+    The frozen Stage 2B detector config remains an unchanged nested value so
+    old replay and validation protocols cannot silently acquire the new rule.
+    """
+
+    base_config: StationarityDetectorConfig
+    query_max_shift_tolerance: float
+
+    def __post_init__(self) -> None:
+        if type(self.base_config) is not StationarityDetectorConfig:
+            raise ValueError(
+                "base_config 必须是原版 StationarityDetectorConfig"
+            )
+        object.__setattr__(
+            self,
+            "query_max_shift_tolerance",
+            _finite_nonnegative(
+                self.query_max_shift_tolerance,
+                "query_max_shift_tolerance",
+            ),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            **self.base_config.to_dict(),
+            "query_max_shift_tolerance": self.query_max_shift_tolerance,
+        }
+        json.dumps(result, ensure_ascii=False, allow_nan=False)
+        return result
+
+
 @dataclass
 class StationarityReplayResult:
     """Deterministic result of replaying a detector over one trace."""
@@ -879,6 +919,23 @@ def _range_evidence_from_summaries(
     }
 
 
+def _query_max_range_evidence_from_summaries(
+    summaries: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Extend the unchanged range evidence with worst-coordinate drift."""
+    evidence = _range_evidence_from_summaries(summaries)
+    query_max_shifts = []
+    for left_index in range(len(summaries)):
+        for right_index in range(left_index + 1, len(summaries)):
+            shift = np.abs(
+                summaries[left_index]["query_mean"]
+                - summaries[right_index]["query_mean"]
+            )
+            query_max_shifts.append(float(np.max(shift)))
+    evidence["query_max_shift"] = max(query_max_shifts)
+    return evidence
+
+
 def _range_evidence(
     trace: StationarityTrace,
     windows: Sequence[Sequence[int]],
@@ -912,6 +969,36 @@ def _stability_evidence(
         >= config.minimum_active_round_rate
         and evidence["minimum_observed_mean_changed_row_fraction"]
         >= config.minimum_mean_changed_row_fraction
+    )
+    return evidence
+
+
+def _query_max_stability_evidence(
+    trace: StationarityTrace,
+    windows: Sequence[Sequence[int]],
+    config: QueryMaxStationarityDetectorConfig,
+) -> Dict[str, Any]:
+    summaries = [_window_summary(trace, positions) for positions in windows]
+    evidence = _query_max_range_evidence_from_summaries(summaries)
+    base = config.base_config
+    evidence["stable"] = bool(
+        evidence["query_mean_shift"] <= base.query_mean_shift_tolerance
+        and evidence["query_p95_shift"] <= base.query_p95_shift_tolerance
+        and evidence["query_max_shift"]
+        <= config.query_max_shift_tolerance
+        and evidence["l1_mean_shift"] <= base.l1_mean_shift_tolerance
+        and evidence["l1_p90_minus_p10_shift"]
+        <= base.l1_p90_minus_p10_shift_tolerance
+        and evidence["unique_row_rate_shift"]
+        <= base.unique_row_rate_tolerance
+        and evidence["normalized_row_entropy_shift"]
+        <= base.normalized_row_entropy_tolerance
+    )
+    evidence["movement_sufficient"] = bool(
+        evidence["minimum_observed_active_round_rate"]
+        >= base.minimum_active_round_rate
+        and evidence["minimum_observed_mean_changed_row_fraction"]
+        >= base.minimum_mean_changed_row_fraction
     )
     return evidence
 
@@ -972,6 +1059,65 @@ def collect_stationarity_range_evidence(
                 "round_index": int(terminal_observation["round_index"]),
                 "window_round_ranges": round_ranges,
                 **_range_evidence_from_summaries(summaries),
+            })
+    json.dumps(checks, ensure_ascii=False, allow_nan=False)
+    return checks
+
+
+def collect_query_max_stationarity_range_evidence(
+    trace: StationarityTrace,
+    window_sizes: Sequence[int],
+) -> List[Dict[str, Any]]:
+    """Collect threshold-free evidence including worst-query drift.
+
+    This is a separate versioned entry point.  The original Stage 2B range
+    evidence and replay outputs remain byte-for-byte unchanged.
+    """
+    trace.validate()
+    sizes = list(window_sizes)
+    if not sizes:
+        raise ValueError("window_sizes 不能为空")
+    for window_size in sizes:
+        if isinstance(window_size, bool) or not isinstance(
+            window_size, (int, np.integer)
+        ) or int(window_size) < 2:
+            raise ValueError("每个 window_size 必须是至少为 2 的整数")
+    normalized_sizes = [int(value) for value in sizes]
+    if len(set(normalized_sizes)) != len(normalized_sizes):
+        raise ValueError("window_sizes 不得重复")
+
+    positions = trace.post_round_positions()
+    checks: List[Dict[str, Any]] = []
+    for window_size in normalized_sizes:
+        completed_blocks = len(positions) // window_size
+        block_positions = [
+            positions[
+                block_index * window_size:(block_index + 1) * window_size
+            ]
+            for block_index in range(completed_blocks)
+        ]
+        block_summaries = [
+            _window_summary(trace, block) for block in block_positions
+        ]
+        for block_count in range(3, completed_blocks + 1):
+            windows = block_positions[block_count - 3:block_count]
+            summaries = block_summaries[block_count - 3:block_count]
+            terminal_position = windows[-1][-1]
+            terminal_observation = trace.observations[terminal_position]
+            round_ranges = [
+                [
+                    int(trace.observations[window[0]]["round_index"]),
+                    int(trace.observations[window[-1]]["round_index"]),
+                ]
+                for window in windows
+            ]
+            checks.append({
+                "completed_block_count": int(block_count),
+                "window_size": int(window_size),
+                "state_index": int(terminal_observation["state_index"]),
+                "round_index": int(terminal_observation["round_index"]),
+                "window_round_ranges": round_ranges,
+                **_query_max_range_evidence_from_summaries(summaries),
             })
     json.dumps(checks, ensure_ascii=False, allow_nan=False)
     return checks
@@ -1062,6 +1208,113 @@ def replay_stationarity(
             insufficient_movement_streak
             >= config.stall_patience_checks
         ):
+            return make_result(
+                "stalled",
+                check["state_index"],
+                check["round_index"],
+            )
+
+    if trace.termination_reason in {"max_rounds", "candidate_budget"}:
+        status = "horizon_reached"
+    elif trace.termination_reason != "in_progress":
+        status = "terminated_before_qualification"
+    elif completed_blocks < 3:
+        status = "collecting"
+    elif checks and checks[-1]["check_status"] == "insufficient_movement":
+        status = "insufficient_movement"
+    else:
+        status = "running"
+    return make_result(status, None, None)
+
+
+def replay_query_max_stationarity(
+    trace: StationarityTrace,
+    config: QueryMaxStationarityDetectorConfig,
+) -> StationarityReplayResult:
+    """Replay the versioned detector with a worst-query drift guard."""
+    trace.validate()
+    if not isinstance(config, QueryMaxStationarityDetectorConfig):
+        raise ValueError(
+            "config 必须是 QueryMaxStationarityDetectorConfig"
+        )
+    trace_descriptor = {
+        "contract_version": trace.contract_version,
+        "trace_identity_sha256": _trace_identity_sha256(trace),
+        "query_identity_sha256": trace.query_identity_sha256,
+        "target_identity_sha256": trace.target_identity_sha256,
+        "n_records": trace.n_records,
+        "query_count": trace.query_count,
+        "state_count": trace.state_count,
+        "post_round_count": trace.post_round_count,
+        "termination_reason": trace.termination_reason,
+    }
+    detector_config = config.to_dict()
+
+    def make_result(
+        status: str,
+        candidate_state_index: int | None,
+        candidate_round_index: int | None,
+    ) -> StationarityReplayResult:
+        return StationarityReplayResult(
+            status=status,
+            candidate_state_index=candidate_state_index,
+            candidate_round_index=candidate_round_index,
+            checks=checks,
+            trace=trace_descriptor,
+            detector_config=detector_config,
+            contract_version=(
+                STATIONARITY_QUERY_MAX_REPLAY_CONTRACT_VERSION
+            ),
+        )
+
+    base = config.base_config
+    positions = trace.post_round_positions()
+    completed_blocks = len(positions) // base.window_size
+    checks: List[Dict[str, Any]] = []
+    moving_stability_streak = 0
+    insufficient_movement_streak = 0
+
+    for block_count in range(3, completed_blocks + 1):
+        windows = []
+        for block_index in range(block_count - 3, block_count):
+            start = block_index * base.window_size
+            end = start + base.window_size
+            windows.append(positions[start:end])
+        evidence = _query_max_stability_evidence(trace, windows, config)
+        terminal_position = windows[-1][-1]
+        terminal_observation = trace.observations[terminal_position]
+        if evidence["stable"] and evidence["movement_sufficient"]:
+            moving_stability_streak += 1
+            insufficient_movement_streak = 0
+            check_status = "stability_pass"
+        elif evidence["stable"]:
+            moving_stability_streak = 0
+            insufficient_movement_streak += 1
+            check_status = "insufficient_movement"
+        else:
+            moving_stability_streak = 0
+            insufficient_movement_streak = 0
+            check_status = "running"
+        check = {
+            "completed_block_count": int(block_count),
+            "window_size": int(base.window_size),
+            "state_index": int(terminal_observation["state_index"]),
+            "round_index": int(terminal_observation["round_index"]),
+            **evidence,
+            "moving_stability_streak": int(moving_stability_streak),
+            "insufficient_movement_streak": int(
+                insufficient_movement_streak
+            ),
+            "check_status": check_status,
+        }
+        checks.append(check)
+        if moving_stability_streak >= 2:
+            return make_result(
+                "stationary_qualified",
+                check["state_index"],
+                check["round_index"],
+            )
+        if insufficient_movement_streak >= base.stall_patience_checks:
             return make_result(
                 "stalled",
                 check["state_index"],

@@ -7,15 +7,20 @@ import pandas as pd
 import pytest
 
 from table_diffevo.stationarity import (
+    STATIONARITY_QUERY_MAX_RANGE_EVIDENCE_CONTRACT_VERSION,
+    STATIONARITY_QUERY_MAX_REPLAY_CONTRACT_VERSION,
     STATIONARITY_RANGE_EVIDENCE_CONTRACT_VERSION,
     STATIONARITY_REPLAY_CONTRACT_VERSION,
     STATIONARITY_TRACE_CONTRACT_VERSION,
+    QueryMaxStationarityDetectorConfig,
     StationarityDetectorConfig,
     StationarityTrace,
     build_stationarity_observation,
+    collect_query_max_stationarity_range_evidence,
     collect_stationarity_range_evidence,
     load_stationarity_trace,
     ordered_query_identity_sha256,
+    replay_query_max_stationarity,
     replay_stationarity,
     save_stationarity_trace,
     stationarity_row_diversity_metrics,
@@ -152,6 +157,13 @@ def _config(**changes):
     return StationarityDetectorConfig(**values)
 
 
+def _query_max_config(*, query_max_shift_tolerance, **base_changes):
+    return QueryMaxStationarityDetectorConfig(
+        base_config=_config(**base_changes),
+        query_max_shift_tolerance=query_max_shift_tolerance,
+    )
+
+
 def test_row_diversity_has_explicit_normalized_entropy():
     unique = pd.DataFrame({"x": [0, 1, 2, 3]})
     collapsed = pd.DataFrame({"x": [0, 0, 0, 0]})
@@ -279,6 +291,101 @@ def test_dynamic_stability_requires_two_completed_checks():
     assert payload["trace"]["post_round_count"] == 8
     assert len(payload["trace"]["trace_identity_sha256"]) == 64
     json.dumps(payload, allow_nan=False)
+
+
+def test_query_max_version_preserves_original_config_and_replay_contract():
+    trace = _make_trace([[2.0, 1.0]] * 8, moving=True)
+    original_config = _config()
+    extended_config = QueryMaxStationarityDetectorConfig(
+        base_config=original_config,
+        query_max_shift_tolerance=0.1,
+    )
+
+    original = replay_stationarity(trace, original_config)
+    extended = replay_query_max_stationarity(trace, extended_config)
+
+    assert "query_max_shift_tolerance" not in original_config.to_dict()
+    assert "query_max_shift" not in original.checks[0]
+    assert original.contract_version == STATIONARITY_REPLAY_CONTRACT_VERSION
+    assert extended.contract_version == (
+        STATIONARITY_QUERY_MAX_REPLAY_CONTRACT_VERSION
+    )
+    assert extended.detector_config["query_max_shift_tolerance"] == 0.1
+    assert extended.checks[0]["query_max_shift"] == 0.0
+
+
+def test_query_max_guard_rejects_sparse_drift_hidden_by_original_metrics():
+    vectors = []
+    for value in (1.0, 1.0, 3.0, 3.0, 5.0, 5.0, 7.0, 7.0):
+        vector = np.zeros(21)
+        vector[7] = value
+        vectors.append(vector)
+    trace = _make_trace(vectors, moving=True, n_records=10)
+    base_changes = {
+        "query_mean_shift_tolerance": 0.1,
+        "query_p95_shift_tolerance": 0.01,
+        "l1_mean_shift_tolerance": 0.1,
+        "l1_p90_minus_p10_shift_tolerance": 0.1,
+        "unique_row_rate_tolerance": 1.0,
+        "normalized_row_entropy_tolerance": 1.0,
+    }
+
+    original = replay_stationarity(trace, _config(**base_changes))
+    extended = replay_query_max_stationarity(
+        trace,
+        _query_max_config(
+            query_max_shift_tolerance=0.01,
+            **base_changes,
+        ),
+    )
+
+    assert original.status == "stationary_qualified"
+    assert original.candidate_round_index == 8
+    assert all(check["query_p95_shift"] == 0.0 for check in original.checks)
+    assert extended.status == "horizon_reached"
+    assert extended.candidate_round_index is None
+    assert all(check["query_max_shift"] == pytest.approx(0.4) for check in (
+        extended.checks
+    ))
+    assert all(check["stable"] is False for check in extended.checks)
+
+
+def test_query_max_guard_keeps_stable_moving_control():
+    trace = _make_trace([[2.0, 1.0]] * 8, moving=True)
+
+    result = replay_query_max_stationarity(
+        trace,
+        _query_max_config(query_max_shift_tolerance=0.01),
+    )
+
+    assert result.status == "stationary_qualified"
+    assert result.candidate_round_index == 8
+
+
+def test_query_max_range_evidence_extends_but_does_not_change_old_fields():
+    vectors = []
+    for value in (1.0, 1.0, 3.0, 3.0, 5.0, 5.0):
+        vector = np.zeros(21)
+        vector[7] = value
+        vectors.append(vector)
+    trace = _make_trace(vectors, moving=True, n_records=10)
+
+    original = collect_stationarity_range_evidence(trace, [2])[0]
+    extended = collect_query_max_stationarity_range_evidence(trace, [2])[0]
+
+    assert STATIONARITY_QUERY_MAX_RANGE_EVIDENCE_CONTRACT_VERSION.endswith(
+        "-v1"
+    )
+    assert set(extended) == {*original, "query_max_shift"}
+    for key, value in original.items():
+        assert extended[key] == value
+    assert extended["query_max_shift"] == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize("value", [-1.0, np.inf, True])
+def test_query_max_config_rejects_invalid_tolerance(value):
+    with pytest.raises(ValueError, match="query_max_shift_tolerance"):
+        _query_max_config(query_max_shift_tolerance=value)
 
 
 def test_detector_evidence_uses_explicit_all_pairwise_formulas():

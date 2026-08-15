@@ -294,6 +294,22 @@ CSV/JSON 哈希分别为 `0556945c2a09d08e45f747bdc53bf11ccbb0ebfe21adeeabd04e88
 source audit 明确记录 `sealed_validation_seeds_read=false`。这些量程来自固定完整 workload 的
 晚期开发轨迹，尚不能替代增量查询场景验证。
 
+在用户确认采用上述护栏候选后，新增独立的
+`QueryMaxStationarityDetectorConfig`、`collect_query_max_stationarity_range_evidence()`
+与 `replay_query_max_stationarity()`；原 `StationarityDetectorConfig`、原无阈值证据入口、
+原 replay 契约和冻结 validation 协议均保持原样，新版使用单独的
+`issue53-stage2b-query-max-*-v1` 契约，避免旧验证静默获得新规则。新增稀疏单查询漂移反例
+确认旧版仍会合格而新版拒绝，稳定且运动充分的对照仍合格，并逐字段确认新版除新增
+`query_max_shift` 外不改变旧证据。
+
+新增 `scripts/calibrate_issue53_stage2b_query_max_detector.py`：只从 12 条 development
+轨迹的既定 36 行晚期证据按“四格各线性 P95、再取最大”自动导出 max 上限，原版冻结配置
+作为不可变 base；随后配对回放原版与新版全部 8000 轮，并审计停止后四连败再漂移。入口
+没有阈值覆盖、validation 读取、生成重跑或在线停止参数。相关 71 项测试先行通过；全套
+回归首次仅因共享 Conda Python 无执行位导致两个需要 `sys.executable` 的子进程测试无法
+启动，使用不修改共享权限的临时可执行副本重跑后为 `1097 passed`。正式 development
+候选报告尚待从干净实现提交发布。
+
 验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
 所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
 
