@@ -205,7 +205,11 @@ Gibbs 约 6.35 秒/轮；compiled 后冷启动一轮约 0.99 秒，20 轮稳态�
 停止轮次等分类字段。正式 report 入口严格审计 12 个 manifest、trace 哈希、生成提交、
 协议、配对 s0/S0/RNG、轮数和 seed 角色，拒绝 validation seed、脏工作树和覆盖已有
 目录；发布 1776 条 range check、96012 条 current-state 描述、纯描述性 JSON 与 9 张
-图。脏工作树只读演练已确认上述规模，尚未发布正式 report，待本提交后从干净版本生成。
+图。正式 report 已从干净分析提交 `35955cb` 生成到
+`outputs/issue53_stage2b_range_report/`：12 个被列入 manifest 的产物逐一重算哈希通过，
+共 18 MB；source generator 仍绑定 `d87503e`，无阈值/分类字段，validation seed 仍未
+读取。量程图显示四个 cell 的 current L1 均先快速下降再持续波动，运动护栏量在后段
+保持非零；这些只是描述性观察，尚未冻结窗口、阈值或给出任何收敛轮次。
 
 验证：量程/Stage 2B 定向测试 57 passed；用不修改共享 Conda 权限的临时可执行副本
 完成全套 1054 passed。所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
