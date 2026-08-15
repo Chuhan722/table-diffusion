@@ -141,9 +141,30 @@ RNG 端点精确相同。原始一次性运行的完整墙钟中位降低 26.31%
 0.278s。下一工程瓶颈是查询因子预编译和批量构造，应作为独立性能问题处理，而不与
 本方法证据混入一个 PR。
 
+Issue #49 已按预注册协议完成 Stage T/A、Stage B 和最终确认，三个阶段的正式
+身份与独立审计均通过。冻结候选 `factor tau=4, sweeps=32` 相对同温度
+`independent tau=4` 通过全部配对门槛，但相对最强独立基线
+`I*=independent tau=5` 的 95% 配对区间上界为 `1.2522`，未通过最终确认。
+因此正式状态为 `not_confirmed_no_reselection / confirmed=false`，没有追加 seeds
+或重选配置。该结论仅限固定 1000 轮预算，不代表长期收敛结果。
+
 当前版本仍是无噪声原型，不是 DP：尚未实现 ε/δ、噪声机制、accountant、私有
-查询选择和带噪一致性。独立方法 QDTE 只作为效果标杆；在统一 target、初始化信息
-和计算预算前，不能声称本方法已经达到或超过 QDTE。
+查询选择和带噪一致性。
+
+## 最近变更（2026-08-15）
+
+### PR #55 审查同步：保留 PR #51 诊断并完成 Stage 0/1 增量复核
+
+PR #55 已合并最新 `origin/master=9685179`。唯一人工冲突位于 factor Gibbs
+演化函数的说明文字；合并结果同时保留 PR #51 的 `condition_observer`、实际条件
+logit/概率诊断及其 RNG 不变性测试，以及 PR #55 的 `direction_logit_clip` 与
+`gibbs_logit_clip` 分离配置和身份诊断。master 新增的 Issue #49 正式里程碑也已
+保留，没有回退既有生成路径。
+
+按审查建议清理了 `PROJECT_STATUS.md` 中的外部项目名称。合并后定向回归为
+`317 passed, 1 skipped`，全仓为 `991 passed, 7 skipped`；`compileall` 与
+`git diff --check` 通过。本次只解决分支同步与文档问题，没有运行效果实验、修改
+Stage 0/1 契约或进入 Issue #53 的后续阶段。
 
 ## 怎么跑 / 指定 GPU
 一键跑（默认用卡 0）：
@@ -401,6 +422,14 @@ CPU 全套回归为 `1092 passed, 7 skipped`。入口实现固定在本地提交
 判据、development 校准、封存 validation、query-max 补充边界、正式负结果、失败诊断和
 全部关键产物哈希。文档明确区分“V1 detector 被否决”与“生成核是否收敛/质量是否足够”，
 并明确 V2 不进入本 PR。当前仍未 push 或创建新 PR。
+
+为使该堆叠 PR 基于 PR #55 的最新审核状态，已在不改写上述正式证据提交 SHA 的前提下，
+普通合入 `origin/research/issue-53-current-state-contract=b765233`。唯一内容冲突位于 factor
+Gibbs 条件采样：解决结果在同一次条件计算中同时保留 PR #51 的截断前 logit/概率/熵
+observer 与 Stage 2 的实际 clip-change 计数，不增加 RNG 消耗或改变采样概率；边界测试明确
+区分“`abs(raw_logit) >= clip` 的资格命中”和“数值确实被 clip 改变”两种统计。合并后
+factor 专项 `63 passed`、Stage 2/相关 Gibbs 定向 `278 passed`、全仓 `1147 passed`。
+本次同步没有重跑正式实验、修改冻结协议、读取新 seed、push 或创建 PR。
 
 验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
 所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
@@ -1030,8 +1059,9 @@ worker 目录均原样保留。
 4 个主题文件。父分支对曲率更新器的代码变化仅修正 0-sweep 未计算诊断，不经过本实验固定的
 8-sweep 路径。当前干净合并提交 `fe99279` 上完整重放 seed 0 的两条 1000 轮轨迹，
 预检、baseline 和 candidate 去除方向/因子/Gibbs/总墙钟四个计时字段后，分别与
-原正式输出精确一致。动力学专项 18 项、相关 qdte `222 passed, 2 skipped`、相关
-gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。qdte 全量唯一失败是该环境未安装
+原正式输出精确一致。动力学专项 18 项、相关独立 Python 3.11 环境
+`222 passed, 2 skipped`、相关 gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。
+独立 Python 3.11 环境全量唯一失败是该环境未安装
 torch 而对应测试未按能力跳过；排除该不适用用例后 `510 passed, 28 skipped,
 1 deselected`。重放 JSON 位于
 `outputs/generation_curvature_dynamics/replay_seed0_1000r_tau2_sweep8_fe99279.json`，
@@ -1080,8 +1110,8 @@ seed 独立重放全部随机
 诊断边界后，重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。PR #22 合入后，
 本分支又以普通 merge 同步 `master=eac317b`；父 HEAD 与合并后主分支代码树相同，
 最新正式重跑去除环境和计时字段后与上一版整份 JSON 精确一致。专项测试 52 项、
-相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项通过、
-2 项跳过。最新正式 JSON 位于
+相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；独立 Python 3.11 环境
+相关 174 项通过、2 项跳过。最新正式 JSON 位于
 `outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`，
 大小 11,326,345 字节，SHA-256 为
 `43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。完整公式、
@@ -1115,7 +1145,8 @@ Issue #18。
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
 定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
-完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
+完整 CPU/torch/CUDA 489 项通过；独立 Python 3.11 环境相关 81 项通过（另 2 项
+跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
 护栏。同步最新主分支并收紧正式元数据门禁后的重跑与上一版非决策字段精确
 一致。正式 6,876,791 字节 JSON 的
@@ -1154,7 +1185,8 @@ normalized L1 为 `0.0030167→0.0027767`（-7.96%），只作次要描述。
 `rho`，也不回到方向门槛。
 
 **验证与输出：** 闭环针对性测试 53 项、加因子模块共 94 项、完整
-CPU/torch/CUDA 452 项、qdte 相关测试 92 项通过（另 2 项按环境跳过）。正式输出包含
+CPU/torch/CUDA 452 项、独立 Python 3.11 环境相关测试 92 项通过（另 2 项按环境
+跳过）。正式输出包含
 40 张 300×10 合成表、81 份 JSON；
 数值有限性、文件数、参数、哈希、配对差和 5051/30450 个离线高阶单元格均已独立
 复核。迁移到数值护栏后的 20 种子 candidate 重放又审计了 1,311,408 次条件更新，
@@ -1245,7 +1277,8 @@ mask，并构造 `q_joint(M) ∝ q0(M) exp(beta U(M))`。有限温度不设置�
 loss/TVD 或跨 workload 改善。精确枚举不是可扩展算法，不能直接设为默认。
 
 **验证：** 新增测试与既有方向/更新测试共 **116 passed**；完整 gsd
-CPU/torch/CUDA 测试 **384 passed**；qdte 主循环 **25 passed, 1 skipped**。
+CPU/torch/CUDA 测试 **384 passed**；独立 Python 3.11 环境主循环
+**25 passed, 1 skipped**。
 公式、匹配规则、命令、环境、原始输出和全部失败 proposal 见
 `docs/设计/联合属性块扩散核.md`。关联 Issue #12；本变更已在 PR #11 合入后从
 最新 `master` 独立整理，不包含后续因子 Gibbs 实现。
@@ -1295,8 +1328,9 @@ Bernoulli 核 KL”的唯一闭式最优解。其期望漂移
 SHA-256 分别保持
 `1ef835d9...570a00a` 与 `c8c93554...12b6c`，共享轨迹和质量指标相同。
 新旧冻结探针共同的 10,800 行逐提案指标最大绝对差也为 0。
-针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，qdte 主循环
-测试 **25 passed, 1 skipped**。公式、数值截断边界、完整命令、环境和输出位置见
+针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，独立
+Python 3.11 环境主循环测试 **25 passed, 1 skipped**。公式、数值截断边界、完整
+命令、环境和输出位置见
 `docs/设计/扩散核温度熵漂移极限.md`。关联 Issue #10；方向计算性能仍由 Issue #7
 独立跟踪。
 
@@ -1368,8 +1402,8 @@ active direction 矩阵的 RMS，固定后不再逐轮更新，使残差收缩�
 
 **等价与边界：** 三枚关闭机制的 nltcs baseline 成品与历史 CSV 哈希逐种子相同，
 共享决策轨迹相同；donor 距离诊断最大非决策微差 `2.98e-8`。完整测试
-**343 passed**，qdte 环境定向主循环测试 **25 passed, 1 skipped**。当前未建模
-多块合取协同，也未建立与 QDTE 的统一跨仓库协议；仓库仍不是 DP。
+**343 passed**，独立 Python 3.11 环境定向主循环测试 **25 passed, 1 skipped**。
+当前未建模多块合取协同，也未建立统一的跨方法对照协议；仓库仍不是 DP。
 
 详细公式、失败结果、命令口径、输出目录和限制见
 `docs/设计/残差驱动正向扩散算子.md`。关联 Issue #6；方向计算性能问题见 Issue #7。
