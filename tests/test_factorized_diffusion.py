@@ -715,6 +715,41 @@ class TestRandomScanGibbs:
         empirical = counts / counts.sum()
         np.testing.assert_allclose(empirical, expected, atol=0.012)
 
+    def test_sampler_observer_records_raw_boundary_without_shifting_rng(self):
+        model = _one_bit_model(30.0)
+        observed = []
+        observed_rng = np.random.default_rng(2026)
+        reference_rng = np.random.default_rng(2026)
+
+        actual = random_scan_gibbs_mask(
+            model,
+            np.array([0]),
+            eta=0.5,
+            strength=1.0,
+            n_steps=4,
+            rng=observed_rng,
+            condition_observer=lambda variable, raw_logit, probability: (
+                observed.append((variable, raw_logit, probability))
+            ),
+        )
+        expected = random_scan_gibbs_mask(
+            model,
+            np.array([0]),
+            eta=0.5,
+            strength=1.0,
+            n_steps=4,
+            rng=reference_rng,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(
+            observed_rng.random(20), reference_rng.random(20)
+        )
+        assert len(observed) == 4
+        assert all(variable == 0 for variable, _, _ in observed)
+        assert all(raw_logit == 30.0 for _, raw_logit, _ in observed)
+        assert all(0.0 < probability < 1.0 for _, _, probability in observed)
+
     def test_finite_temperature_propagation_keeps_full_support(self):
         model = _three_bit_model()
         _, _, independent = _target_and_independent_distributions(model)
@@ -937,6 +972,40 @@ class TestFactorizedGibbsEvolutionStep:
         )
         assert diagnostics["active_gibbs_rows"] == 4
         assert diagnostics["gibbs_microsteps"] > 0
+
+    def test_evolution_records_actual_factor_logit_at_clip_boundary(self):
+        schema = Schema([AttributeBlock(
+            name="a",
+            type="categorical",
+            description="a",
+            values=[0, 1],
+        )])
+        _, diagnostics = evolve_step_factorized_gibbs(
+            pd.DataFrame({"a": [0]}),
+            pd.DataFrame({"a": [1]}),
+            schema,
+            [{
+                "conditions": [{
+                    "attribute": "a", "operator": "==", "value": 1
+                }]
+            }],
+            np.array([30.0]),
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            rng=np.random.default_rng(31),
+            gibbs_rng=np.random.default_rng(32),
+            copy_direction_scores=np.zeros((1, 1)),
+            copy_direction_strength=1.0,
+            n_sweeps=1,
+        )
+
+        logit = diagnostics["factor_conditional_logit_diagnostics"]
+        assert logit["condition_count"] == 1
+        assert logit["raw_logit_abs_max"] == 30.0
+        assert logit["clip_hit_count"] == 1
+        assert logit["raw_logit_strictly_inside_clip"] is False
+        assert logit["all_conditionals_bidirectional"] is True
 
     def test_same_primary_and_gibbs_seeds_are_reproducible(self):
         current, donors = self._tables()
