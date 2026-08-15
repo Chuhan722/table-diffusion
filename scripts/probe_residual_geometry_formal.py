@@ -153,10 +153,15 @@ def _environment():
 
 
 def _load_reference(path, columns):
-    frame = pd.read_csv(path)
-    if list(frame.columns) != columns:
-        frame.columns = columns
-    return frame
+    # .data 等无表头文件必须显式 header=None，否则首行数据被当表头
+    # 吃掉（行数 -1，触发行数一致性校验失败）。与 v3 协议脚本一致。
+    if str(path).endswith(".csv"):
+        frame = pd.read_csv(path)
+        if list(frame.columns) != columns:
+            frame.columns = columns
+    else:
+        frame = pd.read_csv(path, header=None, names=columns)
+    return frame[columns]
 
 
 def _run_dataset(name, spec, seeds, rounds):

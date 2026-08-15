@@ -221,3 +221,22 @@ def test_judge_floor_suboptimal_flag(formal_module):
     assert judgement["floor_suboptimal_flag"] is True
     # 不改变主分类
     assert judgement["classification"] == "supports_relative_geometry"
+
+
+def test_load_reference_headerless_data_file(formal_module, tmp_path):
+    """无表头 .data 参考文件必须完整读取（首行是数据不是表头）"""
+    path = tmp_path / "ref.data"
+    path.write_text("0,1\n1,0\n1,1\n")
+    frame = formal_module._load_reference(path, ["a", "b"])
+    assert len(frame) == 3
+    assert list(frame.columns) == ["a", "b"]
+    assert frame.iloc[0].tolist() == [0, 1]
+
+
+def test_load_reference_csv_with_header(formal_module, tmp_path):
+    """.csv 参考文件按表头读取并对齐列名"""
+    path = tmp_path / "ref.csv"
+    path.write_text("x,y\n0,1\n1,0\n")
+    frame = formal_module._load_reference(path, ["a", "b"])
+    assert len(frame) == 2
+    assert list(frame.columns) == ["a", "b"]
