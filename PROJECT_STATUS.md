@@ -2,6 +2,51 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 V2b 固定 runner 与独立 auditor 完成，正式矩阵未运行（2026-08-16）
+
+> 本段为当前最新暂停点。用户已接受 V2b 自适应设计与结果前人工协议；双尺度研究核心、固定人工
+> runner、独立 auditor、入口契约测试和全仓回归均已完成。**没有生成正式协议 seed，没有运行
+> 10000 条正式人工轨迹，没有读取真实 development/validation，没有接入生成器，也没有创建在线
+> 停止器。包含本段与上述工具的干净 HEAD 是唯一预运行候选，正式矩阵仍需另行授权。**
+
+研究核心仍固定为 15 个 `256,384,...,2048` 检查点，在同一连续前缀上比较
+`b=floor(sqrt(n))` 与 `2b` 两个 V2 重叠批均值估计。任一尺度不可计算则
+`core_not_estimable`；两个尺度均可计算但正式相关膨胀比大于 1.25 则
+`multiscale_disagreement`；相容时正式 LRV、ESS 与 MCSE 一律采用两个尺度中更大的相关膨胀。
+2048 只是资源上限：首次在 2048 相容与到上限仍不相容继续保持不同 first-ready/reason 身份。本层
+始终固定 `stationarity_not_assessed=true`，不产生稳定、收敛、质量或停止结论。
+
+新增固定入口 `scripts/validate_issue53_v2b_adaptive_effective_evidence.py`。`plan` 不实例化 RNG，只
+打印冻结协议；`run` 只有 `--output-dir`，不能覆盖 seed、重复次数、family、检查点、阈值或门禁。
+正式入口要求包含 untracked 在内的干净工作树，manifest 绑定 Git commit、两份设计文档、V2/V2b
+核心、runner、auditor、测试的 SHA-256 以及 Python/NumPy/OS/CPU 环境；输出目录和 JSON 文件均
+拒绝覆盖。runner 会计算所有 15 个检查点，逐轨迹只把 first-ready 用于安全/成本主指标，并同时
+核对公式关系、正式 ESS 上限、MCSE floor、输入身份和禁用字段。
+
+新增 `scripts/audit_issue53_v2b_adaptive_effective_evidence.py`。它不导入 runner，也不导入项目
+V2/V2b 核心；独立实现 PCG64 轨迹生成、NumPy OBM 公式、双尺度分类、first-ready、覆盖率、LRV
+比、资源成本、负相关控制、`phi=0.95` 分支和最终门禁，并将完整科学 payload 与 SHA-256 逐值重放
+对拍。审计前还严格拒绝重复 JSON key、NaN/Infinity、manifest/commit/source hash 漂移。协议全局
+门禁已明确：连续高斯人工矩阵的 `core_not_estimable` 总数必须为 0，慢相关只能因两个可计算尺度
+不一致而安全拒绝，不能用数学核心失效冒充 fail closed。
+
+`tests/test_issue53_v2b_adaptive_effective_evidence_artificial.py` 新增 18 项入口与独立审计测试。专用
+非正式 namespace `SeedSequence([999,53,2,2,...])` 的小矩阵中，runner 与 auditor 的轨迹记录、75
+个 checkpoint 汇总、5 个 family 汇总和接受门禁逐值一致；测试还覆盖 plan 零抽样、CLI 无科学
+旋钮、dirty-tree 先于哈希/抽样拒绝、两套 16 项边界检查、不相容检查点的正式量对拍、矩阵身份和
+汇总篡改拒绝、严格 JSON 与非覆盖审计。没有使用正式 namespace 生成测试随机数。
+
+当前验证结果：V2/V2b 核心加入口为 `86 passed`；Issue #53 相关回归为 `181 passed`；使用 `/tmp`
+临时可执行 Python 副本完成全仓回归为 `1352 passed, 2 warnings`，两条 warning 仍只来自既有
+residual-geometry 输入哈希失败测试。只读 CLI `plan` 已实际核对：5 个 family、10000 条轨迹、
+150000 次检查点分类、300000 次尺度估计、最多生成 20480000 个标量，且
+`generation_started=false`；当前协议 SHA-256 为
+`a7dde6b7867e215c9147131f085eaa47b47e04495b5d1bed37355f95a69dd33f`。
+
+下一步不能直接跑正式矩阵。预运行 commit 只负责冻结本段所列文档、实现与测试；随后必须从该干净
+HEAD 再核对一次只读 `plan`。只有 commit 与 plan 都确认无误并再次获得运行授权，才执行一次正式
+10000 轨迹矩阵，再运行独立 audit；当前没有 push 或 PR。
+
 ### 最新暂停点：Issue #53 V2 人工验收完成，历史下限候选为 2048（2026-08-16）
 
 > 本段为当前最新暂停点。固定 100 轮/12 小块路线已由既有 development 审计作为设计反例归档；

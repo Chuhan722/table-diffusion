@@ -4,11 +4,11 @@ This module estimates the information in one contiguous scalar outer-round
 trajectory.  It deliberately has no dataset identity, quality threshold,
 stationarity classification, convergence state, or stopping decision.
 
-The current candidate uses overlapping batch means with
-``batch_round_count = floor(sqrt(actual_round_count))``.  The public function
-in this module is a research core: it does not yet enforce an
-``insufficient_history`` threshold because that threshold must be selected by
-the preregistered artificial-trajectory protocol.
+The default candidate uses overlapping batch means with
+``batch_round_count = floor(sqrt(actual_round_count))``.  A second research
+entry point exposes the same formula at an explicit batch length for V2b
+multiscale checks.  Neither entry point enforces an ``insufficient_history``
+threshold or makes a stationarity, convergence, quality, or stopping decision.
 """
 
 from __future__ import annotations
@@ -139,28 +139,13 @@ def _not_estimable(
     )
 
 
-def compute_v2_effective_round_evidence(
+def _compute_v2_effective_round_evidence_with_batch_count(
     round_indices: Sequence[int] | np.ndarray,
     values: Sequence[float] | np.ndarray,
+    *,
+    batch_round_count: int,
 ) -> V2EffectiveRoundEvidence:
-    """Estimate scalar effective rounds and MCSE using overlapping batches.
-
-    ``round_indices`` must identify consecutive post-round observations.
-    Initial states, missing rounds, duplicate rounds, and reordered rounds are
-    rejected.  The calculation is:
-
-    * ``b = floor(sqrt(n))``;
-    * estimate long-run variance from every length-``b`` overlapping batch;
-    * divide long-run variance by ordinary sample variance to estimate serial
-      correlation inflation;
-    * cap the official effective round count at the actual round count;
-    * calculate official MCSE from the same conservative inflation used by
-      the official effective round count.
-
-    The result never assesses stationarity or makes a stopping decision.  This
-    research core also does not apply the not-yet-selected minimum-history
-    policy.  Exact zero variance and exact zero long-run variance fail closed.
-    """
+    """Estimate scalar effective rounds with one explicit batch length."""
 
     normalized_round_indices = _coerce_round_indices(round_indices)
     normalized_values = _coerce_values(
@@ -169,7 +154,19 @@ def compute_v2_effective_round_evidence(
     )
 
     actual_round_count = len(normalized_round_indices)
-    batch_round_count = isqrt(actual_round_count)
+    if isinstance(batch_round_count, (bool, np.bool_)) or not isinstance(
+        batch_round_count,
+        (int, np.integer),
+    ):
+        raise ValueError("batch_round_count must be an integer")
+    normalized_batch_round_count = int(batch_round_count)
+    if not 1 <= normalized_batch_round_count < actual_round_count:
+        raise ValueError(
+            "batch_round_count must be at least 1 and smaller than the "
+            "round count"
+        )
+
+    batch_round_count = normalized_batch_round_count
     overlapping_batch_count = actual_round_count - batch_round_count + 1
 
     with np.errstate(over="ignore", invalid="ignore"):
@@ -295,4 +292,58 @@ def compute_v2_effective_round_evidence(
         mcse=mcse,
         numerically_estimable=True,
         reason=None,
+    )
+
+
+def compute_v2_effective_round_evidence_for_batch(
+    round_indices: Sequence[int] | np.ndarray,
+    values: Sequence[float] | np.ndarray,
+    *,
+    batch_round_count: int,
+) -> V2EffectiveRoundEvidence:
+    """Research-only V2 calculation with a caller-specified batch length.
+
+    This entry point exposes the unchanged V2 overlapping-batch formula for
+    multiscale research.  It has no checkpoint, stationarity, convergence, or
+    stopping semantics.
+    """
+
+    return _compute_v2_effective_round_evidence_with_batch_count(
+        round_indices,
+        values,
+        batch_round_count=batch_round_count,
+    )
+
+
+def compute_v2_effective_round_evidence(
+    round_indices: Sequence[int] | np.ndarray,
+    values: Sequence[float] | np.ndarray,
+) -> V2EffectiveRoundEvidence:
+    """Estimate scalar effective rounds and MCSE using overlapping batches.
+
+    ``round_indices`` must identify consecutive post-round observations.
+    Initial states, missing rounds, duplicate rounds, and reordered rounds are
+    rejected.  The calculation is:
+
+    * ``b = floor(sqrt(n))``;
+    * estimate long-run variance from every length-``b`` overlapping batch;
+    * divide long-run variance by ordinary sample variance to estimate serial
+      correlation inflation;
+    * cap the official effective round count at the actual round count;
+    * calculate official MCSE from the same conservative inflation used by
+      the official effective round count.
+
+    The result never assesses stationarity or makes a stopping decision.  This
+    research core also does not apply the not-yet-selected minimum-history
+    policy.  Exact zero variance and exact zero long-run variance fail closed.
+    """
+
+    materialized_round_indices = _materialize_sequence(
+        round_indices,
+        name="round_indices",
+    )
+    return _compute_v2_effective_round_evidence_with_batch_count(
+        materialized_round_indices,
+        values,
+        batch_round_count=isqrt(len(materialized_round_indices)),
     )
