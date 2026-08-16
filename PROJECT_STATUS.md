@@ -2,6 +2,230 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 RMSE+max 固定 runner 与契约测试完成，正式矩阵未运行（2026-08-17）
+
+> 用户已确认结果前协议，并只授权实现固定 runner、只读 `plan` 和确定性契约测试。
+> 本步没有运行 12 条正式轨迹，没有实例化 6 个正式 seed，没有读取真实数据或使用 GPU，
+> 没有修改或接入 `run_evolution`，也没有实现外层选择、加噪、隐私预算或 accountant。
+
+新增固定入口 `scripts/validate_issue53_rmse_max_artificial.py`。它只有两个子命令：只读 `plan`，以及
+留待再次授权的 `run --output-dir`；没有 family、seed、rho、轮数、阈值、资源护栏或生成器参数等科学
+覆盖项。正式 `run` 在构造 RNG 或调用生成器之前要求：结果前协议 SHA-256 精确匹配、工作树连同
+untracked 文件完全干净、全部证据源存在、输出目录尚不存在。这样任何含未提交改动的工作树都会 fail closed，
+不可能误触正式运行；本节所述源文件由当前提交形成可绑定快照，正式执行仍以运行前 manifest
+记录的 `git_commit` 和逐文件 SHA-256 为准。
+
+runner 固定列出 3 family × 2 seed × 2 rho 的 12 条矩阵，`rho=1` 为 40 轮、`rho=0.25` 为
+160 轮，总计 1200 个小型人工生成轮次。只读 `plan` 已实际执行，输出确认：
+
+```text
+mode = plan_only_no_formal_rng_instantiation
+case_count = 12
+full_round_count = 1200
+formal_seed_values_listed_not_instantiated = true
+generation_started = false
+execution_started = false
+protocol_sha256 = cb1224ac797191b74aa40f7baadfab08928b5cb25414971fe8ee091a297d433a
+```
+
+正式选点实现为纯回放契约。判定器每个状态只能看到 `state_index/round_index`、该状态自己的
+count-error vector 和累计 applied participating rows；不含 L1、参考表、family、sigma 或预算。
+它调用唯一的 `QueryFitThresholds.exact_integer_counts()` 与 `assess_query_fit(...)`，不复制公式。
+正常路径选择不晚于第一个 `work>=20` 真实边界状态的 first-qualified current checkpoint；边界状态
+本身先评估质量再触发护栏，原子越界不裁造中间表。若边界前从未达标，则选择边界前 squared loss
+最低、并列最早的表，标记 `resource_cap_reached / fit_target_reached=false`。L1 只在选点和同状态
+物化校验全部完成之后离线计算，完整尾部的后续改善只作报告，不称“收敛”。
+
+新增 `tests/test_issue53_rmse_max_artificial.py` 共 29 项契约测试，覆盖 plan 禁止 RNG/生成器、矩阵身份、
+显式参考 target、协议哈希、CLI 无科学旋钮、脏树/已有输出 fail closed、判定器最小投影、first-qualified
+与 loss-only best 的关键反例、初始/边界/原子越界/迟到达标/未达标兜底、时钟和查询身份交叉校验、
+L1 污染不影响选点、同 checkpoint 前缀物化、12/12 聚合门禁和严格 JSON。仅额外使用非正式测试 seed
+`999053001` 跑了一条 `N=24,m=3,rho=1,40 rounds` 的内存内接线 smoke；它不属于正式矩阵，未写结果文件。
+
+验证结果：新 runner 测试 `29 passed`；连同纯达标接口、旧 3+3 负结果和影子回放的相关回归为
+`84 passed`。Ruff check、Ruff format check 和 tracked diff whitespace check 均通过；runner 可执行，
+`evolution.py` 对 `inner_fit_target`、`inner_stopping` 和新 runner 仍为零引用；`outputs/` 没有生成本步文件。
+
+当前身份 SHA-256：
+
+```text
+protocol document = 012d2507f7b3a79a7fb566047a7f2dae3dbf2e9d77e30dbeb5da44bcfbff6245
+runner            = 271a63a3e8460a69d24a9330a6ae844d730a6fba5da61cf6999e5fd6c9f0c15d
+runner tests      = 8c062c06e5ea40a77d5737ac2300528f295e6d8b821c9b5681331daa8086c51b
+```
+
+**下一步必须暂停。** 本次 runner/测试与可复现提交已由用户授权完成；若要得到科学结果，仍需要
+再次明确授权正式 12 轨迹运行。未经授权不得实例化正式 seed。即使未来
+12/12 通过，也只说明当前 RMSE+max 候选未被该全新人工矩阵否定；仍不能直接接入主生成流程，
+不能称收敛，也不推进真实数据或外层 DP。
+
+### 最新暂停点：Issue #53 RMSE+max 全新人工验证协议草案已写，等待审查（2026-08-16）
+
+> 本步只新增结果前协议草案
+> `docs/设计/Issue53_RMSEMax全新人工验证协议.md`，并同步总设计稿。
+> 没有实现 runner，没有实例化正式 RNG，没有运行任何矩阵轨迹、真实数据或 GPU，
+> 没有修改或接入 `run_evolution`，也没有实现外层选择、加噪、隐私预算或 accountant。
+
+由于当前 `query-count RMSE <= 1 AND max absolute count error <= 2` 是在看过旧 6 条轨迹后才形成的，
+旧结果不能再当独立通过证据。新协议固定三个显式可行的二元人工 family：
+`marginal_skew(N=24,m=3)`、`ring_pair(N=32,m=10)` 和
+`nested_overlap(N=64,m=15)`，分别覆盖偏态边缘、环形二阶重叠和高阶嵌套包含。
+每类使用两个未进入旧证据的 seed，并与 `rho in {1.0,0.25}` 配对，共 12 条轨迹；
+`rho=1` 固定 40 轮，`rho=0.25` 固定 160 轮，期望工作量均为 40 次等效全表扫描。
+
+协议明确区分“首次达标输出”和“历史最低 loss 兜底”。正常达标时，loss、RMSE、最大误差与返回表
+必须来自同一张 first-qualified current table；不能用当前表宣布达标后，改为返回另一张可能
+`MAX>2` 的历史 minimum-loss 表。只有第一个跨过 20 次等效扫描的真实状态仍未达标时，
+才返回此前 minimum-loss 表，并明确标为 `resource_cap_reached / fit_target_reached=false`。
+状态处理顺序固定为先应用并评估真实 post-round，再检查护栏，因此边界状态首次达标仍正常完成，
+不伪造恰好 work=20 的中间表。
+
+矩阵保持固定无门控 0-sweep independent 人工核：随机初始化、geometric、fixed alpha 6、
+rho 两档、eta 0.45、mu 0.02、`tol=inf`、无重试、绝对 residual geometry、固定方向强度/尺度，
+完整轨迹关掉 exact 提前停止并开启 horizon-invariant clocks/query-answer trace。
+这是对达标契约的小型反例搜索，不选择或验证全部 Gibbs、alpha、relative geometry/floor 配置。
+回放判定层只得到同状态 count-error vector 与实际 participating work；不读取 L1、参考表、
+dataset→threshold、sigma、预算或未来尾部。
+
+执行身份、显式 target、轨迹/时钟对齐、有限值、无拒绝重试、至少 10 次扫描尾部和 SHA-256
+先组成有效性门禁。候选的唯一科学通过条件是 12/12 都存在 first-qualified state，且该 state
+不晚于第一个跨过 work=20 的真实边界状态；任一迟到或从未达标即失败，不事后改最大误差 2、
+资源护栏 20、seed 或 family。选点后才离线计算 L1；完整尾部是否继续改善只报告，
+不把“达到预定质量”误称为收敛。
+
+当前协议草案 SHA-256 为
+`e5a47547e7b657fedb4da39d6a08b9c60ebf88709162469a897ed0c0d2f7ffc3`。
+下一步先由用户审查两项核心决定：正常完成返回 first-qualified current table，以及上述 12 轨迹矩阵与
+12/12 门禁。只有用户确认后，才另立一步实现固定 runner 和确定性契约测试；该步仍不得运行正式 12 条轨迹，
+正式运行需要再次明确授权。
+
+### 最新暂停点：Issue #53 RMSE+max 纯达标接口完成，预留外部噪声阈值（2026-08-16）
+
+> 用户接受当前平衡候选 `query-count RMSE <= 1 AND max absolute count error <= 2`，并要求为未来加噪留接口。
+> 本步只新增独立纯判定模块和确定性边界测试；没有修改或接入 `run_evolution`，没有运行新人工矩阵、
+> 真实数据或 GPU，也没有实现噪声公式、外层选择、隐私预算或 accountant。
+
+事前只读诊断确认 `max error <= 1` 偏严：原 6 条轨迹虽最终 6/6 达到，但只有 3/6 在 20 次等效扫描前
+达到；平均工作量从 RMSE-only 的 4.3125 增至 19.6458，约 4.6 倍。因此用户接受整数误差下的最小一级放宽 2。
+该 2 是在看过旧轨迹后提出的，所以旧 6 轨迹不能作为独立验证；下一证据必须使用结果前固定的全新 m/N/workload 人工矩阵。
+
+新增 `src/table_diffevo/inner_fit_target.py`。`QueryFitThresholds.exact_integer_counts()` 唯一生成当前 1/2 候选；
+`assess_query_fit(count_errors, thresholds)` 对单一明确 checkpoint 的同一 count-error 向量计算 squared loss、RMSE、
+最大误差、两项通过状态与 exact residual。该契约防止把不同表的 best loss 和 max error 拼接后错误宣布达标。
+
+未来接口 `QueryFitThresholds.external_noise_calibrated(...)` 只接收外层已换算的数值阈值：一个全局 RMSE limit，
+以及统一或逐查询 max-error limits。内层刻意不接收 sigma、真实答案、reference table、L1、隐私预算或 accountant；
+各查询噪声不同时可直接传等长阈值向量，无需改动评估 API。如何从已发布噪声严格推导这些阈值仍属于未来外层专题，
+本步没有偷偷固定公式。
+
+`tests/test_inner_fit_target.py` 新增 25 项纯边界测试：覆盖当前 1/2 边界、100-query 单尖峰反例、两项必须同时通过、
+exact residual、nextafter、符号不变性、统一/异质外部噪声阈值、向量长度、非有限/溢出和 API 禁止 sigma/L1/reference 输入。
+浮点边界测试暴露 NumPy 聚合后将 `nextafter(1,+inf)` 开根舍入回 1.0；已改用 `math.fsum` 高精度求和，不放宽边界。
+纯测试现为 `25 passed`；连同 RMSE 影子矩阵、旧 3+3 反例与状态机边界的全部相关回归为 `55 passed`。
+Ruff check、Ruff format check、compileall 和 tracked diff 空白检查均通过；`evolution.py` 对新模块仍为零引用。
+
+下一步不是接主循环。应先设计并结果前冻结一个全新的小型人工反例矩阵，覆盖不同查询数、N 与重叠/包含结构；
+经用户另行确认后才能运行该矩阵。
+
+### 最新暂停点：Issue #53 一条记录查询 RMSE 达标候选通过小矩阵（2026-08-16）
+
+> 用户授权试验“查询计数 RMSE 不超过 1 条记录就达标”。本步只离线复用上一步的 6 条
+> 16×3 人工二元轨迹，没有新增 seed，没有读取 `test_300x10`/`nltcs`/validation，没有使用 GPU，
+> 没有修改或接入 `run_evolution`，也没有实现外层选择、加噪、隐私预算或 accountant。
+
+候选只是现有 squared loss 的等价换算：`query_count_RMSE = sqrt(2 * best_loss / m)`。
+当前无噪声整数计数阶段固定 `RMSE <= 1`，等价于 `best_loss <= m/2`。它的语义是“已达到
+预定拟合质量”，不是“已收敛”。停止选点材料中删除 L1；只在 first-qualified checkpoint 已由 loss
+选定且通过 horizon-invariant 前缀重放物化后，才离线复算 L1。
+
+结果前固定的三项门禁全部通过。6/6 轨迹的 first-qualified work 为
+`6.0, 14.0, 2.0, 0.5625, 0.75, 2.5625`，全部早于 20 次等效扫描。前 5 条首次在
+loss 3.0 / RMSE 1.0 达标，第 6 条在 loss 1.5 / RMSE 0.7071 达标。所有前缀、表哈希、独立 loss
+和 residual RMSE 复算一致；后算 normalized L1 为 5 条 0.041667、1 条 0.03125，均低于理论上限
+`1/N = 0.0625`。
+
+小矩阵同时暴露必须保留的边界：前 5 条达标表的最大单查询绝对误差均为 2。因此该条件只保证
+workload 整体的计数 RMSE/normalized L1 上界，不保证每个查询都单独最多差 1。完整尾部仍把 best loss
+改善到 0..2，不能把达标曲解成后续不会改善。
+
+首次执行前测试源 SHA-256 为 `e0d4a28f...0759d9d`；结果回归版为
+`c88a2d09...5c4fbb`。停止相关回归现为 `30 passed`；Ruff check、Ruff format check、compileall、
+tracked/untracked 空白检查均通过，`evolution.py` 仍对新候选零引用。当前结论只是候选通过
+“同一 6-query、16-record 人工问题×6 轨迹”的
+立即反例搜索，尚不能在线接入。下一步先由用户审查是否接受“整体 RMSE<=1，但个别查询可能差 2”的
+质量语义；若接受，再另立一步验证不同 m/N/workload，仍不直接接主循环。
+
+### 最新暂停点：Issue #53 固定反事实矩阵否定 3+3 停止候选（2026-08-16）
+
+> 本步只执行 6 条固定人工 16×3 二元轨迹，在已完成的无门控生成轨迹上离线回放停止器。
+> 没有读取 `test_300x10`/`nltcs`、validation 或任何真实数据，没有使用 GPU，没有修改或接入
+> `run_evolution`，也没有实现外层选择、加噪、隐私预算或 accountant。
+
+结果前固定矩阵为 seed `20260816..20260818` 与 `rho in {1.0, 0.25}` 的笛卡尔积；
+`rho=1.0` 跑 40 轮，`rho=0.25` 跑 160 轮，两者期望工作量均为 40 次等效扫描。
+原生成器全程不停，事后只向 stopper 提供 squared loss 和 applied participating rows。首次执行前
+测试源文件 SHA-256 为 `4506aedca5bca7fc415e539e3b7862ac1e96f452c454c8254eab9b44a34cb411`。
+
+预注册的尾部工作量门禁与“资源护栏不冒充正常完成”门禁均通过，但核心安全门禁失败：
+6 条中 4 条在 `optimization_stalled` 之后出现严格更低 loss。具体为：
+
+- seed 20260816 / rho 1.0：state 12、work 12.0 以 best 3.0 停，尾部到 2.0；
+- seed 20260817 / rho 1.0：state 20、work 20.0 以 best 3.0 停，尾部到 2.0；
+- seed 20260818 / rho 1.0：state 8、work 8.0 以 best 3.0 停，尾部到 1.5；
+- seed 20260816 / rho 0.25：state 27、work 7.0625 以 best 3.0 停，尾部到 1.0。
+
+特别是原 25 轮影子轨迹在 state 13..25 未见低于 3.0，但同一 seed 延长到 40 轮后出现 2.0，
+证明原短尾部不足以支持停止。因此 3+3 候选已被否定，不得接入主循环；本步不事后增加窗口或换 seed。
+`inner_stopping.py` 及其测试暂保留为已否定原型和回归证据，`evolution.py` 仍对它零引用。
+负结果已固化为 `tests/test_inner_stopping_counterfactual_matrix.py`；结果回归版源文件 SHA-256 为
+`567547fd80935520394d5e7e02fd44533d22d2fd9b8b50728e1b6bd35e9e5356`。全部停止器相关测试现为
+`29 passed`；Ruff check、Ruff format check、compileall、tracked/untracked 空白检查均通过。
+
+下一步不是接入，也不是继续把 6 改成 9/12/20。需先与用户讨论并选择语义：要么接受“停滞只是
+有限资源下的启发式截断”，要么取消无门控随机轨迹的正常停滞声明，只保留 exact residual 与 fail-closed 资源上限。
+用户确认前不实现新停止规则。
+
+### 最新暂停点：Issue #53 三窗直接停止被反例否定，3+3 候选修订通过回归（2026-08-16）
+
+> 用户明确当前只做固定 workload、精确查询答案、`sigma=0` 的生成部分；不实现外层查询选择、
+> 私有测量、隐私预算或 accountant。Issue #53 Amendment 2 位于：
+> https://github.com/Chuhan722/table-diffusion/issues/53#issuecomment-5307820105 。本步新增独立模块
+> `src/table_diffevo/inner_stopping.py`、人工测试 `tests/test_inner_stopping.py`、只读影子测试
+> `tests/test_inner_stopping_shadow_replay.py`，并更新
+> `docs/设计/Issue53_无噪声生成内层停止与best输出契约设计稿.md`。**没有接入或修改
+> `run_evolution`；只在 CPU 上运行一条 16×3 人工二元短轨迹，没有读取 `test_300x10`/`nltcs`、
+> validation 或任何真实数据，没有使用 GPU，也没有实现 DP 外层。**
+
+用户已确认“无门控残差引导更新核 + best-checkpoint 输出”的停止语义。生成停止控制只读取现有
+squared loss；normalized L1 只在生成结束后离线评价。普通有限 current loss 上升照常成为下一状态，
+不拒绝、回滚或立即停止；只有 `current_loss < best_loss` 才刷新 checkpoint 并算进展。current loss
+从高处回落但未低于历史 best 不算进展，连续停滞后返回历史 best 而不是较差的 terminal current。NaN、无穷或
+负 loss 直接报错，不能冒充普通上升或正常终止。
+
+纯状态机只接收 initial/post-round loss 与已应用 proposal 的 participating rows。最初实现为连续 3
+个工作窗口无 best 改善就直接 `optimization_stalled`；25 轮固定影子轨迹证明该规则过早：state 3
+候选 best 为 5.0，但继续运行到 state 6 出现 best=3.0。因此三窗直接停止已被明确否定，不得接入。
+
+候选修订保持简单、无数据集阈值：`stall_block_windows=3`，前三个连续空窗只产生 candidate；再连续
+三个空窗仍无新 best 才正式停止，即派生 `required_no_progress_windows=6`。任何严格新 best 都取消
+candidate 与确认并把计数清零。20 个窗口仍是 fail-closed 工程护栏；终止优先级保持
+`exact_residual > optimization_stalled > resource_cap_reached`。当前整数计数下任一严格 loss 改善
+自然至少为 0.5。
+
+同一影子反例在修订后表现正确：state 3 只进入确认、不停止；state 6 的 best=3.0 在终止检查前更新并
+清零；随后 state 7..12 连续六窗无新 best，在 state 12 返回 `optimization_stalled` 和 state 6 best；
+反事实 state 13..25 没有低于 3.0。回放逐状态匹配 prefix minimum、累计参与行、窗口数、first-seen
+best 与表哈希，且不改变完整诊断、候选评价数或 RNG 哈希。rho=1 只让人工测试一轮等于一个窗口，
+不是生产参数或质量证据。legacy 非残差引导配置的 initial table hash 差异仍不扩展当前范围。
+
+纯逻辑测试现为 27 项，新增“第五个空窗后第六窗恰好创新低必须取消停止”等边界；连同 1 项影子回放，
+最终共 `28 passed`。Ruff check、Ruff format check、compileall 和 `git diff --check` 均通过，并确认
+`evolution.py` 对新模块零引用。
+
+本小步到此暂停。单条反例通过只能说明该已知漏洞被修复，不能证明 3+3 普遍安全。下一步若用户继续
+授权，应先固定一个小型人工反事实尾部矩阵，统计候选停止后是否仍出现更低 best；矩阵通过前不接入
+`run_evolution`，不读取真实数据，也不推进外层 DP。
+
 ### 最新暂停点：Issue #53 V2c 正式人工验收失败，独立审计通过（2026-08-16）
 
 > 本段为当前最新暂停点。冻结 commit `f9db5d6fb4af9bccf36c5fad3c1c2565eb8b57c5` 上已完成唯一一次
