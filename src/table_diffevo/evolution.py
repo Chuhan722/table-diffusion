@@ -40,7 +40,9 @@ import pandas as pd
 
 from table_diffevo.schema import Schema
 from table_diffevo.queries import evaluate_table
-from table_diffevo.objective import compute_residual, compute_loss
+from table_diffevo.objective import (
+    RESIDUAL_GEOMETRIES, compute_residual, compute_loss,
+)
 from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
@@ -198,6 +200,8 @@ def run_evolution(
     rho_anneal_rounds: Optional[int] = None,
     selection_scale_invariant: bool = False,
     selection_scale_invariant_min_spread: float = 1e-3,
+    residual_geometry: str = "absolute",
+    residual_geometry_floor: float = 8.0,
     return_final_table: bool = False,
     alpha_schedule_mode: str = "legacy_linear_horizon",
     fixed_alpha: Optional[float] = None,
@@ -380,6 +384,16 @@ def run_evolution(
         行内标准差低于该值时按该值截断：放大倍数有界
         （alpha/min_spread），离散度趋零时选择平滑退化为均匀，避免把
         噪声级微小差异放大成极端选择偏好。必须为正有限数。
+    residual_geometry : str, default "absolute"
+        残差信号几何（Issue #57），统一作用于 fitness 与残差定向扩散的
+        方向场（两者共享同一 residual 向量）。"absolute"：现状口径
+        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"relative"：
+        ε=(y−q)/max(y,floor)/N（近似 KL 梯度，稀有查询推动力按相对误差
+        放大）。只用公开 target 计数做归一化，不引入新信息流；监控
+        loss（compute_loss）与接受门口径不受影响。
+    residual_geometry_floor : float, default 8.0
+        relative 几何的分母下限（计数单位），防止 target 极小或为 0 时
+        分母爆炸。仅 residual_geometry="relative" 时使用，必须 > 0。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -498,6 +512,26 @@ def run_evolution(
         raise ValueError(
             f"eval_method 必须是 'vectorized' 或 'legacy'，得到 {eval_method!r}"
         )
+
+    if residual_geometry not in RESIDUAL_GEOMETRIES:
+        raise ValueError(
+            f"residual_geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
+            f"得到 {residual_geometry!r}"
+        )
+    if residual_geometry == "relative":
+        if (
+            isinstance(residual_geometry_floor, bool)
+            or not isinstance(
+                residual_geometry_floor,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(residual_geometry_floor)
+            or not residual_geometry_floor > 0
+        ):
+            raise ValueError(
+                "residual_geometry_floor 必须是正有限数（非布尔），"
+                f"得到 {residual_geometry_floor!r}"
+            )
 
     if init_method not in ('random', 'marginal', 'pairwise_maxent'):
         raise ValueError(
@@ -884,9 +918,15 @@ def run_evolution(
                 df, queries, schema, target=target, n_records=n_records,
                 batch_size=batch_size, device=device, want_fitness=True,
                 verbose=False,
+                residual_geometry=residual_geometry,
+                residual_geometry_floor=residual_geometry_floor,
             )
         q_ = evaluate_table(df, queries)
-        r_ = compute_residual(target, q_, n_records)
+        r_ = compute_residual(
+            target, q_, n_records,
+            geometry=residual_geometry,
+            geometry_floor=residual_geometry_floor,
+        )
         f_ = compute_fitness(df, queries, r_, q_)
         return q_, r_, f_
 
@@ -1969,6 +2009,11 @@ def run_evolution(
             "selection_scale_invariant_min_spread": (
                 float(selection_scale_invariant_min_spread)
                 if selection_scale_invariant else None
+            ),
+            "residual_geometry": residual_geometry,
+            "residual_geometry_floor": (
+                float(residual_geometry_floor)
+                if residual_geometry == "relative" else None
             ),
             "record_transition_clocks": record_transition_clocks,
             "record_stationarity_trace": record_stationarity_trace,

@@ -2,7 +2,59 @@
 
 ## 当前阶段
 
-### 最新暂停点：Issue #52 Stage B 正式完成，结论为 no_factor_candidate（2026-08-14）
+### 最新暂停点：残差信号几何正式通过——相对残差适应度五种子 supports（2026-08-16，Issue #57）
+
+> 本段为当前最新暂停点。诊断表明旧绝对残差适应度把优化力气集中于大计数
+> 查询、对稀有模式查询系统性无力（平台残差 44.8% 集中在 p<0.05 查询，
+> bootstrap iid 对照 22.3%；既有平台 0.00086–0.0011 已低于单次 iid 抽样
+> 涨落线 0.001598±0.000174，误差是系统性的几何失配而非预算/容量问题）。
+>
+> `run_evolution` 新增 `residual_geometry`（absolute 默认，逐位向后兼容）
+> 与 `residual_geometry_floor`：relative 口径 ε=(y−q)/max(y,floor)/N 近似
+> KL 梯度，稀有查询推动力按相对误差放大；σ/κ 容忍先于相对化；残差同时
+> 驱动 fitness 与方向场，信号几何统一切换；相对化只用公开 target 计数，
+> 不引入新信息流。
+>
+> 预注册正式实验（scripts/probe_residual_geometry_formal.py，formal=True，
+> commit aac1aff）：五臂 absolute / relative_f8(主) / relative_f{1,4,16}
+> × 种子 200..204 × 2000 轮。**nltcs 主判定 supports_relative_geometry**：
+> 5/5 配对全胜，measured L1 五种子均值 0.001061 → **0.000314**（−70.4%，
+> 门槛 ≥30%）；质量风险带零报警——train 未测量 3-way −61.7%、4-way
+> −47.5%、分箱 TVD −7.5% 全部同向改善；稀有查询平均绝对残差 16.93→4.28
+> 计数；支持集重叠 1251→1274；墙钟零额外开销（456s→452s/run）。floor
+> 敏感性：nltcs 最小 target = 12 ≥ 8，f1/f4/f8 逐位一致，f16 均值同为
+> 0.000314（观察项 floor_best=f16 是第 7 位小数差异，无实际意义）。
+> test_300x10 辅助判定 not_supported（1/5 胜，−20.6%）：该数据集最小
+> target = 17 > 8，floor 臂全程未激活，失败**不能归因于 floor 取值**；
+> 当前归因是 300 行尺度下小计数查询的相对化把抽样噪声当信号放大——
+> **相对几何的收益与数据规模相关，小表边界如实保留**，不合并主结论。
+> 首次正式运行在末段离线评价
+> 因参考表读取缺陷崩溃（已修复并加测试）；修复后完整重跑，与首跑全部
+> 50 个 run 的主指标逐位一致（墙钟除外）。
+>
+> 对照参考：Issue #46 讨论的第一层同信息基线（private-pgm 系）nltcs
+> 水位 ≈ 0.000357——本结果五种子均值首次越过该线（0.000314）。收口
+> 判定仍按 #46 协议（≥2 数据集 + 全指标 + 冻结基线调参）正式执行，
+> 本结果不替代该协议。
+>
+> 产物归档：正式 JSON 位于运行工作树 outputs/residual_geometry/
+> formal_residual_geometry_5seed_2000round.json（gitignored），SHA-256
+> `51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64`，
+> 绑定提交 aac1aff；脚本冻结 EXPECTED_INPUT_SHA256 与该产物记录的
+> 公开输入哈希一致（fail-closed 对拍，见
+> scripts/probe_residual_geometry_formal.py）。合并 master 后的行为
+> 不变性由 scripts/replay_residual_geometry_main_arms.py 在当前 HEAD
+> 重放主判定两臂×五种子对拍最终表哈希验证。
+>
+> 边界：无噪声原型结论；**判定口径是 2000 轮固定预算下的终态显著改善，
+> 不构成"算法已收敛"的声明**（未做更长 horizon 对照或平稳性检查；
+> 配置为 tol=inf、固定 rho/mu、无 self-cooling，过程不会自然冻结）。
+> DP 阶段分母将使用带噪计数，其稳定化（floor 与
+> 噪声尺度挂钩或 y+c 平滑）需在 DP 设计中单独处理并计入预算论证（见
+> docs/设计/残差信号几何_绝对与相对适应度口径.md）。默认参数未改
+> （absolute 仍为默认，是否切换默认与 #46 衔接由后续决定）。
+
+### 上一暂停点：Issue #52 Stage B 正式完成，结论为 no_factor_candidate（2026-08-14）
 
 > 本段取代下面“Stage B 工具已确认、正式实验尚未启动”的暂停点。Stage B 已严格按结果前冻结
 > 记录完成并通过独立审计；G* 虽优于同 tau independent，但未优于 I*=independent tau5，

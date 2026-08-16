@@ -143,8 +143,11 @@ def main():
                 existing["note"] = rebuilt["note"]
                 changed.append(f"{ds_name}: initial_state 逐种子复验通过")
 
-        # 4. 判定重算断言
-        old_judgment = ds.get("judgment")
+        # 4. 判定重算断言（兼容早期产物的 judgement 旧拼写）
+        judgment_key = "judgment" if "judgment" in ds else (
+            "judgement" if "judgement" in ds else None
+        )
+        old_judgment = ds.get(judgment_key) if judgment_key else None
         if old_judgment is not None:
             new_judgment = protocol._judge(ds["runs"])
             old_str = json.dumps(old_judgment, sort_keys=True)
