@@ -2,6 +2,42 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 V2c 固定 runner 与独立 auditor 完成，正式矩阵未运行（2026-08-16）
+
+> 本段为当前最新暂停点。V2c 设计、结果前人工协议和三尺度双确认研究核心已分别由 commit
+> `c274221`、`2425b67`、`7e244eb` 冻结；本阶段完成固定人工 runner、独立 auditor 和入口契约
+> 测试。**没有实例化或生成 `[53,2,3,...]` 正式 seed，没有运行 10000 条正式人工轨迹，没有读取
+> `test_300x10`/`nltcs` 或任何真实数据，没有接入项目生成器、GPU、隐私预算或在线停止过程。**
+
+新增固定入口 `scripts/validate_issue53_v2c_three_scale_effective_evidence.py`。`plan` 不实例化 RNG；
+`run` 仅允许指定全新输出目录，不能覆盖 seed、family、重复次数、检查点、三尺度、1.25、双确认或
+验收门禁。正式入口要求包含 untracked 在内的干净工作树，绑定当前 commit、全部设计/协议/核心/
+入口/测试源码哈希，并显式绑定已归档 V2b 负结果的 report、audit 和科学 SHA-256
+`abd39f88da0408b5341374b1019ddb61df50fa591ec745d10bba27e504dbdb12`；V2b 必须保持
+`candidate_failed` 且独立审计通过，否则 fail closed。report 只记录可移植的同目录 manifest 文件名，
+输出文件和目录均拒绝覆盖。
+
+新增 `scripts/audit_issue53_v2c_three_scale_effective_evidence.py`。它不导入 runner，也不导入项目
+V2/V2b/V2c 数学核心；独立实现 PCG64 人工轨迹生成、三尺度 OBM、相邻双确认、first-ready、资格
+回撤、全部 family 汇总与验收门禁。auditor 严格拒绝重复 JSON key、NaN/Infinity、绝对或跨目录
+manifest、commit/source/provenance 漂移，并逐条重放完整科学 payload、SHA 和最终 status。runner 与
+auditor 各自固定 22 项边界检查，覆盖三个尺度分别主导、1.25/nextafter、任一尺度失败、双确认序列、
+2048 当前状态与 first-ready 的区别、资格回撤、ESS cap、MCSE floor、溢出和非法输入。
+
+`tests/test_issue53_v2c_three_scale_effective_evidence_artificial.py` 新增 23 项测试。专用测试 namespace
+`[999,53,2,3,...]` 的小矩阵中，runner 与 auditor 对轨迹、检查点、family 汇总和门禁逐值一致；测试
+显式禁止正式 namespace，并覆盖 plan 零抽样、CLI 无科学旋钮、dirty-tree 先拒绝、V2b 来源损坏、
+payload 篡改后重算 SHA、路径逃逸、非覆盖输出与独立导入边界。最新验证为 V2c 入口 `23 passed`，
+V2/V2b/V2c 核心加三个入口 `175 passed`，相关研究测试 `257 passed`，全仓
+`1428 passed, 2 warnings`；两条 warning 仍只来自既有 residual-geometry 输入哈希失败测试。
+
+只读 `plan` 已核对：协议 SHA-256 为
+`a9930b440f3483d0bb2e6ad8d3bbf4cd8db097b2d85deed69216a475679cbc04`，固定 5 个 family、每类
+2000 条，共 10000 条轨迹、150000 次检查点分类、450000 次尺度估计、最多 20480000 个人工标量；
+输出明确为 `generation_started=false`、`execution_started=false`。下一步只把本阶段冻结成干净的
+预运行 commit，并从该干净 HEAD 再核对一次 `plan`。正式矩阵仍必须等待用户另一次明确授权；届时
+只能执行一次固定矩阵，再运行独立 audit，不能同时读取真实数据或接入生成过程。
+
 ### 最新暂停点：Issue #53 V2c 研究核心与确定性测试完成（2026-08-16）
 
 > 本段为当前最新暂停点。V2c 结果前协议已由 commit `2425b67` 独立冻结；本阶段只新增
