@@ -2,6 +2,35 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 V2c 研究核心与确定性测试完成（2026-08-16）
+
+> 本段为当前最新暂停点。V2c 结果前协议已由 commit `2425b67` 独立冻结；本阶段只新增
+> `src/table_diffevo/adaptive_effective_evidence_v2c.py` 与
+> `tests/test_adaptive_effective_evidence_v2c.py`。**没有实现 runner/auditor，没有实例化或生成
+> `[53,2,3,...]` 正式 seed，没有运行人工矩阵或真实数据，没有接生成器、GPU、隐私预算或在线
+> 停止过程。**
+
+V2c 核心在 15 个固定 `256..2048` 检查点复用未修改的 V2 显式批长 OBM 公式，批长严格为
+`b=floor(sqrt(n))`、`2b`、`4b`。任一尺度不可估计则 `core_not_estimable`；三者都可估计时按 formal
+inflation 的 `max/min <= 1.25` 判当前 `three_scale_compatible`，official LRV/ESS/MCSE 始终使用三个
+尺度的最大 inflation；组合计算溢出单独 fail closed 为 `nonfinite_computation`。
+
+当前公开数值状态严格按相邻两点计算：第一点恒为 false，之后
+`adaptive_numerically_estimable[k] = C[k-1] and C[k]`，所以最早只能在 384 取得资格。完整轨迹仍
+保存第一次取得资格的位置和资源计数，但当前状态可回撤；first-ready 后的三尺度不相容次数、2048
+当前相容状态和当前数值资格均独立保留。全程固定 `stationarity_not_assessed=true`，没有新增
+confirmed/stable/converged/qualified/stop/threshold/quality 字段。
+
+新增 53 项纯确定性测试，覆盖三尺度手算 OBM、冻结批长表、1.25/nextafter 精确边界、三个尺度分别
+成为最大风险、任一尺度失效、组合溢出、official 公式、ESS cap/MCSE floor、平移/正缩放、常数、
+周期、尖峰、趋势、非法输入、`T,T`/`T,F,T`/`T,F,T,T`、2048 首次通过与无资格、资格回撤和原
+V2/V2b 行为不变。V2/V2b/V2c 核心测试通过；Issue #53 相关回归通过；全仓结果为
+`1405 passed, 2 warnings`，两条 warning 仍只来自既有 residual-geometry 输入哈希失败测试。
+
+当前唯一下一步是用户审查本阶段核心与测试。获得下一次明确授权后，才可另行实现固定 runner 与不
+导入 runner/V2b/V2c 核心的独立 auditor；此时仍不得生成正式 seed 或运行 10000 条人工矩阵，更
+不得读取 `test_300x10`/`nltcs` 或连接真实生成过程。
+
 ### 最新暂停点：Issue #53 V2c 结果前人工协议已接受，研究核心获授权（2026-08-16）
 
 > 本段为当前最新暂停点。用户接受的 V2c 唯一设计已由 commit `c274221` 冻结；当前只新增
