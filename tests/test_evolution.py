@@ -1158,3 +1158,106 @@ class TestProposalRetries:
         target = np.array([30, 40, 50])
         with pytest.raises(ValueError, match=message):
             run_evolution(target, queries, schema, n_records=100, **kwargs)
+
+
+class TestResidualGeometry:
+    """残差信号几何参数（Issue #57）。"""
+
+    @staticmethod
+    def _real_setup():
+        from table_diffevo.schema import load_schema
+        from table_diffevo.queries import load_queries
+
+        schema = load_schema("configs/test_300x10/schema.yaml")
+        queries = load_queries("configs/test_300x10/measured_50query.json")
+        target = np.array([q["result"] for q in queries])
+        return schema, queries, target
+
+    def _run(self, **overrides):
+        schema, queries, target = self._real_setup()
+        params = dict(
+            target=target, queries=queries, schema=schema, n_records=300,
+            n_rounds=20, seed=2024, init_method="marginal",
+            residual_directed_diffusion=True,
+            diffusion_direction_strength=2.0,
+            tol=float("inf"), exclude_self=True,
+            selection_scale_invariant=True,
+            alpha_min=16.0, alpha_max=16.0,
+            return_final_table=True,
+        )
+        params.update(overrides)
+        best_S, diag = run_evolution(**params)
+        return best_S, diag
+
+    def test_default_matches_explicit_absolute_bitwise(self):
+        """默认与显式 absolute 的最终表、loss 轨迹逐位一致（向后兼容）"""
+        _, diag_default = self._run()
+        _, diag_abs = self._run(residual_geometry="absolute")
+        assert diag_default["loss_history"] == diag_abs["loss_history"]
+        pd.testing.assert_frame_equal(
+            diag_default["final_table"], diag_abs["final_table"]
+        )
+
+    def test_relative_changes_trajectory_and_runs(self):
+        """relative 几何端到端可跑、轨迹与 absolute 不同、loss 有下降"""
+        _, diag_abs = self._run()
+        _, diag_rel = self._run(residual_geometry="relative")
+        assert diag_rel["loss_history"] != diag_abs["loss_history"]
+        assert diag_rel["loss_history"][-1] < diag_rel["loss_history"][0]
+
+    def test_relative_vectorized_matches_legacy(self):
+        """relative 下 vectorized 与 legacy 路径轨迹一致（numpy 逐位）"""
+        _, diag_vec = self._run(
+            residual_geometry="relative", eval_method="vectorized"
+        )
+        _, diag_leg = self._run(
+            residual_geometry="relative", eval_method="legacy"
+        )
+        assert diag_vec["loss_history"] == diag_leg["loss_history"]
+        pd.testing.assert_frame_equal(
+            diag_vec["final_table"], diag_leg["final_table"]
+        )
+
+    def test_geometry_recorded_in_diagnostics(self):
+        """诊断 params 记录几何配置；absolute 时 floor 为 None"""
+        _, diag_rel = self._run(
+            residual_geometry="relative", residual_geometry_floor=4.0
+        )
+        assert diag_rel["params"]["residual_geometry"] == "relative"
+        assert diag_rel["params"]["residual_geometry_floor"] == 4.0
+        _, diag_abs = self._run()
+        assert diag_abs["params"]["residual_geometry"] == "absolute"
+        assert diag_abs["params"]["residual_geometry_floor"] is None
+
+    def test_invalid_geometry_rejected(self):
+        """非法几何名与非法 floor 在入口即报错"""
+        schema, queries, target = self._real_setup()
+        base = dict(
+            target=target, queries=queries, schema=schema,
+            n_records=300, n_rounds=1, seed=0,
+        )
+        with pytest.raises(ValueError, match="residual_geometry 必须是"):
+            run_evolution(**base, residual_geometry="chi2")
+        with pytest.raises(ValueError, match="residual_geometry_floor"):
+            run_evolution(
+                **base, residual_geometry="relative",
+                residual_geometry_floor=0.0,
+            )
+
+    def test_floor_inf_nan_bool_rejected_at_entry(self):
+        """run_evolution 入口拒绝 inf/nan/bool floor（PR #59 审查漏洞：
+        inf 通过旧校验后残差全 0，第一轮即被误判 exact_residual 停止）"""
+        schema, queries, target = self._real_setup()
+        base = dict(
+            target=target, queries=queries, schema=schema,
+            n_records=300, n_rounds=1, seed=0,
+        )
+        import numpy as _np
+        for bad in (_np.inf, float("inf"), _np.nan, True):
+            with pytest.raises(
+                ValueError, match="residual_geometry_floor 必须是正有限数"
+            ):
+                run_evolution(
+                    **base, residual_geometry="relative",
+                    residual_geometry_floor=bad,
+                )
