@@ -2,6 +2,50 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 RMSE+max 正式人工矩阵有效失败，等待重新讨论（2026-08-17）
+
+> 用户明确授权后，已在冻结 commit `898b76c2a8e60093888bfe05ffce74b89a124c5e` 上执行唯一一次
+> 12 条正式人工矩阵。正式分类为 `candidate_failed`；执行有效性与矩阵身份门禁全部通过。
+> 本步只运行小型 NumPy/CPU 人工生成问题，没有读取真实数据、使用 GPU、消耗隐私预算或接入
+> `run_evolution`。不得修改阈值、资源上限、seed/family 后重跑本矩阵。
+
+冻结协议 SHA-256 为
+`cb1224ac797191b74aa40f7baadfab08928b5cb25414971fe8ee091a297d433a`，scientific result SHA-256 为
+`a29fa02edf7492ab171da50a61eb532a33ce1b47db3f318f3ec2912ff448da49`。12 条 case、1200 个完整生成
+轮次均有效，全部 validity 与 checkpoint prefix replay 检查为 true；manifest、scientific payload
+和 12 张 selected table 的独立字节哈希复核一致。因此这是科学候选失败，不是执行或证据链故障。
+
+唯一科学门禁要求 12/12 在第一个 `work>=20` 真实边界状态及之前同时达到
+`query-count RMSE<=1 AND per-query MAX<=2`，实际只有 4/12：
+
+```text
+marginal_skew   4/4 按时达标；first work = 2.0417, 3, 3.0417, 9
+ring_pair       0/4 按时达标；2 条 rho=0.25 在 work 22.9688/39.0312 迟到，2 条 rho=1 从未达标
+nested_overlap  0/4 按时达标；2 条 rho=0.25 在 work 21.4219/35.5938 迟到，2 条 rho=1 从未达标
+```
+
+完整 horizon 中 8/12 曾达标，但只有最简单的一维偏态 family 按时通过；两个包含联合结构的 family
+在两个 seed 和两个 rho 下都是 0/8。8 条失败 case 中 6 条在资源边界选中表之后仍出现严格更低
+loss，说明 work=20 不是普遍稳定点，`resource_cap_reached` 不能冒充拟合达标或收敛。
+
+结论只否决当前冻结组合：固定 0-sweep independent 无门控核、当前参数、统一 work=20 以及
+RMSE/max 目标共同构成的 v1 在线接入候选。纯 `assess_query_fit` 接口可以保留为同 checkpoint
+质量描述，但当前不得接入主生成流程，也不得运行 nltcs/plants/test_300x10。失败不能单独归因于某一
+阈值或核参数，因此不从本结果事后挑参数修补。
+
+完整解释位于 `docs/实验结果/Issue53_RMSEMax全新人工验证结果.md`。正式原始产物位于
+`outputs/issue53_rmse_max_artificial_898b76c/`：
+
+```text
+protocol_manifest.json          SHA cc49b278276846879d3fc44767451742fe701400a69eed1eff4d92390f7f144c
+rmse_max_evidence_report.json    SHA 92f1588a735bced793dc9a6086c304a1b56a6f99b2d2e08354d31834183ec29f
+selected_tables/*.csv            12/12 与报告逐文件哈希一致
+```
+
+下一步必须暂停实现并与用户重新讨论：跨数据统一资源上限究竟只作为“未达标也必须返回”的工程失败
+出口，还是应先改进生成核，使复杂联合关系能在统一工作量内可靠吸收。不得恢复已否定的 3+3、
+V2b/V2c 或固定 2048 轮；任何新候选都需另立结果前协议和全新证据。
+
 ### 最新暂停点：Issue #53 RMSE+max 固定 runner 与契约测试完成，正式矩阵未运行（2026-08-17）
 
 > 用户已确认结果前协议，并只授权实现固定 runner、只读 `plan` 和确定性契约测试。
