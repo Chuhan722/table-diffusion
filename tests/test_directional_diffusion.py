@@ -409,6 +409,45 @@ class TestContinuousCopyKernel:
         assert np.all(probs > 0.0)
         assert np.all(probs < 1.0)
 
+    def test_default_direction_clip_is_explicitly_thirty(self):
+        scores = np.array([-20.0, -2.0, 0.0, 2.0, 20.0])
+
+        implicit = tilted_copy_probabilities(0.3, scores, strength=2.0)
+        explicit = tilted_copy_probabilities(
+            0.3, scores, strength=2.0, logit_clip=30.0
+        )
+        narrow = tilted_copy_probabilities(
+            0.3, scores, strength=2.0, logit_clip=1.5
+        )
+
+        np.testing.assert_array_equal(implicit, explicit)
+        assert narrow[0] > implicit[0]
+        assert narrow[-1] < implicit[-1]
+
+    def test_direction_clip_can_be_explicitly_disabled(self):
+        scores = np.array([-1000.0, 1000.0])
+
+        guarded = tilted_copy_probabilities(
+            0.5, scores, strength=1.0, logit_clip=30.0
+        )
+        unguarded = tilted_copy_probabilities(
+            0.5, scores, strength=1.0, logit_clip=None
+        )
+
+        assert np.all(guarded > 0.0)
+        assert np.all(guarded < 1.0)
+        np.testing.assert_array_equal(unguarded, [0.0, 1.0])
+
+    @pytest.mark.parametrize("logit_clip", [0.0, -1.0, np.inf, True, "30"])
+    def test_direction_clip_rejects_invalid_values(self, logit_clip):
+        with pytest.raises(ValueError, match="logit_clip"):
+            tilted_copy_probabilities(
+                0.5,
+                np.array([-1.0, 1.0]),
+                strength=1.0,
+                logit_clip=logit_clip,
+            )
+
     def test_eta_endpoints_and_strength_zero_are_exact(self):
         scores = np.array([-3.0, 0.0, 4.0])
         np.testing.assert_array_equal(

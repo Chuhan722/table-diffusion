@@ -1,14 +1,15 @@
 """持久化表状态上的 workload 能量热浴扩散研究原型。
 
 本模块直接把合成表作为 Markov 状态。每个随机扫描微步选择一个表坐标，枚举该
-属性的公开合法值，并从平方 workload 能量的完整有限温条件分布中重采样。采样后
-立即增量更新表、查询答案和 loss；不使用 donor、临时复制 mask、候选接受或回滚。
+属性的公开合法值，并从 workload 能量的完整有限温条件分布中重采样。采样后立即
+增量更新表、查询答案和平方 loss；不使用 donor、临时复制 mask、候选接受或回滚。
 
 固定有限逆温下，本核是以玻尔兹曼分布为平稳分布的单坐标平衡态采样器，不是以
 ``argmin`` 为收敛目标的优化器。当前协议既不退火，也不按 best 状态选择输出；
 强相关 workload 上的单坐标更新还可能与主线的块级更新具有不同混合性质。
 
-该模块目前只服务 Issue #32 的研究脚本，不接入默认生成器，也不承诺稳定公共 API。
+平方能量模式服务 Issue #32，目标对齐的 normalized L1 模式服务 Issue #38；两者
+都不接入默认生成器，也不承诺稳定公共 API。
 """
 
 from dataclasses import dataclass
@@ -24,6 +25,9 @@ from table_diffevo.schema import AttributeBlock, Schema
 
 MAX_DOMAIN_SIZE = 100_000
 IDENTITY_TOLERANCE = 1e-12
+ENERGY_MODE_SQUARED = "squared"
+ENERGY_MODE_NORMALIZED_L1 = "normalized_l1"
+ENERGY_MODES = frozenset({ENERGY_MODE_SQUARED, ENERGY_MODE_NORMALIZED_L1})
 
 
 @dataclass
@@ -56,14 +60,21 @@ class HeatbathConditional:
     source_row_values: Tuple[Any, ...]
     source_query_answers: Tuple[int, ...]
     source_loss: float
+    energy_mode: str
+    source_energy: float
     query_deltas: np.ndarray
     candidate_losses: np.ndarray
     gains: np.ndarray
+    candidate_energies: np.ndarray
+    energy_gains: np.ndarray
     scaled_log_weights: np.ndarray
     probabilities: np.ndarray
     expected_loss: float
     reference_expected_loss: float
     expected_gain_over_reference: float
+    expected_energy: float
+    reference_expected_energy: float
+    expected_energy_gain_over_reference: float
     entropy: float
     maximum_entropy: float
     normalized_entropy: float
@@ -101,6 +112,15 @@ def _validate_index(value: int, upper: int, name: str) -> int:
     ):
         raise ValueError(f"{name} 必须在 [0, {upper}) 内，得到 {value!r}")
     return int(value)
+
+
+def _validate_energy_mode(value: str) -> str:
+    if not isinstance(value, str) or value not in ENERGY_MODES:
+        raise ValueError(
+            "energy_mode 必须是 "
+            f"{sorted(ENERGY_MODES)} 之一，得到 {value!r}"
+        )
+    return value
 
 
 def _readonly(array: np.ndarray) -> np.ndarray:
@@ -462,6 +482,56 @@ def heatbath_probabilities(
     return _readonly(probabilities), _readonly(centered)
 
 
+def boltzmann_probabilities(
+    candidate_energies: np.ndarray,
+    inverse_energy_scale: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """按 ``exp(-inverse_energy_scale * energy)`` 稳定归一化。
+
+    与 :func:`heatbath_probabilities` 不同，本函数不隐式再除以记录数。
+    normalized L1 已包含 ``1/N``，因此必须使用这个显式能量接口，避免重复
+    归一化。平方模式继续走历史函数，以保持概率与随机轨迹精确回归。
+    """
+    beta = _validate_nonnegative_finite(
+        inverse_energy_scale, "inverse_energy_scale"
+    )
+    raw = np.asarray(candidate_energies)
+    if raw.ndim != 1 or len(raw) == 0 or raw.dtype.kind not in "iuf":
+        raise ValueError("candidate_energies 必须是非空有限数值一维数组")
+    energies = raw.astype(float, copy=False)
+    if not np.all(np.isfinite(energies)) or np.any(energies < 0.0):
+        raise ValueError(
+            "candidate_energies 必须是非空有限非负数值一维数组"
+        )
+    if beta == 0.0:
+        centered = np.zeros_like(energies)
+    else:
+        minimum = float(np.min(energies))
+        with np.errstate(over="ignore", invalid="ignore"):
+            centered = -beta * (energies - minimum)
+        if not np.all(np.isfinite(centered)):
+            raise ValueError("条件 log weight 超出 float64 可表示范围")
+    with np.errstate(under="ignore", invalid="ignore"):
+        weights = np.exp(centered)
+    if not np.all(np.isfinite(weights)) or np.any(weights <= 0.0):
+        raise ValueError("条件概率发生下溢或不再具有严格双向支持")
+    total = float(np.sum(weights))
+    if not np.isfinite(total) or total <= 0.0:
+        raise ValueError("条件概率归一化常数无效")
+    probabilities = weights / total
+    if (
+        not np.all(np.isfinite(probabilities))
+        or np.any(probabilities <= 0.0)
+        or (
+            len(probabilities) > 1
+            and np.any(probabilities >= 1.0)
+        )
+        or abs(float(np.sum(probabilities)) - 1.0) > IDENTITY_TOLERANCE
+    ):
+        raise ValueError("条件概率无法表示为严格正的有限分布")
+    return _readonly(probabilities), _readonly(centered)
+
+
 def build_persistent_heatbath_conditional(
     state: PersistentHeatbathState,
     schema: Schema,
@@ -471,11 +541,13 @@ def build_persistent_heatbath_conditional(
     row_index: int,
     attribute_index: int,
     inverse_temperature: float,
+    energy_mode: str = ENERGY_MODE_SQUARED,
 ) -> HeatbathConditional:
     """构造固定表状态与坐标下的完整 workload 热浴条件分布。"""
     beta = _validate_nonnegative_finite(
         inverse_temperature, "inverse_temperature"
     )
+    mode = _validate_energy_mode(energy_mode)
     target_array, active_queries = _validate_state(
         state, schema, queries, target
     )
@@ -511,9 +583,43 @@ def build_persistent_heatbath_conditional(
         or candidate_losses[current_index] != float(state.loss)
     ):
         raise RuntimeError("当前值候选必须严格保持原 workload 状态")
-    probabilities, centered = heatbath_probabilities(
-        candidate_losses, len(state.table), beta
-    )
+
+    if mode == ENERGY_MODE_SQUARED:
+        source_energy = float(state.loss) / len(state.table)
+        candidate_energies = candidate_losses / len(state.table)
+        energy_gains = gains / len(state.table)
+        # 保留历史运算顺序，确保 Issue #32 的概率和随机轨迹精确回归。
+        probabilities, centered = heatbath_probabilities(
+            candidate_losses, len(state.table), beta
+        )
+    else:
+        if len(queries) == 0:
+            raise ValueError("normalized_l1 能量要求至少一个查询")
+        candidate_residuals = residual[None, :] - delta_float
+        candidate_energies = (
+            np.mean(np.abs(candidate_residuals), axis=1) / len(state.table)
+        )
+        source_energy = float(
+            np.mean(np.abs(residual)) / len(state.table)
+        )
+        energy_gains = source_energy - candidate_energies
+        probabilities, centered = boltzmann_probabilities(
+            candidate_energies, beta
+        )
+    if (
+        not np.all(np.isfinite(candidate_energies))
+        or np.any(candidate_energies < 0.0)
+        or not np.all(np.isfinite(energy_gains))
+        or not np.isfinite(source_energy)
+        or source_energy < 0.0
+    ):
+        raise ValueError("候选 workload 能量无效")
+    if (
+        energy_gains[current_index] != 0.0
+        or candidate_energies[current_index] != source_energy
+    ):
+        raise RuntimeError("当前值候选必须严格保持原 workload 能量")
+
     minimum_loss = float(np.min(candidate_losses))
     loss_offsets = candidate_losses - minimum_loss
     expected_offset = float(np.dot(probabilities, loss_offsets))
@@ -525,8 +631,27 @@ def build_persistent_heatbath_conditional(
         reference_expected_loss
     ):
         raise ValueError("条件期望 loss 超出 float64 可表示范围")
-    if expected_gain_over_reference < -IDENTITY_TOLERANCE:
+    if (
+        mode == ENERGY_MODE_SQUARED
+        and expected_gain_over_reference < -IDENTITY_TOLERANCE
+    ):
         raise RuntimeError("有限温条件期望 loss 高于 beta=0 参考扩散")
+
+    minimum_energy = float(np.min(candidate_energies))
+    energy_offsets = candidate_energies - minimum_energy
+    expected_energy_offset = float(np.dot(probabilities, energy_offsets))
+    reference_energy_offset = float(np.mean(energy_offsets))
+    expected_energy_gain_over_reference = (
+        reference_energy_offset - expected_energy_offset
+    )
+    expected_energy = minimum_energy + expected_energy_offset
+    reference_expected_energy = minimum_energy + reference_energy_offset
+    if not np.isfinite(expected_energy) or not np.isfinite(
+        reference_expected_energy
+    ):
+        raise ValueError("条件期望能量超出 float64 可表示范围")
+    if expected_energy_gain_over_reference < -IDENTITY_TOLERANCE:
+        raise RuntimeError("有限温条件期望能量高于 beta=0 参考扩散")
     entropy = float(-np.dot(probabilities, np.log(probabilities)))
     maximum_entropy = float(np.log(len(values)))
     normalized_entropy = (
@@ -536,7 +661,11 @@ def build_persistent_heatbath_conditional(
         1.0 + IDENTITY_TOLERANCE
     ):
         raise RuntimeError("条件熵超出有限域理论范围")
-    uphill = candidate_losses > float(state.loss) + IDENTITY_TOLERANCE
+    if mode == ENERGY_MODE_SQUARED:
+        # 保留历史诊断阈值的量纲与运算，避免只因新增通用能量字段而改变旧输出。
+        uphill = candidate_losses > float(state.loss) + IDENTITY_TOLERANCE
+    else:
+        uphill = candidate_energies > source_energy + IDENTITY_TOLERANCE
     uphill_mass = float(np.sum(probabilities[uphill]))
     names = tuple(schema.attribute_names())
     return HeatbathConditional(
@@ -553,14 +682,23 @@ def build_persistent_heatbath_conditional(
             int(value) for value in state.query_answers.tolist()
         ),
         source_loss=float(state.loss),
+        energy_mode=mode,
+        source_energy=float(source_energy),
         query_deltas=_readonly(deltas),
         candidate_losses=_readonly(candidate_losses),
         gains=_readonly(gains),
+        candidate_energies=_readonly(candidate_energies),
+        energy_gains=_readonly(energy_gains),
         scaled_log_weights=centered,
         probabilities=probabilities,
         expected_loss=expected_loss,
         reference_expected_loss=reference_expected_loss,
         expected_gain_over_reference=float(expected_gain_over_reference),
+        expected_energy=float(expected_energy),
+        reference_expected_energy=float(reference_expected_energy),
+        expected_energy_gain_over_reference=float(
+            expected_energy_gain_over_reference
+        ),
         entropy=entropy,
         maximum_entropy=maximum_entropy,
         normalized_entropy=float(normalized_entropy),
@@ -659,10 +797,21 @@ def apply_heatbath_choice(
         "loss_before": before_loss,
         "loss_after": float(state.loss),
         "gain": float(before_loss - state.loss),
+        "energy_mode": conditional.energy_mode,
+        "energy_before": conditional.source_energy,
+        "energy_after": float(conditional.candidate_energies[choice]),
+        "energy_gain": float(conditional.energy_gains[choice]),
         "expected_loss": conditional.expected_loss,
         "reference_expected_loss": conditional.reference_expected_loss,
         "expected_gain_over_reference": (
             conditional.expected_gain_over_reference
+        ),
+        "expected_energy": conditional.expected_energy,
+        "reference_expected_energy": (
+            conditional.reference_expected_energy
+        ),
+        "expected_energy_gain_over_reference": (
+            conditional.expected_energy_gain_over_reference
         ),
         "conditional_entropy": conditional.entropy,
         "conditional_maximum_entropy": conditional.maximum_entropy,
@@ -686,6 +835,7 @@ def persistent_heatbath_step(
     *,
     coordinate_index: Optional[int] = None,
     gumbels: Optional[np.ndarray] = None,
+    energy_mode: str = ENERGY_MODE_SQUARED,
 ) -> Dict[str, Any]:
     """执行一个随机扫描微步并原地更新 ``state``。"""
     if not isinstance(rng, np.random.Generator):
@@ -693,6 +843,7 @@ def persistent_heatbath_step(
     beta = _validate_nonnegative_finite(
         inverse_temperature, "inverse_temperature"
     )
+    mode = _validate_energy_mode(energy_mode)
     _validate_state(state, schema, queries, target)
     n_coordinates = len(state.table) * schema.n_blocks()
     if coordinate_index is None:
@@ -710,6 +861,7 @@ def persistent_heatbath_step(
         row_index=row_index,
         attribute_index=attribute_index,
         inverse_temperature=beta,
+        energy_mode=mode,
     )
     choice = sample_heatbath_index(
         conditional,
@@ -729,12 +881,26 @@ def initial_gain_rms_scale(
     schema: Schema,
     queries: List[Dict[str, Any]],
     target: np.ndarray,
+    *,
+    energy_mode: str = ENERGY_MODE_SQUARED,
 ) -> Dict[str, Any]:
-    """枚举初始状态全部合法单坐标编辑，返回非零 ``gain/N`` 的 RMS。"""
+    """枚举初始状态全部合法单坐标编辑，返回非零能量 gain 的 RMS。
+
+    平方模式的能量 gain 是历史定义 ``squared_loss_gain/N``；L1 模式
+    直接使用 normalized L1 的变化。默认平方路径保持 Issue #32 的运算顺序。
+    """
+    mode = _validate_energy_mode(energy_mode)
     target_array, active_queries = _validate_state(
         state, schema, queries, target
     )
+    if mode == ENERGY_MODE_NORMALIZED_L1 and len(queries) == 0:
+        raise ValueError("normalized_l1 能量要求至少一个查询")
     residual = target_array - state.query_answers.astype(float, copy=False)
+    source_l1_energy = (
+        float(np.mean(np.abs(residual)) / len(state.table))
+        if mode == ENERGY_MODE_NORMALIZED_L1
+        else None
+    )
     scaled_gains = []
     candidate_evaluations = 0
     query_evaluations = 0
@@ -749,10 +915,19 @@ def initial_gain_rms_scale(
                 attribute_index,
             )
             delta_float = deltas.astype(float, copy=False)
-            gains = (
-                delta_float @ residual
-                - 0.5 * np.sum(delta_float ** 2, axis=1)
-            ) / len(state.table)
+            if mode == ENERGY_MODE_SQUARED:
+                gains = (
+                    delta_float @ residual
+                    - 0.5 * np.sum(delta_float ** 2, axis=1)
+                ) / len(state.table)
+            else:
+                candidate_energies = (
+                    np.mean(
+                        np.abs(residual[None, :] - delta_float), axis=1
+                    )
+                    / len(state.table)
+                )
+                gains = source_l1_energy - candidate_energies
             nonzero = gains[gains != 0.0]
             scaled_gains.extend(nonzero.tolist())
             candidate_evaluations += len(values)

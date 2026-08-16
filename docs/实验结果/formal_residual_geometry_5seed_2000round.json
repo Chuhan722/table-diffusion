@@ -1,0 +1,1715 @@
+{
+  "protocol": {
+    "issue": 57,
+    "seeds": [
+      200,
+      201,
+      202,
+      203,
+      204
+    ],
+    "rounds": 2000,
+    "datasets": [
+      "test_300x10",
+      "nltcs"
+    ],
+    "arms": {
+      "absolute": {
+        "residual_geometry": "absolute"
+      },
+      "relative_f8": {
+        "residual_geometry": "relative",
+        "residual_geometry_floor": 8.0
+      },
+      "relative_f1": {
+        "residual_geometry": "relative",
+        "residual_geometry_floor": 1.0
+      },
+      "relative_f4": {
+        "residual_geometry": "relative",
+        "residual_geometry_floor": 4.0
+      },
+      "relative_f16": {
+        "residual_geometry": "relative",
+        "residual_geometry_floor": 16.0
+      }
+    },
+    "shared_params": {
+      "rho": 0.01,
+      "beta": 1.0,
+      "h": 0.8,
+      "eta": 0.5,
+      "mu": 0.01,
+      "lambda_param": 0.5,
+      "delta": 0.05,
+      "winsorize_quantiles": [
+        0.01,
+        0.99
+      ],
+      "distance_mode": "geometric",
+      "init_method": "marginal",
+      "residual_directed_diffusion": true,
+      "diffusion_direction_strength": 2.0,
+      "diffusion_direction_normalization": "initial_rms",
+      "exclude_self": true,
+      "tol": "inf",
+      "selection_scale_invariant": true,
+      "selection_scale_invariant_min_spread": 0.001,
+      "alpha_min": 16.0,
+      "alpha_max": 16.0
+    },
+    "primary_dataset": "nltcs",
+    "frozen_si_alpha": 16.0,
+    "frozen_min_spread": 0.001
+  },
+  "provenance": {
+    "git_commit": "aac1aff84f0c435db962dc3d3b43660fcdc8c18a",
+    "git_dirty": false,
+    "formal": true,
+    "started_at": "2026-08-16T01:41:14.164402+08:00",
+    "environment": {
+      "python": "3.9.21",
+      "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+      "numpy": "1.26.4",
+      "pandas": "2.2.3"
+    },
+    "input_sha256": {
+      "test_300x10": {
+        "schema": "58087cbba7eb90e82974bc9ffc2222510705b97599f00ae207765e03b60cf792",
+        "queries": "7cccd58400a8e7bf74aed6efe01069f3142dde166b37a39cd3d18408b8cecb88",
+        "marginals": "1e0fb0413c5ed53907a760d491fda84aec8162642a39cf8eadc577d7d1ec9ee4"
+      },
+      "nltcs": {
+        "schema": "5765de90ea97bb6617c960f9cf81fee97ca4975296bfdd67686667729cc4e7f4",
+        "queries": "b34eb2d5a16ce1deeafbdcda7af9a9b971a490e59df0099d7c7c55ce70f0468f",
+        "marginals": "a5e63ea80c49cfb1ac7cdb88662ce54641f4dab33ac60bda53e332cd123ea25e"
+      }
+    },
+    "command": "scripts/probe_residual_geometry_formal.py",
+    "finished_at": "2026-08-16T05:17:42.501125+08:00"
+  },
+  "datasets": {
+    "test_300x10": {
+      "initial_state": {
+        "measured_l1_mean": 0.018106666666666667,
+        "measured_l1_by_seed": {
+          "200": 0.018066666666666665,
+          "201": 0.01753333333333333,
+          "202": 0.0194,
+          "203": 0.018533333333333332,
+          "204": 0.016999999999999998
+        },
+        "loss_by_seed": {
+          "200": 2456.5,
+          "201": 2110.5,
+          "202": 2488.5,
+          "203": 2454.0,
+          "204": 2358.5
+        },
+        "note": "n_rounds=0 的 marginal 初始化状态（种子相关）"
+      },
+      "reference_sha256": {
+        "reference": "c211133455c4fdd19f01f34eca511cf089667452d038265897eec15b5b84baeb"
+      },
+      "runs": [
+        {
+          "dataset": "test_300x10",
+          "arm": "absolute",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 34.0,
+          "final_loss": 36.5,
+          "final_table_measured_l1": 0.003,
+          "best_loss": 16.5,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.9,
+          "exact_match_queries": 18,
+          "row_max_prob_mean_final": 0.5700007404267798,
+          "effective_donors_mean_final": 4.720787315977483,
+          "tail_mean_pre_proposal_loss": 33.575,
+          "final_table_sha256": "af4374cd7f63243353f8a531b8a99c8ff42c3f7cf6ad3cd9693a22693717a88f",
+          "elapsed_sec": 56.5,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015084141754108098,
+              "unmeasured_4way_l1": 0.006629009304871374,
+              "raw_joint_tvd": 1.0000000000000002,
+              "binned_joint_tvd": 0.9933333333333334,
+              "raw_unique_states": 234,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f8",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 46.0,
+          "final_loss": 48.5,
+          "final_table_measured_l1": 0.003666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.1,
+          "exact_match_queries": 13,
+          "row_max_prob_mean_final": 0.43842171112572564,
+          "effective_donors_mean_final": 4.887244454091641,
+          "tail_mean_pre_proposal_loss": 34.84,
+          "final_table_sha256": "a1ea7b3dbfaa9d2cbfd21181b034f9245349f8656189d8647f27534d9566915d",
+          "elapsed_sec": 56.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015087441430739788,
+              "unmeasured_4way_l1": 0.006622441160372195,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666668,
+              "raw_unique_states": 232,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f1",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 46.0,
+          "final_loss": 48.5,
+          "final_table_measured_l1": 0.003666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.1,
+          "exact_match_queries": 13,
+          "row_max_prob_mean_final": 0.43842171112572564,
+          "effective_donors_mean_final": 4.887244454091641,
+          "tail_mean_pre_proposal_loss": 34.84,
+          "final_table_sha256": "a1ea7b3dbfaa9d2cbfd21181b034f9245349f8656189d8647f27534d9566915d",
+          "elapsed_sec": 56.9,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015087441430739788,
+              "unmeasured_4way_l1": 0.006622441160372195,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666668,
+              "raw_unique_states": 232,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f4",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 46.0,
+          "final_loss": 48.5,
+          "final_table_measured_l1": 0.003666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.1,
+          "exact_match_queries": 13,
+          "row_max_prob_mean_final": 0.43842171112572564,
+          "effective_donors_mean_final": 4.887244454091641,
+          "tail_mean_pre_proposal_loss": 34.84,
+          "final_table_sha256": "a1ea7b3dbfaa9d2cbfd21181b034f9245349f8656189d8647f27534d9566915d",
+          "elapsed_sec": 56.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015087441430739788,
+              "unmeasured_4way_l1": 0.006622441160372195,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666668,
+              "raw_unique_states": 232,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f16",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 46.0,
+          "final_loss": 48.5,
+          "final_table_measured_l1": 0.003666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.1,
+          "exact_match_queries": 13,
+          "row_max_prob_mean_final": 0.43842171112572564,
+          "effective_donors_mean_final": 4.887244454091641,
+          "tail_mean_pre_proposal_loss": 34.84,
+          "final_table_sha256": "a1ea7b3dbfaa9d2cbfd21181b034f9245349f8656189d8647f27534d9566915d",
+          "elapsed_sec": 56.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015087441430739788,
+              "unmeasured_4way_l1": 0.006622441160372195,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666668,
+              "raw_unique_states": 232,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "absolute",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 29.5,
+          "final_loss": 30.5,
+          "final_table_measured_l1": 0.0027333333333333333,
+          "best_loss": 20.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.82,
+          "exact_match_queries": 18,
+          "row_max_prob_mean_final": 0.5446837524115894,
+          "effective_donors_mean_final": 3.7136843354310365,
+          "tail_mean_pre_proposal_loss": 32.81,
+          "final_table_sha256": "642aa5fcf6c3bee7fd129e79750c8f793a0b76c64ddee1b58ff0415f25b36890",
+          "elapsed_sec": 57.5,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.013466640269253613,
+              "unmeasured_4way_l1": 0.0060825396825396815,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666668,
+              "raw_unique_states": 240,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f8",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 38.5,
+          "final_loss": 46.5,
+          "final_table_measured_l1": 0.0037999999999999996,
+          "best_loss": 24.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.14,
+          "exact_match_queries": 11,
+          "row_max_prob_mean_final": 0.5230339139581884,
+          "effective_donors_mean_final": 4.527745117050817,
+          "tail_mean_pre_proposal_loss": 43.535,
+          "final_table_sha256": "230996f322bdc820f0e7fe2ede8c5b9023711e61136d07f26cbd2e64f7651ce7",
+          "elapsed_sec": 56.6,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015788292747310764,
+              "unmeasured_4way_l1": 0.006850793650793651,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9766666666666668,
+              "raw_unique_states": 217,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f1",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 38.5,
+          "final_loss": 46.5,
+          "final_table_measured_l1": 0.0037999999999999996,
+          "best_loss": 24.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.14,
+          "exact_match_queries": 11,
+          "row_max_prob_mean_final": 0.5230339139581884,
+          "effective_donors_mean_final": 4.527745117050817,
+          "tail_mean_pre_proposal_loss": 43.535,
+          "final_table_sha256": "230996f322bdc820f0e7fe2ede8c5b9023711e61136d07f26cbd2e64f7651ce7",
+          "elapsed_sec": 56.5,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015788292747310764,
+              "unmeasured_4way_l1": 0.006850793650793651,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9766666666666668,
+              "raw_unique_states": 217,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f4",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 38.5,
+          "final_loss": 46.5,
+          "final_table_measured_l1": 0.0037999999999999996,
+          "best_loss": 24.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.14,
+          "exact_match_queries": 11,
+          "row_max_prob_mean_final": 0.5230339139581884,
+          "effective_donors_mean_final": 4.527745117050817,
+          "tail_mean_pre_proposal_loss": 43.535,
+          "final_table_sha256": "230996f322bdc820f0e7fe2ede8c5b9023711e61136d07f26cbd2e64f7651ce7",
+          "elapsed_sec": 56.3,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015788292747310764,
+              "unmeasured_4way_l1": 0.006850793650793651,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9766666666666668,
+              "raw_unique_states": 217,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f16",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 38.5,
+          "final_loss": 46.5,
+          "final_table_measured_l1": 0.0037999999999999996,
+          "best_loss": 24.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.14,
+          "exact_match_queries": 11,
+          "row_max_prob_mean_final": 0.5230339139581884,
+          "effective_donors_mean_final": 4.527745117050817,
+          "tail_mean_pre_proposal_loss": 43.535,
+          "final_table_sha256": "230996f322bdc820f0e7fe2ede8c5b9023711e61136d07f26cbd2e64f7651ce7",
+          "elapsed_sec": 57.1,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.015788292747310764,
+              "unmeasured_4way_l1": 0.006850793650793651,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9766666666666668,
+              "raw_unique_states": 217,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "absolute",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 34.0,
+          "final_loss": 27.0,
+          "final_table_measured_l1": 0.002533333333333333,
+          "best_loss": 19.5,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.76,
+          "exact_match_queries": 19,
+          "row_max_prob_mean_final": 0.640428570373209,
+          "effective_donors_mean_final": 3.3011325882908227,
+          "tail_mean_pre_proposal_loss": 37.17,
+          "final_table_sha256": "395de8127da6f1539da40b6811b7e56091f6b9e907bc726f02b957fce1b27862",
+          "elapsed_sec": 57.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014473701577245427,
+              "unmeasured_4way_l1": 0.006476847290640393,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9900000000000001,
+              "raw_unique_states": 223,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f8",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 50.5,
+          "final_loss": 43.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.4976331887723931,
+          "effective_donors_mean_final": 4.977352035152887,
+          "tail_mean_pre_proposal_loss": 49.82,
+          "final_table_sha256": "6e4743384808872afc38dad92dee49b827a7d93e243bc2cda976d4d256344f74",
+          "elapsed_sec": 57.1,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014628126443608527,
+              "unmeasured_4way_l1": 0.006526984126984127,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9866666666666667,
+              "raw_unique_states": 235,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f1",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 50.5,
+          "final_loss": 43.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.4976331887723931,
+          "effective_donors_mean_final": 4.977352035152887,
+          "tail_mean_pre_proposal_loss": 49.82,
+          "final_table_sha256": "6e4743384808872afc38dad92dee49b827a7d93e243bc2cda976d4d256344f74",
+          "elapsed_sec": 57.2,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014628126443608527,
+              "unmeasured_4way_l1": 0.006526984126984127,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9866666666666667,
+              "raw_unique_states": 235,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f4",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 50.5,
+          "final_loss": 43.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.4976331887723931,
+          "effective_donors_mean_final": 4.977352035152887,
+          "tail_mean_pre_proposal_loss": 49.82,
+          "final_table_sha256": "6e4743384808872afc38dad92dee49b827a7d93e243bc2cda976d4d256344f74",
+          "elapsed_sec": 57.3,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014628126443608527,
+              "unmeasured_4way_l1": 0.006526984126984127,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9866666666666667,
+              "raw_unique_states": 235,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f16",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 50.5,
+          "final_loss": 43.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.4976331887723931,
+          "effective_donors_mean_final": 4.977352035152887,
+          "tail_mean_pre_proposal_loss": 49.82,
+          "final_table_sha256": "6e4743384808872afc38dad92dee49b827a7d93e243bc2cda976d4d256344f74",
+          "elapsed_sec": 57.2,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014628126443608527,
+              "unmeasured_4way_l1": 0.006526984126984127,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9866666666666667,
+              "raw_unique_states": 235,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "absolute",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 31.0,
+          "final_loss": 27.0,
+          "final_table_measured_l1": 0.002666666666666667,
+          "best_loss": 18.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.8,
+          "exact_match_queries": 17,
+          "row_max_prob_mean_final": 0.6531434581025215,
+          "effective_donors_mean_final": 3.251949243016019,
+          "tail_mean_pre_proposal_loss": 41.08,
+          "final_table_sha256": "f767ce30bbfae8d26bb03260fc68bac19c14fb14389db0cdc3dd4b7143347984",
+          "elapsed_sec": 57.6,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01472645680723289,
+              "unmeasured_4way_l1": 0.006502025177887247,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9866666666666668,
+              "raw_unique_states": 238,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f8",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 41.5,
+          "final_loss": 40.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 20.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.5187131737013795,
+          "effective_donors_mean_final": 4.454074290036669,
+          "tail_mean_pre_proposal_loss": 51.965,
+          "final_table_sha256": "73b5c9d0c0a555d3099a21d467153e9fd98e87a51d8994cfd97722826fd44fa8",
+          "elapsed_sec": 57.0,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014899359862733452,
+              "unmeasured_4way_l1": 0.006684838533114394,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666667,
+              "raw_unique_states": 220,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f1",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 41.5,
+          "final_loss": 40.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 20.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.5187131737013795,
+          "effective_donors_mean_final": 4.454074290036669,
+          "tail_mean_pre_proposal_loss": 51.965,
+          "final_table_sha256": "73b5c9d0c0a555d3099a21d467153e9fd98e87a51d8994cfd97722826fd44fa8",
+          "elapsed_sec": 56.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014899359862733452,
+              "unmeasured_4way_l1": 0.006684838533114394,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666667,
+              "raw_unique_states": 220,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f4",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 41.5,
+          "final_loss": 40.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 20.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.5187131737013795,
+          "effective_donors_mean_final": 4.454074290036669,
+          "tail_mean_pre_proposal_loss": 51.965,
+          "final_table_sha256": "73b5c9d0c0a555d3099a21d467153e9fd98e87a51d8994cfd97722826fd44fa8",
+          "elapsed_sec": 56.6,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014899359862733452,
+              "unmeasured_4way_l1": 0.006684838533114394,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666667,
+              "raw_unique_states": 220,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f16",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 41.5,
+          "final_loss": 40.0,
+          "final_table_measured_l1": 0.0033333333333333335,
+          "best_loss": 20.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 1.0,
+          "exact_match_queries": 14,
+          "row_max_prob_mean_final": 0.5187131737013795,
+          "effective_donors_mean_final": 4.454074290036669,
+          "tail_mean_pre_proposal_loss": 51.965,
+          "final_table_sha256": "73b5c9d0c0a555d3099a21d467153e9fd98e87a51d8994cfd97722826fd44fa8",
+          "elapsed_sec": 56.9,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.014899359862733452,
+              "unmeasured_4way_l1": 0.006684838533114394,
+              "raw_joint_tvd": 1.0,
+              "binned_joint_tvd": 0.9966666666666667,
+              "raw_unique_states": 220,
+              "raw_support_overlap": 0
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "absolute",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 28.0,
+          "final_loss": 34.5,
+          "final_table_measured_l1": 0.003,
+          "best_loss": 14.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.9,
+          "exact_match_queries": 15,
+          "row_max_prob_mean_final": 0.5857480135258959,
+          "effective_donors_mean_final": 3.517222795925166,
+          "tail_mean_pre_proposal_loss": 29.31,
+          "final_table_sha256": "48cb89b8184ef079db8b9e44e00f396026a2fc8103d8bdab5ccac22da9e25ac2",
+          "elapsed_sec": 57.7,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01370751666336699,
+              "unmeasured_4way_l1": 0.00618631636562671,
+              "raw_joint_tvd": 0.9966666666666668,
+              "binned_joint_tvd": 0.9933333333333333,
+              "raw_unique_states": 241,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f8",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 30.0,
+          "final_loss": 30.0,
+          "final_table_measured_l1": 0.002666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.8,
+          "exact_match_queries": 19,
+          "row_max_prob_mean_final": 0.4981151733017422,
+          "effective_donors_mean_final": 4.3322733348648015,
+          "tail_mean_pre_proposal_loss": 32.735,
+          "final_table_sha256": "b5c5953549d78f4c64c66a8ee7ddb60eeabd0ed295f3d71304d62ffaf4e729f2",
+          "elapsed_sec": 56.8,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01464594469741965,
+              "unmeasured_4way_l1": 0.006514942528735632,
+              "raw_joint_tvd": 0.9966666666666667,
+              "binned_joint_tvd": 0.9666666666666668,
+              "raw_unique_states": 231,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f1",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 30.0,
+          "final_loss": 30.0,
+          "final_table_measured_l1": 0.002666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.8,
+          "exact_match_queries": 19,
+          "row_max_prob_mean_final": 0.4981151733017422,
+          "effective_donors_mean_final": 4.3322733348648015,
+          "tail_mean_pre_proposal_loss": 32.735,
+          "final_table_sha256": "b5c5953549d78f4c64c66a8ee7ddb60eeabd0ed295f3d71304d62ffaf4e729f2",
+          "elapsed_sec": 56.8,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01464594469741965,
+              "unmeasured_4way_l1": 0.006514942528735632,
+              "raw_joint_tvd": 0.9966666666666667,
+              "binned_joint_tvd": 0.9666666666666668,
+              "raw_unique_states": 231,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f4",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 30.0,
+          "final_loss": 30.0,
+          "final_table_measured_l1": 0.002666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.8,
+          "exact_match_queries": 19,
+          "row_max_prob_mean_final": 0.4981151733017422,
+          "effective_donors_mean_final": 4.3322733348648015,
+          "tail_mean_pre_proposal_loss": 32.735,
+          "final_table_sha256": "b5c5953549d78f4c64c66a8ee7ddb60eeabd0ed295f3d71304d62ffaf4e729f2",
+          "elapsed_sec": 56.9,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01464594469741965,
+              "unmeasured_4way_l1": 0.006514942528735632,
+              "raw_joint_tvd": 0.9966666666666667,
+              "binned_joint_tvd": 0.9666666666666668,
+              "raw_unique_states": 231,
+              "raw_support_overlap": 1
+            }
+          }
+        },
+        {
+          "dataset": "test_300x10",
+          "arm": "relative_f16",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 30.0,
+          "final_loss": 30.0,
+          "final_table_measured_l1": 0.002666666666666667,
+          "best_loss": 19.0,
+          "rare_query_mean_abs_residual": null,
+          "common_query_mean_abs_residual": 0.8,
+          "exact_match_queries": 19,
+          "row_max_prob_mean_final": 0.4981151733017422,
+          "effective_donors_mean_final": 4.3322733348648015,
+          "tail_mean_pre_proposal_loss": 32.735,
+          "final_table_sha256": "b5c5953549d78f4c64c66a8ee7ddb60eeabd0ed295f3d71304d62ffaf4e729f2",
+          "elapsed_sec": 56.8,
+          "offline": {
+            "reference": {
+              "unmeasured_3way_l1": 0.01464594469741965,
+              "unmeasured_4way_l1": 0.006514942528735632,
+              "raw_joint_tvd": 0.9966666666666667,
+              "binned_joint_tvd": 0.9666666666666668,
+              "raw_unique_states": 231,
+              "raw_support_overlap": 1
+            }
+          }
+        }
+      ],
+      "judgement": {
+        "metric": "final_table_measured_l1",
+        "primary_baseline": "absolute",
+        "primary_candidate": "relative_f8",
+        "baseline_l1_by_seed": {
+          "200": 0.003,
+          "201": 0.0027333333333333333,
+          "202": 0.002533333333333333,
+          "203": 0.002666666666666667,
+          "204": 0.003
+        },
+        "candidate_l1_by_seed": {
+          "200": 0.003666666666666667,
+          "201": 0.0037999999999999996,
+          "202": 0.0033333333333333335,
+          "203": 0.0033333333333333335,
+          "204": 0.002666666666666667
+        },
+        "paired_wins": 1,
+        "n_seeds": 5,
+        "baseline_mean": 0.0027866666666666665,
+        "candidate_mean": 0.0033600000000000006,
+        "relative_improvement": -0.20574162679425867,
+        "primary_pass": false,
+        "floor_arm_means": {
+          "relative_f8": 0.0033600000000000006,
+          "relative_f1": 0.0033600000000000006,
+          "relative_f4": 0.0033600000000000006,
+          "relative_f16": 0.0033600000000000006
+        },
+        "floor_best_arm": "relative_f8",
+        "floor_suboptimal_flag": false,
+        "quality_risks": {
+          "unmeasured_3way_l1": {
+            "baseline_mean": 0.014291691414241404,
+            "candidate_mean": 0.015009833036362436,
+            "relative_change": 0.05024888946352545,
+            "flagged": true
+          },
+          "unmeasured_4way_l1": {
+            "baseline_mean": 0.006375347564313081,
+            "candidate_mean": 0.00664,
+            "relative_change": 0.041511844337452176,
+            "flagged": false
+          },
+          "binned_joint_tvd": {
+            "baseline_mean": 0.9920000000000002,
+            "candidate_mean": 0.9846666666666668,
+            "relative_change": -0.007392473118279649,
+            "flagged": false
+          }
+        },
+        "any_quality_risk": true,
+        "classification": "not_supported",
+        "thresholds": {
+          "primary_min_wins": 5,
+          "primary_min_improvement": 0.3,
+          "mixed_min_wins": 3,
+          "quality_risk_rel": 0.05
+        }
+      }
+    },
+    "nltcs": {
+      "initial_state": {
+        "measured_l1_mean": 0.06332730368327673,
+        "measured_l1_by_seed": {
+          "200": 0.06340486038897757,
+          "201": 0.06335867951342891,
+          "202": 0.06335022125146345,
+          "203": 0.06324958645581598,
+          "204": 0.06327317080669778
+        },
+        "loss_by_seed": {
+          "200": 698546195.0,
+          "201": 696656887.0,
+          "202": 695802764.5,
+          "203": 693819590.5,
+          "204": 693921609.5
+        },
+        "note": "n_rounds=0 的 marginal 初始化状态（种子相关）"
+      },
+      "reference_sha256": {
+        "train": "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30"
+      },
+      "runs": [
+        {
+          "dataset": "nltcs",
+          "arm": "absolute",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 608181.0,
+          "final_loss": 596298.0,
+          "final_table_measured_l1": 0.0010484540488866552,
+          "best_loss": 437943.5,
+          "rare_query_mean_abs_residual": 18.09251101321586,
+          "common_query_mean_abs_residual": 16.02925045703839,
+          "exact_match_queries": 37,
+          "row_max_prob_mean_final": 0.024158881977200508,
+          "effective_donors_mean_final": 1796.3421630859375,
+          "tail_mean_pre_proposal_loss": 637381.075,
+          "final_table_sha256": "c734cc4886eb030ff8dfd1afe9c44e5969395d44f985b85021de9f9f55abdec5",
+          "elapsed_sec": 455.0,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.001597110804289237,
+              "unmeasured_4way_l1": 0.001767747038821138,
+              "raw_joint_tvd": 0.26500216303071505,
+              "binned_joint_tvd": 0.26500216303071505,
+              "raw_unique_states": 2136,
+              "raw_support_overlap": 1237
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f8",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 18997.0,
+          "final_loss": 17467.0,
+          "final_table_measured_l1": 0.0002652313387125822,
+          "best_loss": 14579.0,
+          "rare_query_mean_abs_residual": 3.4559471365638768,
+          "common_query_mean_abs_residual": 4.985374771480805,
+          "exact_match_queries": 81,
+          "row_max_prob_mean_final": 0.05396611616015434,
+          "effective_donors_mean_final": 1488.7135009765625,
+          "tail_mean_pre_proposal_loss": 26019.29,
+          "final_table_sha256": "a4f891a3d6567371253c3d11833ca583abdd8e7ec38903dd9d2e9f203ee73218",
+          "elapsed_sec": 452.2,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005478387040190463,
+              "unmeasured_4way_l1": 0.0008334204884170894,
+              "raw_joint_tvd": 0.23465793214263644,
+              "binned_joint_tvd": 0.23465793214263644,
+              "raw_unique_states": 2085,
+              "raw_support_overlap": 1282
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f1",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 18997.0,
+          "final_loss": 17467.0,
+          "final_table_measured_l1": 0.0002652313387125822,
+          "best_loss": 14579.0,
+          "rare_query_mean_abs_residual": 3.4559471365638768,
+          "common_query_mean_abs_residual": 4.985374771480805,
+          "exact_match_queries": 81,
+          "row_max_prob_mean_final": 0.05396611616015434,
+          "effective_donors_mean_final": 1488.7135009765625,
+          "tail_mean_pre_proposal_loss": 26019.29,
+          "final_table_sha256": "a4f891a3d6567371253c3d11833ca583abdd8e7ec38903dd9d2e9f203ee73218",
+          "elapsed_sec": 451.8,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005478387040190463,
+              "unmeasured_4way_l1": 0.0008334204884170894,
+              "raw_joint_tvd": 0.23465793214263644,
+              "binned_joint_tvd": 0.23465793214263644,
+              "raw_unique_states": 2085,
+              "raw_support_overlap": 1282
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f4",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 18997.0,
+          "final_loss": 17467.0,
+          "final_table_measured_l1": 0.0002652313387125822,
+          "best_loss": 14579.0,
+          "rare_query_mean_abs_residual": 3.4559471365638768,
+          "common_query_mean_abs_residual": 4.985374771480805,
+          "exact_match_queries": 81,
+          "row_max_prob_mean_final": 0.05396611616015434,
+          "effective_donors_mean_final": 1488.7135009765625,
+          "tail_mean_pre_proposal_loss": 26019.29,
+          "final_table_sha256": "a4f891a3d6567371253c3d11833ca583abdd8e7ec38903dd9d2e9f203ee73218",
+          "elapsed_sec": 452.4,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005478387040190463,
+              "unmeasured_4way_l1": 0.0008334204884170894,
+              "raw_joint_tvd": 0.23465793214263644,
+              "binned_joint_tvd": 0.23465793214263644,
+              "raw_unique_states": 2085,
+              "raw_support_overlap": 1282
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f16",
+          "seed": 200,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 25996.5,
+          "final_loss": 25292.5,
+          "final_table_measured_l1": 0.00032221656348718953,
+          "best_loss": 15327.5,
+          "rare_query_mean_abs_residual": 4.365638766519824,
+          "common_query_mean_abs_residual": 5.917733089579524,
+          "exact_match_queries": 69,
+          "row_max_prob_mean_final": 0.03918391466140747,
+          "effective_donors_mean_final": 1655.5965576171875,
+          "tail_mean_pre_proposal_loss": 28681.845,
+          "final_table_sha256": "019d99ebd908398ecee58d26d4eb4ace5c9634d08eb6ebfbf9b4ac2e3e4bb0cc",
+          "elapsed_sec": 451.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0006075628972263897,
+              "unmeasured_4way_l1": 0.0008705646834470764,
+              "raw_joint_tvd": 0.24195043569618693,
+              "binned_joint_tvd": 0.24195043569618693,
+              "raw_unique_states": 2017,
+              "raw_support_overlap": 1267
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "absolute",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 578503.5,
+          "final_loss": 616179.5,
+          "final_table_measured_l1": 0.0011528549319785955,
+          "best_loss": 423625.0,
+          "rare_query_mean_abs_residual": 17.308370044052865,
+          "common_query_mean_abs_residual": 19.77148080438757,
+          "exact_match_queries": 20,
+          "row_max_prob_mean_final": 0.028278393670916557,
+          "effective_donors_mean_final": 2190.81689453125,
+          "tail_mean_pre_proposal_loss": 595105.475,
+          "final_table_sha256": "2ec8ff7e0a6c458e15839b73ff7aa28a5a016e44d79a4278e0d1312d4f3def96",
+          "elapsed_sec": 455.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0015609015483290202,
+              "unmeasured_4way_l1": 0.0017061371667082066,
+              "raw_joint_tvd": 0.2533835980470923,
+              "binned_joint_tvd": 0.2533835980470923,
+              "raw_unique_states": 2174,
+              "raw_support_overlap": 1252
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f8",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 26638.5,
+          "final_loss": 23338.5,
+          "final_table_measured_l1": 0.00031666004102812704,
+          "best_loss": 16084.0,
+          "rare_query_mean_abs_residual": 4.328193832599119,
+          "common_query_mean_abs_residual": 5.7842778793418645,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.03301099315285683,
+          "effective_donors_mean_final": 1816.2822265625,
+          "tail_mean_pre_proposal_loss": 27276.98,
+          "final_table_sha256": "b4525ce4f70865db2f50e9a8ba7702a2546dedeec2a46e7da90739ccb62735ca",
+          "elapsed_sec": 452.1,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005877953603373711,
+              "unmeasured_4way_l1": 0.0008660017752471866,
+              "raw_joint_tvd": 0.23094987948828877,
+              "binned_joint_tvd": 0.23094987948828877,
+              "raw_unique_states": 2088,
+              "raw_support_overlap": 1303
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f1",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 26638.5,
+          "final_loss": 23338.5,
+          "final_table_measured_l1": 0.00031666004102812704,
+          "best_loss": 16084.0,
+          "rare_query_mean_abs_residual": 4.328193832599119,
+          "common_query_mean_abs_residual": 5.7842778793418645,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.03301099315285683,
+          "effective_donors_mean_final": 1816.2822265625,
+          "tail_mean_pre_proposal_loss": 27276.98,
+          "final_table_sha256": "b4525ce4f70865db2f50e9a8ba7702a2546dedeec2a46e7da90739ccb62735ca",
+          "elapsed_sec": 452.4,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005877953603373711,
+              "unmeasured_4way_l1": 0.0008660017752471866,
+              "raw_joint_tvd": 0.23094987948828877,
+              "binned_joint_tvd": 0.23094987948828877,
+              "raw_unique_states": 2088,
+              "raw_support_overlap": 1303
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f4",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 26638.5,
+          "final_loss": 23338.5,
+          "final_table_measured_l1": 0.00031666004102812704,
+          "best_loss": 16084.0,
+          "rare_query_mean_abs_residual": 4.328193832599119,
+          "common_query_mean_abs_residual": 5.7842778793418645,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.03301099315285683,
+          "effective_donors_mean_final": 1816.2822265625,
+          "tail_mean_pre_proposal_loss": 27276.98,
+          "final_table_sha256": "b4525ce4f70865db2f50e9a8ba7702a2546dedeec2a46e7da90739ccb62735ca",
+          "elapsed_sec": 452.0,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005877953603373711,
+              "unmeasured_4way_l1": 0.0008660017752471866,
+              "raw_joint_tvd": 0.23094987948828877,
+              "binned_joint_tvd": 0.23094987948828877,
+              "raw_unique_states": 2088,
+              "raw_support_overlap": 1303
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f16",
+          "seed": 201,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 21462.0,
+          "final_loss": 27687.0,
+          "final_table_measured_l1": 0.0003409235224326999,
+          "best_loss": 14367.0,
+          "rare_query_mean_abs_residual": 5.048458149779735,
+          "common_query_mean_abs_residual": 5.904936014625228,
+          "exact_match_queries": 69,
+          "row_max_prob_mean_final": 0.049340516328811646,
+          "effective_donors_mean_final": 1453.791748046875,
+          "tail_mean_pre_proposal_loss": 22242.68,
+          "final_table_sha256": "8ad16e6741c7c02e1d65d37ee0db058fdb84827148c46427929fd31583e1e3af",
+          "elapsed_sec": 451.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005996152856335695,
+              "unmeasured_4way_l1": 0.0009053234325158186,
+              "raw_joint_tvd": 0.2427538471046289,
+              "binned_joint_tvd": 0.2427538471046289,
+              "raw_unique_states": 2032,
+              "raw_support_overlap": 1273
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "absolute",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 649732.0,
+          "final_loss": 616939.0,
+          "final_table_measured_l1": 0.001155880149761863,
+          "best_loss": 432815.0,
+          "rare_query_mean_abs_residual": 17.370044052863435,
+          "common_query_mean_abs_residual": 19.809872029250457,
+          "exact_match_queries": 28,
+          "row_max_prob_mean_final": 0.021060364320874214,
+          "effective_donors_mean_final": 2030.818603515625,
+          "tail_mean_pre_proposal_loss": 518865.935,
+          "final_table_sha256": "906c7f662bd1feab98c7d35674e160f16f82c167c2de0d3d6ccab8ae88aff512",
+          "elapsed_sec": 456.2,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.001654414801431969,
+              "unmeasured_4way_l1": 0.0017875564272573107,
+              "raw_joint_tvd": 0.2609233051109326,
+              "binned_joint_tvd": 0.2609233051109326,
+              "raw_unique_states": 2068,
+              "raw_support_overlap": 1225
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f8",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19497.0,
+          "final_loss": 24701.0,
+          "final_table_measured_l1": 0.0003152400408441444,
+          "best_loss": 14484.0,
+          "rare_query_mean_abs_residual": 4.185022026431718,
+          "common_query_mean_abs_residual": 5.861060329067642,
+          "exact_match_queries": 68,
+          "row_max_prob_mean_final": 0.05614115670323372,
+          "effective_donors_mean_final": 1304.027099609375,
+          "tail_mean_pre_proposal_loss": 23746.885,
+          "final_table_sha256": "c92390cff66fc57c9df3ea70516ab969b279731910ea26e79c4097eb9f60f54c",
+          "elapsed_sec": 452.4,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005994591439519816,
+              "unmeasured_4way_l1": 0.0008755223362633288,
+              "raw_joint_tvd": 0.2358321488165132,
+              "binned_joint_tvd": 0.2358321488165132,
+              "raw_unique_states": 1998,
+              "raw_support_overlap": 1247
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f1",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19497.0,
+          "final_loss": 24701.0,
+          "final_table_measured_l1": 0.0003152400408441444,
+          "best_loss": 14484.0,
+          "rare_query_mean_abs_residual": 4.185022026431718,
+          "common_query_mean_abs_residual": 5.861060329067642,
+          "exact_match_queries": 68,
+          "row_max_prob_mean_final": 0.05614115670323372,
+          "effective_donors_mean_final": 1304.027099609375,
+          "tail_mean_pre_proposal_loss": 23746.885,
+          "final_table_sha256": "c92390cff66fc57c9df3ea70516ab969b279731910ea26e79c4097eb9f60f54c",
+          "elapsed_sec": 452.4,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005994591439519816,
+              "unmeasured_4way_l1": 0.0008755223362633288,
+              "raw_joint_tvd": 0.2358321488165132,
+              "binned_joint_tvd": 0.2358321488165132,
+              "raw_unique_states": 1998,
+              "raw_support_overlap": 1247
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f4",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19497.0,
+          "final_loss": 24701.0,
+          "final_table_measured_l1": 0.0003152400408441444,
+          "best_loss": 14484.0,
+          "rare_query_mean_abs_residual": 4.185022026431718,
+          "common_query_mean_abs_residual": 5.861060329067642,
+          "exact_match_queries": 68,
+          "row_max_prob_mean_final": 0.05614115670323372,
+          "effective_donors_mean_final": 1304.027099609375,
+          "tail_mean_pre_proposal_loss": 23746.885,
+          "final_table_sha256": "c92390cff66fc57c9df3ea70516ab969b279731910ea26e79c4097eb9f60f54c",
+          "elapsed_sec": 451.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005994591439519816,
+              "unmeasured_4way_l1": 0.0008755223362633288,
+              "raw_joint_tvd": 0.2358321488165132,
+              "binned_joint_tvd": 0.2358321488165132,
+              "raw_unique_states": 1998,
+              "raw_support_overlap": 1247
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f16",
+          "seed": 202,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 27161.5,
+          "final_loss": 19012.0,
+          "final_table_measured_l1": 0.0002742452529239502,
+          "best_loss": 14033.5,
+          "rare_query_mean_abs_residual": 3.9383259911894273,
+          "common_query_mean_abs_residual": 4.851919561243144,
+          "exact_match_queries": 96,
+          "row_max_prob_mean_final": 0.021774187684059143,
+          "effective_donors_mean_final": 1734.748779296875,
+          "tail_mean_pre_proposal_loss": 24814.585,
+          "final_table_sha256": "c6c6d64303bcc60e70097164eb223207b32f214f79587c8b8c183dc80cfb549f",
+          "elapsed_sec": 452.3,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005626409354335723,
+              "unmeasured_4way_l1": 0.0008894105554540634,
+              "raw_joint_tvd": 0.23416352512205674,
+              "binned_joint_tvd": 0.23416352512205674,
+              "raw_unique_states": 2122,
+              "raw_support_overlap": 1305
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "absolute",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 505397.0,
+          "final_loss": 495171.0,
+          "final_table_measured_l1": 0.0009649827337238499,
+          "best_loss": 415141.0,
+          "rare_query_mean_abs_residual": 15.980176211453745,
+          "common_query_mean_abs_residual": 15.310786106032907,
+          "exact_match_queries": 34,
+          "row_max_prob_mean_final": 0.027413472533226013,
+          "effective_donors_mean_final": 1776.322265625,
+          "tail_mean_pre_proposal_loss": 518796.14,
+          "final_table_sha256": "88b2b61bed10aa470d603ec60abd6ffc66e1927acd71ac0daa273f87bf8bfdf1",
+          "elapsed_sec": 455.6,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0014353011796597727,
+              "unmeasured_4way_l1": 0.001619947014236613,
+              "raw_joint_tvd": 0.24813052345343306,
+              "binned_joint_tvd": 0.24813052345343306,
+              "raw_unique_states": 2127,
+              "raw_support_overlap": 1267
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f8",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 45969.0,
+          "final_loss": 38827.0,
+          "final_table_measured_l1": 0.00037549743995575523,
+          "best_loss": 14495.0,
+          "rare_query_mean_abs_residual": 5.297356828193832,
+          "common_query_mean_abs_residual": 6.7221206581352835,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.02646471932530403,
+          "effective_donors_mean_final": 1734.9425048828125,
+          "tail_mean_pre_proposal_loss": 24168.095,
+          "final_table_sha256": "2172003d2fc3ff65d00b4e3d71423db8417e44d57285c3d6cf1c7b7090da451d",
+          "elapsed_sec": 451.7,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0006216781052419292,
+              "unmeasured_4way_l1": 0.0009365209909057632,
+              "raw_joint_tvd": 0.23453433038749152,
+              "binned_joint_tvd": 0.23453433038749152,
+              "raw_unique_states": 2052,
+              "raw_support_overlap": 1273
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f1",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 45969.0,
+          "final_loss": 38827.0,
+          "final_table_measured_l1": 0.00037549743995575523,
+          "best_loss": 14495.0,
+          "rare_query_mean_abs_residual": 5.297356828193832,
+          "common_query_mean_abs_residual": 6.7221206581352835,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.02646471932530403,
+          "effective_donors_mean_final": 1734.9425048828125,
+          "tail_mean_pre_proposal_loss": 24168.095,
+          "final_table_sha256": "2172003d2fc3ff65d00b4e3d71423db8417e44d57285c3d6cf1c7b7090da451d",
+          "elapsed_sec": 453.1,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0006216781052419292,
+              "unmeasured_4way_l1": 0.0009365209909057632,
+              "raw_joint_tvd": 0.23453433038749152,
+              "binned_joint_tvd": 0.23453433038749152,
+              "raw_unique_states": 2052,
+              "raw_support_overlap": 1273
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f4",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 45969.0,
+          "final_loss": 38827.0,
+          "final_table_measured_l1": 0.00037549743995575523,
+          "best_loss": 14495.0,
+          "rare_query_mean_abs_residual": 5.297356828193832,
+          "common_query_mean_abs_residual": 6.7221206581352835,
+          "exact_match_queries": 65,
+          "row_max_prob_mean_final": 0.02646471932530403,
+          "effective_donors_mean_final": 1734.9425048828125,
+          "tail_mean_pre_proposal_loss": 24168.095,
+          "final_table_sha256": "2172003d2fc3ff65d00b4e3d71423db8417e44d57285c3d6cf1c7b7090da451d",
+          "elapsed_sec": 452.0,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0006216781052419292,
+              "unmeasured_4way_l1": 0.0009365209909057632,
+              "raw_joint_tvd": 0.23453433038749152,
+              "binned_joint_tvd": 0.23453433038749152,
+              "raw_unique_states": 2052,
+              "raw_support_overlap": 1273
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f16",
+          "seed": 203,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 30680.5,
+          "final_loss": 29052.0,
+          "final_table_measured_l1": 0.0003378365655109985,
+          "best_loss": 14879.0,
+          "rare_query_mean_abs_residual": 4.889867841409692,
+          "common_query_mean_abs_residual": 5.9451553930530165,
+          "exact_match_queries": 76,
+          "row_max_prob_mean_final": 0.03989188373088837,
+          "effective_donors_mean_final": 1677.8848876953125,
+          "tail_mean_pre_proposal_loss": 24823.76,
+          "final_table_sha256": "818110dd0081d639175db43018afa6a3c971dd4c1dbba38e3b42603796fb2cbb",
+          "elapsed_sec": 452.6,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0006178057915385511,
+              "unmeasured_4way_l1": 0.000847699207658419,
+              "raw_joint_tvd": 0.23385452073419444,
+              "binned_joint_tvd": 0.23385452073419444,
+              "raw_unique_states": 2082,
+              "raw_support_overlap": 1292
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "absolute",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 469847.0,
+          "final_loss": 462311.0,
+          "final_table_measured_l1": 0.000981158387993565,
+          "best_loss": 398325.5,
+          "rare_query_mean_abs_residual": 15.892070484581497,
+          "common_query_mean_abs_residual": 15.862888482632542,
+          "exact_match_queries": 30,
+          "row_max_prob_mean_final": 0.02501728944480419,
+          "effective_donors_mean_final": 1923.044189453125,
+          "tail_mean_pre_proposal_loss": 483454.985,
+          "final_table_sha256": "f9542fad0debd7a7f4cd206dae54dfc0d4b94b4f7a3a66d62950d8bd253a5c49",
+          "elapsed_sec": 457.1,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0014600184078551258,
+              "unmeasured_4way_l1": 0.0015313332147118687,
+              "raw_joint_tvd": 0.24794512082071568,
+              "binned_joint_tvd": 0.24794512082071568,
+              "raw_unique_states": 2166,
+              "raw_support_overlap": 1274
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f8",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19898.5,
+          "final_loss": 19957.5,
+          "final_table_measured_l1": 0.00029727395155984245,
+          "best_loss": 15105.0,
+          "rare_query_mean_abs_residual": 4.151982378854625,
+          "common_query_mean_abs_residual": 5.356489945155393,
+          "exact_match_queries": 79,
+          "row_max_prob_mean_final": 0.0646568164229393,
+          "effective_donors_mean_final": 1056.4158935546875,
+          "tail_mean_pre_proposal_loss": 22449.59,
+          "final_table_sha256": "8259d1ce1a00aae40df83375084c9613d903892b3c39af0a4c2f82f61dc17af9",
+          "elapsed_sec": 452.3,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005986159788714073,
+              "unmeasured_4way_l1": 0.0009034600681439567,
+              "raw_joint_tvd": 0.24380446202336073,
+              "binned_joint_tvd": 0.24380446202336073,
+              "raw_unique_states": 1996,
+              "raw_support_overlap": 1266
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f1",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19898.5,
+          "final_loss": 19957.5,
+          "final_table_measured_l1": 0.00029727395155984245,
+          "best_loss": 15105.0,
+          "rare_query_mean_abs_residual": 4.151982378854625,
+          "common_query_mean_abs_residual": 5.356489945155393,
+          "exact_match_queries": 79,
+          "row_max_prob_mean_final": 0.0646568164229393,
+          "effective_donors_mean_final": 1056.4158935546875,
+          "tail_mean_pre_proposal_loss": 22449.59,
+          "final_table_sha256": "8259d1ce1a00aae40df83375084c9613d903892b3c39af0a4c2f82f61dc17af9",
+          "elapsed_sec": 451.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005986159788714073,
+              "unmeasured_4way_l1": 0.0009034600681439567,
+              "raw_joint_tvd": 0.24380446202336073,
+              "binned_joint_tvd": 0.24380446202336073,
+              "raw_unique_states": 1996,
+              "raw_support_overlap": 1266
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f4",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 19898.5,
+          "final_loss": 19957.5,
+          "final_table_measured_l1": 0.00029727395155984245,
+          "best_loss": 15105.0,
+          "rare_query_mean_abs_residual": 4.151982378854625,
+          "common_query_mean_abs_residual": 5.356489945155393,
+          "exact_match_queries": 79,
+          "row_max_prob_mean_final": 0.0646568164229393,
+          "effective_donors_mean_final": 1056.4158935546875,
+          "tail_mean_pre_proposal_loss": 22449.59,
+          "final_table_sha256": "8259d1ce1a00aae40df83375084c9613d903892b3c39af0a4c2f82f61dc17af9",
+          "elapsed_sec": 452.9,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005986159788714073,
+              "unmeasured_4way_l1": 0.0009034600681439567,
+              "raw_joint_tvd": 0.24380446202336073,
+              "binned_joint_tvd": 0.24380446202336073,
+              "raw_unique_states": 1996,
+              "raw_support_overlap": 1266
+            }
+          }
+        },
+        {
+          "dataset": "nltcs",
+          "arm": "relative_f16",
+          "seed": 204,
+          "rounds_run": 2000,
+          "candidate_evaluations": 2000,
+          "pre_final_proposal_loss": 22429.0,
+          "final_loss": 21309.5,
+          "final_table_measured_l1": 0.000294063516361273,
+          "best_loss": 14463.0,
+          "rare_query_mean_abs_residual": 4.140969162995595,
+          "common_query_mean_abs_residual": 5.270566727605119,
+          "exact_match_queries": 69,
+          "row_max_prob_mean_final": 0.024708466604351997,
+          "effective_donors_mean_final": 1800.6953125,
+          "tail_mean_pre_proposal_loss": 24601.135,
+          "final_table_sha256": "c0e573c70454bca76df7c47fe500f3f2b71c7cea3550dd9b1e1d766b308d1ac3",
+          "elapsed_sec": 453.1,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 0.0005555208747531674,
+              "unmeasured_4way_l1": 0.0008692106669672952,
+              "raw_joint_tvd": 0.242630245349484,
+              "binned_joint_tvd": 0.242630245349484,
+              "raw_unique_states": 2071,
+              "raw_support_overlap": 1282
+            }
+          }
+        }
+      ],
+      "judgement": {
+        "metric": "final_table_measured_l1",
+        "primary_baseline": "absolute",
+        "primary_candidate": "relative_f8",
+        "baseline_l1_by_seed": {
+          "200": 0.0010484540488866552,
+          "201": 0.0011528549319785955,
+          "202": 0.001155880149761863,
+          "203": 0.0009649827337238499,
+          "204": 0.000981158387993565
+        },
+        "candidate_l1_by_seed": {
+          "200": 0.0002652313387125822,
+          "201": 0.00031666004102812704,
+          "202": 0.0003152400408441444,
+          "203": 0.00037549743995575523,
+          "204": 0.00029727395155984245
+        },
+        "paired_wins": 5,
+        "n_seeds": 5,
+        "baseline_mean": 0.0010606660504689058,
+        "candidate_mean": 0.00031398056242009026,
+        "relative_improvement": 0.7039779275660951,
+        "primary_pass": true,
+        "floor_arm_means": {
+          "relative_f8": 0.00031398056242009026,
+          "relative_f1": 0.00031398056242009026,
+          "relative_f4": 0.00031398056242009026,
+          "relative_f16": 0.00031385708414322224
+        },
+        "floor_best_arm": "relative_f16",
+        "floor_suboptimal_flag": true,
+        "quality_risks": {
+          "unmeasured_3way_l1": {
+            "baseline_mean": 0.0015415493483130253,
+            "candidate_mean": 0.000591077458484347,
+            "relative_change": -0.616569226842342,
+            "flagged": false
+          },
+          "unmeasured_4way_l1": {
+            "baseline_mean": 0.0016825441723470273,
+            "candidate_mean": 0.000882985131795465,
+            "relative_change": -0.47520835036160464,
+            "flagged": false
+          },
+          "binned_joint_tvd": {
+            "baseline_mean": 0.2550769420925777,
+            "candidate_mean": 0.23595575057165813,
+            "relative_change": -0.07496244609197061,
+            "flagged": false
+          }
+        },
+        "any_quality_risk": false,
+        "classification": "supports_relative_geometry",
+        "thresholds": {
+          "primary_min_wins": 5,
+          "primary_min_improvement": 0.3,
+          "mixed_min_wins": 3,
+          "quality_risk_rel": 0.05
+        }
+      }
+    }
+  }
+}

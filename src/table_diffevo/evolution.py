@@ -40,12 +40,16 @@ import pandas as pd
 
 from table_diffevo.schema import Schema
 from table_diffevo.queries import evaluate_table
-from table_diffevo.objective import compute_residual, compute_loss
+from table_diffevo.objective import (
+    RESIDUAL_GEOMETRIES, compute_residual, compute_loss,
+)
+from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
 from table_diffevo.update import evolve_step
 from table_diffevo.directional_diffusion import (
+    DEFAULT_DIRECTION_LOGIT_CLIP,
     additive_copy_drift_diagnostics,
     bernoulli_entropy,
     bernoulli_kl,
@@ -58,8 +62,32 @@ from table_diffevo.pairwise_init import init_from_pairwise_maxent
 from table_diffevo.vectorized_eval import evaluate_vectorized
 from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
+    compile_mask_workload,
     evolve_step_factorized_gibbs,
 )
+from table_diffevo.stationarity import (
+    StationarityTrace,
+    build_stationarity_observation,
+    ordered_query_identity_sha256,
+    target_answer_identity_sha256,
+)
+
+
+def _self_cooling_factor(
+    residual_l1: float,
+    initial_residual_l1: float,
+    exponent: float,
+) -> Tuple[float, float]:
+    """返回 (残差比 r, 冷却因子 r**exponent)。
+
+    r = min(1, residual_l1 / initial_residual_l1)；初始残差为 0 时定义 r = 0
+    （初始即达标，动力学应完全冻结）。两个返回值都落在 [0, 1]。
+    """
+    if initial_residual_l1 > 0.0:
+        ratio = min(1.0, residual_l1 / initial_residual_l1)
+    else:
+        ratio = 0.0
+    return ratio, ratio ** exponent
 
 
 def _rng_state_sha256(rng: np.random.Generator) -> str:
@@ -76,6 +104,28 @@ def _table_sha256(frame: pd.DataFrame) -> str:
     """返回合成表 CSV 表示的摘要，只用于复现诊断。"""
     serialized = frame.to_csv(index=False).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+def _current_state_metrics(
+    target: np.ndarray,
+    current: np.ndarray,
+    n_records: int,
+    squared_loss: float,
+    *,
+    state_index: int,
+    round_index: int,
+    phase: str,
+) -> Dict[str, Any]:
+    """构造一个不消费 RNG/查询评价的 current-state 观测点。"""
+    return {
+        "state_index": int(state_index),
+        "round": int(round_index),
+        "phase": phase,
+        "current_normalized_l1": compute_normalized_l1(
+            target, current, n_records
+        ),
+        "current_squared_loss": float(squared_loss),
+    }
 
 
 def _factorized_gibbs_seed(seed: int) -> int:
@@ -141,7 +191,28 @@ def run_evolution(
     factorized_gibbs_sweeps: int = 0,
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    factorized_gibbs_use_compiled_workload: bool = False,
     candidate_budget: Optional[int] = None,
+    residual_self_cooling: Optional[float] = None,
+    self_cooling_monotone: bool = False,
+    self_cooling_stop_ratio: Optional[float] = None,
+    rho_anneal_end: Optional[float] = None,
+    rho_anneal_rounds: Optional[int] = None,
+    selection_scale_invariant: bool = False,
+    selection_scale_invariant_min_spread: float = 1e-3,
+    residual_geometry: str = "absolute",
+    residual_geometry_floor: float = 8.0,
+    return_final_table: bool = False,
+    alpha_schedule_mode: str = "legacy_linear_horizon",
+    fixed_alpha: Optional[float] = None,
+    diffusion_direction_reference_scale: Optional[float] = None,
+    diffusion_direction_logit_clip: Optional[float] = (
+        DEFAULT_DIRECTION_LOGIT_CLIP
+    ),
+    record_transition_clocks: bool = False,
+    record_stationarity_trace: bool = False,
+    stop_on_exact_residual: bool = True,
+    horizon_invariant: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回历史最优合成表和诊断信息。
@@ -208,6 +279,7 @@ def run_evolution(
     alpha_min, alpha_max : float, default 2.0, 10.0
         （geometric 模式）动态锐度调度的起止值，α_t 从 α_min 线性升到 α_max
         （早期平缓探索、后期锐利收敛）。推荐 2→10（实验最优配置）。
+        仅在 alpha_schedule_mode='legacy_linear_horizon' 时生效。
     exclude_self : bool, default True
         是否禁止记录抽到自己（对角线屏蔽）。主循环候选池=全表（全对全），
         抽到自己=该行本轮不变、对演化零贡献。默认 True 屏蔽之；传 False
@@ -236,7 +308,9 @@ def run_evolution(
         - 'none'：直接使用原始比例残差方向量；
         - 'initial_rms'：用本次运行首个非零方向矩阵的 RMS 固定定标。此时
           diffusion_direction_strength 是无量纲初始温度，后续残差变小时倾斜自然
-          冷却，不逐轮重新标准化。
+          冷却，不逐轮重新标准化；
+        - 'fixed'：使用显式 diffusion_direction_reference_scale，跨预算与链
+          不重新估计。
     factorized_gibbs_sweeps : int, default 0
         每条参与记录在独立定向初始 mask 后执行的随机扫描 Gibbs sweep 数。0 完全
         保留既有独立单块更新；正数只允许与 residual_directed_diffusion 一起启用。
@@ -247,6 +321,9 @@ def run_evolution(
     factorized_gibbs_logit_clip : float or None, default 30
         Gibbs 条件 logit 的对称数值护栏。正有限数值保留极端有限温度下的双向
         float64 支持；显式传入 None 可关闭。该参数不改变 sweep=0 路径。
+    factorized_gibbs_use_compiled_workload : bool, default False
+        True 时预编译公开 schema/query 结构，并使用与逐行因子构造输出等价的
+        批量条件评价路径。只影响非零 Gibbs sweep 的实现与性能，不改变核。
     candidate_budget : int or None, default None
         可选的全局候选评估次数上限。若指定，演化会在达到此预算时提前停止，
         与 n_rounds 并存（先达到者停止）。
@@ -256,6 +333,96 @@ def run_evolution(
 
         用途：为长时间探索实验设置计算成本上限，确保可比性。
 
+    residual_self_cooling : float or None, default None
+        残差自冷却指数（Issue #44 研究机制，默认关闭）。设为正数 p 时，每轮
+        计算残差比 ``r_t = min(1, ||target - q_t||_1 / ||target - q_0||_1)``，
+        并把参与率 ``rho`` 与变异率 ``mu`` 乘以冷却因子 ``c_t = r_t ** p``。
+        扰动幅度随收敛进度自动衰减：残差趋零时动力学自然冻结（零残差为吸收
+        态），无需接受门的棘轮作用。``p=1`` 为线性冷却，``p=2`` 更陡，
+        ``p=0.5`` 更缓。None 时完全关闭，主循环行为与历史逐轨迹一致。
+
+        该机制只作用于扰动幅度（分布侧），不引入任何接受/拒绝判定；与
+        ``tol=inf``（关闭整代接受门）组合即为无门控扩散演化研究配置。
+    self_cooling_monotone : bool, default False
+        机制消融选项。False（默认）：冷却跟随当前残差比，状态回漂时温度回升
+        （复燃）并快速重新收敛；True：使用历史最低残差比，温度只降不升
+        （分布侧棘轮）。dev 定标（test_300x10、seed 42..44、2000 轮）显示
+        单调冷却反而更差（final 96.8 vs 89.2）：温度锁死后偶发劣化步的恢复
+        极慢。保留该开关仅作机制消融对照。两种模式都不读取候选评价。
+    self_cooling_stop_ratio : float or None, default None
+        内在停止阈值（需同时启用 residual_self_cooling）。当残差比
+        ``r_t <= self_cooling_stop_ratio`` 时提前停止，作为达标早停之外的
+        内在收敛停机信号；取值须在 (0, 1)。None 时不启用。
+    rho_anneal_end : float or None, default None
+        时间驱动的几何 rho 退火终点（Issue #44 机制迭代，默认关闭）。设为
+        (0, rho] 内的值时，第 t 轮（t 从 0 起）的参与率为
+        ``rho_t = rho * (rho_anneal_end / rho) ** (t / (n_rounds - 1))``，
+        即从 ``rho`` 几何插值到 ``rho_anneal_end``——扩散模型意义上的盲
+        噪声时间表（noise schedule）：调度只依赖轮次进度，不读取残差或任何
+        候选评价，因而不存在残差反馈的过早冻结死锁。``rho_anneal_end ==
+        rho`` 时每轮值恒为 rho（浮点上与关闭一致）。与
+        ``residual_self_cooling`` 可组合：冷却因子乘在退火后的 rho_t 上。
+        None 时完全关闭，rho 恒定，行为与历史逐轨迹一致。
+    rho_anneal_rounds : int or None, default None
+        两段式调度的快降段轮数 K（需同时启用 rho_anneal_end）。指定时退火
+        进度按 ``min(1, t / K)`` 计算：前 K 轮从 ``rho`` 几何降温到
+        ``rho_anneal_end``，之后恒定在 ``rho_anneal_end`` 深潜。None 时
+        退火进度铺满全程 ``n_rounds``。动机：无门恒定动力学的噪声地板随
+        rho 近似线性抬升，而到达高温地板只需少量轮数——快降段之后把预算
+        留给低温深潜。仍是纯时间驱动的盲调度，不读取残差或候选评价。
+    selection_scale_invariant : bool, default False
+        尺度不变选择（仅 distance_mode='geometric'；Issue #44 机制迭代）。
+        True 时 donor 选择 logits 先做行内标准化再乘 alpha：选择压力的
+        有效温度恒等于 alpha，与联合分数行内离散度的绝对尺度解耦，消除
+        种群同质化导致的晚期选择退化（否则需要靠调大 alpha 补偿）。纯
+        分布侧机制：不读取候选评价、不引入接受/拒绝。False 保持历史行为。
+        开启且 exclude_self=True 时行统计只在非自身候选上计算（第三轮
+        审查修正）；启用时诊断新增 ``donor_top_share_history``（每轮被选
+        最多的 donor 占比，选择集中度监控）。
+    selection_scale_invariant_min_spread : float, default 1e-3
+        尺度不变选择的低信号保护下限（需 selection_scale_invariant=True）。
+        行内标准差低于该值时按该值截断：放大倍数有界
+        （alpha/min_spread），离散度趋零时选择平滑退化为均匀，避免把
+        噪声级微小差异放大成极端选择偏好。必须为正有限数。
+    residual_geometry : str, default "absolute"
+        残差信号几何（Issue #57），统一作用于 fitness 与残差定向扩散的
+        方向场（两者共享同一 residual 向量）。"absolute"：现状口径
+        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"relative"：
+        ε=(y−q)/max(y,floor)/N（近似 KL 梯度，稀有查询推动力按相对误差
+        放大）。只用公开 target 计数做归一化，不引入新信息流；监控
+        loss（compute_loss）与接受门口径不受影响。
+    residual_geometry_floor : float, default 8.0
+        relative 几何的分母下限（计数单位），防止 target 极小或为 0 时
+        分母爆炸。仅 residual_geometry="relative" 时使用，必须 > 0。
+    return_final_table : bool, default False
+        为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
+        拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
+        DataFrame，不可直接 JSON 序列化，调用方保存诊断前必须自行弹出。
+        默认 False 保持诊断字典可序列化，行为与历史一致。
+    alpha_schedule_mode : str, default 'legacy_linear_horizon'
+        legacy 模式保持按总轮数插值的旧语义；'fixed' 要求 fixed_alpha，且每轮
+        alpha 完全相同。
+    fixed_alpha : float or None, default None
+        fixed alpha 模式的显式有限非负值。
+    diffusion_direction_reference_scale : float or None, default None
+        fixed 方向归一化使用的正有限共享尺度 s0。
+    diffusion_direction_logit_clip : float or None, default 30
+        independent 方向 Bernoulli logit 的显式护栏；默认保持历史30。
+    record_transition_clocks : bool, default False
+        是否记录逐 attempt 参与行、实际改单元格、查询空间移动和逐轮状态/RNG
+        哈希。只增加观测计算，不参与生成决策。
+    record_stationarity_trace : bool, default False
+        是否附加 Issue #53 Stage 2A current-state 轨迹对象。轨迹保存初态和每个
+        真实 post-round 的查询答案、多样性、实际状态运动、工作量和哈希；不重算
+        查询、不消费 RNG。该对象不是 JSON，调用方持久化前必须从 diagnostics
+        弹出。默认关闭以保持旧诊断和开销。
+    stop_on_exact_residual : bool, default True
+        是否保留历史 ``residual == 0`` 的 proposal 前早停。Stage 2 校准入口会
+        显式关闭，因为精确命中 measured target 不等于长期 current-state 稳定。
+        默认 True 保持 legacy 行为。
+    horizon_invariant : bool, default False
+        启用 Issue #53 fail-closed 门禁，拒绝与总预算耦合或持续变化的配置。
+
     Returns
     -------
     best_S : pd.DataFrame, shape (n_records, n_attributes)
@@ -264,6 +431,12 @@ def run_evolution(
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
         - best_loss: float，最优 loss
+        - current_state_metrics_history: List[dict]，初始 current state 与
+          每个实际轮后 current state 的 normalized L1/平方 loss。每项
+          显式记录 state_index、round 和 phase；在 proposal 前提前停止
+          时不伪造重复状态
+        - final_current_normalized_l1/final_current_squared_loss:
+          最终 current table 的两个权威终态指标
         - rounds_run: int，实际跑的轮数
         - stopped_early: bool，是否因残差全 0 提前停止
         - accept_history: List[bool]，每轮整代检查是否接受提案
@@ -281,6 +454,10 @@ def run_evolution(
         - distance_evaluation_count: int，实际构造全对全距离矩阵的次数
         - direction_evaluation_count: int，实际计算局部方向矩阵的次数
         - candidate_budget_exhausted: bool，是否因达到 candidate_budget 提前停止
+        - self_cooling_history: List[float]，每轮的冷却因子 c_t（关闭时恒 1.0；
+          与 loss_history 逐轮对齐）
+        - self_cooling_stopped: bool，是否因残差比达到 self_cooling_stop_ratio
+          提前停止
         - factorized_gibbs_attempt_diagnostics_history: 每轮每次尝试的因子构造、
           Gibbs 微步和墙钟诊断；不参与接受或早停
         - primary_rng_state_sha256/factorized_gibbs_rng_state_sha256:
@@ -293,7 +470,8 @@ def run_evolution(
 
     Notes
     -----
-    **终止条件：** 残差全 0（达标）、达到 n_rounds、或达到 candidate_budget（若指定）。
+    **终止条件：** 残差全 0（达标）、达到 n_rounds、达到 candidate_budget
+    （若指定）、或残差比达到 self_cooling_stop_ratio（若指定）。
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
     重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
@@ -335,10 +513,53 @@ def run_evolution(
             f"eval_method 必须是 'vectorized' 或 'legacy'，得到 {eval_method!r}"
         )
 
+    if residual_geometry not in RESIDUAL_GEOMETRIES:
+        raise ValueError(
+            f"residual_geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
+            f"得到 {residual_geometry!r}"
+        )
+    if residual_geometry == "relative":
+        if (
+            isinstance(residual_geometry_floor, bool)
+            or not isinstance(
+                residual_geometry_floor,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(residual_geometry_floor)
+            or not residual_geometry_floor > 0
+        ):
+            raise ValueError(
+                "residual_geometry_floor 必须是正有限数（非布尔），"
+                f"得到 {residual_geometry_floor!r}"
+            )
+
     if init_method not in ('random', 'marginal', 'pairwise_maxent'):
         raise ValueError(
             "init_method 必须是 'random'、'marginal' 或 "
             f"'pairwise_maxent'，得到 {init_method!r}"
+        )
+
+    if alpha_schedule_mode not in (
+        "legacy_linear_horizon", "fixed"
+    ):
+        raise ValueError(
+            "alpha_schedule_mode 必须是 'legacy_linear_horizon' 或 "
+            f"'fixed'，得到 {alpha_schedule_mode!r}"
+        )
+    if alpha_schedule_mode == "fixed":
+        if (
+            isinstance(fixed_alpha, (bool, np.bool_))
+            or not isinstance(
+                fixed_alpha, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(fixed_alpha)
+            or fixed_alpha < 0.0
+        ):
+            raise ValueError("fixed 模式要求 fixed_alpha 是有限非负数值")
+        fixed_alpha = float(fixed_alpha)
+    elif fixed_alpha is not None:
+        raise ValueError(
+            "fixed_alpha 只允许与 alpha_schedule_mode='fixed' 一起使用"
         )
 
     if isinstance(max_retries, bool) or not isinstance(max_retries, (int, np.integer)):
@@ -354,11 +575,121 @@ def run_evolution(
             "residual_directed_diffusion 必须是布尔值，"
             f"得到 {residual_directed_diffusion!r}"
         )
+    residual_directed_diffusion = bool(residual_directed_diffusion)
+    for value, name in (
+        (record_transition_clocks, "record_transition_clocks"),
+        (record_stationarity_trace, "record_stationarity_trace"),
+        (stop_on_exact_residual, "stop_on_exact_residual"),
+        (horizon_invariant, "horizon_invariant"),
+    ):
+        if not isinstance(value, (bool, np.bool_)):
+            raise ValueError(f"{name} 必须是布尔值")
+    record_transition_clocks = bool(record_transition_clocks)
+    record_stationarity_trace = bool(record_stationarity_trace)
+    stop_on_exact_residual = bool(stop_on_exact_residual)
+    horizon_invariant = bool(horizon_invariant)
     if candidate_budget is not None:
         if isinstance(candidate_budget, bool) or not isinstance(candidate_budget, (int, np.integer)):
             raise ValueError(f"candidate_budget 必须是正整数或 None，得到 {candidate_budget!r}")
         if candidate_budget <= 0:
             raise ValueError(f"candidate_budget 必须 > 0，得到 {candidate_budget}")
+    if residual_self_cooling is not None:
+        if (
+            isinstance(residual_self_cooling, (bool, np.bool_))
+            or not isinstance(
+                residual_self_cooling,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(residual_self_cooling)
+            or residual_self_cooling <= 0.0
+        ):
+            raise ValueError(
+                "residual_self_cooling 必须是正有限数值或 None，"
+                f"得到 {residual_self_cooling!r}"
+            )
+        residual_self_cooling = float(residual_self_cooling)
+    if residual_self_cooling is not None and not isinstance(
+        self_cooling_monotone, (bool, np.bool_)
+    ):
+        raise ValueError(
+            f"self_cooling_monotone 必须是布尔值，得到 {self_cooling_monotone!r}"
+        )
+    if self_cooling_stop_ratio is not None:
+        if residual_self_cooling is None:
+            raise ValueError(
+                "self_cooling_stop_ratio 需要同时启用 residual_self_cooling"
+            )
+        if (
+            isinstance(self_cooling_stop_ratio, (bool, np.bool_))
+            or not isinstance(
+                self_cooling_stop_ratio,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(self_cooling_stop_ratio)
+            or not 0.0 < self_cooling_stop_ratio < 1.0
+        ):
+            raise ValueError(
+                "self_cooling_stop_ratio 必须位于 (0, 1) 或为 None，"
+                f"得到 {self_cooling_stop_ratio!r}"
+            )
+        self_cooling_stop_ratio = float(self_cooling_stop_ratio)
+    if rho_anneal_end is not None:
+        if (
+            isinstance(rho_anneal_end, (bool, np.bool_))
+            or not isinstance(
+                rho_anneal_end,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(rho_anneal_end)
+            or not 0.0 < rho_anneal_end <= rho
+        ):
+            raise ValueError(
+                "rho_anneal_end 必须位于 (0, rho] 或为 None，"
+                f"得到 {rho_anneal_end!r}（rho={rho}）"
+            )
+        rho_anneal_end = float(rho_anneal_end)
+    if rho_anneal_rounds is not None:
+        if rho_anneal_end is None:
+            raise ValueError(
+                "rho_anneal_rounds 需要同时启用 rho_anneal_end"
+            )
+        if (
+            isinstance(rho_anneal_rounds, (bool, np.bool_))
+            or not isinstance(rho_anneal_rounds, (int, np.integer))
+            or rho_anneal_rounds < 1
+        ):
+            raise ValueError(
+                "rho_anneal_rounds 必须是正整数或 None，"
+                f"得到 {rho_anneal_rounds!r}"
+            )
+        rho_anneal_rounds = int(rho_anneal_rounds)
+    if not isinstance(selection_scale_invariant, (bool, np.bool_)):
+        raise ValueError(
+            "selection_scale_invariant 必须是布尔值，"
+            f"得到 {selection_scale_invariant!r}"
+        )
+    selection_scale_invariant = bool(selection_scale_invariant)
+    if selection_scale_invariant and distance_mode != "geometric":
+        raise ValueError(
+            "selection_scale_invariant 仅支持 distance_mode='geometric'，"
+            f"得到 {distance_mode!r}"
+        )
+    if (
+        isinstance(selection_scale_invariant_min_spread, (bool, np.bool_))
+        or not isinstance(
+            selection_scale_invariant_min_spread,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(selection_scale_invariant_min_spread)
+        or selection_scale_invariant_min_spread <= 0
+    ):
+        raise ValueError(
+            "selection_scale_invariant_min_spread 必须是正有限数，"
+            f"得到 {selection_scale_invariant_min_spread!r}"
+        )
+    selection_scale_invariant_min_spread = float(
+        selection_scale_invariant_min_spread
+    )
     if (
         isinstance(diffusion_direction_strength, (bool, np.bool_))
         or not isinstance(
@@ -373,10 +704,51 @@ def run_evolution(
             f"得到 {diffusion_direction_strength!r}"
         )
     diffusion_direction_strength = float(diffusion_direction_strength)
-    if diffusion_direction_normalization not in ("none", "initial_rms"):
+    if diffusion_direction_normalization not in (
+        "none", "initial_rms", "fixed"
+    ):
         raise ValueError(
-            "diffusion_direction_normalization 必须是 'none' 或 "
-            f"'initial_rms'，得到 {diffusion_direction_normalization!r}"
+            "diffusion_direction_normalization 必须是 'none'、"
+            f"'initial_rms' 或 'fixed'，得到 "
+            f"{diffusion_direction_normalization!r}"
+        )
+    if diffusion_direction_normalization == "fixed":
+        if (
+            isinstance(diffusion_direction_reference_scale, (bool, np.bool_))
+            or not isinstance(
+                diffusion_direction_reference_scale,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(diffusion_direction_reference_scale)
+            or diffusion_direction_reference_scale <= 0.0
+        ):
+            raise ValueError(
+                "fixed 方向归一化要求 "
+                "diffusion_direction_reference_scale 是正有限数值"
+            )
+        diffusion_direction_reference_scale = float(
+            diffusion_direction_reference_scale
+        )
+    elif diffusion_direction_reference_scale is not None:
+        raise ValueError(
+            "diffusion_direction_reference_scale 只允许与 "
+            "diffusion_direction_normalization='fixed' 一起使用"
+        )
+    if diffusion_direction_logit_clip is not None:
+        if (
+            isinstance(diffusion_direction_logit_clip, (bool, np.bool_))
+            or not isinstance(
+                diffusion_direction_logit_clip,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(diffusion_direction_logit_clip)
+            or diffusion_direction_logit_clip <= 0.0
+        ):
+            raise ValueError(
+                "diffusion_direction_logit_clip 必须是正有限数值或 None"
+            )
+        diffusion_direction_logit_clip = float(
+            diffusion_direction_logit_clip
         )
     for value, name in (
         (factorized_gibbs_sweeps, "factorized_gibbs_sweeps"),
@@ -390,6 +762,22 @@ def run_evolution(
             raise ValueError(f"{name} 必须是非负整数，得到 {value!r}")
     factorized_gibbs_sweeps = int(factorized_gibbs_sweeps)
     factorized_gibbs_max_order = int(factorized_gibbs_max_order)
+    if not isinstance(
+        factorized_gibbs_use_compiled_workload, (bool, np.bool_)
+    ):
+        raise ValueError(
+            "factorized_gibbs_use_compiled_workload 必须是布尔值"
+        )
+    factorized_gibbs_use_compiled_workload = bool(
+        factorized_gibbs_use_compiled_workload
+    )
+    if (
+        factorized_gibbs_use_compiled_workload
+        and factorized_gibbs_sweeps == 0
+    ):
+        raise ValueError(
+            "compiled factorized workload 只允许与非零 Gibbs sweep 一起使用"
+        )
     if factorized_gibbs_max_order > 8:
         raise ValueError("factorized_gibbs_max_order 不得超过绝对护栏 8")
     if factorized_gibbs_logit_clip is not None:
@@ -439,6 +827,62 @@ def run_evolution(
                 f"得到 {eta!r}"
             )
 
+    if horizon_invariant:
+        violations = []
+        if (
+            isinstance(n_rounds, (bool, np.bool_))
+            or not isinstance(n_rounds, (int, np.integer))
+            or n_rounds <= 0
+        ):
+            violations.append("n_rounds 必须是正整数最大预算")
+        if (
+            isinstance(n_records, (bool, np.bool_))
+            or not isinstance(n_records, (int, np.integer))
+            or n_records <= 0
+        ):
+            violations.append("n_records 必须是正整数")
+        if (
+            isinstance(seed, (bool, np.bool_))
+            or not isinstance(seed, (int, np.integer))
+        ):
+            violations.append("seed 必须是显式整数")
+        for value, name in ((rho, "rho"), (eta, "eta"), (mu, "mu")):
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(
+                    value, (int, float, np.integer, np.floating)
+                )
+                or not np.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                violations.append(f"{name} 必须是 [0, 1] 内的固定标量")
+        if distance_mode != "geometric":
+            violations.append("distance_mode 必须是 geometric")
+        if alpha_schedule_mode != "fixed":
+            violations.append("alpha 必须使用 fixed 模式")
+        if residual_directed_diffusion and (
+            diffusion_direction_normalization != "fixed"
+        ):
+            violations.append("残差方向必须使用 fixed s0")
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(
+                tol, (int, float, np.integer, np.floating)
+            )
+            or not np.isposinf(tol)
+        ):
+            violations.append("tol 必须是正无穷以关闭整代门控")
+        if max_retries != 0:
+            violations.append("max_retries 必须为0")
+        if residual_self_cooling is not None:
+            violations.append("residual_self_cooling 必须关闭")
+        if rho_anneal_end is not None:
+            violations.append("rho_anneal_end 必须关闭")
+        if violations:
+            raise ValueError(
+                "horizon_invariant 配置不合格：" + "；".join(violations)
+            )
+
     rng = np.random.default_rng(seed)
     factorized_gibbs_rng = (
         np.random.default_rng(_factorized_gibbs_seed(seed))
@@ -474,9 +918,15 @@ def run_evolution(
                 df, queries, schema, target=target, n_records=n_records,
                 batch_size=batch_size, device=device, want_fitness=True,
                 verbose=False,
+                residual_geometry=residual_geometry,
+                residual_geometry_floor=residual_geometry_floor,
             )
         q_ = evaluate_table(df, queries)
-        r_ = compute_residual(target, q_, n_records)
+        r_ = compute_residual(
+            target, q_, n_records,
+            geometry=residual_geometry,
+            geometry_floor=residual_geometry_floor,
+        )
         f_ = compute_fitness(df, queries, r_, q_)
         return q_, r_, f_
 
@@ -499,7 +949,9 @@ def run_evolution(
         S = init_synthetic_table(n_records, schema, rng)
         initialization_diagnostics = {"method": "random"}
     initial_table_sha256 = (
-        _table_sha256(S) if residual_directed_diffusion else None
+        _table_sha256(S)
+        if residual_directed_diffusion or record_stationarity_trace
+        else None
     )
     primary_rng_post_initialization_state_sha256 = _rng_state_sha256(rng)
 
@@ -512,6 +964,11 @@ def run_evolution(
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
+    rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
+    donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
+    row_max_prob_mean_history: List[float] = []  # 逐行最大概率均值（每轮）
+    row_max_prob_max_history: List[float] = []  # 逐行最大概率最大值（每轮）
+    effective_donors_mean_history: List[float] = []  # exp(行熵)均值（每轮）
     copy_direction_mean_history: List[Optional[float]] = []
     copy_direction_positive_rate_history: List[Optional[float]] = []
     copy_direction_negative_rate_history: List[Optional[float]] = []
@@ -526,12 +983,18 @@ def run_evolution(
     additive_copy_drift_utilization_history: List[Optional[float]] = []
     effective_direction_strength_history: List[Optional[float]] = []
     direction_reference_scale_history: List[Optional[float]] = []
+    direction_logit_evaluated_count_history: List[int] = []
+    direction_logit_clipped_count_history: List[int] = []
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
+    transition_clock_history: List[Dict[str, Any]] = []
+    stationarity_observations: List[Dict[str, Any]] = []
+    stationarity_query_answers: List[np.ndarray] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
+    termination_reason: Optional[str] = None
     stopped_early = False
     candidate_budget_exhausted = False
     rounds_run = 0
@@ -540,7 +1003,10 @@ def run_evolution(
     distance_evaluation_count = 0
     direction_evaluation_count = 0
     direction_evaluation_elapsed_sec = 0.0
-    direction_reference_scale: Optional[float] = None
+    direction_reference_scale: Optional[float] = (
+        diffusion_direction_reference_scale
+        if diffusion_direction_normalization == "fixed" else None
+    )
     factorized_gibbs_factor_build_elapsed_sec = 0.0
     factorized_gibbs_sample_elapsed_sec = 0.0
     factorized_gibbs_active_rows = 0
@@ -548,6 +1014,20 @@ def run_evolution(
     factorized_gibbs_factor_count = 0
     factorized_gibbs_factor_table_entries = 0
     factorized_gibbs_microsteps = 0
+    factorized_gibbs_conditional_logit_evaluated_count = 0
+    factorized_gibbs_conditional_logit_clipped_count = 0
+    factorized_gibbs_workload_compile_elapsed_sec = 0.0
+    factorized_gibbs_compiled_workload = None
+    if factorized_gibbs_use_compiled_workload:
+        compile_start = time.perf_counter()
+        factorized_gibbs_compiled_workload = compile_mask_workload(
+            schema,
+            queries,
+            max_factor_order=factorized_gibbs_max_order,
+        )
+        factorized_gibbs_workload_compile_elapsed_sec = (
+            time.perf_counter() - compile_start
+        )
 
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
@@ -563,23 +1043,91 @@ def run_evolution(
     # 又在第一轮重复扫描同一张 S_0。
     initial_q, initial_residual, initial_fitness = _eval_counts_resid_fitness(S)
     initial_loss = compute_loss(target, initial_q)
+    self_cooling_initial_l1 = float(np.abs(target - initial_q).sum())
+    self_cooling_history: List[float] = []
+    self_cooling_stopped = False
+    self_cooling_factor = 1.0
+    self_cooling_min_ratio = 1.0
     state_eval_cache = (
         initial_q, initial_residual, initial_fitness, initial_loss
     )
     state_evaluation_count += 1
     best_S = S.copy()
     best_loss = initial_loss
+    current_state_metrics_history: List[Dict[str, Any]] = [
+        _current_state_metrics(
+            target,
+            initial_q,
+            n_records,
+            initial_loss,
+            state_index=0,
+            round_index=0,
+            phase="initial",
+        )
+    ]
+    if record_stationarity_trace:
+        stationarity_query_answers.append(
+            np.asarray(initial_q, dtype=float).copy()
+        )
+        stationarity_observations.append(
+            build_stationarity_observation(
+                frame=S,
+                target=target,
+                current_query_answers=initial_q,
+                n_records=n_records,
+                squared_loss=initial_loss,
+                state_index=0,
+                round_index=0,
+                phase="initial",
+                proposal_attempt_count=0,
+                proposal_accepted=False,
+                applied_attempt_index=0,
+                attempted_participating_row_count=0,
+                applied_participating_row_count=0,
+                actual_changed_row_count=0,
+                actual_changed_cell_count=0,
+                actual_changed_query_count=0,
+                normalized_query_l1_movement_mean=0.0,
+                gibbs_microstep_count_attempted=0,
+                gibbs_microstep_count_applied=0,
+                candidate_evaluation_count_cumulative=0,
+                current_table_sha256=initial_table_sha256,
+                primary_rng_state_sha256=(
+                    primary_rng_post_initialization_state_sha256
+                ),
+                factorized_gibbs_rng_state_sha256=(
+                    factorized_gibbs_initial_rng_state_sha256
+                ),
+            )
+        )
 
     for t in range(n_rounds):
         rounds_run = t + 1
 
-        # 计算当前轮的动态锐度 α_t（geometric 模式用）
-        if n_rounds > 1:
-            progress = t / (n_rounds - 1)
+        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed
+        # 模式完全不读取 n_rounds，供 Issue #53 前缀不变参考过程使用。
+        if alpha_schedule_mode == "fixed":
+            alpha_t = fixed_alpha
         else:
-            progress = 1.0
-        alpha_t = alpha_min + (alpha_max - alpha_min) * progress
+            if n_rounds > 1:
+                progress = t / (n_rounds - 1)
+            else:
+                progress = 1.0
+            alpha_t = alpha_min + (alpha_max - alpha_min) * progress
         alpha_history.append(alpha_t)
+
+        # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
+        # 或候选评价。关闭时 rho_t 恒等于 rho，逐轨迹等价于历史行为。
+        # rho_anneal_rounds 指定时为两段式：前 K 轮快降，其后恒定深潜。
+        if rho_anneal_end is not None:
+            if rho_anneal_rounds is not None:
+                anneal_progress = min(1.0, t / rho_anneal_rounds)
+            else:
+                anneal_progress = progress
+            rho_t = rho * (rho_anneal_end / rho) ** anneal_progress
+        else:
+            rho_t = rho
+        rho_schedule_history.append(rho_t)
 
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
@@ -592,6 +1140,25 @@ def run_evolution(
             q, residual, fitness, loss = state_eval_cache
         loss_history.append(loss)
 
+        # 残差自冷却因子：与 loss_history 逐轮对齐记录；内在停止检查在达标
+        # 检查之后执行。
+        self_cooling_ratio = None
+        if residual_self_cooling is not None:
+            self_cooling_ratio, _ = _self_cooling_factor(
+                float(np.abs(target - q).sum()),
+                self_cooling_initial_l1,
+                residual_self_cooling,
+            )
+            if self_cooling_monotone:
+                self_cooling_min_ratio = min(
+                    self_cooling_min_ratio, self_cooling_ratio
+                )
+                self_cooling_ratio = self_cooling_min_ratio
+            self_cooling_factor = self_cooling_ratio ** residual_self_cooling
+            self_cooling_history.append(self_cooling_factor)
+        else:
+            self_cooling_history.append(1.0)
+
         # 是否在本轮打印进度：log_every=0 每轮打印；否则每 log_every 轮，
         # 且首轮和末轮总打印（长实验也能看到起点和终点）。
         do_log = (
@@ -602,14 +1169,32 @@ def run_evolution(
         )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
-        if np.all(residual == 0):
+        if stop_on_exact_residual and np.all(residual == 0):
             if do_log:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
+            termination_reason = "exact_residual"
             # 达标的当前表即最优
             if loss < best_loss:
                 best_loss = loss
                 best_S = S.copy()
+            break
+
+        # 3b. 残差自冷却内在停止：残差比达到阈值即停机（分布侧停止条件）。
+        if (
+            self_cooling_stop_ratio is not None
+            and self_cooling_ratio is not None
+            and self_cooling_ratio <= self_cooling_stop_ratio
+        ):
+            if do_log:
+                print(
+                    f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | "
+                    f"残差比 {self_cooling_ratio:.4f} 达到内在停止阈值"
+                    f" {self_cooling_stop_ratio}，提前停止"
+                )
+            stopped_early = True
+            self_cooling_stopped = True
+            termination_reason = "self_cooling_ratio"
             break
 
         # 5-6. 距离 → 抽样概率 → 抽 donor
@@ -633,11 +1218,43 @@ def run_evolution(
             # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
             # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
             exclude_self=exclude_self,
+            scale_invariant=selection_scale_invariant,
+            scale_invariant_min_spread=selection_scale_invariant_min_spread,
         )
         donor_idx = sample_donors(probs, rng, device=device)
+        # 逐行选择集中度诊断（第二轮审查意见 4）：全局 top share 不能
+        # 判断单行 softmax 是否接近确定性——即使每行都以 99.9% 概率选
+        # 各自不同的 donor，全局 top share 仍可能很低。补充逐行最大
+        # 概率与概率熵（有效 donor 数 = exp(熵)），在设备上归约成标量
+        # 后回传。只在尺度不变选择启用时记录。
+        if selection_scale_invariant:
+            if use_torch:
+                import torch
+                row_max = probs.max(dim=1).values
+                safe = torch.clamp(probs, min=1e-30)
+                row_entropy = -(probs * torch.log(safe)).sum(dim=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(torch.exp(row_entropy).mean())
+                )
+            else:
+                row_max = probs.max(axis=1)
+                safe = np.clip(probs, 1e-30, None)
+                row_entropy = -(probs * np.log(safe)).sum(axis=1)
+                row_max_prob_mean_history.append(float(row_max.mean()))
+                row_max_prob_max_history.append(float(row_max.max()))
+                effective_donors_mean_history.append(
+                    float(np.exp(row_entropy).mean())
+                )
         # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
         del probs
         donors = S.iloc[donor_idx].reset_index(drop=True)
+        # 全局集中度（第三轮审查）：被选最多的 donor 占比。
+        if selection_scale_invariant:
+            donor_top_share_history.append(
+                float(np.bincount(donor_idx).max() / len(donor_idx))
+            )
 
         # 诊断：记录选中 donor 的适应度和距离
         N = len(S)  # 记录数
@@ -683,7 +1300,7 @@ def run_evolution(
                 candidate_scale = direction_rms_scale(active_directions)
                 if candidate_scale > 0.0:
                     direction_reference_scale = candidate_scale
-            if diffusion_direction_normalization == "initial_rms":
+            if diffusion_direction_normalization in ("initial_rms", "fixed"):
                 effective_direction_strength = (
                     diffusion_direction_strength / direction_reference_scale
                     if direction_reference_scale is not None else 0.0
@@ -696,11 +1313,42 @@ def run_evolution(
             direction_reference_scale_history.append(
                 direction_reference_scale
             )
+            direction_logit_evaluated_count_history.append(
+                int(len(active_directions))
+            )
+            if (
+                diffusion_direction_logit_clip is None
+                or not 0.0 < eta < 1.0
+                or effective_direction_strength == 0.0
+                or len(active_directions) == 0
+            ):
+                direction_logit_clipped_count_history.append(0)
+            else:
+                base_logit = float(np.log(eta) - np.log1p(-eta))
+                with np.errstate(over="ignore", invalid="ignore"):
+                    raw_direction_logits = (
+                        base_logit
+                        + effective_direction_strength * active_directions
+                    )
+                direction_logit_clipped_count_history.append(int(
+                    np.count_nonzero(
+                        ~np.isfinite(raw_direction_logits)
+                        | (
+                            raw_direction_logits
+                            < -diffusion_direction_logit_clip
+                        )
+                        | (
+                            raw_direction_logits
+                            > diffusion_direction_logit_clip
+                        )
+                    )
+                ))
             if len(active_directions):
                 active_probabilities = tilted_copy_probabilities(
                     eta,
                     active_directions,
                     effective_direction_strength,
+                    logit_clip=diffusion_direction_logit_clip,
                 )
                 negative_mask = active_directions < 0.0
                 positive_mask = active_directions > 0.0
@@ -780,6 +1428,8 @@ def run_evolution(
             additive_copy_drift_utilization_history.append(None)
             effective_direction_strength_history.append(None)
             direction_reference_scale_history.append(None)
+            direction_logit_evaluated_count_history.append(0)
+            direction_logit_clipped_count_history.append(0)
 
         # 7-8. 靠近一步 → 整代安全检查。首次失败时可复用当轮
         # donor 并缩小 rho 重试；距离/适应度/抽样都不重算，额外成本只是
@@ -793,6 +1443,7 @@ def run_evolution(
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
         attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
+        attempt_transition_clocks: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
             {
@@ -802,7 +1453,9 @@ def run_evolution(
             if residual_directed_diffusion else {}
         )
         for attempt in range(max_retries + 1):
-            attempt_rho = rho * (retry_rho_decay ** attempt)
+            attempt_rho = (
+                rho_t * self_cooling_factor * (retry_rho_decay ** attempt)
+            )
             if factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
                     evolve_step_factorized_gibbs(
@@ -813,7 +1466,7 @@ def run_evolution(
                         residual,
                         rho=attempt_rho,
                         eta=eta,
-                        mu=mu,
+                        mu=mu * self_cooling_factor,
                         copy_direction_scores=copy_direction_scores,
                         copy_direction_strength=effective_direction_strength,
                         n_sweeps=factorized_gibbs_sweeps,
@@ -821,6 +1474,12 @@ def run_evolution(
                         gibbs_rng=factorized_gibbs_rng,
                         max_factor_order=factorized_gibbs_max_order,
                         gibbs_logit_clip=factorized_gibbs_logit_clip,
+                        direction_logit_clip=(
+                            diffusion_direction_logit_clip
+                        ),
+                        compiled_workload=(
+                            factorized_gibbs_compiled_workload
+                        ),
                     )
                 )
                 attempt_factorized_gibbs_diagnostics.append(
@@ -847,17 +1506,42 @@ def run_evolution(
                 factorized_gibbs_microsteps += factorized_diagnostics[
                     "gibbs_microsteps"
                 ]
+                factorized_gibbs_conditional_logit_evaluated_count += (
+                    factorized_diagnostics.get(
+                        "conditional_logit_evaluated_count", 0
+                    )
+                )
+                factorized_gibbs_conditional_logit_clipped_count += (
+                    factorized_diagnostics.get(
+                        "conditional_logit_clipped_count", 0
+                    )
+                )
             else:
-                proposal = evolve_step(
+                independent_transition_kwargs = dict(direction_kwargs)
+                if (
+                    diffusion_direction_logit_clip
+                    != DEFAULT_DIRECTION_LOGIT_CLIP
+                ):
+                    independent_transition_kwargs["direction_logit_clip"] = (
+                        diffusion_direction_logit_clip
+                    )
+                if record_transition_clocks or record_stationarity_trace:
+                    independent_transition_kwargs["return_diagnostics"] = True
+                independent_result = evolve_step(
                     S,
                     donors,
                     schema,
                     rho=attempt_rho,
                     eta=eta,
-                    mu=mu,
+                    mu=mu * self_cooling_factor,
                     rng=rng,
-                    **direction_kwargs,
+                    **independent_transition_kwargs,
                 )
+                if record_transition_clocks or record_stationarity_trace:
+                    proposal, independent_diagnostics = independent_result
+                else:
+                    proposal = independent_result
+                    independent_diagnostics = None
             proposal_q = _eval_counts(proposal)
             proposal_loss = compute_loss(target, proposal_q)
             proposal_attempts += 1
@@ -869,6 +1553,41 @@ def run_evolution(
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
+            if record_transition_clocks or record_stationarity_trace:
+                changed = (
+                    proposal.reset_index(drop=True)
+                    .ne(S.reset_index(drop=True))
+                    .to_numpy(dtype=bool)
+                )
+                kernel_diagnostics = (
+                    factorized_diagnostics
+                    if factorized_gibbs_sweeps > 0
+                    else independent_diagnostics
+                )
+                query_l1_movement = float(np.abs(delta_q).sum())
+                changed_query_count = int(np.count_nonzero(delta_q))
+                attempt_transition_clocks.append({
+                    "attempt": int(attempt + 1),
+                    "participating_rows": int(
+                        kernel_diagnostics["participating_rows"]
+                    ),
+                    "changed_rows": int(np.any(changed, axis=1).sum()),
+                    "changed_cells": int(changed.sum()),
+                    "query_l1_movement": query_l1_movement,
+                    "normalized_query_l1_movement": float(
+                        query_l1_movement / n_records
+                    ),
+                    "normalized_query_l1_movement_mean": float(
+                        np.mean(np.abs(delta_q)) / n_records
+                    ),
+                    "changed_queries": changed_query_count,
+                    "query_l2_squared_movement": float(
+                        np.dot(delta_q, delta_q)
+                    ),
+                    "gibbs_microsteps": int(
+                        kernel_diagnostics.get("gibbs_microsteps", 0)
+                    ),
+                })
 
             # 候选预算是硬上限：本次候选已被评估并计入，若刚好触边，就先标记
             # 耗尽。这必须在接受/拒绝分支之前判定——否则接受路径的 break 会绕过
@@ -901,6 +1620,120 @@ def run_evolution(
             attempt_factorized_gibbs_diagnostics
         )
 
+        post_round_q = proposal_q if accepted else q
+        current_state_metrics_history.append(
+            _current_state_metrics(
+                target,
+                post_round_q,
+                n_records,
+                current_loss,
+                state_index=len(current_state_metrics_history),
+                round_index=t + 1,
+                phase="post_round",
+            )
+        )
+        post_current_table_sha256 = None
+        post_primary_rng_state_sha256 = None
+        post_factorized_gibbs_rng_state_sha256 = None
+        if record_transition_clocks or record_stationarity_trace:
+            post_current_table_sha256 = _table_sha256(S)
+            post_primary_rng_state_sha256 = _rng_state_sha256(rng)
+            post_factorized_gibbs_rng_state_sha256 = (
+                _rng_state_sha256(factorized_gibbs_rng)
+                if factorized_gibbs_rng is not None else None
+            )
+
+        if record_stationarity_trace:
+            attempted_participating_rows = sum(
+                row["participating_rows"]
+                for row in attempt_transition_clocks
+            )
+            attempted_gibbs_microsteps = sum(
+                row["gibbs_microsteps"]
+                for row in attempt_transition_clocks
+            )
+            applied_clock = (
+                attempt_transition_clocks[accepted_attempt - 1]
+                if accepted else None
+            )
+            stationarity_query_answers.append(
+                np.asarray(post_round_q, dtype=float).copy()
+            )
+            stationarity_observations.append(
+                build_stationarity_observation(
+                    frame=S,
+                    target=target,
+                    current_query_answers=post_round_q,
+                    n_records=n_records,
+                    squared_loss=current_loss,
+                    state_index=len(current_state_metrics_history) - 1,
+                    round_index=t + 1,
+                    phase="post_round",
+                    proposal_attempt_count=proposal_attempts,
+                    proposal_accepted=accepted,
+                    applied_attempt_index=accepted_attempt,
+                    attempted_participating_row_count=(
+                        attempted_participating_rows
+                    ),
+                    applied_participating_row_count=(
+                        applied_clock["participating_rows"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_row_count=(
+                        applied_clock["changed_rows"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_cell_count=(
+                        applied_clock["changed_cells"]
+                        if applied_clock is not None else 0
+                    ),
+                    actual_changed_query_count=(
+                        applied_clock["changed_queries"]
+                        if applied_clock is not None else 0
+                    ),
+                    normalized_query_l1_movement_mean=(
+                        applied_clock[
+                            "normalized_query_l1_movement_mean"
+                        ]
+                        if applied_clock is not None else 0.0
+                    ),
+                    gibbs_microstep_count_attempted=(
+                        attempted_gibbs_microsteps
+                    ),
+                    gibbs_microstep_count_applied=(
+                        applied_clock["gibbs_microsteps"]
+                        if applied_clock is not None else 0
+                    ),
+                    candidate_evaluation_count_cumulative=(
+                        candidate_evaluation_count
+                    ),
+                    current_table_sha256=post_current_table_sha256,
+                    primary_rng_state_sha256=(
+                        post_primary_rng_state_sha256
+                    ),
+                    factorized_gibbs_rng_state_sha256=(
+                        post_factorized_gibbs_rng_state_sha256
+                    ),
+                )
+            )
+        if record_transition_clocks:
+            transition_clock_history.append({
+                "state_index": len(current_state_metrics_history) - 1,
+                "round": int(t + 1),
+                "attempts": attempt_transition_clocks,
+                "accepted_attempt": int(accepted_attempt),
+                "candidate_evaluation_count_cumulative": int(
+                    candidate_evaluation_count
+                ),
+                "post_current_table_sha256": post_current_table_sha256,
+                "primary_rng_state_sha256": (
+                    post_primary_rng_state_sha256
+                ),
+                "factorized_gibbs_rng_state_sha256": (
+                    post_factorized_gibbs_rng_state_sha256
+                ),
+            })
+
         if accepted:
             # S 已替换为 proposal，旧表对应的所有缓存立即失效。显式删除本地距离
             # 引用，避免下一轮计算新矩阵时旧矩阵仍占一份设备内存。
@@ -924,10 +1757,14 @@ def run_evolution(
 
         # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
         if candidate_budget_exhausted:
+            termination_reason = "candidate_budget"
             if do_log or log_every > 0:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | "
                       f"达到候选预算 {candidate_budget} 提前停止")
             break
+
+    if termination_reason is None:
+        termination_reason = "max_rounds"
 
     elapsed_sec = time.perf_counter() - loop_start
     sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
@@ -947,12 +1784,30 @@ def run_evolution(
     normalized_l1_median = float(np.median(per_query_nl1))
     normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
     normalized_l1_max = float(np.max(per_query_nl1))
+    final_current_metrics = current_state_metrics_history[-1]
 
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
+        "best_loss_diagnostic_only": best_loss,
+        "normalized_l1_at_best_squared_loss_diagnostic_only": (
+            normalized_l1_error
+        ),
+        "current_state_metrics_history": current_state_metrics_history,
+        "current_state_transition_count": (
+            len(current_state_metrics_history) - 1
+        ),
+        "transition_clock_history": transition_clock_history,
+        "transition_clock_count": len(transition_clock_history),
+        "final_current_normalized_l1": final_current_metrics[
+            "current_normalized_l1"
+        ],
+        "final_current_squared_loss": final_current_metrics[
+            "current_squared_loss"
+        ],
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
+        "termination_reason": termination_reason,
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
@@ -961,6 +1816,11 @@ def run_evolution(
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
+        "rho_schedule_history": rho_schedule_history,
+        "donor_top_share_history": donor_top_share_history,
+        "row_max_prob_mean_history": row_max_prob_mean_history,
+        "row_max_prob_max_history": row_max_prob_max_history,
+        "effective_donors_mean_history": effective_donors_mean_history,
         "copy_direction_mean_history": copy_direction_mean_history,
         "copy_direction_positive_rate_history": (
             copy_direction_positive_rate_history
@@ -993,6 +1853,12 @@ def run_evolution(
         "direction_reference_scale_history": (
             direction_reference_scale_history
         ),
+        "direction_logit_evaluated_count_history": (
+            direction_logit_evaluated_count_history
+        ),
+        "direction_logit_clipped_count_history": (
+            direction_logit_clipped_count_history
+        ),
         "raw_proposal_gain_history": raw_proposal_gain_history,
         "raw_proposal_linear_gain_history": raw_proposal_linear_gain_history,
         "raw_proposal_quadratic_penalty_history": (
@@ -1004,6 +1870,8 @@ def run_evolution(
         "state_evaluation_count": state_evaluation_count,
         "candidate_evaluation_count": candidate_evaluation_count,
         "candidate_budget_exhausted": candidate_budget_exhausted,
+        "self_cooling_history": self_cooling_history,
+        "self_cooling_stopped": self_cooling_stopped,
         "distance_evaluation_count": distance_evaluation_count,
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
@@ -1021,6 +1889,15 @@ def run_evolution(
             factorized_gibbs_factor_table_entries
         ),
         "factorized_gibbs_microsteps": factorized_gibbs_microsteps,
+        "factorized_gibbs_conditional_logit_evaluated_count": (
+            factorized_gibbs_conditional_logit_evaluated_count
+        ),
+        "factorized_gibbs_conditional_logit_clipped_count": (
+            factorized_gibbs_conditional_logit_clipped_count
+        ),
+        "factorized_gibbs_workload_compile_elapsed_sec": (
+            factorized_gibbs_workload_compile_elapsed_sec
+        ),
         "initial_table_sha256": initial_table_sha256,
         "primary_rng_post_initialization_state_sha256": (
             primary_rng_post_initialization_state_sha256
@@ -1057,8 +1934,27 @@ def run_evolution(
             "distance_mode": distance_mode,
             "p": p if distance_mode == 'multiplicative' else None,
             "lambda": lambda_param if distance_mode == 'geometric' else None,
-            "alpha_min": alpha_min if distance_mode == 'geometric' else None,
-            "alpha_max": alpha_max if distance_mode == 'geometric' else None,
+            "alpha_min": (
+                alpha_min
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "legacy_linear_horizon"
+                else None
+            ),
+            "alpha_max": (
+                alpha_max
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "legacy_linear_horizon"
+                else None
+            ),
+            "alpha_schedule_mode": (
+                alpha_schedule_mode
+                if distance_mode == "geometric" else None
+            ),
+            "fixed_alpha": (
+                fixed_alpha
+                if distance_mode == "geometric"
+                and alpha_schedule_mode == "fixed" else None
+            ),
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
             "exclude_self": exclude_self,
@@ -1074,13 +1970,69 @@ def run_evolution(
             "diffusion_direction_normalization": (
                 diffusion_direction_normalization
             ),
+            "diffusion_direction_reference_scale": (
+                diffusion_direction_reference_scale
+                if diffusion_direction_normalization == "fixed" else None
+            ),
+            "diffusion_direction_logit_clip": (
+                diffusion_direction_logit_clip
+            ),
             "factorized_gibbs_sweeps": factorized_gibbs_sweeps,
             "factorized_gibbs_max_order": factorized_gibbs_max_order,
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
+            "factorized_gibbs_use_compiled_workload": (
+                factorized_gibbs_use_compiled_workload
+            ),
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None
             ),
+            "residual_self_cooling": (
+                float(residual_self_cooling)
+                if residual_self_cooling is not None else None
+            ),
+            "self_cooling_monotone": (
+                bool(self_cooling_monotone)
+                if residual_self_cooling is not None else None
+            ),
+            "self_cooling_stop_ratio": (
+                float(self_cooling_stop_ratio)
+                if self_cooling_stop_ratio is not None else None
+            ),
+            "rho_anneal_end": (
+                float(rho_anneal_end) if rho_anneal_end is not None else None
+            ),
+            "rho_anneal_rounds": (
+                int(rho_anneal_rounds)
+                if rho_anneal_rounds is not None else None
+            ),
+            "selection_scale_invariant": bool(selection_scale_invariant),
+            "selection_scale_invariant_min_spread": (
+                float(selection_scale_invariant_min_spread)
+                if selection_scale_invariant else None
+            ),
+            "residual_geometry": residual_geometry,
+            "residual_geometry_floor": (
+                float(residual_geometry_floor)
+                if residual_geometry == "relative" else None
+            ),
+            "record_transition_clocks": record_transition_clocks,
+            "record_stationarity_trace": record_stationarity_trace,
+            "stop_on_exact_residual": stop_on_exact_residual,
+            "horizon_invariant": horizon_invariant,
         },
     }
+    if record_stationarity_trace:
+        diagnostics["stationarity_trace"] = StationarityTrace(
+            n_records=int(n_records),
+            query_identity_sha256=ordered_query_identity_sha256(queries),
+            target_identity_sha256=target_answer_identity_sha256(target),
+            observations=stationarity_observations,
+            measured_query_answers=np.stack(
+                stationarity_query_answers, axis=0
+            ),
+            termination_reason=termination_reason,
+        )
+    if return_final_table:
+        diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
     return best_S.reset_index(drop=True), diagnostics

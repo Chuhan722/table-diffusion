@@ -8,12 +8,16 @@ mask 分布。它不执行正收益门槛、方向 argmax、top-k 或整代 prop
 import copy
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from table_diffevo.directional_diffusion import tilted_copy_probabilities
+from table_diffevo.directional_diffusion import (
+    DEFAULT_DIRECTION_LOGIT_CLIP,
+    tilted_copy_probabilities,
+    validate_direction_logit_clip,
+)
 from table_diffevo.joint_diffusion import enumerate_copy_masks
 from table_diffevo.queries import _coerce_to_column_type, eval_condition
 from table_diffevo.schema import Schema
@@ -906,25 +910,74 @@ def _conditional_copy_probability_unchecked(
     base_logit: float,
     strength: float,
     logit_clip: Optional[float],
+    condition_observer: Optional[
+        Callable[[int, float, float], None]
+    ] = None,
 ) -> float:
+    probability, _ = _conditional_copy_probability_with_clip_flag_unchecked(
+        model,
+        mask,
+        variable,
+        baseline_probability,
+        base_logit,
+        strength,
+        logit_clip,
+        condition_observer,
+    )
+    return probability
+
+
+def _conditional_copy_probability_with_clip_flag_unchecked(
+    model: SparseMaskEnergy,
+    mask: np.ndarray,
+    variable: int,
+    baseline_probability: float,
+    base_logit: float,
+    strength: float,
+    logit_clip: Optional[float],
+    condition_observer: Optional[
+        Callable[[int, float, float], None]
+    ] = None,
+) -> Tuple[float, bool]:
+    """Return one conditional probability and whether clipping changed it."""
     difference = _conditional_energy_difference_unchecked(
         model, mask, variable
     )
     if strength == 0.0 or difference == 0.0:
-        return baseline_probability
-    with np.errstate(over="ignore", invalid="ignore"):
-        logit = base_logit + strength * difference
-    if np.isnan(logit):
-        raise ValueError("条件 logit 无法由有限输入稳定计算")
-    if logit_clip is None:
-        if not np.isfinite(logit):
-            raise ValueError("条件 logit 超出 float64 可表示范围")
+        raw_logit = base_logit
+        probability = baseline_probability
+        clipped = False
     else:
-        logit = float(np.clip(logit, -logit_clip, logit_clip))
-    if logit >= 0.0:
-        return float(1.0 / (1.0 + np.exp(-logit)))
-    exponential = float(np.exp(logit))
-    return exponential / (1.0 + exponential)
+        with np.errstate(over="ignore", invalid="ignore"):
+            raw_logit = base_logit + strength * difference
+        if np.isnan(raw_logit):
+            raise ValueError("条件 logit 无法由有限输入稳定计算")
+        clipped = False
+        if logit_clip is None:
+            if not np.isfinite(raw_logit):
+                raise ValueError("条件 logit 超出 float64 可表示范围")
+            effective_logit = raw_logit
+        else:
+            clipped = bool(
+                not np.isfinite(raw_logit)
+                or raw_logit < -logit_clip
+                or raw_logit > logit_clip
+            )
+            effective_logit = float(np.clip(
+                raw_logit, -logit_clip, logit_clip
+            ))
+        if effective_logit >= 0.0:
+            probability = float(
+                1.0 / (1.0 + np.exp(-effective_logit))
+            )
+        else:
+            exponential = float(np.exp(effective_logit))
+            probability = exponential / (1.0 + exponential)
+    if condition_observer is not None:
+        condition_observer(
+            int(variable), float(raw_logit), float(probability)
+        )
+    return probability, clipped
 
 
 def conditional_copy_probability(
@@ -976,6 +1029,9 @@ def random_scan_gibbs_mask(
     rng: np.random.Generator,
     *,
     logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    condition_observer: Optional[
+        Callable[[int, float, float], None]
+    ] = None,
 ) -> np.ndarray:
     """从显式初始 mask 做随机坐标、带放回的 Gibbs 微步。
 
@@ -983,7 +1039,36 @@ def random_scan_gibbs_mask(
     精确返回初始 mask 且不消耗 RNG；空活跃集合也不消耗 RNG。
     默认把条件 logit 截到 ``[-30, 30]``，避免有限输入在 float64 中丢失双向支持；
     ``logit_clip=None`` 只用于显式请求未截断的理论条件式。
+    可选 ``condition_observer`` 在每个实际微步收到变量索引、截断前 logit 和实际
+    采样概率；它只用于诊断，采样器不会为它额外消耗随机数。
     """
+    mask, _ = _random_scan_gibbs_mask_with_diagnostics(
+        model,
+        initial_mask,
+        eta,
+        strength,
+        n_steps,
+        rng,
+        logit_clip=logit_clip,
+        condition_observer=condition_observer,
+    )
+    return mask
+
+
+def _random_scan_gibbs_mask_with_diagnostics(
+    model: SparseMaskEnergy,
+    initial_mask: np.ndarray,
+    eta: float,
+    strength: float,
+    n_steps: int,
+    rng: np.random.Generator,
+    *,
+    logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
+    condition_observer: Optional[
+        Callable[[int, float, float], None]
+    ] = None,
+) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Internal random scan with observational clip counters."""
     mask = _validate_mask(
         initial_mask, model.n_active_attributes, "initial_mask"
     ).copy()
@@ -993,23 +1078,36 @@ def random_scan_gibbs_mask(
     clip = _validate_logit_clip(logit_clip)
     if not isinstance(rng, np.random.Generator):
         raise ValueError("rng 必须是 np.random.Generator")
+    if condition_observer is not None and not callable(condition_observer):
+        raise ValueError("condition_observer 必须可调用或为 None")
     if steps == 0 or model.n_active_attributes == 0:
-        return mask
+        return mask, {
+            "conditional_logit_evaluated_count": 0,
+            "conditional_logit_clipped_count": 0,
+        }
 
     base_logit = float(np.log(baseline) - np.log1p(-baseline))
+    clipped_count = 0
     for _ in range(steps):
         variable = int(rng.integers(0, model.n_active_attributes))
-        probability = _conditional_copy_probability_unchecked(
-            model,
-            mask,
-            variable,
-            baseline,
-            base_logit,
-            beta,
-            clip,
+        probability, clipped = (
+            _conditional_copy_probability_with_clip_flag_unchecked(
+                model,
+                mask,
+                variable,
+                baseline,
+                base_logit,
+                beta,
+                clip,
+                condition_observer,
+            )
         )
+        clipped_count += int(clipped)
         mask[variable] = rng.random() < probability
-    return mask
+    return mask, {
+        "conditional_logit_evaluated_count": int(steps),
+        "conditional_logit_clipped_count": int(clipped_count),
+    }
 
 
 def propagate_random_scan_distribution(
@@ -1117,6 +1215,7 @@ def evolve_step_factorized_gibbs(
     max_factor_order: int = 3,
     gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     compiled_workload: Optional[CompiledMaskWorkload] = None,
+    direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """执行一轮“独立定向初值 + 低阶因子 Gibbs”同步更新。
 
@@ -1129,7 +1228,9 @@ def evolve_step_factorized_gibbs(
     :func:`compile_mask_workload` 创建的 ``compiled_workload`` 时，只对参与且
     recipient/donor 不同的记录批量评价查询条件；不传则保留旧逐行构造路径。
 
-    返回的诊断只记录公开生成过程的工作量和墙钟，不评价 loss，也不参与更新决策。
+    返回的诊断只记录公开生成过程的工作量、实际条件 logit、概率和墙钟，不评价
+    loss，也不参与更新决策。``direction_logit_clip`` 控制共同的独立定向初始
+    mask，``gibbs_logit_clip`` 只控制后续 factor 条件 Gibbs；两者分别显式记录。
     """
     for value, name in ((rho, "rho"), (eta, "eta"), (mu, "mu")):
         if (
@@ -1145,6 +1246,7 @@ def evolve_step_factorized_gibbs(
     eta = float(eta)
     mu = float(mu)
     strength = _validate_strength(copy_direction_strength)
+    direction_clip = validate_direction_logit_clip(direction_logit_clip)
     sweeps = _validate_nonnegative_integer(n_sweeps, "n_sweeps")
     maximum_order = _validate_nonnegative_integer(
         max_factor_order, "max_factor_order"
@@ -1225,6 +1327,7 @@ def evolve_step_factorized_gibbs(
                 eta,
                 direction_scores[:, attr_index],
                 strength,
+                logit_clip=direction_clip,
             )
         copy_masks[:, attr_index] = (
             rng.random(n_records) < copy_probabilities
@@ -1238,8 +1341,26 @@ def evolve_step_factorized_gibbs(
     factor_count = 0
     factor_table_entries = 0
     gibbs_microsteps = 0
+    conditional_logit_evaluated_count = 0
+    conditional_logit_clipped_count = 0
     factor_model_builds = 0
     condition_evaluation_batches = 0
+    conditional_logit_diagnostics = {
+        "condition_count": 0,
+        "raw_logit_min": None,
+        "raw_logit_max": None,
+        "raw_logit_abs_max": 0.0,
+        "raw_logit_abs_max_condition": None,
+        "logit_clip": float(clip) if clip is not None else None,
+        "clip_hit_count": 0,
+        "clip_hit_conditions": [],
+        "conditional_probability_min": None,
+        "conditional_probability_max": None,
+        "minimum_binary_outcome_probability": None,
+        "conditional_entropy_sum": 0.0,
+        "all_finite": True,
+        "all_conditionals_bidirectional": True,
+    }
     if sweeps > 0:
         gibbs_rows = np.flatnonzero(
             participate & np.any(differs, axis=1)
@@ -1283,16 +1404,95 @@ def evolve_step_factorized_gibbs(
                 model.active_attribute_indices, active_indices
             ):
                 raise RuntimeError("因子模型的活跃属性顺序与更新 mask 不一致")
+
+            def observe_condition(variable, raw_logit, probability):
+                diagnostics = conditional_logit_diagnostics
+                if not np.isfinite(raw_logit) or not np.isfinite(probability):
+                    diagnostics["all_finite"] = False
+                    raise ValueError("实际 Gibbs 条件 logit/概率不是有限值")
+                attribute_index = int(active_indices[variable])
+                context = {
+                    "microstep_within_round": int(
+                        diagnostics["condition_count"]
+                    ),
+                    "row": int(row_index),
+                    "local_variable": int(variable),
+                    "attribute_index": attribute_index,
+                    "attribute": attr_names[attribute_index],
+                    "raw_logit": float(raw_logit),
+                }
+                absolute = abs(raw_logit)
+                if (
+                    diagnostics["raw_logit_abs_max_condition"] is None
+                    or absolute > diagnostics["raw_logit_abs_max"]
+                ):
+                    diagnostics["raw_logit_abs_max"] = float(absolute)
+                    diagnostics["raw_logit_abs_max_condition"] = context
+                diagnostics["condition_count"] += 1
+                diagnostics["raw_logit_min"] = (
+                    float(raw_logit)
+                    if diagnostics["raw_logit_min"] is None
+                    else min(diagnostics["raw_logit_min"], raw_logit)
+                )
+                diagnostics["raw_logit_max"] = (
+                    float(raw_logit)
+                    if diagnostics["raw_logit_max"] is None
+                    else max(diagnostics["raw_logit_max"], raw_logit)
+                )
+                diagnostics["conditional_probability_min"] = (
+                    float(probability)
+                    if diagnostics["conditional_probability_min"] is None
+                    else min(
+                        diagnostics["conditional_probability_min"],
+                        probability,
+                    )
+                )
+                diagnostics["conditional_probability_max"] = (
+                    float(probability)
+                    if diagnostics["conditional_probability_max"] is None
+                    else max(
+                        diagnostics["conditional_probability_max"],
+                        probability,
+                    )
+                )
+                minimum_outcome = min(probability, 1.0 - probability)
+                diagnostics["minimum_binary_outcome_probability"] = (
+                    float(minimum_outcome)
+                    if diagnostics[
+                        "minimum_binary_outcome_probability"
+                    ] is None
+                    else min(
+                        diagnostics[
+                            "minimum_binary_outcome_probability"
+                        ],
+                        minimum_outcome,
+                    )
+                )
+                if 0.0 < probability < 1.0:
+                    diagnostics["conditional_entropy_sum"] += float(
+                        -probability * np.log(probability)
+                        - (1.0 - probability) * np.log1p(-probability)
+                    )
+                else:
+                    diagnostics["all_conditionals_bidirectional"] = False
+                if clip is not None and absolute >= clip:
+                    diagnostics["clip_hit_count"] += 1
+                    diagnostics["clip_hit_conditions"].append(context)
+
             sample_start = time.perf_counter()
-            copy_masks[row_index, active_indices] = random_scan_gibbs_mask(
-                model,
-                copy_masks[row_index, active_indices],
-                eta,
-                strength,
-                sweeps * n_active,
-                gibbs_rng,
-                logit_clip=clip,
+            sampled_mask, sample_diagnostics = (
+                _random_scan_gibbs_mask_with_diagnostics(
+                    model,
+                    copy_masks[row_index, active_indices],
+                    eta,
+                    strength,
+                    sweeps * n_active,
+                    gibbs_rng,
+                    logit_clip=clip,
+                    condition_observer=observe_condition,
+                )
             )
+            copy_masks[row_index, active_indices] = sampled_mask
             gibbs_sample_elapsed += time.perf_counter() - sample_start
             active_gibbs_rows += 1
             active_blocks += n_active
@@ -1301,6 +1501,12 @@ def evolve_step_factorized_gibbs(
                 len(factor.values) for factor in model.factors
             )
             gibbs_microsteps += sweeps * n_active
+            conditional_logit_evaluated_count += sample_diagnostics[
+                "conditional_logit_evaluated_count"
+            ]
+            conditional_logit_clipped_count += sample_diagnostics[
+                "conditional_logit_clipped_count"
+            ]
 
     for attr_index, attr in enumerate(attr_names):
         selected = participate & copy_masks[:, attr_index]
@@ -1327,11 +1533,19 @@ def evolve_step_factorized_gibbs(
 
     diagnostics = {
         "participating_rows": int(participate.sum()),
+        "direction_logit_clip": direction_clip,
+        "gibbs_logit_clip": clip,
         "active_gibbs_rows": active_gibbs_rows,
         "active_blocks": active_blocks,
         "factor_count": factor_count,
         "factor_table_entries": factor_table_entries,
         "gibbs_microsteps": gibbs_microsteps,
+        "conditional_logit_evaluated_count": (
+            conditional_logit_evaluated_count
+        ),
+        "conditional_logit_clipped_count": (
+            conditional_logit_clipped_count
+        ),
         "factor_builder": (
             "not_used"
             if sweeps == 0
@@ -1343,6 +1557,33 @@ def evolve_step_factorized_gibbs(
         ),
         "factor_model_builds": factor_model_builds,
         "condition_evaluation_batches": condition_evaluation_batches,
+        "factor_conditional_logit_diagnostics": {
+            **conditional_logit_diagnostics,
+            "clip_hit_rate": (
+                float(
+                    conditional_logit_diagnostics["clip_hit_count"]
+                    / conditional_logit_diagnostics["condition_count"]
+                )
+                if conditional_logit_diagnostics["condition_count"]
+                else 0.0
+            ),
+            "raw_logit_strictly_inside_clip": bool(
+                clip is None
+                or conditional_logit_diagnostics["condition_count"] == 0
+                or conditional_logit_diagnostics["raw_logit_abs_max"]
+                < clip
+            ),
+            "conditional_entropy_mean": (
+                float(
+                    conditional_logit_diagnostics[
+                        "conditional_entropy_sum"
+                    ]
+                    / conditional_logit_diagnostics["condition_count"]
+                )
+                if conditional_logit_diagnostics["condition_count"]
+                else None
+            ),
+        },
         "compiled_unique_conditions": (
             compiled_workload.n_unique_conditions
             if sweeps > 0 and compiled_workload is not None

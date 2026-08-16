@@ -1,6 +1,332 @@
 # 项目进度
 
 ## 当前阶段
+
+### 最新暂停点：残差信号几何正式通过——相对残差适应度五种子 supports（2026-08-16，Issue #57）
+
+> 本段为当前最新暂停点。诊断表明旧绝对残差适应度把优化力气集中于大计数
+> 查询、对稀有模式查询系统性无力（平台残差 44.8% 集中在 p<0.05 查询，
+> bootstrap iid 对照 22.3%；既有平台 0.00086–0.0011 已低于单次 iid 抽样
+> 涨落线 0.001598±0.000174，误差是系统性的几何失配而非预算/容量问题）。
+>
+> `run_evolution` 新增 `residual_geometry`（absolute 默认，逐位向后兼容）
+> 与 `residual_geometry_floor`：relative 口径 ε=(y−q)/max(y,floor)/N 近似
+> KL 梯度，稀有查询推动力按相对误差放大；σ/κ 容忍先于相对化；残差同时
+> 驱动 fitness 与方向场，信号几何统一切换；相对化只用公开 target 计数，
+> 不引入新信息流。
+>
+> 预注册正式实验（scripts/probe_residual_geometry_formal.py，formal=True，
+> commit aac1aff）：五臂 absolute / relative_f8(主) / relative_f{1,4,16}
+> × 种子 200..204 × 2000 轮。**nltcs 主判定 supports_relative_geometry**：
+> 5/5 配对全胜，measured L1 五种子均值 0.001061 → **0.000314**（−70.4%，
+> 门槛 ≥30%）；质量风险带零报警——train 未测量 3-way −61.7%、4-way
+> −47.5%、分箱 TVD −7.5% 全部同向改善；稀有查询平均绝对残差 16.93→4.28
+> 计数；支持集重叠 1251→1274；墙钟零额外开销（456s→452s/run）。floor
+> 敏感性：nltcs 最小 target = 12 ≥ 8，f1/f4/f8 逐位一致，f16 均值同为
+> 0.000314（观察项 floor_best=f16 是第 7 位小数差异，无实际意义）。
+> test_300x10 辅助判定 not_supported（1/5 胜，−20.6%）：该数据集最小
+> target = 17 > 8，floor 臂全程未激活，失败**不能归因于 floor 取值**；
+> 当前归因是 300 行尺度下小计数查询的相对化把抽样噪声当信号放大——
+> **相对几何的收益与数据规模相关，小表边界如实保留**，不合并主结论。
+> 首次正式运行在末段离线评价
+> 因参考表读取缺陷崩溃（已修复并加测试）；修复后完整重跑，与首跑全部
+> 50 个 run 的主指标逐位一致（墙钟除外）。
+>
+> 对照参考：Issue #46 讨论的第一层同信息基线（private-pgm 系）nltcs
+> 水位 ≈ 0.000357——本结果五种子均值首次越过该线（0.000314）。收口
+> 判定仍按 #46 协议（≥2 数据集 + 全指标 + 冻结基线调参）正式执行，
+> 本结果不替代该协议。
+>
+> 产物归档：正式 JSON 位于运行工作树 outputs/residual_geometry/
+> formal_residual_geometry_5seed_2000round.json（gitignored），SHA-256
+> `51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64`，
+> 绑定提交 aac1aff；脚本冻结 EXPECTED_INPUT_SHA256 与该产物记录的
+> 公开输入哈希一致（fail-closed 对拍，见
+> scripts/probe_residual_geometry_formal.py）。合并 master 后的行为
+> 不变性由 scripts/replay_residual_geometry_main_arms.py 在当前 HEAD
+> 重放主判定两臂×五种子对拍最终表哈希验证。
+>
+> 边界：无噪声原型结论；**判定口径是 2000 轮固定预算下的终态显著改善，
+> 不构成"算法已收敛"的声明**（未做更长 horizon 对照或平稳性检查；
+> 配置为 tol=inf、固定 rho/mu、无 self-cooling，过程不会自然冻结）。
+> DP 阶段分母将使用带噪计数，其稳定化（floor 与
+> 噪声尺度挂钩或 y+c 平滑）需在 DP 设计中单独处理并计入预算论证（见
+> docs/设计/残差信号几何_绝对与相对适应度口径.md）。默认参数未改
+> （absolute 仍为默认，是否切换默认与 #46 衔接由后续决定）。
+
+### 上一暂停点：Issue #52 Stage B 正式完成，结论为 no_factor_candidate（2026-08-14）
+
+> 本段取代下面“Stage B 工具已确认、正式实验尚未启动”的暂停点。Stage B 已严格按结果前冻结
+> 记录完成并通过独立审计；G* 虽优于同 tau independent，但未优于 I*=independent tau5，
+> 因此正式停止，不进入 Stage C。
+
+冻结与结果身份：
+
+```text
+tool commit = bab78a377aa49e6a680b91660f579d427e82860a
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290210632
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5290453407
+mode = formal
+task count = 30/30 complete
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 470.64 s
+audit elapsed = 0.95 s
+```
+
+正式 Stage B 只运行 Stage A 合格的三个 factor 配置，seeds `200..209`、每条3000轮、末500轮
+current-loss mean 为主指标；同 tau independent 和 I* 均复用已审计 Stage T 轨迹：
+
+| factor | factor late mean | 同 tau independent | 同 tau 差值 / W-T-L | I*=independent tau5 | 相对 I* 差值 / W-T-L |
+|---|---:|---:|---:|---:|---:|
+| tau=1,s8 | 132.3734 | 157.2517 | -24.8783 / 8-0-2 | 68.5089 | +63.8645 / 0-0-10 |
+| tau=2,s8 | 98.9192 | 111.5445 | -12.6253 / 9-0-1 | 68.5089 | +30.4103 / 0-0-10 |
+| tau=3,s16 | **73.3693** | 85.5252 | **-12.1559 / 9-0-1** | 68.5089 | **+4.8604 / 4-0-6** |
+
+factor 排名为 `tau3,s16 < tau2,s8 < tau1,s8`，所以：
+
+```text
+I* = independent tau=5
+G* = factor tau=3,sweeps=16
+point_estimate_better_than_same_tau_independent = true
+point_estimate_better_than_i_star = false
+stage_c_candidate = null
+stage_c_allowed = false
+status = no_factor_candidate
+```
+
+失败位置唯一且清楚：G* 相对同 tau independent tau3 的末500轮均值改善12.1559，9/10 seeds
+改善；但相对 I* 反而高4.8604，只有4/10 seeds改善。按冻结规则不得递补 factor 第二名或追加
+配置。G* 的 final 单点均值为 `63.75`，略低于 I* 的 `64.70`，但主指标是末500轮均值，不能用
+辅助单点翻转决定；AUC 也比 I* 高 `4095.78`。
+
+三个 factor 都优于各自同 tau independent，说明 factor Gibbs 的同温度收益在3000轮仍存在；
+`no_factor_candidate` 的含义不是 factor 完全无效，而是最佳合格 factor 仍未超过更强的高温
+independent tau5。
+
+本结果仍是 horizon-limited 固定预算结果，不能声称达到平衡：
+
+| factor | rounds 2001..2500 | rounds 2501..3000 | 相对变化 | 明显下降 seeds |
+|---|---:|---:|---:|---:|
+| tau=1,s8 | 166.2599 | 132.3734 | -20.06% | 10/10 |
+| tau=2,s8 | 112.9026 | 98.9192 | -12.11% | 7/10 |
+| tau=3,s16 | 81.0142 | 73.3693 | -9.20% | 9/10 |
+
+预注册没有因末段下降而延长 horizon，因此固定预算选择仍为 `no_factor_candidate`。三个 factor
+总 clip hits 均为0；factor 条件最大原始 `abs(logit)` 为 `4.6984/11.2762/16.2638`，全部低于
+clip=30。全部轨迹身份、初态、主 RNG 终点、方向尺度、数值、双向条件和上游哈希门禁通过。
+
+正式产物：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_b_formal_bab78a3_20260814
+protocol SHA：ae9e6848c54a072a742019d31ff6341f9aba80e981ba1d65ae235bcb895d8604
+trajectory scientific SHA：1e01ca87c376a35636bff5fa13762c18b3dfbf340bd2169ef83390179b11c195
+report SHA：5e62a9c21638807d4827b89d476a16903d081d1f1424fea136f12d8074c5151d
+audit SHA：de42e0a7ae2a12f132956cf38525f3bb563e5db78bd4da47a9c5464e18a62c1a
+report size：6,697,968 bytes
+audit size：118,387 bytes
+```
+
+独立 auditor 未导入 Stage B runner，重新绑定 Stage T/A、推导三个 factor 配置，并重算趋势、
+聚合、逐 seed 双对照配对、I*/G* 和 selection，全部一致。
+
+当前禁止运行 seeds `300..319` 的 Stage C，也不得事后增加 tau/sweeps/seeds/horizon。Issue #52
+在本协议下已得到完整可接受的负结果；若后续研究 nltcs、跨 workload、GPU、无限 horizon 或新的
+温度/混合设计，必须另立问题和结果前协议，不能并入本次结果。
+
+### 最新暂停点：Issue #52 Stage B 工具已确认，正式实验尚未启动（2026-08-14）
+
+> 本段取代下面“Stage A 正式完成、尚未实现 Stage B”的暂停点，记录将与 Stage B 工具作为
+> 同一个冻结提交。当前完成范围只有 runner、独立 auditor、真实全链路 smoke 和回归测试；
+> **本提交不包含任何正式3000轮 factor 结果，也不授权跳过 Issue 运行前记录。**
+
+本轮新增：
+
+```text
+scripts/run_issue52_stage_b.py
+scripts/audit_issue52_stage_b.py
+tests/test_issue52_stage_b.py
+scripts/issue52_protocol.py 中的 Stage B 冻结协议与正式上游哈希
+```
+
+Stage B 正式输入和判定已按 Issue #52 正文落成代码：
+
+1. Stage T report/audit 与 Stage A report/audit 都按文件 SHA、格式、协议、审计状态和科学哈希
+   绑定；正式模式只接受既有正式产物。Stage A 的正式 report 很大，runner/auditor 通过已冻结
+   文件 SHA 和小型独立 audit 读取 selection，不重复把335MB raw proposal 全量载入内存。
+2. factor 配置不手写重新选择，而是从 Stage A 已审计的 `minimal_sufficient_sweeps` 推导。正式
+   集合严格为 `tau=1,s8`、`tau=2,s8`、`tau=3,s16`；tau=4/5 不运行。
+3. 只运行 factor 轨迹；同 tau independent 与 I* 都直接复用已审计 Stage T 的
+   seeds `200..209` 原始轨迹，不重复计算 independent。正式 horizon、检查点和主指标仍是
+   3000 rounds、每500轮检查、rounds 2501..3000 current-loss mean。
+4. I* 从绑定的 Stage T late-mean 排名重算，正式固定得到 `independent_tau_5`。G* 在合格
+   factor 中先按 late mean，精确并列再按 sweeps 少、tau 小排序。
+5. 只有 G* 点估计同时低于同 tau independent 与 I* 才输出
+   `factor_candidate_selected` 并允许 Stage C；否则固定为 `no_factor_candidate`。Stage B 不提前
+   加入胜率或置信区间，也不递补第二名；这些更严格条件仍只属于 Stage C。
+6. factor 长轨迹使用已验证等价、速度更合适的 `compiled_batch` 构造路径和 NumPy/CPU，最多
+   8 workers；每条轨迹继续检查相同初态、主 RNG 终点、方向固定尺度、独立/factor 条件数值、
+   完整轮数和表/RNG 哈希。worker 数只影响墙钟时间。
+7. 独立 auditor 不导入 Stage B runner；它重新绑定两个上游、推导配置、重算 factor 趋势与
+   聚合、逐 seed 的同 tau/I* 配对、I*/G* 和最终停止状态，并核验 trajectory scientific SHA。
+
+真实 smoke 串起了 Stage T → 状态库 → Stage A → Stage B。smoke 的 Stage A 因样本极小只给出
+`tau=1,s8` 与 `tau=2,s16` 两个管线配置，因此 Stage B 正确只执行2条 factor 轨迹（seed 9903、
+12 rounds），没有重新运行5条 independent。1 worker 与2 workers 的全部非计时科学字段完全
+一致：
+
+```text
+trajectory scientific SHA = 76a5c8f7a0e3ab71663f843115333fd5574d0d9e783aaf99d1ae469314d84620
+all identity gates = true
+audit passed = true
+runner/audit formal_result_valid = false
+```
+
+smoke 判定分支临时得到：
+
+```text
+I* = independent tau=5，late mean=1697.25
+G* = factor tau=2,s16，late mean=1383.50
+vs same-tau independent tau=2：-409.00
+vs I*：-313.75
+status = factor_candidate_selected
+```
+
+这些数只有1 seed、12 rounds，而且 factor 配置本身也来自每状态2 proposals 的 smoke Stage A；
+它们只证明配置派生、配对和选择分支能工作，**不是任何正式效果证据，也不能预告正式 G***。
+两条 smoke factor 轨迹的独立方向与 Gibbs 条件总 clip hits 均为0。
+
+专项和回归：
+
+```text
+Stage B 新专项：6 passed
+Issue #52 全链路：33 passed
+全仓库：966 passed, 7 skipped
+ruff / py_compile / git diff --check：通过
+```
+
+测试覆盖正式协议与四个冻结产物哈希、只运行 Stage A 合格 factor、I* 复算、G* 的 late
+mean/sweeps/tau 排序、双点估计门槛、无递补、串并行等价、不可覆盖，以及轨迹 history、配对、
+selection 和上游 SHA 篡改拒绝。
+
+用户已经检查并确认本阶段设计与 smoke。冻结顺序必须保持为：本节与工具同一 commit 推送，随后
+在 Issue #52 发布绑定该 commit、四个上游哈希和正式命令的运行前记录；只有记录发布成功且再次
+明确继续后，才可启动 formal Stage B。当前不得运行正式3000轮、Stage C、nltcs、GPU 或新增
+tau/sweeps。
+
+### 最新暂停点：Issue #52 Stage A 混合资格正式完成并审计通过（2026-08-14）
+
+> 本段取代下面“实现与 smoke 已确认”的暂停点。Stage A 已严格按结果前冻结记录完成；
+> 尚未实现或运行 Stage B。下一步只能先设计并审查 Stage B 工具，不能直接启动3000轮 factor
+> 轨迹。
+
+冻结与结果身份：
+
+```text
+tool commit = 5d25864c9845b1bba67ffb87ae5b7e1bd92c6073
+pre-run record = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289850550
+formal result  = https://github.com/Chuhan722/table-diffusion/issues/52#issuecomment-5289918247
+mode = formal
+runner formal_result_valid = true
+audit passed = true
+audit formal_result_valid = true
+runner elapsed = 444.02 s
+audit elapsed = 18.26 s
+```
+
+正式实验读取已审计的48状态库（16组、每组3 seeds），每状态每 attempt 200 proposals；
+共实际执行10个 attempt、480个 state-attempts、96,000个 raw state-proposal bundles。严格按每个
+tau 的 `8→16→32` 序列运行，首次全部组通过即停，32失败即不合格。结果：
+
+| tau | 实际执行 | 决定处最差组 TVD | 决定处最差 gap recovery | 资格 |
+|---:|---|---:|---:|---|
+| 1 | 8 | 0.003855 | 99.266% | qualified，最小8 |
+| 2 | 8 | 0.031897 | 96.611% | qualified，最小8 |
+| 3 | 8→16 | 0.042889 | 96.373% | qualified，最小16 |
+| 4 | 8→16→32 | 0.050535 | 95.923% | 32上限仍不合格 |
+| 5 | 8→16→32 | 0.061061 | 95.172% | 32上限仍不合格 |
+
+因此 Stage B 的 factor 资格集合已经冻结为：
+
+```text
+factor tau=1, sweeps=8
+factor tau=2, sweeps=8
+factor tau=3, sweeps=16
+```
+
+tau=4/5 的失败都只来自 `initial` 状态组的 TVD；gap recovery 已通过，其他15个中晚期组
+全部通过。tau=4,s32 的未舍入值为 `0.0505347729 > 0.05`，虽然只超出
+`0.00053477`，仍必须按冻结规则判失败；不得四舍五入改判、追加64/128或放宽门槛。tau=5,s32
+为 `0.0610613188`。tau=3 的 initial TVD 从8 sweep 的 `0.057311` 降至16 sweep 的
+`0.042889`，所以16是首次充分值。
+
+数值与实现门禁全部通过：最大因子能量误差 `1.11e-16`、one-hot误差 `5.55e-17`；
+tau=1..5 最大原始 `abs(logit)` 为 `5.695/11.391/17.086/22.781/28.477`，全部低于
+clip=30且总 clip hits=0。production/exact replay 共核验283,950次、22,741,632微步，
+mismatch=0；同一 tau 的不同 sweeps 的共享条件/tape hash 均唯一且一致。独立 auditor 重新计算
+proposal summary、16组 TVD/recovery、停止序列和 selection，全部一致。
+
+产物与哈希：
+
+```text
+目录：outputs/issue52_low_temperature_long_horizon/stage_a_mixing_formal_5d25864_20260814
+protocol SHA：e0259b1c614aa49ed79f4d7dec61829ae0b46233e77a14e127b39af93c62e17d
+execution scientific SHA：56d5a470a891e99c985503514d7092e385805d1b6900cb46e1da4995fb0c2e0d
+report SHA：52654a455d42a0899194878789aa4690b3527c5482a6e4c2d5475b59df835b09
+audit SHA：6b4b76af01dc2ed3b267f8047e8edefef84e5fc1049d7aa5974af6ab8286a741
+report size：335,058,715 bytes
+```
+
+结论边界：Stage A 只决定混合资格，不比较外层3000轮效果、不选择 G*，也不说明 independent
+tau=4/5 无效。下一步若继续，应先实现 Stage B：只运行上述三个合格 factor 配置，复用
+seeds 200..209、3000 rounds、Stage T 检查点和主指标，再与同 tau independent 及 Stage T 的
+I* 比较。Stage B 的 runner/auditor、结果前冻结记录和正式输出目前都不存在。
+
+### 最新暂停点：Issue #52 Stage A 混合资格实现与 smoke 已确认（2026-08-14）
+
+本轮先把 `origin/master`（含 PR #48）合入研究分支，merge commit 为
+`ea1e4ba`，无冲突；此前正式 Stage T 与48状态库的四个文件哈希均保持不变。随后只完成
+Stage A factor Gibbs 混合资格的实现和缩小 smoke，**没有运行正式 Stage A，也没有启动
+Stage B**。用户已经检查并确认本阶段实现；本节与工具代码共同组成正式运行前的冻结提交，
+该提交本身不包含任何 formal Stage A 结果。
+
+新增/修改内容：
+
+- `scripts/issue52_protocol.py`：冻结 evaluation `tau=1..5`、逐 tau
+  `sweeps=8→16→32`、首次16个状态组全部通过即停止、32失败即不合格的统一规则；正式模式
+  绑定已审计48状态库及其 audit 的文件/协议/scientific SHA。
+- `scripts/run_issue52_stage_a_mixing.py`：只读取已有状态库；逐 tau 真正按顺序增量执行并立即
+  停止；固定同一 state/donor/proposal/address tape；按组计算 TVD 与 expected-direction gap
+  recovery；同时检查零 clip、数值、精确能量和 production Gibbs 同 tape replay；输出不可覆盖的
+  原始逐状态报告和 scientific hash。
+- `scripts/audit_issue52_stage_a_mixing.py`：不导入 Stage A runner，使用审计侧既有独立聚合实现，
+  从 raw proposal 重新计算逐配置 summary、16组 TVD/recovery、共享条件 hash、最小充分 sweeps、
+  停止序列与最终 selection。
+- `tests/test_issue52_stage_a_mixing.py`：覆盖首次8/16通过、到32仍失败、通过后多跑、错误提前停、
+  跳级、缺状态、乱序、共享 tape 篡改和 `sweeps>32` 拒绝，并构造真实 smoke 全链路。
+
+真实 smoke 使用1个 seed/组、16状态、每状态2 proposals，仅验证管线，不是方法证据。它有意跑出
+不同停止分支：`tau=1` 在8通过，`tau=2` 在16通过，`tau=3/4/5` 到32仍不合格；全部已执行
+attempt 的正确性与共享条件门禁通过、clip hits 为0，独立 audit `passed=true`，但
+`formal_result_valid=false`。因此这些 tau/sweeps 数值**不能**替代正式48状态 × 每状态200
+proposals 结果，也不能据此提前淘汰 tau=3/4/5。
+
+最终验证：
+
+```text
+Stage A mixing 新测试：8 passed
+Issue #52 相关链路：31 passed
+全仓库（正式 CPU 研究环境）：960 passed, 7 skipped
+全仓库（CUDA 辅助环境，含13个额外 CUDA 参数化用例）：980 passed
+ruff / py_compile / git diff --check：通过
+```
+
+本实现已经通过用户检查。冻结提交推送后，必须先在 Issue #52 发布绑定该 commit、协议、输入与
+状态库哈希的正式运行前记录；只有记录发布完成后才可运行 formal Stage A 及独立 audit。当前禁止
+追加64/128 sweeps、改门槛、做3000轮 factor 轨迹、Stage B、nltcs 或 GPU 改造。
+
 **当前主线固定仓库原始无噪声配置，研究扩散演化机制本身能否更好地逼近精确
 workload；2-way 最大熵初始化保留为辅助消融，不再作为本阶段主线 baseline。**
 
@@ -115,6 +441,20 @@ candidate 四个窗口的 loss 为 `1544.23/1274.07/1315.91/1342.66`，与低能
 默认路径之外的研究模块、oracle、复现脚本和测试，不将其作为稳定公共 API。自适应
 温度/退火与局部最小逃逸改由 Issue #40 独立预注册，不在观察本次种子后追加扫描。
 
+Issue #38 已按新 seed 60..79、3000 微步、共同初始表/坐标/Gumbel 的冻结协议检验
+目标对齐的 normalized L1 能量。L1 candidate 的 measured L1 为 `0.027200`，高于
+平方 baseline 的 `0.019570` 和 initial 的 `0.017357`；相对平方核差
+`+0.007630`，95% 区间 `[+0.006782,+0.008478]`，0/20 改善。未测量 3-way 和
+4-way 相对平方核也分别恶化 12.98%/8.42%，均为 0/20 改善，正式分类为
+`not_supported`，不进入默认生成器直接比较。
+
+失败不是探索塌缩：L1 平均条件熵比例为 0.9432，uphill 概率质量为 0.2689。事后
+全坐标精确漂移诊断进一步显示，`tau=1` 时 L1 初始一步平均期望漂移在 20/20 seed
+为正，均值 `+4.08e-5`；临界 `tau_*` 均值为 4.390、范围 3.770..5.681。相同
+名义 tau 经不同能量 RMS 定标后不保证相同的相对当前状态下降语义。新的定理同时
+证明：严格单坐标局部最优点上，有限温全支持与原始能量处处超鞅不能兼得。下一方法
+问题应另立为漂移约束温度或更大块邻域，不能在正式 seed 上事后把 tau 改为临界值。
+
 独立性能工作已把相同 8-sweep 算法的因子管线稳定降低约 74%，逐轮表哈希与两个
 RNG 端点精确相同。原始一次性运行的完整墙钟中位降低 26.31%，但一个 seed 因
 未修改阶段波动而变慢 2.746%，触发预注册硬门禁；当前父提交上的完整独立复验则
@@ -127,9 +467,30 @@ RNG 端点精确相同。原始一次性运行的完整墙钟中位降低 26.31%
 0.278s。下一工程瓶颈是查询因子预编译和批量构造，应作为独立性能问题处理，而不与
 本方法证据混入一个 PR。
 
+Issue #49 已按预注册协议完成 Stage T/A、Stage B 和最终确认，三个阶段的正式
+身份与独立审计均通过。冻结候选 `factor tau=4, sweeps=32` 相对同温度
+`independent tau=4` 通过全部配对门槛，但相对最强独立基线
+`I*=independent tau=5` 的 95% 配对区间上界为 `1.2522`，未通过最终确认。
+因此正式状态为 `not_confirmed_no_reselection / confirmed=false`，没有追加 seeds
+或重选配置。该结论仅限固定 1000 轮预算，不代表长期收敛结果。
+
 当前版本仍是无噪声原型，不是 DP：尚未实现 ε/δ、噪声机制、accountant、私有
-查询选择和带噪一致性。独立方法 QDTE 只作为效果标杆；在统一 target、初始化信息
-和计算预算前，不能声称本方法已经达到或超过 QDTE。
+查询选择和带噪一致性。
+
+## 最近变更（2026-08-15）
+
+### PR #55 审查同步：保留 PR #51 诊断并完成 Stage 0/1 增量复核
+
+PR #55 已合并最新 `origin/master=9685179`。唯一人工冲突位于 factor Gibbs
+演化函数的说明文字；合并结果同时保留 PR #51 的 `condition_observer`、实际条件
+logit/概率诊断及其 RNG 不变性测试，以及 PR #55 的 `direction_logit_clip` 与
+`gibbs_logit_clip` 分离配置和身份诊断。master 新增的 Issue #49 正式里程碑也已
+保留，没有回退既有生成路径。
+
+按审查建议清理了 `PROJECT_STATUS.md` 中的外部项目名称。合并后定向回归为
+`317 passed, 1 skipped`，全仓为 `991 passed, 7 skipped`；`compileall` 与
+`git diff --check` 通过。本次只解决分支同步与文档问题，没有运行效果实验、修改
+Stage 0/1 契约或进入 Issue #53 的后续阶段。
 
 ## 怎么跑 / 指定 GPU
 一键跑（默认用卡 0）：
@@ -146,6 +507,501 @@ CUDA_VISIBLE_DEVICES=1 conda run -p ./.conda python scripts/run.py
 ```
 卡号写错会找不到 GPU，自动降级到 CPU（很慢）——看到异常慢先查卡号。
 注：多种子是串行跑；用多卡并行跑不同种子需另改调度，暂未做。
+
+## 最近变更（2026-08-15）
+
+### Issue #53 Stage 2B：正式开发轨迹完成；无阈值量程报告入口完成
+
+Stage 2B 已把讨论确认的前三项写成显式协议：同时覆盖 `test_300x10` 与 `nltcs`、
+独立核与 8-sweep 三阶因子 Gibbs 核，四格共用同一套后续 detector；固定 exact、
+no-gate、marginal init、scale-invariant donor、`alpha=16`、`rho=0.01`、`eta=0.5`、
+`mu=0.01`、`tau=2` 和双侧 `logit clip=30`。开发 seed 冻结为 200..202，验证 seed
+220..224 在 detector 配置冻结前由程序封存。历史文件名
+`measured_1000query.json` 实际含 1001 条查询，协议按完整冻结文件和 SHA-256 使用，
+不静默删减。
+
+新增 `scripts/collect_issue53_stage2b_range_finding.py`：默认只打印 12 条开发轨迹计划，
+完整检查输入哈希、参数、seed 角色、当前态终点、RNG、轨迹文件和不可覆盖原子落盘。
+正式 development 最大观察预算已在报告单卡预计开销后经用户确认冻结为每条 8000
+轮；它不是收敛阈值，也不执行在线早停。入口拒绝其他轮数，smoke 仅允许未保留
+seed、小表和至多 3 轮。生成提交 `d87503e`、协议
+`483fd48ff88f050a7935eeb8cd4eb05e74607c1067800da39669516aa1d4b12b` 上的 12 条
+development 轨迹现已全部跑满并严格重读：2 dataset × 2 kernel × seed 200..202，
+每条 8001 个当前状态，共 209 MB、记录运行时间 4.90 小时；validation seed
+220..224 未读取。六个 dataset×seed 配对均共享 s0/S0/初始化后 RNG，方向与 Gibbs
+条件 logit 的正式 clip 命中总数都为 0。
+
+`s0` 现在由每个 dataset×seed 的独立核 `initial_rms` 参考预检取得首个非零 RMS，
+随后两个核从同一 seed 重启并固定共享该 `s0`；预检状态不进入正式轨迹，任意常数
+回退被拒绝。新增方向 logit 与 Gibbs 条件 logit 的评价/clip 命中只读计数。Gibbs
+在 Stage 2B 显式接入已验证逐步输出等价的 compiled-batch 因子构造，默认生成器仍
+保持旧路径；新主循环接线测试确认 final table、全部 current-state 观测、查询向量和
+主/Gibbs RNG 精确不变。
+
+非正式 seed 999 冒烟中，小表两个核各 2 轮共享 `s0=0.0495288`、S0 和初始化后主
+RNG，轨迹可严格重读，两个 clip 均零命中；compiled 与旧 rowwise 的两轮轨迹和 RNG
+逐字一致。nltcs 的 seed 999 两轮实现等价审计也确认 final table、全部 current-state
+观测、查询向量、主/Gibbs RNG 和关键 diagnostics 精确一致。nltcs 纯性能探针显示旧
+Gibbs 约 6.35 秒/轮；compiled 后冷启动一轮约 0.99 秒，20 轮稳态约 0.676 秒/轮，
+独立核约 0.240 秒/轮。正式 8000 轮预算已获确认，以上探针不参与窗口/阈值校准。
+
+新增 `collect_stationarity_range_evidence()` 与
+`scripts/analyze_issue53_stage2b_range_finding.py`，固定候选窗口
+`100/200/400/800/1000`，复用 Stage 2A 的三相邻窗口、全窗口两两比较公式，但 API
+没有 detector config/阈值参数，输出也 fail-closed 禁止稳定、运动充分、停滞、候选
+停止轮次等分类字段。正式 report 入口严格审计 12 个 manifest、trace 哈希、生成提交、
+协议、配对 s0/S0/RNG、轮数和 seed 角色，拒绝 validation seed、脏工作树和覆盖已有
+目录；发布 1776 条 range check、96012 条 current-state 描述、纯描述性 JSON 与 9 张
+图。正式 report 已从干净分析提交 `35955cb` 生成到
+`outputs/issue53_stage2b_range_report/`：12 个被列入 manifest 的产物逐一重算哈希通过，
+共 18 MB；source generator 仍绑定 `d87503e`，无阈值/分类字段，validation seed 仍未
+读取。量程图显示四个 cell 的 current L1 均先快速下降再持续波动，运动护栏量在后段
+保持非零；这些只是描述性观察，尚未冻结窗口、阈值或给出任何收敛轮次。
+
+在以上无阈值报告之后，已与用户逐项确认开发候选校准协议：统一 `W=400`；只用
+development seed `200..202` 中完整落在 `6001..8000` 的检查终点
+`7200/7600/8000`，共 12 轨迹 × 3 检查 = 36 行；六个稳定性上限按每个
+dataset×kernel cell 的线性 P95 后取四格最大值，两项运动性下限按每格线性 P05 后
+取四格最小值，不加人工倍数或舍入；连续两次稳定且运动充分才合格，稳定但运动不足的
+停滞耐心为四次。候选停止后的开发审计同样按窗口重叠语义，只有连续四次稳定性失败才
+记为持续再漂移，避免单个异常块在三个相邻检查中被重复计数。
+
+新增 `scripts/calibrate_issue53_stage2b_detector.py`，没有阈值覆盖入口，严格复用 12 条
+正式 development 输入审计并拒绝 validation seed、脏工作树和覆盖输出；正式候选报告
+已从干净分析提交 `58c0386` 生成到
+`outputs/issue53_stage2b_detector_calibration/`。候选公共配置为：查询均值变化上限
+`0.0022331667`、查询 P95 变化上限 `0.0054885833`、L1 均值变化上限
+`0.0004866`、L1 P90-P10 宽度变化上限 `0.00044`、唯一行比例变化上限
+`0.0558866667`、归一化行熵变化上限 `0.0192478344`、活跃轮次比例下限
+`0.8625`、平均改变行比例下限 `0.0057487176`、停滞耐心 `4`。
+
+开发完整回放发布 36 行阈值来源和 216 行全预算检查：12/12 均为
+`stationary_qualified`，其中 11 条候选停止在 2000 轮、1 条在 2400 轮；0 条停滞，
+候选停止后最大连续不稳定为 0..2，0 条触发四连败持续再漂移，开发分类为
+`candidate_supported_on_development`。三项产物哈希复算通过，报告 manifest SHA-256
+为 `faa7c821804ea8de98a50069745ef906996ca51dbb00bdab7bc862f2945c1d8e`；该报告生成时
+validation seed `220..224` 仍未读取，候选配置尚未冻结，也尚未接入在线停止。
+
+用户审查开发结果后已同意将上述候选冻结为 validation 配置。新增
+`scripts/issue53_stage2b_validation_protocol.py`，完整精度绑定生成提交 `d87503e`、
+原生成协议 `483fd48f…`、校准分析提交 `58c0386` 以及正式校准报告/36 行来源/216 行
+回放三个产物哈希；冻结配置 SHA-256 为
+`f3789ddbbec63b66bf8f7b21e08268a0e46aad5ed2e6601c67524d988d9cb1b9`，完整验证协议
+SHA-256 为 `7c6d345dc559298dafd4a28eb5a2c1f08742133f660bbbef67b0347c726e8921`。
+
+封存验证范围固定为 2 dataset × 2 kernel × seed `220..224` 共 20 条，每条必须跑满
+8000 轮以保留候选停止后的反事实尾部，总预算 160000 轮；采集时不在线早停。硬门禁为
+20/20 `stationary_qualified`、0 条 `stalled`、0 条停止后四连败持续再漂移，不允许
+cell 特例；验证一旦失败即拒绝本配置、退休这些 seed 并重新设计，禁止用同一验证结果
+调阈值。当前入口只有 plan 模式，不能读取 validation 轨迹或启动生成；正式单卡运行
+仍须先向用户报告 GPU 与预计开销并再次取得明确确认。validation 数据截至目前仍未读取，
+在线自动停止仍未接入。
+
+用户随后明确批准启动 8000 轮封存验证，并要求在线 detector 留待另行讨论。新增独立
+`scripts/collect_issue53_stage2b_validation.py`：collect 必须显式确认冻结协议完整 SHA，
+要求干净工作树和恰好一张可见 CUDA GPU；20 条按固定顺序运行，每条轨迹原子落盘并可
+严格审计续跑，完整集合结束前不执行 detector replay 或发布部分分类。执行器全套回归
+1080 passed 后固定在提交 `0388997`，并于 `2026-08-15T10:55:31+08:00` 从独立 detached
+worktree `/home/chuhan/projects/table-diffusion-issue53-validation-run` 正式启动；物理 GPU 1
+通过 `CUDA_VISIBLE_DEVICES=1` 成为唯一可见卡。正式输出写入
+`outputs/issue53_stage2b_validation/`，运行日志为
+`outputs/issue53_stage2b_validation_run.log`；预计墙钟约 8.5..9 小时。validation seed
+现已正式解封，后续禁止修改或根据部分结果调节 detector；截至本记录只确认进程健康，
+未执行任何部分 detector 分类。
+
+在不读取 validation 中间结果、不修改冻结配置和运行 worktree 的前提下，已并行完成一项
+纯人工轨迹反例审查。审查严格使用冻结的 `W=400`、1001 个查询、`N=1000` 和完整 replay：
+当仅 1/1001 个查询的四个窗口均值依次为 `0.1/0.3/0.5/0.7`、其余查询不变时，三个窗口
+最大两两单查询漂移达到 `0.4`，但跨查询 mean 被稀释为 `0.0003996004`，线性 P95 为
+`0`，整体 L1 均值漂移同为 `0.0003996004`；六项稳定性与两项运动性均通过，detector
+在 1200/1600 两次连续通过后错误给出 `stationary_qualified`。两个查询等幅反向移动的
+反例也在 1600 轮错误合格，且整体 L1 漂移恰为 `0`。稳定对照按预期在 1600 轮合格；
+全体查询单块尖峰对照则连续三次被识别为不稳定，尖峰离开三个窗口并重新连续通过后才在
+3200 轮合格。该审查使用满足 trace 契约但非生成器实跑的构造轨迹，因此证明的是当前
+`query mean + query P95` 在逻辑上不足以排除稀疏查询漂移，不证明正式生成轨迹中已经发生
+该事件。当前 detector、校准报告和正在运行的 validation 协议均未改动；下一步需先讨论
+是否引入对所有查询一视同仁的最坏查询漂移护栏，再决定新配置的校准与新 seed 验证。
+
+为只测量该护栏的开发自然量程，新增
+`scripts/analyze_issue53_stage2b_query_max_range.py`。入口固定复用原校准的 `W=400`、
+`6001..8000` 与终点 `7200/7600/8000`，严格审计 12 条 development 输入并拒绝
+validation；每个检查对三个窗口全部两两计算逐查询归一化窗口均值漂移，输出其中最大值、
+对应查询坐标和窗口对，同时复算并逐项核对现有 query mean/P95 公式。入口没有阈值、配置、
+分类、候选停止或生成重跑参数，正式输出要求干净工作树且不可覆盖。新增契约测试覆盖 21 个
+查询中单坐标漂移令线性 P95 为零而 max 保持 `0.4`、全部三组窗口对以及脏树先验拒绝；
+相关 14 项测试通过。正式报告已从干净分析提交 `1505fd5` 发布到
+`outputs/issue53_stage2b_query_max_range/`：36 行证据完整覆盖四格各 9 行，终点严格为
+`7200/7600/8000`；test 的查询数为 50、nltcs 为 1001。`query_max_shift` 全局范围为
+`0.0015501205..0.007825`、全局线性 P95 为 `0.0077875`；四格线性 P95 分别为 nltcs
+Gibbs `0.002673506`、nltcs independent `0.0030212904`、test Gibbs
+`0.0074966667`、test independent `0.0078083333`。若后续机械沿用“四格 P95 后取最大”
+规则，其描述性包络值为 `0.0078083333`，但本步骤没有把它选择为阈值，也没有修改 detector。
+CSV/JSON 哈希分别为 `0556945c2a09d08e45f747bdc53bf11ccbb0ebfe21adeeabd04e88bee26f9092`
+与 `70390c99f6cdac24568db35f502356601cf70d1a0721bec68d99b235b1439d9a`，逐项复算通过；
+source audit 明确记录 `sealed_validation_seeds_read=false`。这些量程来自固定完整 workload 的
+晚期开发轨迹，尚不能替代增量查询场景验证。
+
+在用户确认采用上述护栏候选后，新增独立的
+`QueryMaxStationarityDetectorConfig`、`collect_query_max_stationarity_range_evidence()`
+与 `replay_query_max_stationarity()`；原 `StationarityDetectorConfig`、原无阈值证据入口、
+原 replay 契约和冻结 validation 协议均保持原样，新版使用单独的
+`issue53-stage2b-query-max-*-v1` 契约，避免旧验证静默获得新规则。新增稀疏单查询漂移反例
+确认旧版仍会合格而新版拒绝，稳定且运动充分的对照仍合格，并逐字段确认新版除新增
+`query_max_shift` 外不改变旧证据。
+
+新增 `scripts/calibrate_issue53_stage2b_query_max_detector.py`：只从 12 条 development
+轨迹的既定 36 行晚期证据按“四格各线性 P95、再取最大”自动导出 max 上限，原版冻结配置
+作为不可变 base；随后配对回放原版与新版全部 8000 轮，并审计停止后四连败再漂移。入口
+没有阈值覆盖、validation 读取、生成重跑或在线停止参数。相关 71 项测试先行通过；全套
+回归首次仅因共享 Conda Python 无执行位导致两个需要 `sys.executable` 的子进程测试无法
+启动，使用不修改共享权限的临时可执行副本重跑后为 `1097 passed`。正式 development
+候选报告已从干净实现提交 `c55b703` 发布到
+`outputs/issue53_stage2b_query_max_calibration/`：36 行校准证据与 216 行全预算检查均严格
+覆盖预定范围，自动导出的公共 `query_max_shift_tolerance` 为
+`0.007808333333333567`，原冻结配置的其余字段逐项不变。新版回放 12/12 均为
+`stationary_qualified`，停止轮次由原版 11 条 2000、1 条 2400 变为 10 条 2000、2 条
+2400；仅 `test_300x10/seed_200/factorized_gibbs` 推迟 400 轮，其余 11 条不变。0 条
+停滞、0 条持续再漂移；停止后最大连续不稳定分别为 6 条 0、2 条 1、4 条 2，均未达到
+四连败门禁。随后补充的两个稀疏查询反向变化与单块全体尖峰恢复测试确认：新版拒绝前者，
+后者在异常块退出三窗口并重新连续两次通过后正常合格；相关 49 项定向测试通过。
+
+正式 query-max 报告 manifest、报告、36 行证据和 216 行全回放哈希依次为
+`b7b2906c59f7d0b5668f3d68380a14cefc5df62c91942200c047138b0ba85658`、
+`23f6acbcce5f7bae45edcbb4f3f76e6bf804abfcfb63936287da0ba45c8c249c`、
+`bd2e2d8a19c67ba94289bb256a4caa0eed4292b0a9b886d8da0294fd64deda96`、
+`a5db9728fa59787125be1da117b80668dac82cd43ac7b42d48595138d95dad9a`，逐项复算通过；
+报告明确记录旧冻结 detector 未修改、无在线停止、无生成重跑、无 validation seed 访问。
+该结果支持 query-max 开发候选，但尚未把它冻结为新版 validation 配置。
+
+冻结 V1 的正式 validation 轨迹采集已于 `2026-08-15 18:57 +08:00` 完成：20/20 条
+轨迹均跑满 8000 轮，总计 160000 轮，采集器逐条重审 trace 哈希、完整预算、无门控
+proposal 全应用、终态和配对 `s0/S0/初始化后 RNG` 后才发布集合 manifest。正式输入仍为
+`outputs/issue53_stage2b_validation/`，collection manifest SHA-256 为
+`cdb58df5d6ebcc0ea0892ace2244889448cb62e3ba7a4174259fe4c3c5fd4e92`；其中仍明确记录
+`detector_replay_performed=false` 与 `partial_validation_classification_read=false`。采集阶段
+没有提前查看任一轨迹的收敛分类，也没有根据 validation seed 调整冻结配置。
+
+新增 `scripts/replay_issue53_stage2b_validation.py` 作为冻结 V1 唯一正式解封入口。默认
+`plan` 不读取 validation 轨迹；`report` 没有阈值覆盖参数，必须同时显式确认冻结协议完整
+SHA-256 和上述 collection manifest SHA-256，并要求干净工作树。正式回放前会重新审计
+集合字段、20 个 cell 与 run manifest 哈希、采集提交、8000 轮预算、trace 哈希和十组配对
+绑定，再用唯一冻结配置回放；每条轨迹同时保留完整 18 个 `W=400` 检查，审计候选停止后
+连续四次不稳定再漂移，并把 20/20 合格、零停滞、零持续再漂移交给既有冻结门禁统一判定。
+失败轨迹的停滞轮次单独记录，不会冒充合格候选停止轮次。正式产物将原子、不可覆盖地发布
+报告、20 行轨迹结果、360 行全预算检查及带哈希 manifest；该入口不重跑生成器、不接在线
+停止，也不使用 query-max 候选或绝对 L1 质量作为停止条件。
+
+新增正式回放契约测试覆盖协议/集合双哈希确认、脏工作树先验拒绝、run manifest 篡改、
+采集阶段提前分类标记、跨核配对不一致、真实 V1 公式的 20 条通过、停滞字段归一化、候选后
+四连败再漂移以及结果原子落盘。专项 13 项、相关冻结协议/采集/校准/基础收敛 69 项均通过；
+CPU 全套回归为 `1092 passed, 7 skipped`。入口实现固定在本地提交 `a69c499`，随后从该
+干净提交显式确认冻结协议 SHA 与 collection manifest SHA，执行了一次不可覆盖的正式
+`report` 回放。
+
+正式 V1 validation 分类为 `does_not_support_frozen_detector_on_validation`。20/20 条轨迹都
+曾满足“连续两次稳定且运动充分”：18 条候选停止轮次为 2000，2 条为 2400；停滞为 0。
+失败只来自预注册的停止后持续再漂移门禁：`test_300x10 / seed 220 / factorized_gibbs` 在
+候选轮次 2000 后，于检查终点 5600..7600 出现 6 次连续稳定性失败。前四次由 L1
+`P90-P10` 宽度变化超过 `0.00044` 触发，后两次由 L1 窗口均值变化超过 `0.0004866`
+触发；运动护栏始终通过。8000 轮检查重新稳定不撤销“曾连续至少四次再漂移”的冻结门禁。
+其余 19 条均未达到四连败，唯一失败轨迹令持续再漂移计数为 1，因此硬门禁整体失败。
+
+正式报告位于 `outputs/issue53_stage2b_v1_validation_replay/`，20 行轨迹结果和 360 行完整
+检查均已发布并逐项重算哈希。report manifest、报告、轨迹 CSV、完整检查 CSV 的 SHA-256
+依次为 `bb4de0d6cfee9257eb3f4c2045ed1011b55e36bbf5c2f72b712c5b952e96b324`、
+`dcccefff9ae2237f0be3298ef53e3d9df2dbb621537a5c278ca6f41c91c306b7`、
+`ff945cf8b29ed86a316e643210934fbc37a66ac01b121813f4bad4f0eaefaaff`、
+`3c3e21a9914e532693b18672667bb20aa63fffcf7fbafb19e87a234748bdf51e`。按冻结协议，V1 配置
+被拒绝，validation seed `220..224` 对后续配置正式验证作废且不得用于回调阈值；当前不能
+把 V1 接入在线停止。query-max 仍只是 development 候选，也不能在这批 seed 上补做正式
+验证。下一步应先区分“候选停止过早”与“判据对正常长期波动过敏”的设计问题，冻结新版
+方法后再使用全新的 validation seed。
+
+对该失败所做的只读事后诊断没有发现实现、封存输入或异构服务器问题：正式 replay 与原始
+400 轮块统计逐项一致，失败配对均来自同一 RTX 4090 环境，方向及 Gibbs 条件 clip 仍为零，
+运动护栏全程通过。异常轨迹的候选证据区间 `801..2000` L1 均值为 `0.00295911`，候选后
+`2001..8000` 为 `0.00291260`，最后 2000 轮为 `0.00292033`，最后一个 400 轮块为
+`0.00287450`；候选后块均值线性斜率近零且略向下。因此现有证据不支持“loss 持续向坏处
+漂移”，更像一次随后恢复的局部波动形态变化。5600..6800 的四连败来自相邻块 L1
+`P90-P10` 宽度在约 `0.00073..0.00127` 间切换，7200..7600 则由一个 L1 均值较高块
+造成，8000 已恢复稳定。
+
+主要设计矛盾在统计口径而非某个核的代码：开发校准每个 cell 只用 3 seed × 3 个晚期检查
+共 9 行估计单检查 P95，但验证实际要求六项稳定性指标在总计 298 个候选后检查中不得形成
+任何四连败；这些检查还因三窗口滚动而高度相关。development 小表候选后已有 12/89 个
+不稳定检查，validation 小表进一步为 32/149，而 nltcs 在 development 和 validation 均为
+0。统一绝对阈值由小表噪声最大的 cell 主导，相对 nltcs 各 cell 的晚期 P95 已宽松约
+3.95..17.32 倍，说明当前“一套绝对阈值覆盖不同 N/查询数”并不真正尺度无关。小表
+`N=300,Q=50` 的 normalized L1 单计数粒度为 `1/(NQ)=0.00006667`，宽度阈值
+`0.00044` 实际夹在约 6 与 7 个离散粒度之间，也会放大边界敏感性。
+
+另一个信号是 development 与 validation 共 32 条轨迹全部在 2000 或 2400 轮合格，候选
+规则几乎退化为固定 burn-in；“连续两次”检查共享三分之二窗口，并不是两份独立稳定证据。
+但仅增加连续次数也不能根治：本次异常在候选后曾连续稳定多个检查，直到 5600 才出现并在
+8000 恢复。当前最合理判断是 V1 的单检查量程校准、重叠连续语义和“长期不得出现一次局部
+波动”的验证目标没有共同控制误停风险；不能据此认定 Gibbs 核未收敛，也没有足够 seed 将
+问题归因给 Gibbs。query-max 不直接处理本次 L1 波动。以上诊断不改变正式失败结论，也不
+用于回调 validation seed `220..224` 的阈值。
+
+为准备把 Stage 2 V1 作为独立研究 PR 归档，新增
+`docs/进度/Issue53_Stage2_V1收敛检测器总结.md`，集中整理 Stage 2A 轨迹语义、V1 三窗口
+判据、development 校准、封存 validation、query-max 补充边界、正式负结果、失败诊断和
+全部关键产物哈希。文档明确区分“V1 detector 被否决”与“生成核是否收敛/质量是否足够”，
+并明确 V2 不进入本 PR。当前仍未 push 或创建新 PR。
+
+为使该堆叠 PR 基于 PR #55 的最新审核状态，已在不改写上述正式证据提交 SHA 的前提下，
+普通合入 `origin/research/issue-53-current-state-contract=b765233`。唯一内容冲突位于 factor
+Gibbs 条件采样：解决结果在同一次条件计算中同时保留 PR #51 的截断前 logit/概率/熵
+observer 与 Stage 2 的实际 clip-change 计数，不增加 RNG 消耗或改变采样概率；边界测试明确
+区分“`abs(raw_logit) >= clip` 的资格命中”和“数值确实被 clip 改变”两种统计。合并后
+factor 专项 `63 passed`、Stage 2/相关 Gibbs 定向 `278 passed`、全仓 `1147 passed`。
+本次同步没有重跑正式实验、修改冻结协议、读取新 seed、push 或创建 PR。
+
+验证：执行器加入后用不修改共享 Conda 权限的临时可执行副本完成全套 1080 passed。
+所有新改动仍只在本地工作树，未推送、未更新 Issue/PR。
+
+## 最近变更（2026-08-14）
+
+### Issue #53 Stage 2A：离线收敛回放判据完成本地审查修订（待用户审查）
+
+Stage 2A 仍只交付轨迹与离线回放工具，不接在线早停、不冻结生产窗口/阈值，也不运行
+正式长实验。三窗口、全窗口两两比较、连续两次通过和 S0 排除语义保持不变；L1 判据
+现在显式固定为窗口算术均值与线性分位数 `P90-P10`，并额外输出每窗口 P95 作为过冲
+诊断，不把绝对 L1 高低混入收敛资格。
+
+运动护栏不再使用“任一单元格改变”的合并布尔比例。每个窗口分别计算活跃轮次比例和
+平均改变行比例，三个窗口的最小值必须同时超过调用者显式给出的正阈值；零阈值被
+fail-closed 拒绝。人工轨迹已覆盖完全冻结、大表每轮只改一行、前动后冻、持续漂移、
+稳定充分运动，以及高 L1 但稳定运动仍可收敛，明确区分“收敛”与“质量”。
+
+回放结果契约升为 `issue53-stage2a-replay-v2`，结果绑定完整轨迹内容 SHA-256、查询/目标
+身份、轨迹终止原因和完整检测配置。JSON/NPZ 加载现在拒绝顶层、数组 metadata 和逐状态
+观测中的未知字段；非预算原因结束但未通过回放的轨迹返回
+`terminated_before_qualification`，不再误报为 `collecting`。独立核与因子化 Gibbs 核均
+纳入“开关轨迹不改变最终表、评价次数或 RNG 端点”的回归测试。当前改动仅在本地
+`research/issue-53-stage2-convergence-trace` 工作树，尚未推送或更新 Issue/PR。验证：
+Stage 2A/参考过程/主循环定向测试 159 passed、1 skipped；全套 998 passed、7 skipped。
+
+### 尺度不变选择 v3：NaN 修复+证据链+归因进分类，主判定三过（PR #48）
+
+第二轮审查五项全部修复：exclude_self 的 NaN 漏洞（softmax 前置
+-inf，双路径回归测试）、证据链对齐 #45/#47（allow-dirty 无条件非
+正式、拒绝覆盖、参考表生成后读取、全输入 SHA-256、原生
+initial_state、tail 改名、tol="inf"）、标准化归因参与最终分类、
+逐行集中度诊断（row_max_prob/有效 donor 数）、v1/v2 归档非正式。
+本次隔离复核：尺度不变相关 26 项、rho 退火 23 项；全套 898 passed、
+7 skipped（905 collected）。
+
+**v3 正式结果**（三次预注册 Issue #44 评论 5288095498，五臂、种子
+100..104、formal=true）：nltcs **supports_scale_invariant_selection**
+（三判定全过）——无门 si L1 **0.001010**（五臂最优 5/5）：机制
+0.291✓、归因 0.539✓（标准化本身贡献 46%）、门冗余 0.722✓、质量零
+报警。逐行诊断如实报告：平均集中度低（终态均值 3.1%、有效 donor
+1726），但存在瞬时单行确定性选择（峰值 1.0）——不作"无集中坍缩"
+声明；支持集收窄 ~29% 仍为已知风险。小表辅助
+mechanism_gain_gate_not_redundant（门仍强+高阶风险，如实）。
+正式 JSON SHA-256 `b5f2782c…`。对 PGM 水位 0.000357 差距 2.8 倍。
+
+## 最近变更（2026-08-13 晚）
+
+### 尺度不变选择 v2：审查修复后正式重跑，主判定维持 supports（PR #48）
+
+第一轮审查（PR #48）指出五处实现/协议问题，全部修复：低信号保护
+`scale_invariant_min_spread`（放大倍数有界、低离散度平滑退化均匀）、
+exclude_self 行统计只在非自身候选上计算（numpy/torch 同步）、donor
+全局 top_share 监控（当时的"无坍缩"判断已由 v3 逐行诊断撤回）、
+best_loss 改用主循环值、nltcs 离线参考限定 train（一次实验一份源数据）、formal 标志
+校验协议参数、any_quality_risk 纳入分类、单变量归因臂
+no_gate_legacy_a16。专项测试 18 项，全套 906 通过。
+
+**v2 正式结果**（重新预注册 Issue #44 评论 5278428081，提交 051cf22，
+五臂、种子 100..104、2000 轮、formal=true）：nltcs 主判定
+**supports_scale_invariant_selection**——无门 si L1 **0.001094**（五臂
+最优 5/5）：机制改进 0.316✓、**标准化归因 0.584✓（v2 新增：同 alpha
+下标准化本身贡献 42%，是最大单一来源；alpha 数值贡献也真实）**、门
+冗余 0.729✓（配置对齐后无门反好 27%），质量零报警，best_loss 不变式
+零违反。test_300x10 辅助 mechanism_gain_gate_not_redundant（机制与
+归因成立、小表门仍强 4.60 且高阶风险 flagged，如实保留）。v1 输出
+归档 *.prefix_legacy.json，v1 数字不再引用（v2 无门 si 0.001094 与
+v1 0.001020 同量级，方向不变）。正式 JSON SHA-256 `e5c507bb…`。
+
+"门冗余"结论限于测试配置（rho=0.01、a16、nltcs、2000 轮等预算），
+不从方法设计推广（审查意见一.3 的定位）。
+
+## 最近变更（2026-08-13）
+
+### 尺度不变选择：无门控扩散演化正式通过预注册判定（Issue #44 阶段二）
+
+**背景：** rho=0.01 更正重跑（PR #45）将无门量化目标定为等预算打平历史门
+L1 0.002728。诊断（4000 轮地板扫描）定位瓶颈为净漂移速率而非噪声地板；
+盲 rho 调度（几何/两段式，已实现为消融工具）增益仅 3-5%；alpha 扫描单调
+改善无拐点 → 结构诊断：种群同质化使 donor 联合分数行内离散度收缩，固定
+alpha 的 softmax 选择压力衰减为均匀。
+
+**机制：** `selection_scale_invariant`（默认 False）——geometric 抽样的
+logits 行内标准化后乘 alpha，有效选择温度恒等于 alpha，尺度不变性成为
+内生性质。纯分布侧（改分布，不筛选）：不读取候选评价、无接受/拒绝组件。
+dev 定标（seed 42..44，只用于定标）冻结 a16 恒定 + 全默认漂移参数；恒定
+单参数打平/超过手调双端递增谱系，且修正后饱和拐点出现——结构而非调参。
+
+**正式结果（预注册 Issue #44 评论 5270803118，协议 f59d0ba，四臂 2×2
+配置对齐，种子 100..104，2000 轮）：** nltcs 主判定分类
+**supports_scale_invariant_selection**——无门 si L1 **0.001020**（四臂
+最优，5/5）：机制改进 ratio 0.294（≤0.60），门冗余 ratio 0.611（≤1.10，
+配置对齐后无门反好 39%）；质量零报警（train 未测量 3-way −50.7%、4-way
+−33.8%，TVD 略好）；支持集 2087 vs 2989 为已知边界（观察指标）。
+test_300x10 辅助：mechanism_gain_gate_not_redundant（机制 0.48 通过 5/5，
+小表上门仍强 4.20，高阶报警）——小表偏门模式如实保留，逐数据集判定不
+合并。legacy 两臂与 PR #45 正式重跑逐种子一致（轨迹级复现）。正式 JSON
+SHA-256 `cf0e2699…`（nltcs）已入库。
+
+**公平性纪律：** dev 曾出现"无门越过有门 41%"的中间表述，经有门同配置
+对照证实为配置不对称假象（rho 混淆教训的应用），已在设计文档 §5 更正；
+正式协议因此采用 2×2 完整配置对齐。
+
+**收口进度（Issue #46）：** 对 PGM 同信息无噪声水位 0.000357 的差距从
+基线 9.8 倍缩到 **2.9 倍**（0.001020）。尚未收口；支持集收窄机制与剩余
+差距分解为开放问题。
+
+## 最近变更（2026-08-11 晚）
+
+### 扩散必要性 2×2 消融：完整引导机制具有显著增量价值（Issue #43）
+
+**预注册协议**（提交 31abe2c；rho 更正重跑提交 7c06ce7，种子 100..104，
+四臂等预算 2000 轮，rho=0.01 显式）：{扩散核, 随机核} × {无门+自冷却,
+历史贪心门}。随机核 = alpha=0（geometric 抽样精确退化为逐行均匀 donor）+
+关闭残差定向复制，只移除方向来源，保留 rho/eta/mu 扰动结构与冷却调度。
+主判定数据集为 nltcs（项目方 2026-08-12 于结果产出前澄清；小表只作辅助）。
+首轮继承默认 rho=0.1 的输出保留为 `*.rho01_legacy.json`。
+
+**nltcs 结果（rho=0.01，最终表 measured L1，5 种子均值）：**
+
+- 无门条件：完整引导 0.006626 vs 无引导 0.063833——比值 **0.104**（约
+  10 倍），5/5 全胜，`diffusion_necessary_no_gate = true`。判定含义
+  （第三、四轮审查定稿）：**完整引导组合**（fitness/距离加权 donor +
+  残差定向复制作为整体）显著优于**均匀 donor、无定向复制的对照**；
+  对照臂仍保留冷却或门提供的目标反馈，不称"完全无引导"；本实验未把
+  donor 加权与残差定向拆开，不宣称其中某个子机制单独必要；无门一列
+  实际是"无门+双重自冷却"，不推广到其他无门控配置。
+- 有门条件：随机 0.051753 vs 扩散 0.002728——比值 **18.97**，
+  `gate_confounds_attribution = false`。该判定的含义（审查修正）：随机核
+  加门**不能匹配**引导核加门，门不足以解释引导方案的全部收益；它不证明
+  "随机+门本身无效"——相对初始状态（marginal 初始化 L1 0.063276，逐正式
+  种子复算）随机+门在 nltcs 上改善约 18.2%（5/5 种子方向一致），确实
+  构成有效爬山，只是显著弱于引导核。
+
+test_300x10 辅助数据同方向（无门比值 0.089、5/5；有门比值 2.73）。两个
+必要性标志在 rho∈{0.1, 0.01} 下一致成立——消融结论对 rho 稳健（rho=0.1
+历史数字：无门比值 0.050、有门比值 6.08）。
+
+**结论（第四轮审查定稿口径）：** **在当前参数、固定 2000 轮等候选评价
+与 measured L1 指标下，完整 donor/copy 方向引导组合，在"无门+双重自
+冷却"和"历史门控"两种具体配置中，均显著优于均匀 donor、无定向复制的
+对照；随机门控本身有效（相对初始改善约 18.2%），但不能替代引导机制。**
+两个判定标志在 rho∈{0.1, 0.01} 下一致成立。边界：不拆分宣称单个子
+机制（donor 加权 / 残差定向）单独必要；对照臂保留冷却/门的目标反馈，
+不称"完全无引导"；无门一列实际是"无门+双重自冷却"，不推广到其他无门
+配置；A/B、C/D 跨列比较同时改变门与冷却两个因素，不将跨列差异单独
+归因给门（单因素归因见 PR #45 §7.3 交叉表）。消融正式 JSON 含初始
+状态 L1（initial_state，可由 scripts/audit_formal_json.py 独立复验）；
+nltcs test 侧评价按"一次实验一份源数据"规则撤回（见
+test_evaluation_withdrawn，历史 test 参考哈希迁入其
+withdrawn_reference_sha256）。--allow-dirty 现强制
+formal_protocol=false（脚本级测试覆盖）。
+
+**边界：** 单数据集主判定 + 小表辅助；随机核只是"均匀 donor+无定向"这一种
+随机化（更强的随机基线如纯变异核未测）；与外部生成器的差距见 Issue #46
+（PGM 无噪声水位 0.000357，尚差约 10 倍，未达收口）。
+
+### 无门控扩散演化：残差自冷却机制接入（Issue #44 阶段一）
+
+**方法边界背景（Issue #43）：** 主循环的整代接受门是归因混杂因子——随机变异加
+贪心门本身即有效爬山法，门在时无法证明扩散机制的必要性。三臂探索（test_300x10、
+seed 42/43/44 配对、500 轮）显示：无门恒定扰动下，分布倾斜完成约 99.6% 的下降
+（28,900→118）但终点回漂到 ~234；历史贪心门 85.7；A0 严格门 89.3（门工程无
+增益）。项目主线因此确定为无门控扩散演化：方向与收敛来自 fitness/分布动力学，
+接受门只作安全护栏或对照臂。
+
+**机制：** 每轮残差比 `r_t = min(1, ||target−q_t||_1 / ||target−q_0||_1)`，
+冷却因子 `c_t = r_t^p` 整体缩放 `rho` 与 `mu`。现有 fitness 在零残差时自动
+变平，本机制补上扰动幅度侧：零残差成为吸收态，不需要门的棘轮作用。新增
+`residual_self_cooling`（冷却指数 p，默认 None 关闭）与
+`self_cooling_stop_ratio`（内在停止阈值）两个参数；诊断新增
+`self_cooling_history`/`self_cooling_stopped`。默认关闭路径与
+`master=cd5de38` 在 seed 137、25 轮下最终表与全轨迹摘要哈希精确一致。
+
+**探索性证据（冒烟，非正式结论）：** 无门 + `p=1`、2000 轮、3 种子均值：
+final 89.2 / 全程最优 65.5 / 末 100 轮 104.5；同轮有门贪心 82.3/82.3/82.9。
+无门全程最优首次越过有门贪心；终点回漂从 2.31 倍压缩到 1.36 倍，吸收态尚未
+完全达成（正式实现以 `scripts/compare_gate_free_self_cooling.py` 复现）。
+
+**nltcs test 评价定位（第三轮审查更正）：** 本实验源数据为 train，
+test 侧评价（含等行数抽样口径）已按"一次实验一份源数据"规则从正式
+产物撤回；泛化问题须以 test 为源数据独立建实验。离线参考只用 train。
+
+**正式结果（rho 更正后，提交 2bdd11e，四臂 gate×cooling，种子 100..104，
+2000 轮）：** 首轮（继承默认 rho=0.1）的 nltcs `supports` 结论已确认为 rho
+混淆产物——大扰动下贪心门拒绝率极高、baseline 被系统性削弱，输出保留为
+`*.rho01_legacy.json` 不再引用。以项目标准 `rho=0.01` 显式重跑后，nltcs 与
+test_300x10 均为 **not_supported**：nltcs 最终表 L1 历史门 0.002728、无门
+恒定 0.003467（差 27%）、有门+冷却 0.006263、无门+冷却 0.006626（主判定
+ratio 2.43）。两个冷却臂无论有无门都显著更差——冷却×小 rho 交互在等预算内
+把动力学饿死，这是机制在标准配置下的真实负结果；回漂消除（1.0002）的吸收态
+语义保留。正式 JSON SHA-256（第四轮审查收口后，含 test 撤回迁移与字段改名）
+`61665697c7383081d1a1429aceb4ee784988b87af7445b1a33b2aabfb3a12746`。
+
+**完整引导机制的增量价值对 rho 稳健**（PR #47 同步重跑，rho=0.01）：
+无门条件引导/无引导 = 0.104（5/5 全胜），有门条件无引导/引导 = 18.97——
+完整引导机制显著优于无引导基线、门只解释部分改善，两标志在
+rho∈{0.1, 0.01} 下一致成立。消融最终 JSON SHA-256（第四轮收口后）
+`01c6f67b0886704c34810a39d1820d0f1d77d429c66dc18eb1027a715434aa24`；
+运行时刻原始哈希 `41ca3664…` 保留于提交历史。
+
+**边界：** dev 定标记录与协议冻结见设计文档；不修改默认生成器；小表终点锁定
+的机制迭代（Issue #40 退火、mu 独立调度）与 Issue #43 的 2×2 必要性消融另行
+预注册；尚未与外部生成器对照（Issue #46），不构成收口判定。测试：专项 26 项，
+全套 820 项通过。设计文档见 `docs/设计/无门控残差自冷却扩散.md`。
+## 最近变更（2026-08-07）
+
+### 目标对齐 L1 持久热浴——正式负结果与有限温漂移边界
+
+**预注册结果：** Issue #38 固定 `test_300x10`、精确 50-query target、marginal
+初始化、新 seed 60..79、3000 个单坐标微步、`tau=1`。平方 baseline 与 L1
+candidate 各自只在初始表计算一次同类非零能量变化 RMS，并共享初始表、坐标日程
+和逐合法值 Gumbel；不接受、回滚、早停或选择 best。L1 的 measured normalized
+L1 为 `0.027200`，平方为 `0.019570`，配对差 `+0.007630`、区间
+`[+0.006782,+0.008478]`、0/0/20；相对 initial `0.017357` 也为 0/20 改善。
+
+**独立质量：** 未测量 3-way 为 `0.0102133→0.0107962→0.0121971`
+（initial→平方→L1），L1 相对平方恶化 12.98%，差的区间为
+`[+0.00126797,+0.00153378]`，0/0/20。4-way 为
+`0.00498069→0.00512743→0.00555928`，相对平方恶化 8.42%，也是 0/0/20。
+measured 和 3-way 预注册门槛都失败，正式分类为 `not_supported`；阶段 II 不运行。
+条件熵比例 0.9432、L1-uphill 概率质量 0.2689，未触发探索塌缩门槛。
+
+**数理解释与事后诊断：** 有限温完整条件核对 Gibbs 分布可逆、遍历；同状态条件
+期望对逆温的导数为负方差，但这只保证相对无向扩散更低，不保证相对当前状态下降。
+全坐标精确复算显示，正式 `tau=1` 下 L1 的初始随机扫描一步期望漂移均值为
+`+4.0776e-5`，20/20 seed 为正，平均 90.98% 坐标正漂移；沿轨迹的 seed 级平均
+条件漂移也 20/20 为正。初始漂移变号的 `tau_*` 均值为 4.390，范围
+3.770..5.681，而平方核均值仅 0.239。这是事后机制定位，不是新温度有效性结果。
+
+进一步证明了有限温全支持的停止边界：若状态是严格单坐标局部最小，所有上坡合法值
+仍有正概率就必然产生正期望漂移，因此原始能量不可能在每个状态都构成超鞅。后续若
+研究漂移约束温度，必须用新 seed 预注册，并在局部最小处明确探索策略；不能直接把
+4.390 设为默认值。
+
+**门禁与复现：** clean generation commit `1ac5ddd` 上 20 seed 全部跑满；内置与
+磁盘审计均重放 40 条轨迹、120000 次转移、20 个随机日程和 40 张最终表，失败 0。
+离线评价重建 60 张表后才读取真实参考表，磁盘复算通过。漂移诊断 commit 为
+`d7ee057`，20 seed、40 组初始全坐标候选集复算通过。审查修复（`0dd707c`）后
+生成 JSON 不变；离线 JSON 因新增审计重执行记录重新生成，`analysis` 段与原件
+（`c1566a4d…`，保留为 `*.pre_reaudit.json`）逐字段一致。当前生成、离线和漂移
+JSON 的 SHA-256 分别为
+`16c7095e700a64cec052c839b84618042111e04708fe1e63b67614ab34ab85af`、
+`df90f4b79b4b939441f88bee8121492536d07884cfd0f5cd3ee0ac8585835365` 和
+`3bc7b4eabdffb1325254ed410649d36643feecc8c0272469223606ce0bfe684e`。完整定理、
+协议、结果和边界见 `docs/设计/L1持久有限温扩散的理论边界与验证协议.md`。
 
 ## 最近变更（2026-08-11）
 
@@ -529,8 +1385,9 @@ worker 目录均原样保留。
 4 个主题文件。父分支对曲率更新器的代码变化仅修正 0-sweep 未计算诊断，不经过本实验固定的
 8-sweep 路径。当前干净合并提交 `fe99279` 上完整重放 seed 0 的两条 1000 轮轨迹，
 预检、baseline 和 candidate 去除方向/因子/Gibbs/总墙钟四个计时字段后，分别与
-原正式输出精确一致。动力学专项 18 项、相关 qdte `222 passed, 2 skipped`、相关
-gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。qdte 全量唯一失败是该环境未安装
+原正式输出精确一致。动力学专项 18 项、相关独立 Python 3.11 环境
+`222 passed, 2 skipped`、相关 gsd 230 项、完整 gsd CPU/torch/CUDA 559 项通过。
+独立 Python 3.11 环境全量唯一失败是该环境未安装
 torch 而对应测试未按能力跳过；排除该不适用用例后 `510 passed, 28 skipped,
 1 deselected`。重放 JSON 位于
 `outputs/generation_curvature_dynamics/replay_seed0_1000r_tau2_sweep8_fe99279.json`，
@@ -579,8 +1436,8 @@ seed 独立重放全部随机
 诊断边界后，重跑与 `743c8d5` 输出的整份非决策 JSON 精确一致。PR #22 合入后，
 本分支又以普通 merge 同步 `master=eac317b`；父 HEAD 与合并后主分支代码树相同，
 最新正式重跑去除环境和计时字段后与上一版整份 JSON 精确一致。专项测试 52 项、
-相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；qdte 相关 174 项通过、
-2 项跳过。最新正式 JSON 位于
+相关 gsd 测试 176 项、完整 gsd CPU/torch/CUDA 541 项；独立 Python 3.11 环境
+相关 174 项通过、2 项跳过。最新正式 JSON 位于
 `outputs/generation_curvature_gibbs/formal_3seed_2state_200p_tau2_sweep8_1b18d13.json`，
 大小 11,326,345 字节，SHA-256 为
 `43aab0862a5dfe86c81863c6dc645d9243167234d8dcd55804953f0e0d6e7eaf`。完整公式、
@@ -614,7 +1471,8 @@ Issue #18。
 **结论与验证：** 预注册的单一来源假设未成立，所以本阶段不实现固定基数 Gibbs，
 也不只做参与率/微批归一化。更一般的整代曲率能量或总查询步幅预算需另立问题并先
 定义有限温度、反向支持和退化性质。诊断测试 37 项、加因子和演化相关测试 124 项、
-完整 CPU/torch/CUDA 489 项通过；qdte 相关 81 项通过（另 2 项跳过）。完整协议
+完整 CPU/torch/CUDA 489 项通过；独立 Python 3.11 环境相关 81 项通过（另 2 项
+跳过）。完整协议
 审计的 158,512 次实际 Gibbs 条件更新最大原始 `|logit|=9.7069`，零次触发 30
 护栏。同步最新主分支并收紧正式元数据门禁后的重跑与上一版非决策字段精确
 一致。正式 6,876,791 字节 JSON 的
@@ -653,7 +1511,8 @@ normalized L1 为 `0.0030167→0.0027767`（-7.96%），只作次要描述。
 `rho`，也不回到方向门槛。
 
 **验证与输出：** 闭环针对性测试 53 项、加因子模块共 94 项、完整
-CPU/torch/CUDA 452 项、qdte 相关测试 92 项通过（另 2 项按环境跳过）。正式输出包含
+CPU/torch/CUDA 452 项、独立 Python 3.11 环境相关测试 92 项通过（另 2 项按环境
+跳过）。正式输出包含
 40 张 300×10 合成表、81 份 JSON；
 数值有限性、文件数、参数、哈希、配对差和 5051/30450 个离线高阶单元格均已独立
 复核。迁移到数值护栏后的 20 种子 candidate 重放又审计了 1,311,408 次条件更新，
@@ -744,7 +1603,8 @@ mask，并构造 `q_joint(M) ∝ q0(M) exp(beta U(M))`。有限温度不设置�
 loss/TVD 或跨 workload 改善。精确枚举不是可扩展算法，不能直接设为默认。
 
 **验证：** 新增测试与既有方向/更新测试共 **116 passed**；完整 gsd
-CPU/torch/CUDA 测试 **384 passed**；qdte 主循环 **25 passed, 1 skipped**。
+CPU/torch/CUDA 测试 **384 passed**；独立 Python 3.11 环境主循环
+**25 passed, 1 skipped**。
 公式、匹配规则、命令、环境、原始输出和全部失败 proposal 见
 `docs/设计/联合属性块扩散核.md`。关联 Issue #12；本变更已在 PR #11 合入后从
 最新 `master` 独立整理，不包含后续因子 Gibbs 实现。
@@ -794,8 +1654,9 @@ Bernoulli 核 KL”的唯一闭式最优解。其期望漂移
 SHA-256 分别保持
 `1ef835d9...570a00a` 与 `c8c93554...12b6c`，共享轨迹和质量指标相同。
 新旧冻结探针共同的 10,800 行逐提案指标最大绝对差也为 0。
-针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，qdte 主循环
-测试 **25 passed, 1 skipped**。公式、数值截断边界、完整命令、环境和输出位置见
+针对性测试 **67 passed**，完整 CPU/torch/CUDA 测试 **356 passed**，独立
+Python 3.11 环境主循环测试 **25 passed, 1 skipped**。公式、数值截断边界、完整
+命令、环境和输出位置见
 `docs/设计/扩散核温度熵漂移极限.md`。关联 Issue #10；方向计算性能仍由 Issue #7
 独立跟踪。
 
@@ -867,8 +1728,8 @@ active direction 矩阵的 RMS，固定后不再逐轮更新，使残差收缩�
 
 **等价与边界：** 三枚关闭机制的 nltcs baseline 成品与历史 CSV 哈希逐种子相同，
 共享决策轨迹相同；donor 距离诊断最大非决策微差 `2.98e-8`。完整测试
-**343 passed**，qdte 环境定向主循环测试 **25 passed, 1 skipped**。当前未建模
-多块合取协同，也未建立与 QDTE 的统一跨仓库协议；仓库仍不是 DP。
+**343 passed**，独立 Python 3.11 环境定向主循环测试 **25 passed, 1 skipped**。
+当前未建模多块合取协同，也未建立统一的跨方法对照协议；仓库仍不是 DP。
 
 详细公式、失败结果、命令口径、输出目录和限制见
 `docs/设计/残差驱动正向扩散算子.md`。关联 Issue #6；方向计算性能问题见 Issue #7。
