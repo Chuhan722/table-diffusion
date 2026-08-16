@@ -540,8 +540,37 @@ development cell 上寻找明显反例；若没有明显反例，只能暂时保
 残差的相关显式不可计算、交替残差相关为 `-1`；候选行保留 zero-scale/相关缺失且 JSON 中没有
 `NaN/Infinity`；四格描述性汇总无隐藏结论；脏工作树在读取正式输入前 fail-closed。V2 定向与相关
 Stage 2 测试 `138 passed`，全仓 CPU 回归 `1169 passed, 7 skipped`，`git diff --check` 通过。
-截至本记录只运行了 plan 和人工/契约测试，尚未读取 development 轨迹、生成正式报告、使用 GPU 或
-运行生成实验；分支尚未 push，也没有创建 PR。
+固定 100 轮的正式无阈值 development 审计随后已从干净分析提交
+`c4462fe688532489fee773d1a420c9f0028770f3` 生成到
+`outputs/issue53_stage2_v2_subblock_100_audit/`。本次只读回放上述 12 条既有 development
+轨迹，没有读取退休 validation seed、重跑生成器或使用 GPU；每条轨迹仍为 8000 轮，严格切成
+80 个 100 轮小块，每个候选使用连续 12 块、每 4 块前进一步，得到每条 18 个、合计 216 个候选。
+六组 dataset×seed 的配对 `s0/S0/RNG` 绑定全部通过；方向 logit 共评价
+`1,523,784,931` 次、Gibbs 条件 logit 共评价 `61,470,968` 次，正式 clip 命中均为 0。
+
+固定 100 轮下，逐查询去趋势残差 lag-1 相关绝对值 P95 的候选中位数/最大值为：
+
+| dataset | kernel | 中位数 | 最大值 |
+|---|---|---:|---:|
+| `nltcs` | factorized Gibbs | 0.5944 | 0.9823 |
+| `nltcs` | independent | 0.6033 | 0.9790 |
+| `test_300x10` | factorized Gibbs | 0.4946 | 0.6288 |
+| `test_300x10` | independent | 0.5089 | 0.6736 |
+
+四格的 query zero-scale 与相关不可计算比例均为 0，因此该信号不是零尺度或缺失值造成的。
+由于协议没有预注册拒绝阈值，这不是“统计检验已拒绝”的结论；但四格均出现一致且不弱的残差
+相关风险，足以在方法设计层面不再保留“固定 100 轮可作为统一证据块”的假设。下一步改为设计
+同一套、由轨迹本身决定证据尺度的规则；不得补试 `50/200` 后择优，也不得建立
+dataset→window 映射。query-count 的跨数据修正仍未定义，阈值、状态机、在线停止和新 validation
+继续冻结。
+
+正式产物 SHA-256：`report_manifest.json` 为
+`024f301db8212c1335226accc189e402a5b32d062c0e035efcad9c876c81a2f0`，
+`audit_summary.json` 为
+`4055db58cf173e5c0b32dc2f84d65cc9c255fe39ebd8abbda9494fc63b4795ee`，
+`candidate_evidence.csv` 为
+`b0ca4fe23b87d721da2af477886915d893b622172d784c794b437056bb87d714`。
+本次状态记录不新增事后阈值或分类；分支尚未 push，也没有创建 PR。
 
 ## 最近变更（2026-08-14）
 
