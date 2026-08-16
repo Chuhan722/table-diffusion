@@ -37,6 +37,15 @@
 > 判定仍按 #46 协议（≥2 数据集 + 全指标 + 冻结基线调参）正式执行，
 > 本结果不替代该协议。
 >
+> 产物归档：正式 JSON 位于运行工作树 outputs/residual_geometry/
+> formal_residual_geometry_5seed_2000round.json（gitignored），SHA-256
+> `51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64`，
+> 绑定提交 aac1aff；脚本冻结 EXPECTED_INPUT_SHA256 与该产物记录的
+> 公开输入哈希一致（fail-closed 对拍，见
+> scripts/probe_residual_geometry_formal.py）。合并 master 后的行为
+> 不变性由 scripts/replay_residual_geometry_main_arms.py 在当前 HEAD
+> 重放主判定两臂×五种子对拍最终表哈希验证。
+>
 > 边界：无噪声原型结论；**判定口径是 2000 轮固定预算下的终态显著改善，
 > 不构成"算法已收敛"的声明**（未做更长 horizon 对照或平稳性检查；
 > 配置为 tol=inf、固定 rho/mu、无 self-cooling，过程不会自然冻结）。
