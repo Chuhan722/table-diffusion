@@ -122,6 +122,33 @@ OUTPUT_PATH = Path(
     ".json"
 )
 
+# 冻结的预期输入身份（fail-closed）：正式运行必须精确匹配这组公开输入。
+# 与首次正式产物（commit aac1aff）记录的 input_sha256 一致。
+EXPECTED_INPUT_SHA256 = {
+    "test_300x10": {
+        "schema": (
+            "58087cbba7eb90e82974bc9ffc2222510705b97599f00ae207765e03b60cf792"
+        ),
+        "queries": (
+            "7cccd58400a8e7bf74aed6efe01069f3142dde166b37a39cd3d18408b8cecb88"
+        ),
+        "marginals": (
+            "1e0fb0413c5ed53907a760d491fda84aec8162642a39cf8eadc577d7d1ec9ee4"
+        ),
+    },
+    "nltcs": {
+        "schema": (
+            "5765de90ea97bb6617c960f9cf81fee97ca4975296bfdd67686667729cc4e7f4"
+        ),
+        "queries": (
+            "b34eb2d5a16ce1deeafbdcda7af9a9b971a490e59df0099d7c7c55ce70f0468f"
+        ),
+        "marginals": (
+            "a5e63ea80c49cfb1ac7cdb88662ce54641f4dab33ac60bda53e332cd123ea25e"
+        ),
+    },
+}
+
 
 def _sha256_file(path):
     digest = hashlib.sha256()
@@ -340,7 +367,14 @@ def _offline_mean(runs, arm, ref_name, metric):
     return float(np.mean(values)) if values else None
 
 
-def _judge(runs, ref_name):
+def _judge(runs):
+    # 离线参考名从 runs 自动推断（每数据集只有一个参考：train/reference），
+    # 保持与 scripts/audit_formal_json.py 的单参 _judge(runs) 接口兼容。
+    ref_names = [
+        next(iter(run["offline"]))
+        for run in runs if run.get("offline")
+    ]
+    ref_name = ref_names[0] if ref_names else None
     metric = "final_table_measured_l1"
     base_by_seed = _arm_metric_by_seed(runs, PRIMARY_BASELINE, metric)
     cand_by_seed = _arm_metric_by_seed(runs, PRIMARY_CANDIDATE, metric)
@@ -464,6 +498,7 @@ def main():
     formal = bool(matches_prereg and not args.allow_dirty)
 
     input_sha256 = {}
+    input_hash_mismatches = []
     for name in args.datasets:
         spec = DATASETS[name]
         input_sha256[name] = {
@@ -471,6 +506,25 @@ def main():
             "queries": _sha256_file(spec["queries"]),
             "marginals": _sha256_file(spec["marginals"]),
         }
+        expected = EXPECTED_INPUT_SHA256.get(name)
+        if expected is not None:
+            for kind, digest in input_sha256[name].items():
+                if digest != expected[kind]:
+                    input_hash_mismatches.append(
+                        f"{name}/{kind}: 实际 {digest[:12]}… != 冻结 "
+                        f"{expected[kind][:12]}…"
+                    )
+    # fail-closed：公开输入与冻结身份不符时拒绝正式运行（预注册协议
+    # 绑定这组输入）。--allow-dirty 的探索模式允许继续（formal 已为
+    # false），但把偏差记录进输出。
+    if input_hash_mismatches and not args.allow_dirty:
+        raise SystemExit(
+            "输入身份与冻结的 EXPECTED_INPUT_SHA256 不符，拒绝正式运行"
+            "（探索性运行请加 --allow-dirty）：\n  "
+            + "\n  ".join(input_hash_mismatches)
+        )
+    if input_hash_mismatches:
+        formal = False
 
     result = {
         "protocol": {
@@ -500,6 +554,7 @@ def main():
             "started_at": datetime.now().astimezone().isoformat(),
             "environment": _environment(),
             "input_sha256": input_sha256,
+            "input_hash_mismatches": input_hash_mismatches,
             "command": " ".join(sys.argv),
         },
         "datasets": {},
@@ -511,16 +566,18 @@ def main():
         runs, initial_state, reference_sha256 = _run_dataset(
             name, spec, args.seeds, args.rounds
         )
-        ref_name = next(iter(spec["references"]))
         result["datasets"][name] = {
             "initial_state": initial_state,
             "reference_sha256": reference_sha256,
             "runs": runs,
-            "judgement": _judge(runs, ref_name),
+            # 字段名与 scripts/audit_formal_json.py 及既有正式协议一致
+            # （judgment，无 e）。首次正式产物（aac1aff）使用旧拼写
+            # judgement，审计器已兼容读取。
+            "judgment": _judge(runs),
         }
         print(
             f"[{name}] 判定: "
-            f"{result['datasets'][name]['judgement']['classification']}",
+            f"{result['datasets'][name]['judgment']['classification']}",
             flush=True,
         )
 

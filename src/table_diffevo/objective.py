@@ -103,7 +103,8 @@ def compute_residual(
     ------
     ValueError
         n_records <= 0，target 与 current 形状不一致，geometry 非法，
-        或 geometry_floor <= 0
+        或 geometry_floor 非正有限数（inf/nan/bool 均拒绝——inf 会把
+        全部残差压成 0 并错误触发精确达标早停）
 
     Examples
     --------
@@ -123,10 +124,19 @@ def compute_residual(
             f"geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
             f"得到 {geometry!r}"
         )
-    if geometry == "relative" and not geometry_floor > 0:
-        raise ValueError(
-            f"geometry_floor 必须 > 0，得到 {geometry_floor!r}"
-        )
+    if geometry == "relative":
+        if (
+            isinstance(geometry_floor, bool)
+            or not isinstance(
+                geometry_floor, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(geometry_floor)
+            or not geometry_floor > 0
+        ):
+            raise ValueError(
+                "geometry_floor 必须是正有限数（非布尔），"
+                f"得到 {geometry_floor!r}"
+            )
 
     if target.shape != current.shape:
         raise ValueError(

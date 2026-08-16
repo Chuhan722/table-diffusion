@@ -164,7 +164,7 @@ def test_judge_supports_when_all_seeds_improve(formal_module):
     base = [0.0010, 0.0011, 0.0010, 0.0009, 0.0010]
     cand = [0.0003, 0.0004, 0.0003, 0.0003, 0.0004]
     runs = _fake_runs(base, cand, floors=_full_floor_arms(cand))
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["paired_wins"] == 5
     assert judgement["classification"] == "supports_relative_geometry"
     assert judgement["floor_suboptimal_flag"] is False
@@ -174,7 +174,7 @@ def test_judge_mixed_when_partial_wins(formal_module):
     base = [0.0010, 0.0011, 0.0010, 0.0009, 0.0010]
     cand = [0.0008, 0.0009, 0.0008, 0.0012, 0.0011]  # 3/5 胜
     runs = _fake_runs(base, cand, floors=_full_floor_arms(cand))
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["paired_wins"] == 3
     assert judgement["classification"] == "mixed"
 
@@ -183,7 +183,7 @@ def test_judge_not_supported_when_no_gain(formal_module):
     base = [0.0010] * 5
     cand = [0.0012] * 5
     runs = _fake_runs(base, cand, floors=_full_floor_arms(cand))
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["classification"] == "not_supported"
 
 
@@ -192,7 +192,7 @@ def test_judge_supports_requires_min_improvement(formal_module):
     base = [0.0010] * 5
     cand = [0.00085] * 5  # 改善 15%
     runs = _fake_runs(base, cand, floors=_full_floor_arms(cand))
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["paired_wins"] == 5
     assert judgement["classification"] == "mixed"
 
@@ -203,7 +203,7 @@ def test_judge_quality_risk_downgrades(formal_module):
     runs = _fake_runs(
         base, cand, floors=_full_floor_arms(cand), offline_rel=0.10,
     )
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["any_quality_risk"] is True
     assert judgement["classification"] == (
         "supports_relative_geometry_with_quality_risk"
@@ -216,7 +216,7 @@ def test_judge_floor_suboptimal_flag(formal_module):
     floors = _full_floor_arms(cand)
     floors["relative_f4"] = [0.0002] * 5  # f4 优于主臂 f8
     runs = _fake_runs(base, cand, floors=floors)
-    judgement = formal_module._judge(runs, "train")
+    judgement = formal_module._judge(runs)
     assert judgement["floor_best_arm"] == "relative_f4"
     assert judgement["floor_suboptimal_flag"] is True
     # 不改变主分类
@@ -240,3 +240,52 @@ def test_load_reference_csv_with_header(formal_module, tmp_path):
     frame = formal_module._load_reference(path, ["a", "b"])
     assert len(frame) == 2
     assert list(frame.columns) == ["a", "b"]
+
+
+def test_input_hash_mismatch_fails_closed(formal_module, monkeypatch, tmp_path):
+    """公开输入与冻结 EXPECTED_INPUT_SHA256 不符时拒绝正式运行；
+    --allow-dirty 探索模式可继续但 formal=False 且偏差入档"""
+    out = tmp_path / "o.json"
+    monkeypatch.setattr(
+        sys, "argv",
+        ["probe_residual_geometry_formal.py", "--output", str(out)],
+    )
+    monkeypatch.setattr(
+        formal_module, "_git",
+        lambda *args: "" if "status" in args else "testcommit",
+    )
+    fake_spec = {
+        "schema": tmp_path / "s.yaml",
+        "queries": tmp_path / "q.json",
+        "marginals": tmp_path / "m.json",
+    }
+    for p in fake_spec.values():
+        p.write_text("x")
+    import json as _json
+    fake_spec["queries"].write_text(_json.dumps({"record_count": 1}))
+    monkeypatch.setattr(formal_module, "DATASETS", {"nltcs": fake_spec})
+    monkeypatch.setattr(
+        formal_module, "_run_dataset", lambda *a, **k: ([], {}, {})
+    )
+    with pytest.raises(SystemExit, match="EXPECTED_INPUT_SHA256 不符"):
+        formal_module.main()
+    # 探索模式：允许继续但 formal=False，偏差记录进 provenance
+    monkeypatch.setattr(
+        sys, "argv",
+        ["probe_residual_geometry_formal.py", "--output", str(out),
+         "--allow-dirty"],
+    )
+    formal_module.main()
+    payload = _json.loads(out.read_text())
+    assert payload["provenance"]["formal"] is False
+    assert len(payload["provenance"]["input_hash_mismatches"]) == 3
+
+
+def test_expected_input_hashes_match_repo_files(formal_module):
+    """冻结的 EXPECTED_INPUT_SHA256 与仓库当前公开输入逐一相符
+    （防冻结常量与实际文件漂移）"""
+    for name, spec in formal_module.DATASETS.items():
+        expected = formal_module.EXPECTED_INPUT_SHA256[name]
+        for kind in ("schema", "queries", "marginals"):
+            actual = formal_module._sha256_file(spec[kind])
+            assert actual == expected[kind], f"{name}/{kind} 哈希漂移"

@@ -310,7 +310,7 @@ def test_geometry_invalid_name_raises():
 def test_geometry_floor_nonpositive_raises():
     """relative 下 floor <= 0 报错"""
     for bad in (0.0, -1.0):
-        with pytest.raises(ValueError, match="geometry_floor 必须 > 0"):
+        with pytest.raises(ValueError, match="geometry_floor 必须是正有限数"):
             compute_residual(
                 np.array([1.0]), np.array([1.0]), n_records=10,
                 geometry="relative", geometry_floor=bad,
@@ -327,3 +327,16 @@ def test_geometry_floor_ignored_for_absolute():
         geometry="absolute", geometry_floor=-5.0,
     )
     np.testing.assert_array_equal(r1, r2)
+
+
+def test_geometry_floor_rejects_inf_nan_bool():
+    """floor=inf 会把全部残差压成 0 并错误触发精确达标早停（PR #59
+    审查复现的漏洞），inf/nan/bool 必须在入口拒绝"""
+    target = np.array([100.0])
+    current = np.array([90.0])
+    for bad in (np.inf, float("inf"), np.nan, True):
+        with pytest.raises(ValueError, match="geometry_floor 必须是正有限数"):
+            compute_residual(
+                target, current, n_records=300,
+                geometry="relative", geometry_floor=bad,
+            )

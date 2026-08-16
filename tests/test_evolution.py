@@ -1243,3 +1243,21 @@ class TestResidualGeometry:
                 **base, residual_geometry="relative",
                 residual_geometry_floor=0.0,
             )
+
+    def test_floor_inf_nan_bool_rejected_at_entry(self):
+        """run_evolution 入口拒绝 inf/nan/bool floor（PR #59 审查漏洞：
+        inf 通过旧校验后残差全 0，第一轮即被误判 exact_residual 停止）"""
+        schema, queries, target = self._real_setup()
+        base = dict(
+            target=target, queries=queries, schema=schema,
+            n_records=300, n_rounds=1, seed=0,
+        )
+        import numpy as _np
+        for bad in (_np.inf, float("inf"), _np.nan, True):
+            with pytest.raises(
+                ValueError, match="residual_geometry_floor 必须是正有限数"
+            ):
+                run_evolution(
+                    **base, residual_geometry="relative",
+                    residual_geometry_floor=bad,
+                )

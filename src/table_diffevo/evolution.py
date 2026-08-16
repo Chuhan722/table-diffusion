@@ -518,11 +518,20 @@ def run_evolution(
             f"residual_geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
             f"得到 {residual_geometry!r}"
         )
-    if residual_geometry == "relative" and not residual_geometry_floor > 0:
-        raise ValueError(
-            "residual_geometry_floor 必须 > 0，"
-            f"得到 {residual_geometry_floor!r}"
-        )
+    if residual_geometry == "relative":
+        if (
+            isinstance(residual_geometry_floor, bool)
+            or not isinstance(
+                residual_geometry_floor,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(residual_geometry_floor)
+            or not residual_geometry_floor > 0
+        ):
+            raise ValueError(
+                "residual_geometry_floor 必须是正有限数（非布尔），"
+                f"得到 {residual_geometry_floor!r}"
+            )
 
     if init_method not in ('random', 'marginal', 'pairwise_maxent'):
         raise ValueError(
