@@ -1,0 +1,15 @@
+formal JSON: outputs/residual_geometry/formal_residual_geometry_5seed_2000round.json
+formal JSON SHA-256: 51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64
+formal commit: aac1aff84f0c435db962dc3d3b43660fcdc8c18a
+replay commit: 1a56c49efa62ef82be434c08f3fce4ae28d675e5
+[nltcs seed=200 absolute] L1=0.001048 sha=c734cc4886eb… vs 记录 c734cc4886eb… -> OK
+[nltcs seed=200 relative_f8] L1=0.000265 sha=a4f891a3d656… vs 记录 a4f891a3d656… -> OK
+[nltcs seed=201 absolute] L1=0.001153 sha=2ec8ff7e0a6c… vs 记录 2ec8ff7e0a6c… -> OK
+[nltcs seed=201 relative_f8] L1=0.000317 sha=b4525ce4f708… vs 记录 b4525ce4f708… -> OK
+[nltcs seed=202 absolute] L1=0.001156 sha=906c7f662bd1… vs 记录 906c7f662bd1… -> OK
+[nltcs seed=202 relative_f8] L1=0.000315 sha=c92390cff66f… vs 记录 c92390cff66f… -> OK
+[nltcs seed=203 absolute] L1=0.000965 sha=88b2b61bed10… vs 记录 88b2b61bed10… -> OK
+[nltcs seed=203 relative_f8] L1=0.000375 sha=2172003d2fc3… vs 记录 2172003d2fc3… -> OK
+[nltcs seed=204 absolute] L1=0.000981 sha=f9542fad0deb… vs 记录 f9542fad0deb… -> OK
+[nltcs seed=204 relative_f8] L1=0.000297 sha=8259d1ce1a00… vs 记录 8259d1ce1a00… -> OK
+重放通过：10 个主判定 run 的最终表哈希与 measured L1 全部与正式记录逐位一致
