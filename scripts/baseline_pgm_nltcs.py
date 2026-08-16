@@ -31,10 +31,24 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+DATASET_ATTR_COUNTS = {"nltcs": 16, "plants": 69}
+DATASET = "nltcs"  # 由 --dataset 覆盖
 SCHEMA_ATTRS = [f"attr_{i}" for i in range(1, 17)]
 QUERY_PATH = Path("configs/nltcs/measured_1000query.json")
 MARGINALS_PATH = Path("configs/nltcs/init_marginals.json")
 OUTPUT_DIR = Path("outputs/tier1_pgm_baseline")
+
+
+def _apply_dataset(dataset):
+    """按数据集名切换全部路径与属性表（二值基准约定布局）。"""
+    global DATASET, SCHEMA_ATTRS, QUERY_PATH, MARGINALS_PATH, OUTPUT_DIR
+    if dataset not in DATASET_ATTR_COUNTS:
+        raise SystemExit(f"未知数据集 {dataset!r}，已知: {sorted(DATASET_ATTR_COUNTS)}")
+    DATASET = dataset
+    SCHEMA_ATTRS = [f"attr_{i}" for i in range(1, DATASET_ATTR_COUNTS[dataset] + 1)]
+    QUERY_PATH = Path(f"configs/{dataset}/measured_1000query.json")
+    MARGINALS_PATH = Path(f"configs/{dataset}/init_marginals.json")
+    OUTPUT_DIR = Path(f"outputs/tier1_pgm_baseline_{dataset}") if dataset != "nltcs" else Path("outputs/tier1_pgm_baseline")
 NOISELESS_STDDEV = 1e-6
 SEEDS = [100, 101, 102, 103, 104]
 ITERS = 5000
@@ -122,9 +136,12 @@ def workload_l1(table, workload, n_records):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default="nltcs",
+                        choices=sorted(DATASET_ATTR_COUNTS))
     parser.add_argument("--seeds", nargs="+", type=int, default=SEEDS)
     parser.add_argument("--iters", type=int, default=ITERS)
     args = parser.parse_args()
+    _apply_dataset(args.dataset)
 
     from mbi.estimation import MirrorDescent
 
@@ -160,7 +177,7 @@ def main():
               f"({elapsed:.1f}s)", flush=True)
 
     report = {
-        "experiment": "tier1_pgm_baseline_nltcs",
+        "experiment": f"tier1_pgm_baseline_{DATASET}",
         "method": (
             "private-pgm MirrorDescent, noiseless linear measurements "
             "(1-way marginals + 1001 workload cells), synthetic_data(round)"
