@@ -2,6 +2,56 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 V2 人工验收入口完成，重复实验尚未执行（2026-08-16）
+
+> 本段为当前最新暂停点。固定 100 轮/12 小块路线已由既有 development 审计作为设计反例归档；
+> 当前改为不预设正常停止轮数的连续轨迹有效证据路线。本步已完成研究版数学核心、确定性边界测试
+> 和固定人工验收入口，
+> **尚未运行人工重复协议，尚未读取真实 development/validation，也未接入生成器或停止器。**
+
+新增两份待冻结设计记录：
+
+```text
+docs/设计/Issue53_V2有效证据计数器设计稿.md
+docs/设计/Issue53_V2人工轨迹验收协议.md
+```
+
+新实现位于 `src/table_diffevo/effective_evidence.py`，与旧的
+`stationarity_v2.py` 固定小块研究代码隔离。研究函数只接受连续 post-round 身份与同长度一维有限
+标量序列；拒绝 initial、缺号、重复、乱序、布尔、非有限和非数值输入。批长唯一候选为
+`b=floor(sqrt(n))`，实现使用整数 `isqrt(n)`；以全部重叠批均值估计长期方差，再计算 raw 相关膨胀、
+raw ESS、正式保守 ESS 和 MCSE。输出固定声明 `stationarity_not_assessed=true`，不存在
+stable/converged/qualified/stop/threshold/quality 字段，也不接受数据集或核身份。
+
+实现审查发现并修正了一处设计漏洞：若只把正式 ESS 截在实际 round 数以内、但 MCSE 继续直接使用
+负相关下更小的原始长期方差，MCSE 仍会暗中获得“超过 n 份证据”的收益。现在正式 ESS 与正式 MCSE
+统一使用 `max(1, raw_correlation_inflation)`；raw ESS 与原始长期方差只作诊断。完全常数返回
+`zero_round_variance`，批长与周期精确偶合造成伪零长期方差时返回
+`degenerate_long_run_variance`，有限输入导致数值溢出时返回 `nonfinite_computation`，全部 fail closed。
+
+`tests/test_effective_evidence.py` 新增 25 项确定性测试，覆盖手工复算 OBM 公式、输入身份、常数、周期、
+平移/正比例缩放不变性、单点尖峰、负相关 raw/formal ESS 分离、趋势不越权分类、数值溢出和输入不变。
+Issue #53 相关回归为 `67 passed`。第一次全仓回归因共享 `.conda/bin/python3.11` 没有执行权限，所有
+失败均集中在需要启动子进程的旧测试；使用不写入仓库的临时可执行副本重跑后完整通过：
+`1258 passed, 7 skipped, 2 warnings`。两条 warning 均来自既有 residual-geometry 输入哈希失败测试。
+
+新增 `scripts/validate_issue53_v2_effective_evidence.py` 作为固定 CPU 人工入口，协议 SHA-256 为
+`79c88437c3ae720f6938fdb2fa56b31b198734a4a39f6dd596d75e16a1690e22`。正式矩阵只有独立白噪声与
+`AR(1) phi=0.5/0.8/-0.5` 四类，每类 2000 条、每条最长 4096，在
+`16/32/64/128/256/512/1024/2048/4096` 九个前缀调用同一个研究核心，共 8000 条人工轨迹、
+72000 次证据计算。命令行只能指定新输出目录，不能覆盖 seed、重复、长度、相关强度或容差；运行前
+要求包含 untracked 在内的干净工作树，manifest 将绑定 commit、协议、源码/测试/文档哈希和环境。
+
+`tests/test_issue53_v2_effective_evidence_artificial.py` 新增 13 项入口契约测试；与核心合计
+`38 passed`。加入入口后的全仓临时可执行环境回归为 `1271 passed, 7 skipped, 2 warnings`，warning
+仍只来自既有 residual-geometry 测试。`plan` 已验证只描述固定矩阵且没有生成随机数；预注册的
+`family_code × repeat_index` 人工 seed 仍未用于完整矩阵。
+
+当前研究核心只要求至少 2 个 round 以满足数学定义，**这不是证据充分下限**。下一步只能先创建本地
+预运行提交锁定本节、协议和入口，然后执行固定人工矩阵，得到统一历史下限或
+`candidate_failed`。结果前不得新增真实数据、回调协议容差、连接生成 runner、设置 max_rounds 或
+创建停止判定。本批改动由下一次本地预运行提交冻结；尚未 push 或创建 PR。
+
 ### 最新暂停点：残差信号几何正式通过——相对残差适应度五种子 supports（2026-08-16，Issue #57）
 
 > 本段为当前最新暂停点。诊断表明旧绝对残差适应度把优化力气集中于大计数
