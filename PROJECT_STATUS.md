@@ -2,6 +2,48 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 P=6 两数据归档 smoke runner 已冻结，尚未运行（2026-08-17）
+
+> 用户确认不需要为 P=6 先冻结 rho，并授权在 `test_300x10`、`nltcs` 各跑一次后归档 PR；本机两张
+> 4090 均有其他用户任务，因此改用旧服务器空闲 GPU 0。本步只实现、测试并准备冻结 runner，没有
+> 读取新运行结果、启动 generator、调整 P/rho/C/alpha/Gibbs 或访问原始参考表。
+
+新增固定入口：
+
+```text
+scripts/run_issue53_p6_dataset_smoke.py
+tests/test_run_issue53_p6_dataset_smoke.py
+protocol SHA = 3b593ce71c8b4bd147b836dd03986d4e64d27bb782a57d0a9ac5759baf805c17
+output = outputs/issue53_p6_dataset_smoke_seed200/
+```
+
+入口只有 result-blind `plan` 和必须确认完整 protocol SHA 的 `run`，没有数据集、seed、P、rho、轮数、
+alpha、Gibbs 或其他科学参数覆盖。固定为：
+
+```text
+datasets = test_300x10 -> nltcs（串行）
+seed = 200（每个数据一条，仅作 PR 归档前真实全链路 smoke）
+rho = 0.01
+P = 6 natural-work ticks
+C = n_rounds 6000 / candidate_budget 6000（期望 60 normalized work）
+relative residual geometry floor = 8
+scale-invariant fixed alpha = 16
+factorized Gibbs sweeps = 0
+tol = +inf, max_retries = 0, terminal-current output
+```
+
+runner 原样使用当前 relative-f8 主臂的 `initial_rms` 方向尺度；alpha 显式固定为 16，rho 恒定且不启用
+任何随总轮数变化的退火，因此改变纯 C 上限不会改变同 seed 的前缀。两个数据的 schema/query/marginals
+SHA 以及历史 relative-f8 seed 200、2000-round 归档 JSON SHA 全部固定。历史结果只作描述性同 seed
+对照，不构成新验收阈值，不允许据此调参。在线停止不读取 L1，runner 也不读取原始 reference table。
+
+验证：新增 runner `10 passed`；Issue #53 当前停止链路相关 `113 passed`；全仓 CPU 回归
+`1605 passed, 7 skipped, 2 个既有 warning`。result-blind plan 已通过，正式输出目录不存在。
+
+远端只读预检：`root@10.8.176.53:6006` / `Cardiff_VM_6` 的 GPU 0 是 RTX A6000 46GB，检查时
+`3 MiB / 0%` 且无 compute process；GPU 3 的既有无关任务不触碰。下一步先提交本节冻结版本，再次
+确认 GPU 0 空闲后用 Git bundle 部署到全新隔离目录，只暴露 GPU 0、单 worker 串行执行两个数据。
+
 ### 最新暂停点：Issue #53 P=6 正式质量—计算验收通过（2026-08-17）
 
 > 用户在 auditor erratum 提交后单独授权继续。本步先运行 result-blind evaluator plan，再对既有唯一
