@@ -2,6 +2,669 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 terminal-current P=6 冻结链路已提交，正式 12 cases 尚未运行（2026-08-17）
+
+> 用户授权本步只做提交前回归并提交当前完整冻结实现，提交后停止。本步没有执行 formal collector、
+> 12 cases、未见 seed、真实数据或 GPU，没有预览未见 loss/L1，也没有调整 P、阈值、family、rho、
+> seed、C 或生成核参数。
+
+本次冻结提交统一包含：独立 terminal-current A/B/C 自然工作时钟状态机、`run_evolution` opt-in 接线、
+六条已知 development 轨迹一致性诊断、P=6 未见公开人工 family/protocol、受 SHA 与 clean-tree 约束的
+raw collector，以及只读 artifact 审计和唯一结果分流 evaluator。formal collection 和 evaluation 仍是
+两个独立显式命令，没有自动串联；错误 SHA、dirty tree、已有输出/报告都会 fail closed。
+
+提交前再次审查全部待提交文件和 CLI：protocol 只有 plan；collector 只有 plan/collect，collect 仅接收
+输出目录与完整 protocol SHA；evaluator 只有 plan/evaluate，evaluate 仅接收 collection 路径与完整
+protocol SHA。没有 family、seed、rho、P、C、阈值或分流覆盖参数，也没有导入时或 plan 时自动生成。
+
+验证：
+
+```text
+Issue #53 当前链路相关回归：99 passed
+全仓 CPU 回归：1591 passed, 7 skipped, 2 warnings
+```
+
+两条 warning 仍来自旧 `test_residual_geometry_formal_script.py` 输入哈希错误路径的 NumPy 空均值，零
+失败。全仓测试首次收集时发现当前轻量测试解释器缺少 matplotlib；随后只读追加项目原有 `.conda`
+site-packages 的 matplotlib 路径重跑，冒烟确认 NumPy 仍来自当前测试环境，完整回归通过。没有安装或
+修改依赖。全部新增/修改 Python 文件 `py_compile` 通过；新文件 Ruff check/format 通过，legacy
+`evolution.py` 的 F/E9 检查通过；`git diff --check` 通过。
+
+当前应在冻结提交后的干净工作树停下。下一步不再改设计或自动跑实验；只有用户再次明确确认完整
+protocol SHA `759cddb3e75a8a1d04e9568ae0fff30b0e26969dd6e95020500330838269b317`，才允许执行
+primary collection。采集结束后还必须单独授权只读 evaluate；任何一步都不得顺带启动下一步。
+
+### 最新暂停点：Issue #53 P=6 只读证据审计与唯一分流完成，尚未运行（2026-08-17）
+
+> 用户授权继续 collector 之后的一小步。本步只实现 raw artifact 审计、第 7/8 节固定聚合门禁与假
+> 证据测试；没有执行 generator、12 cases、新 seed、真实数据或 GPU，没有预览未见 loss/L1，也没有
+> 调整 P、阈值、family、seed、rho、C，或实现外层选择、加噪、隐私预算与 DP。
+
+新增：
+
+```text
+scripts/evaluate_issue53_p6_unseen.py
+tests/test_evaluate_issue53_p6_unseen.py
+evaluation contract = issue53-p6-unseen-evaluation-v1
+```
+
+入口仍严格分离：`plan` 不读 collection、不调用 generator；`evaluate` 只接收 collection 路径和完整
+protocol SHA，不开放任何阈值、P 或分流覆盖参数。错误 SHA 在环境、artifact 和 generator 之前失败；
+正式判定要求含 untracked 在内的干净工作树、与 collection 完全相同的 Git commit 和 Python/NumPy/
+Pandas runtime，并拒绝覆盖已有 `p6_evaluation_report.json`。evaluator 的 source manifest 覆盖
+collector 所有冻结源码并追加自身。
+
+artifact 审计逐级验证 collection/execution/case manifest 的精确字段和 SHA，拒绝绝对路径、路径逃逸、
+缺失/篡改文件及不完整 12-case 矩阵；核对协议全文、采集源 SHA、NumPy CPU 环境、case/family/query/
+target 身份。每条 terminal CSV 均重新检查 schema/domain/N，复算 ordered query vector、squared loss、
+normalized L1 和 terminal table SHA。A/C 必须没有 shadow；B 必须有完整 trace/summary，且 online 的
+current metrics、transition clocks、accept/proposal/attempt、table/query、RNG、candidate 前缀均由
+artifact 重新验证，不能只相信 collector 写入的 `prefix_audit=true`。
+
+在线 A/B/C 也会从保存的逐状态 current loss 与自然工作时钟重新执行：冻结无门控核每轮恰好一次
+proposal 并直接生效；A/B/C 更早触发却仍继续的轨迹会被拒绝；terminal decision、historical best、
+candidate C 来源和 terminal-current 身份必须复算一致。B 的 +6/+12 继续调用冻结定位规则，右删失不
+插值、不用 C terminal 补齐。
+
+聚合顺序固定为：
+
+```text
+artifact 完整性 -> 证据完整性 -> 质量/计算 -> 唯一分流
+```
+
+证据门禁沿用协议的正常结束>=10、C<=2、B>=6、两个 checkpoint 各覆盖>=80%；另把协议中逐 family
+中位数的必要前提显式化为“每个 checkpoint 的两个 family 各至少一条可用 B”，否则中位数无定义，
+只判证据不足。证据不足时 quality/compute 固定为不可评价，绝不误判为质量或计算失败。证据完整后
+严格执行两个 checkpoint 的总体中位数<=0.01、`delta_L1>0.02` 比例<=25%、逐 family 中位数<=0.02，
+以及 +12 中位节省>=30%。
+
+分流只有五个 machine-readable classification：P=6 当前人工 development 支持；仅质量失败唯一 P=12；
+仅计算失败唯一 P=4；证据不足不改 P；双失败/family 相反方向拒绝 B。family 冲突在结果前操作化为：
+一个 family 的质量失败/计算通过指向增大 P，另一个质量通过/计算失败指向减小 P 时直接拒绝，不能走
+单一回退。报告锁定最多一次回退、禁止第三个 P、禁止结果后重调阈值，并明确不能声称收敛。
+
+验证：evaluator 22 项测试通过，覆盖五种分类、三类基础证据不足、family 缺失、方向冲突、严格
+`>0.02` 边界、右删失只用观测值、输入契约、A 优先级、A/B/C 离线复算、完整假 A 矩阵和假 B shadow
+artifact、文件篡改、路径逃逸、错误 SHA、dirty tree、同 commit/source/runtime 约束与报告拒绝覆盖。
+协议、collector、evaluator 合计 `42 passed`；`py_compile`、Ruff check/format 通过。全部是伪造矩阵
+或内存假执行器，没有调用真实 generator。
+
+当前再次停止。工作树仍未提交，所以 clean-tree 门禁会继续阻止误运行。下一步应先由用户审查本步；
+若继续，只做提交前的相关回归与冻结提交，仍不运行 12 cases。提交后也必须再次单独得到用户对完整
+protocol SHA 的明确确认，才允许正式 primary collection；不得自动开始实验。
+
+### 最新暂停点：Issue #53 P=6 正式原始采集入口完成，尚未运行（2026-08-17）
+
+> 用户在 manifest 暂停点后授权继续下一小步。本步只实现受冻结协议 SHA 约束的 primary runner/raw
+> collector，并用假执行器测试；没有执行 generator、12 cases 或任何未见 seed，没有预览 loss/L1、
+> 读取真实数据、使用 GPU、评价通过/失败，或调整 P/阈值/family/seed/rho/C。
+
+新增：
+
+```text
+scripts/collect_issue53_p6_unseen.py
+tests/test_collect_issue53_p6_unseen.py
+collection contract = issue53-p6-unseen-primary-collection-v1
+```
+
+入口只有两个命令：
+
+```text
+plan    -> 只打印固定矩阵与开销，不实例化 RNG、不生成
+collect -> 必须显式确认 protocol SHA，且正式运行前要求工作树含 untracked 在内完全干净
+```
+
+`collect` 不提供 family、seed、rho、P、C、检查点或验收阈值覆盖参数，只能执行 manifest 中的 12 条
+primary P=6 cases；输出目录已存在时拒绝覆盖。正式 execution manifest 会锁定 Git commit、协议全文、
+关键源码/协议文档文件 SHA，以及 Python/NumPy/Pandas/平台环境。错误 protocol SHA 会在环境检查、输出
+创建和 generator 调用之前失败。
+
+运行结构保持最小：每条 case 先执行在线 terminal-current A/B/C；A 或 C 不做无用续跑，只有 B 才用
+同一 family/S0/seed 从头确定性重放一个关闭停止器的只读 shadow 到固定 C。shadow 必须与 online 在 B
+terminal 之前逐项一致：current metrics、transition clocks、accept/proposal/attempt 序列、terminal
+table、query vector、主 RNG 和 candidate evaluation count，任一不等立即中止。该重放等价于从冻结 B
+状态继续，但无需给核心生成器增加 resume 接口。
+
+B 通过前缀审计后，只定位 `tau+6`、`tau+12` 的第一个真实 current state；不插值、不用 C terminal
+补齐，观察范围不足就记 `right_censored_by_resource_guard`。逐 case 原子保存 terminal CSV、在线诊断，
+以及仅 B 才有的 shadow trace/summary/checkpoint 身份；reference multiset 从不传给 generator。集合入口
+只发布 raw collection manifest，不计算 delta、聚合门禁、classification 或回退选择，控制台也不输出
+单条 loss/L1。
+
+预估硬上限已在 plan 中显式报告：12 条 online 的 raw-round cap 总和 1800；若 12 条全部为 B，再各跑
+一条 shadow，最多 24 次 generator 调用、3600 raw rounds。实际 A/C 只有一次调用，B 才有第二次；均为
+小 N 人工 family、NumPy CPU，不使用 GPU或隐私预算。
+
+验证：新 collector 的 `8 passed`，覆盖 plan 零生成、family 物化不含 reference、冻结 kwargs、错误 SHA
+前置失败、dirty-tree 前置失败、+6/+12 首个真实状态与右删失、B terminal/shadow artifact 和全 12-case
+编排。所有运行均为内存假执行器，没有调用真实 `run_evolution`。Ruff、format 与 `py_compile` 通过。
+
+当前再次停止，工作树仍未提交，因此 clean-tree 门禁也会阻止误启动正式采集。下一步不应直接跑实验；
+应先实现并结果前冻结只读 artifact 审计器和第 7/8 节聚合判定器，只用伪造 A/B/C 矩阵测试全部通过、
+失败、证据不足及唯一 P=12/P=4 分流。判定器审查完成后，再提交代码并单独确认 protocol SHA 后运行。
+
+### 最新暂停点：Issue #53 P=6 未见轨迹确定性 manifest 与纯校验完成（2026-08-17）
+
+> 用户授权继续协议中预先限定的一小步。本步只实现公开人工 family、case 矩阵、C 映射、验收元数据
+> 与纯测试；没有导入或运行 generator，没有执行 12 cases、新 seed、真实数据或 GPU，也没有预览
+> loss/L1、调整 P/阈值/C，或接入外层选择、加噪、隐私预算与 DP。
+
+新增结果前冻结入口与测试：
+
+```text
+scripts/issue53_p6_unseen_protocol.py
+tests/test_issue53_p6_unseen_protocol.py
+```
+
+入口只支持 `--mode plan`，没有执行模式，也不导入 `table_diffevo.evolution`。它每次重新构造并校验
+U1/U2 manifest；从公开 reference multiset 逐项复算 N 和 ordered target，检查 schema domain、state
+唯一性、查询字段/顺序与 family 身份，不能只信手写 target。固定身份如下：
+
+```text
+protocol SHA-256 = 759cddb3e75a8a1d04e9568ae0fff30b0e26969dd6e95020500330838269b317
+U1 family SHA-256 = c47200c0b68c6c3bcf4818b7b9322f85666584eaa1459d94a19d216642f447ee
+U2 family SHA-256 = db3af48d083e1e4905a16362b63ba4bbbe7c55045efd3ae6e6a580f82a58bbab
+```
+
+复算结果与协议完全一致：
+
+```text
+U1 binary_chain_4: N=32, 11 queries,
+target=[16,16,16,16,12,10,8,10,8,6,6]
+
+U2 mixed_2x3x2: N=36, 15 queries,
+target=[18,14,10,12,19,6,6,6,6,6,7,11,4,5,2]
+```
+
+首轮 case 顺序固定为 family -> seed -> rho，共 12 条；每条显式带 P、N、`n_rounds` 与
+`candidate_budget`。C 映射严格只有 rho=1.0 -> 60/60、rho=0.25 -> 240/240，未知值 fail closed。
+回退入口不接收任意 P，只允许两个结果前注册的互斥分支：质量单独失败用独立 seed 的 P=12；计算
+单独失败用同一独立 seed 批的 P=4；每个候选矩阵仍各 12 条，但正式流程最多触发其中一个一次。
+
+manifest 同时锁定无门控 terminal-current A/B/C 契约、+6/+12 影子检查点、五项通过门禁和证据不足/
+结构失败分流。`tol=+inf` 在严格 JSON 中写为语义字符串 `positive_infinity`，避免写入非法 Infinity；
+正式执行入口将来必须显式翻译且核对协议 SHA。每次 manifest 调用返回新对象，外部修改不会污染后续
+身份。
+
+验证只运行新协议纯测试：`12 passed`；`py_compile`、Ruff check/format 与新文件
+`git diff --check` 全部通过。没有运行全库测试，因为本步没有修改生成代码，且边界明确禁止启动新
+轨迹。
+
+当前再次停止。下一步先由用户审查冻结实现；未获明确授权前，不得另建 formal runner 或执行 12
+cases。若用户继续，下一小步应先明确是只实现受 protocol SHA 约束的独立运行/结果收集入口，还是在
+入口审查后再单独授权正式运行；无论哪种都不得开放任意 P、family、seed、rho、阈值或 C 覆盖参数。
+
+### 最新暂停点：Issue #53 P=6 未见轨迹验收协议已结果前冻结（2026-08-17）
+
+> 用户确认先写简单、统一的 P=6 质量—计算验收方案，并确认 P 失败后最多调整一次。本步只写协议
+> 与做 target 算术复核；没有实现 family、运行 generator、新 seed、真实数据或 GPU，也没有接外层
+> 选择、加噪、隐私预算与 DP。
+
+新增正式协议：
+
+```text
+docs/设计/Issue53_P6未见轨迹质量计算验收协议.md
+```
+
+首轮固定矩阵：
+
+```text
+P = 6
+family = U1 binary_chain_4 (N=32), U2 mixed_2x3x2 (N=36)
+seed = 20260819, 20260820, 20260821
+rho = 1.0, 0.25
+总计 = 2 × 3 × 2 = 12 cases
+影子检查点 = B 后 +6、+12 normalized work
+```
+
+两个 family 的 reference multiset、ordered equality queries 与整数 target 已逐项写死。独立算术复核：
+
+```text
+U1 total N=32，target=[16,16,16,16,12,10,8,10,8,6,6]
+U2 total N=36，target=[18,14,10,12,19,6,6,6,6,6,7,11,4,5,2]
+```
+
+生成参数沿用当前冻结核，只隔离停止规则；在线仍为 `tol=+inf`、`max_retries=0`、terminal-current
+输出。C 不作质量终点，统一按预期 60 normalized work 换算纯防挂死护栏：rho=1 使用 60 raw rounds/
+candidates，rho=0.25 使用 240。实际 work 随 participating rows 随机变化；C case 只标资源截断。
+
+P=6 必须同时满足：
+
+1. 12 条中至少 10 条由 A/B 正常结束，C 不超过 2；
+2. 至少 6 条 B，且 +6/+12 各至少覆盖 80% 的 B cases；
+3. 两个检查点的 `delta_L1 = L1_B - L1_continuation` 中位数均不超过 0.01；
+4. 每个检查点 `delta_L1>0.02` 不超过 25%，两个 family 各自中位数不超过 0.02；
+5. 相对 +12 work 的中位 normalized-work 节省至少 30%。
+
+L1 只在表身份固定后离线计算，不进入在线停止。loss 同时报但不作跨 family 硬门禁。检查点右删失
+不得用 C terminal 或最后状态补齐。
+
+失败后的处理已预注册：
+
+```text
+仅质量失败、计算/覆盖通过 -> 唯一候选 P=12
+仅计算失败、质量/覆盖通过 -> 唯一候选 P=4
+质量与计算同时失败，或 family 需要相反方向 -> 停止调 P，重新设计 B
+C 太多、B 少于 6 或检查点覆盖不足 -> 证据不足，不调 P
+```
+
+唯一回退 seed 固定为 20260822—20260824；family/rho/阈值/C 均不变。回退仍失败或证据不足，就停止
+P 调整；禁止第三个 P 或在同一 seed 上反复调到通过。
+
+下一步若用户继续授权，只把协议实现成确定性 family/manifest 和纯测试，复算 N、target、查询顺序、
+12-case 矩阵、C 映射与协议哈希；实现后再次停止，仍不运行这 12 cases。
+
+### 最新暂停点：Issue #53 六条已知轨迹在线接线一致性验证通过（2026-08-17）
+
+> 用户授权本步只复用已经看过的六条人工轨迹，验证新 A/B/C 在线接线能否严格复现旧离线回放。
+> 没有增加 seed、读取真实数据、比较 patience、选择 C、使用 GPU 或形成正式质量/收敛结论。
+
+验证入口继续复用：
+
+```text
+scripts/analyze_issue53_terminal_early_stop_development.py
+tests/test_issue53_terminal_early_stop_development.py
+```
+
+完整轨迹与在线轨迹共用同一份冻结 generator 参数；唯一预期差异是完整轨迹关闭 stopping 并跑到旧
+horizon，在线轨迹启用 `inner_early_stopping_patience_ticks=6`。对每条完整轨迹先按旧纯回放得到 A/B
+决定，再要求在线运行严格复现同一状态。
+
+逐条结果：
+
+```text
+seed      rho    offline/online reason   stop state   stop work   terminal loss
+20260816  1.00   B / B                    12           12.0000     12.0
+20260817  1.00   B / B                    20           20.0000      7.0
+20260818  1.00   B / B                     8            8.0000      7.5
+20260816  0.25   B / B                    27            7.0625      4.0
+20260817  0.25   B / B                    64           16.0000      1.0
+20260818  0.25   A / A                    11            2.8125      0.0
+```
+
+六条全部满足：在线 reason/state/work 与离线相同；主返回和 `final_table` 的 SHA-256 等于完整轨迹
+stop state 的 current 表；current metrics、transition clocks、accept history、candidate evaluations
+严格等于完整前缀；停止后主 RNG SHA-256 等于完整轨迹同一状态。5 条 B 仍全部输出高于历史 best
+loss 的 terminal current，确认没有回滚或 best 选表。结果为 5 B、1 A、0 C；C 没有抢先干扰 A/B。
+
+报告新增 `online_wiring_audit`，分类固定为
+`development_known_trajectories_wiring_consistency_only`。它只证明实现一致，不证明 P=6 合适、C 数值
+合理、输出质量通过或算法收敛。结果文档已同步：
+`docs/实验结果/Issue53_TerminalCurrent早停开发诊断.md`。
+
+验证：六轨迹开发逻辑/在线审计 15 passed；相关新旧回归 255 passed、1 skipped；全库 1549 passed、
+7 skipped，2 条旧 residual-geometry 错误路径的 NumPy warning，零失败；Ruff、`py_compile` 与
+`git diff --check` 通过。
+
+下一步不是运行新数据，而是先讨论并冻结未见 seed/family 的质量—计算评价协议：一个全局 P 候选、
+允许的 terminal-current 质量代价、最低计算收益、报告的检查点/删失规则，以及 C 的外部资源设置。
+协议确认前不得开始正式验证或真实数据运行。
+
+### 最新暂停点：Issue #53 terminal-current A/B/C 已完成 opt-in 接线（2026-08-17）
+
+> 用户授权的本步只把已完成的纯状态机接入 `run_evolution` 并增加接线测试。没有运行新 seed、真实
+> 数据或 GPU，没有选择新的 patience/C 数值，也没有实现外层查询选择、加噪、隐私预算与 DP。
+
+`run_evolution` 新增末尾可选参数：
+
+```text
+inner_early_stopping_patience_ticks=None  -> legacy 行为不变，主返回历史 best
+inner_early_stopping_patience_ticks=P>0   -> 启用 A/B/C，主返回 terminal current
+```
+
+参数放在原有 `horizon_invariant` 之后，避免改变旧 positional 调用对已有参数的映射。新模式固定：
+
+```text
+A：current loss == 0 -> fit_target_reached，inner_complete=true
+B：连续 P 个自然 work tick 无严格 best 刷新 -> early_stopped，inner_complete=true
+C：candidate_budget 或 n_rounds 到界 -> resource_cap_reached，inner_complete=false
+同一状态优先级：A > B > C
+```
+
+每轮先让已接受 proposal 成为 current、更新 current/best/时钟，再观察 A/B/C。A、B、C 的主返回、
+`diagnostics["final_table"]`（请求时）和 `output_squared_loss` 都对应同一 terminal current；历史 best
+只保留在 `best_loss_diagnostic_only` 与 best-L1 诊断字段，不参与选表。C 的具体来源另记为
+`resource_cap_source_diagnostic_only`，不会把资源截断冒充质量完成。`n_rounds=0` 在 S0 上直接走 C，
+但同一 S0 若已满足 A，仍由 A 优先。
+
+逐段接线审查发现并修复一个配置漏洞：`run_evolution` 默认有限 `tol` 会拒绝 loss 上升 proposal，
+与本方法的无门控身份冲突。因此启用新模式时 fail-closed 要求 `tol=+inf`、`max_retries=0`；否则明确
+报错，不能出现“名义无门控、实际仍门控”。只增加观察器并把 patience 设到不会提前触发时，配对
+测试确认 current-table、逐状态 metrics、transition clocks、accept history 与 RNG hash 全部不变。
+
+测试与检查：
+
+- 纯状态机 + 接线测试：42 collected，全部通过；
+- 新旧停止、evolution、reference process、fit-target/shadow 等相关回归：249 passed，1 skipped；
+- 全库：1543 passed，7 skipped，2 条 warning 来自旧 residual-geometry 错误路径的空均值；零失败；
+- 新文件 Ruff check/format、`evolution.py` 的 F/E9 定向 lint、`py_compile`、`git diff --check` 通过。
+
+下一步不是自动跑数据。先由用户审查本次接线；确认后再单独讨论并冻结运行与评价协议，包括是否仍
+以 P=6 作为 development 候选、如何报告 A/B/C 比例与 terminal-current 质量—计算权衡，以及 C 的
+外部资源配置。当前不得据此宣称收敛或开始正式实验。
+
+### 最新暂停点：Issue #53 terminal-current A/B/C 纯状态机完成（2026-08-17）
+
+> 用户纠正方向：若没有 B，当前零噪声 A 很难触发，生成大多只能运行到 C；而 terminal current 并不
+> 随运行单调改善，所以 A+C 不是更好的质量方案。B 应是大多数运行的主要实践停止方式，不再要求它
+> 先证明未来永远不会改善。本步只实现独立纯状态机与边界测试；没有导入或修改 `run_evolution`，没有
+> 运行 generator、新 seed、真实数据或 GPU，也没有接外层选择、加噪、隐私预算与 DP。
+
+新增当前候选模块：
+
+```text
+src/table_diffevo/inner_early_stopping.py
+tests/test_inner_early_stopping.py
+```
+
+旧 `inner_stopping.py` 及其 shadow/counterfactual 测试继续原样保存，用于复现已被否决的 3+3
+`optimization_stalled` 历史负证据。没有把旧结果事后改名成通过；新 A/B/C 候选用独立模块隔离。
+
+新状态机固定以下最小契约：
+
+```text
+natural tick = floor(cumulative applied participating rows / N)
+P = 6 ticks（可配置 development 默认值）
+
+A：current loss == 0
+   -> fit_target_reached, inner_complete=true
+
+B：连续 P 个已完成自然 tick 没有严格历史 best 刷新
+   -> early_stopped, inner_complete=true
+
+C：调用方在当前状态传入 resource_cap_reached=true
+   -> resource_cap_reached, inner_complete=false
+
+同一 current 状态的优先级：A > B > C
+```
+
+C 不在 `EarlyStoppingConfig` 内硬编码任何 max work/round/time；具体外部资源限制由以后调用方拥有，
+只把是否到达护栏传给状态机。这避免把 C 的魔法数字重新混入质量逻辑。
+
+状态机只观察 current loss、严格 best 刷新、applied participating rows 与外部 C 布尔标志；不接收
+table、L1、reference、未来状态或 RNG。普通 current loss 上升已经是发生后的合法状态，不拒绝、
+回滚或重试。best loss/state 仅以 `diagnostic_only` 字段暴露。A/B/C 停止决定的
+`terminal_output_state_index` 与 `terminal_output_loss` 均严格等于触发时 current 身份；即使 B/C
+触发时 current 明显差于历史 best，也不会返回 best。
+
+新纯测试共 `28 passed`，覆盖：初始 A、默认/可配置 P、参与行自然时钟、只在真实 tick 边界触发 B、
+下降但未低于 best 不算 progress、第六 tick 恰好刷新 best 取消 B、A/B/C 同状态优先级、C 输出较差
+current 而非 best、非法 loss/参与行/配置/C 标志、生命周期及 API 禁止 L1。旧状态机三组历史回归
+`29 passed`，确认旧负证据未被破坏。Ruff check、Ruff format check、`py_compile` 与
+`git diff --check` 通过。
+
+总设计稿已同步：B 是主要实践停止，不再把复杂 continuation 验收当成实现前置；既有 continuation
+曲线只保留为“terminal 后续非单调、不能挑任意 C 终点”的 development 观察。
+
+下一步若用户继续授权，只将 `InnerEarlyStopper` 接入 `run_evolution` 并增加接线测试，仍不运行新
+seed 或真实数据。接线必须保证 proposal 先成为 current，再观察 A/B/C；B/C 返回
+`diagnostics["final_table"]` 对应的 terminal current，不改生成核、rho、alpha、residual 或 Gibbs。
+
+### 最新暂停点：Issue #53 B 后 continuation-gain 开发曲线完成（2026-08-17）
+
+> 用户确认不再用任意 C 的最后状态评价 B，并授权下一小步只改造既有六条已知轨迹的开发诊断。
+> 本步没有新增 seed、比较 patience、选择 C、接入在线状态机、读取真实数据、使用 GPU，或实现外层
+> 选择、加噪、隐私预算与 DP。固定 `P=6` 仍只是 development 基线，不是生产参数或收敛结论。
+
+诊断入口 `scripts/analyze_issue53_terminal_early_stop_development.py` 已更新为 v2：
+
+```text
+analysis_id = issue53_terminal_early_stop_continuation_development_v2
+B stop work = tau
+relative checkpoints = tau+P, tau+2P, tau+4P
+P = 6 normalized-work ticks（仅 development）
+```
+
+B 在 `tau` 的 terminal current table/current loss 先固定为正式输出；离线影子副本才沿同 RNG 前缀
+继续。每个相对检查点取第一个实际达到或越过目标 work 的 post-round current 状态，不插值。旧完整
+轨迹只是可观察范围，不是 C 或质量终点；不够长的点固定记为
+`right_censored_by_known_trace_horizon`，state/table/loss/L1 均保持空值，不能拿末尾状态补齐。
+
+五条 B 轨迹的 continuation-gain 汇总如下。差值均为“续跑检查点 current − B 输出 current”，负数
+表示续跑后的 terminal 更好：
+
+```text
+相对点    观察/删失   loss 续跑更好/相同/更差   loss 平均/中位差    L1 平均/中位差
++6        5/0         1/0/4                    +3.2 / +4.0         +0.016667 / +0.020833
++12       5/0         0/1/4                    +3.8 / +4.5         +0.020833 / +0.020833
++24       3/2         3/0/0                    -4.0 / -2.5         -0.020833 / -0.010417
+```
+
+L1 的方向计数与 loss 完全一致。实际平均额外 work 为 6.0、12.0625、24.0；平均额外 raw rounds/
+candidate evaluations 为 13.4、28、49。所有可观察检查点前均未达到零残差 A。`+24` 的 3/3 不能
+解释为稳定收益，因为另外两条较晚停止的轨迹恰好被旧 horizon 右删失，存在明显可观察性偏差。
+
+结论是 terminal current 的后续变化明显非单调：只选 `+6`、`+12` 或 `+24` 中任一单点都会得到
+不同甚至相反判断。这支持取消单一 C 终点比较，但既不支持也不否决 P=6。正式验收必须在看新数据前
+冻结多检查点质量—计算口径和删失处理，不能看完曲线后挑有利检查点。
+
+每个观察点均用同 seed、`horizon_invariant=True` 重放前缀；metrics/clocks、current-table SHA-256、
+独立 squared loss 与离线 normalized L1 全部同状态核对通过。旧轨迹没有逐状态累计墙钟，因此明确
+报告 `wall_clock_delta_available=false`，没有用独立重放耗时伪造续跑墙钟。结果文档已改写为
+`docs/实验结果/Issue53_TerminalCurrent早停开发诊断.md`，总设计稿 6.4 与当前暂停点已同步。
+
+纯契约测试现为 `9 passed`，`py_compile`、Ruff check、Ruff format check 与 `git diff --check` 通过。
+下一步必须先讨论并结果前冻结：允许的 terminal loss/离线 true-L1 退化、最低计算收益、正式相对
+检查点与删失规则、一个全局 patience 候选、全新未见 seed/family 协议。用户再次确认前不实现状态机、
+不运行新 seed 或真实数据，也不接外层 DP。
+
+### 最新暂停点：Issue #53 A/B 正常停止与 C 资源截断语义完成收口（2026-08-17）
+
+> 用户指出：若用“运行到 C 的最后状态”作为 B 的参考结果，无门控随机轨迹会因 C 的取值不同而
+> 得到不同结论，因此该比较不严谨。本步只修正
+> `docs/设计/Issue53_三条件自然工作时钟组合停止设计稿.md` 与本状态记录；没有修改代码或测试，
+> 没有运行 generator、实验、新 seed、真实数据或 GPU，也没有实现外层选择、加噪、隐私预算或 DP。
+
+当前统一输出契约为：每个 proposal 都无条件成为下一张 current 表；普通 loss 上升不拒绝、不回滚、
+不重试。A、B、C 任一出口都只返回触发时的 terminal current table/current loss，历史 best 表不得
+替换输出。历史 best loss 只允许作为 B 的只读 progress/计时信号和诊断字段，不能影响 proposal、
+残差、current 状态或输出身份。准确方法名为：
+
+```text
+无门控残差引导扩散核 + 状态相关早停器
+```
+
+三个条件的完成含义已经分开：
+
+```text
+A = fit_target_reached
+    当前表进入测量噪声允许范围；当前 sigma=0 时即 measured residual 全零；正常质量完成。
+
+B = early_stopped
+    尚未达到 A，但连续冻结的自然工作耐心内没有历史 best 刷新；到边界立即输出 current；
+    不等待 current 回到 best 附近，不回滚，不增加 terminal-readiness 输出门控；正常早停，
+    但不表示拟合达标、平稳、收敛或未来不会改善。
+
+C = resource_cap_reached / candidate_budget / max_rounds_guard
+    A、B 均未触发时由调用方外部资源限制强制截断；输出 current，inner_complete=false；
+    只表示 resource-limited，不能计作 A/B 正常完成或质量合格。
+```
+
+C 不再被设计成内部质量参数，也没有理论推出的通用最佳数字。它只能由调用方在运行前按可用资源
+传入，例如最大 normalized work、candidate evaluations 或墙钟；旧 `work=20` 已被正式负结果证明
+不能充当默认拟合点、稳定点或 B 的共同参考终点。固定六个无 best-refresh tick 也只保留为已知六条
+轨迹上的 development 基线，不是最终耐心值、生产参数或收敛结论。
+
+B 的后续验收不再比较“B terminal”与“某个 C terminal”。新结构是：令 B 在工作量 `tau` 触发，
+立即固定 `tau` 的 current 表作为正式输出；只在离线影子诊断中沿同一 RNG 前缀继续，在事前声明的
+`tau+P`、`tau+2P`、`tau+4P`……相对工作检查点，记录 terminal current loss、离线 true L1、额外
+normalized work/raw rounds/candidates/墙钟及是否后来达到 A。正式判断必须跨未见 seed 汇总“额外
+计算—后续收益曲线”，不能由一个任意终点决定。若影子观察先碰到 C，未观察到的检查点记为右删失/
+证据不足，不能把 C terminal 补成真值或判 B 通过。
+
+下一步若用户继续授权，只把现有 development 诊断改造成上述 B 后 continuation-gain 曲线，仍只用
+已知六条轨迹检查协议与实现，不读取新 seed，也不当独立验证。该诊断审查后，再单独讨论并结果前
+冻结统一质量—计算容限、一个全局耐心候选和未见 seed 协议；当前不得直接接主生成器或外层 DP。
+
+本步为纯文档修改，没有运行测试；`git diff --check` 通过，新增设计稿无尾随空白且 Markdown fence
+成对。
+
+### 最新暂停点：Issue #53 固定六 tick terminal-current 早停开发诊断完成（2026-08-17）
+
+> 用户确认：无门控生成的 B 最终输出必须是触发早停时最后一张 current table/current loss，不能返回
+> 历史 best；但中间可以只读记录 best loss，并用 best 是否刷新作为 progress 信号。本步只在旧 3+3
+> 已使用的六条人工完整轨迹上，按新 terminal-output 语义重放固定六 tick 早停基线。该材料已被看过，
+> 分类仅为 development 诊断，不是验证或调参证据。没有修改主生成器、接入在线停止、读取真实数据、
+> 使用 GPU 或实现外层 DP。
+
+新增可复现入口与三项纯边界测试：
+
+```text
+scripts/analyze_issue53_terminal_early_stop_development.py
+tests/test_issue53_terminal_early_stop_development.py
+```
+
+入口先完整生成轨迹，再只读 loss/participating rows 确定 A/B 停止 state；随后用同 seed 和固定前缀
+重放，并显式读取 `diagnostics["final_table"]`。六条停止表和六条参考终点表均通过前缀 metrics/clocks、
+current-table SHA-256、独立 squared loss 与 normalized L1 复算，确认没有误用 `run_evolution` 的历史
+best 主返回值。
+
+固定候选只使用：自然 tick=`floor(cumulative participating rows/N)`；tick 内刷新严格 best 算 progress；
+连续 6 tick 无 progress 触发 `early_stopped`；当前零噪声 A 为 current loss=0；B 输出 terminal current。
+没有比较 9/12/20 或自适应公式。
+
+六条中五条由 B 早停、一条在 work=2.8125 由 A 精确命中。五条 B 的 development 汇总：
+
+```text
+平均 / 中位 work 节省                    68.47% / 70.00%
+terminal loss 较参考好 / 相同 / 差        1 / 0 / 4
+terminal L1 较参考好 / 相同 / 差          1 / 0 / 4
+平均 / 中位 terminal loss delta           +2.7 / +1.5
+平均 / 中位 terminal L1 delta             +0.01875 / +0.020833
+停止 current loss 高于 / 等于历史 best    5 / 0
+平均 / 中位 current-minus-best loss        +3.8 / +4.0
+```
+
+最明显一条在 best loss=3 时以 terminal current loss=12 输出。结论不是按旧苛刻标准自动否决早停，
+而是发现一个直接风险：best-stagnation 可以描述“多久没产生新低”，但不能保证触发瞬间的 current 状态
+适合作为 terminal 输出。完整参考终点自身也会随机漂动，一条 B 早停优于参考，A 精确命中那条若继续
+完整运行反而从 L1=0 漂到 0.114583，因此参考终点不是 ground-truth 最优 checkpoint。
+
+完整结果位于 `docs/实验结果/Issue53_TerminalCurrent早停开发诊断.md`。纯测试 `3 passed`；Ruff check、
+Ruff format check 与 `git diff --check` 通过。
+
+下一步只讨论：best-stagnation 是否只负责把 B 武装成早停候选，而真正停止还要等待一个简单、在线、
+不回滚且不读取 L1 的 terminal-readiness 条件。用户确认前不实现、不比较其他 patience、不运行新 seed
+或真实数据，也不接外层 DP。
+
+### 最新暂停点：Issue #53 条件 B 已正式改为早停语义，等待定义质量—成本验收口径（2026-08-17）
+
+> 用户确认不再要求 B 证明“完全不变、未来没有任何改善”，而将其改为计算—质量权衡下的早停。
+> 本步只更新设计语义和状态记录；没有选择耐心值、min-delta、窗口或相对改善公式，没有修改生产代码
+> 或测试，没有运行 generator、新 seed、真实数据或 GPU，也没有实现外层 DP。
+
+三种出口现在统一为：
+
+```text
+A = fit_target_reached：进入测量噪声允许范围，当前零噪声下即 residual 全零
+B = early_stopped：尚未达到 A，但按事先冻结的质量—计算取舍返回停止时 terminal current
+C = resource_cap_reached：达到工程资源上限，强制返回历史 best
+```
+
+用户随后明确纠正 B 的输出契约：早停结果必须是触发 B 时最后一张 current table 及其 current loss，
+不能回头返回历史 best table/best loss。对 B，`selected identity == terminal identity`；历史 best 最多
+作为进度诊断或候选触发信号，不参与输出选表。C 的返回语义未在本步重新确认，暂不从 B 外推修改。
+
+B 不再使用 `optimization_stalled` 名称，也不声明 converged、stationary、全局最优或未来不会改善。
+停止后的完整参考轨迹出现更低 loss，不再自动判候选失败；后来达到 A 也必须与额外付出的标准工作量
+和墙钟一起评价。早停验收比较早停 terminal current 表与共同参考终点的 terminal current 表；两者的
+true evaluation L1 仍只允许在两张表都固定后离线计算，不能进入在线停止或选点。完整前缀 best 可
+并列报告，但不能替换任一 terminal 输出。
+
+在线可用信息和已确认结构不变：自然时钟为
+`floor(cumulative applied participating rows / N)`；普通 current-loss 上升不拒绝状态，B 早停返回
+terminal current 表。B 的触发信号是否仍观察内部 best loss，还是改看 current-loss 趋势，尚未确认。
+
+旧固定 3+3 与“历史最长 progress 间隔两倍、最少 6 tick”的结果仍是有效负证据：它们不能证明停滞。
+不能事后把旧结论改写为通过；若以后把同类 patience 规则作为早停候选，必须用新的名称、质量—成本
+问题、结果前协议和未见验证轨迹。
+
+下一步先讨论 B 的在线触发信号应看 best 刷新还是 terminal/current-loss 趋势，再冻结 terminal 输出的
+早停验收口径：允许多少 loss/离线 true-L1 差异，至少必须换取多少 normalized work、raw rounds、
+candidate evaluations 或墙钟节省。该口径确定前，不比较 patience 6/9/12，不实现状态机、不运行
+新数据，也不接外层 DP。设计稿已同步更新：
+`docs/设计/Issue53_三条件自然工作时钟组合停止设计稿.md`。
+
+### 最新暂停点：Issue #53 自适应耐心 B 候选在已知反例回放中失败（2026-08-17）
+
+> 用户确认将 A 简化回唯一的“进入测量噪声允许范围”：当前噪声为 0，所以只有 measured residual
+> 全零才触发，不再使用固定 `RMSE<=1 AND MAX<=2` 工程容差作为正式 A。随后只做一个最小
+> development 步骤：在旧 3+3 已使用的六条完整人工轨迹上回放新提出的自适应耐心 B。没有修改
+> 生成核或生产代码，没有接入 `run_evolution`，没有读取真实数据、使用 GPU、生成输出文件或实现
+> 外层 DP。该回放使用已知 seed，只能检查旧漏洞，不能作为新候选的独立验证。
+
+保留的自然时钟与观察口径为：
+
+```text
+work_tick = floor(cumulative applied participating rows / N)
+每个 tick 内出现严格更低 best loss才算 progress
+```
+
+development 候选固定为：`longest_gap=max(3, 历史相邻 progress tick 最大间隔)`，当前连续无进展
+`idle_ticks >= 2*longest_gap` 时由 B 停止。它想用当前轨迹自己的历史改善节奏替代所有数据固定 3+3。
+
+回放结果仍失败：六条中一条在 work 2.8125 先以零 residual 触发 A；其余五条由 B 停止，其中四条
+停止后仍出现严格更低 best，恰好重现固定 3+3 的四个已知反例：
+
+```text
+seed 20260816 / rho 1.0   B work 18.0000  best 3.0 -> tail 2.0  patience 12
+seed 20260817 / rho 1.0   B work 22.0000  best 3.0 -> tail 2.0  patience 8
+seed 20260818 / rho 1.0   B work 8.0000   best 3.0 -> tail 1.5  patience 6
+seed 20260816 / rho 0.25  B work 7.0625   best 3.0 -> tail 1.0  patience 6
+seed 20260817 / rho 0.25  B work 16.0000  best 0.5 -> tail 0.5  patience 6
+seed 20260818 / rho 0.25  A work 2.8125   best 0.0
+```
+
+结论：该自适应候选只把前两条停止点稍微后移，无法解决“未来改善间隔可能超过全部历史间隔”的
+根本漏洞，development 阶段即否决；不实现独立状态机、不接主循环、也不为它建立新 seed 正式协议。
+固定 3+3 负结果继续有效。自然 work tick 与 best-so-far 口径仍可保留，但当前没有已接受的 B 数值
+规则。设计记录已同步到 `docs/设计/Issue53_三条件自然工作时钟组合停止设计稿.md`。
+
+下一步只继续讨论 B 的正确语义和可获得的证据；不能把耐心值从 6 事后改成 9/12/20，也不能把本次
+已知轨迹回放改写成独立实验。用户再次确认前不实现、运行新 seed、读取真实数据或接外层 DP。
+
+### 最新暂停点：Issue #53 A+B+C 自然工作时钟组合停止设计稿完成，等待审查（2026-08-17）
+
+> 用户重新确认内层目标后，本步只新增待审查设计稿
+> `docs/设计/Issue53_三条件自然工作时钟组合停止设计稿.md`。没有修改代码、测试或冻结协议，
+> 没有运行 generator、人工矩阵、真实数据或 GPU，也没有接入 `run_evolution`，没有改变 rho、alpha、
+> residual、Gibbs、外层 DP 或任何已归档结果。
+
+设计恢复完整的三个互补条件：A 是同一 current checkpoint 的拟合/未来噪声一致达标，B 是尚未达到
+A 时按观察到的 best-loss 收益判断停滞，C 是最大标准工作量、candidate budget 或 raw-round guard
+构成的工程保险。建议终止优先级为
+`exact_residual > fit_target_reached > optimization_stalled > resource_cap_reached`；A 返回第一张达标
+current table，B/C 返回历史 minimum-loss、并列最早的 best 表。L1、held-out、真实答案与 reference
+table 仍禁止进入在线停止或选点。
+
+用户明确希望保留的时钟固定写成：
+
+```text
+normalized_work = cumulative applied participating rows / N
+work_tick = floor(normalized_work)
+```
+
+每当 work tick 增加 1，结算刚完成的自然工作区间是否刷新过历史 best。这只时钟没有被旧证据否定；
+它自动把不同 rho 的原始轮数换成记录更新机会。相同 work 不代表相同墙钟，factor build、Gibbs
+microsteps、candidate evaluations 和 elapsed time 必须并列报告，零参与空转还需 candidate/raw-round
+故障保险。
+
+旧 3+3 负结果保持有效：它不能独立保证未来再无严格 improvement。但当时四条反例均在 3+3 停止前
+已经达到后来接受的 RMSE<=1/MAX<=2，因此在完整 A+B+C 顺序下会先由 A 结束；旧矩阵没有回答
+“只对尚未达到 A 的轨迹，3+3 能否作为 practical B fallback”。新稿建议先原样保留 3 个无新-best
+tick 形成 candidate、再 3 个确认的 3+3 作为唯一待验候选，不增加 V2 式统计层，也不把 stalled 写成
+converged/stationary。
+
+后续若获设计确认，必须先另立新协议和全新 seed 的完整轨迹影子验证。明确错误是：B 在 A 前停止，
+但不受停止影响的同一前缀在共同 C 之前后来达到 A。若尾部未达到 A、但 best loss 仍降低，正式协议
+还需用户先选择：任意严格改善都否决 B，或只把 missed A 作为硬失败并另立结果前“明显改善”口径；
+不得看完结果后用百分比或 true L1 临时决定。
+
+下一步只请用户审查设计稿的三个决定：自然 work tick 是否唯一采用；3+3 是否先原样作为组合 B 的
+待验候选；tail improvement 采用严格方案还是另立明显收益口径。用户确认前不得写正式协议、实现、
+运行或更新 Issue，也不得重跑旧 6 条、V2 系列或最新 12 条矩阵。当前设计稿故意未提交；工作树预期
+只包含 `PROJECT_STATUS.md` 修改和上述新设计文档，待用户审查后再决定是否修订与提交。
+
 ### 最新暂停点：Issue #53 RMSE+max 正式人工矩阵有效失败，等待重新讨论（2026-08-17）
 
 > 用户明确授权后，已在冻结 commit `898b76c2a8e60093888bfe05ffce74b89a124c5e` 上执行唯一一次
