@@ -2,11 +2,11 @@
 
 ## 当前阶段
 
-### 最新暂停点：平方根残差 P=6 两数据三臂协议已冻结，正式矩阵尚未运行（2026-08-17）
+### 最新暂停点：平方根残差 P=6 两数据三臂矩阵完成，跨数据反转仍存在（2026-08-17）
 
 > 本工作在独立 worktree/分支 `research/issue53-sqrt-residual-earlystop` 上进行，不修改等待外部审查的
-> PR #63 分支。用户要求直接比较 absolute、平方根中间方法和 relative 在 test/nltcs 的 P=6 早停
-> terminal-current 结果；本节记录的是结果前冻结状态，没有任何新矩阵结果。
+> PR #63 分支。用户授权直接比较 absolute、平方根中间方法和 relative 在 test/nltcs 的 P=6 早停
+> terminal-current 结果；18 组矩阵已在 A6000 上全部完成并聚合。
 
 新增残差几何：
 
@@ -44,11 +44,34 @@ docs/设计/Issue53_平方根残差P6早停两数据三臂对比协议.md
 ```
 
 结果前验证：新增/相关定向 `47 passed`；本机轻量环境可收集的全仓回归 `1577 passed, 7 skipped`，
-仅有 2 个既有 warning。完整全仓首次 collection 因本机轻量环境没有 matplotlib，6 个旧 Stage2
-分析测试无法导入；冻结提交部署到 A6000 后须用完整环境补跑，不把依赖缺失记为测试失败。
+仅有 2 个既有 warning。本机环境缺少 matplotlib 的 6 个旧 Stage2 分析测试在 A6000 完整环境中补跑；
+冻结提交 `fe8fb797a718bf0e9a89668d46fbd5726c1c3082` 的远端全仓结果为 `1636 passed, 2 warnings`。
 
-正式运行按用户澄清使用 `root@10.8.176.53:6006` 的 RTX A6000，只暴露一张空闲 GPU、一个 worker，
-三个 seed shard 串行，不并占多卡且不触碰 GPU 3 的既有任务。当前尚未部署、未启动生成、未产生输出。
+正式运行使用 `root@10.8.176.53:6006` 的 RTX A6000 GPU 0，只暴露一张 GPU、一个 worker，三个 seed
+shard 串行；GPU 3 的既有任务未触碰。18/18 cases 均为 `early_stopped`，没有资源上限结束：
+
+| 数据 | 残差 | mean terminal L1 | 配对胜数 | mean work | mean rounds |
+|---|---|---:|---:|---:|---:|
+| `test_300x10` | `absolute` | 0.0026000 | 3/3 | 13.3356 | 1319.7 |
+| `test_300x10` | `sqrt_relative` | 0.0029778 | 0/3 | 14.0044 | 1396.0 |
+| `test_300x10` | `relative` | 0.0037556 | 0/3 | 15.6689 | 1550.0 |
+| `nltcs` | `absolute` | 0.0011321723 | 0/3 | 17.6697 | 1768.7 |
+| `nltcs` | `sqrt_relative` | 0.0004930488 | 0/3 | 15.3349 | 1534.3 |
+| `nltcs` | `relative` | 0.0003474679 | 3/3 | 23.0065 | 2301.3 |
+
+`test_300x10` 上 absolute 同时以 L1 和 work 支配另外两臂：sqrt 的平均 L1/work 分别高 14.53%/
+5.02%。`nltcs` 上 sqrt 同时以 L1 和 work 支配 absolute（分别低 56.45%/13.21%）；relative 比
+sqrt 的 L1 再低 29.53%，但 work 高 50.03%，二者构成 Pareto 取舍。三 seed 的胜者在两个数据上
+都是 3/3 一致，但方向相反，因此平方根方法只是 nltcs 上有价值的中间点，不是跨数据 canonical 答案。
+
+完整结果见 `docs/实验结果/Issue53_平方根残差P6早停两数据三臂结果.md`。报告 SHA-256 为
+`241618e80cce3549e2626fc668467e4c9029be968858e09a2dffb029716de143`；本地与远端 40 个文件逐项
+SHA-256 完全一致。运行结束后远端树 clean、GPU 0 已释放，GPU 3 未触碰。
+
+下一步不扫更多固定指数、不调 rho。先只读分析现有 18 个终态，按 generation-visible target 频率、
+查询阶数和重叠度分解配对误差，定位跨数据反转发生在哪些查询区间；该分析是已见结果后的 development
+diagnostic，不作选择证据。之后再结果前冻结确定性 geometry selector/双尺度组合，或明确采用数据集级
+Pareto 选择；新候选必须用 fresh seeds 并补 held-out、高阶联合、支持集和多样性门禁。
 
 ### 最新暂停点：PR #63 已创建并以 Amendment 3 同步 Issue #53，等待审查（2026-08-17）
 
