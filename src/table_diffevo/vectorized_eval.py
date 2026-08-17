@@ -365,10 +365,12 @@ def evaluate_vectorized(
     verbose : bool, default True
         回退组非空时是否打印提醒。
     residual_geometry : str, default "absolute"
-        残差几何，透传给 objective.compute_residual（"absolute" 现状
-        口径 / "relative" 相对残差口径），影响返回的 residual 与 fitness。
+        残差几何，透传给 objective.compute_residual（"absolute" 现状口径 /
+        "sqrt_relative" 平方根标准化 / "relative" 相对残差口径），影响
+        返回的 residual 与 fitness。
     residual_geometry_floor : float, default 8.0
-        relative 几何的分母下限，透传给 objective.compute_residual。
+        sqrt_relative/relative 几何的分母下限，透传给
+        objective.compute_residual。
 
     Returns
     -------

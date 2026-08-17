@@ -2,6 +2,54 @@
 
 ## 当前阶段
 
+### 最新暂停点：平方根残差 P=6 两数据三臂协议已冻结，正式矩阵尚未运行（2026-08-17）
+
+> 本工作在独立 worktree/分支 `research/issue53-sqrt-residual-earlystop` 上进行，不修改等待外部审查的
+> PR #63 分支。用户要求直接比较 absolute、平方根中间方法和 relative 在 test/nltcs 的 P=6 早停
+> terminal-current 结果；本节记录的是结果前冻结状态，没有任何新矩阵结果。
+
+新增残差几何：
+
+```text
+sqrt_relative
+  = sign(raw) * magnitude / sqrt(max(target, 8)) / n_records
+```
+
+它固定在 absolute（不按 target 标准化）与 relative（完整除以 target）之间；不暴露指数、不扫描
+gamma。噪声容忍仍先于标准化，三种几何零点相同，absolute/relative 旧路径不改默认语义。
+
+冻结 development 矩阵：
+
+```text
+datasets = [test_300x10, nltcs]
+arms     = [absolute, sqrt_relative, relative]
+seeds    = [310, 311, 312]
+cases    = 18
+P        = 6 natural-work ticks
+C        = 6000 rounds / 6000 candidates
+protocol SHA = 7e7b5e08f9d934031257cbd98b6a857f7ba1dcb4cf1f97077d48f781a4e2585f
+```
+
+除 seed/geometry 外完全复用 PR #63 两数据 smoke 参数：rho=0.01、scale-invariant donor、fixed
+alpha=16、direction initial_rms、eta=0.5、mu=0.01、Gibbs sweeps=0、tol=inf、无重试、
+terminal-current。每个数据只描述三 seed 平均 terminal measured L1、配对胜数、loss、rounds/work 和
+A/B/C；不读取原始 reference table，不形成 canonical/held-out/收敛结论，不按结果调参。
+
+固定入口和协议：
+
+```text
+scripts/compare_issue53_residual_geometry_earlystop.py
+tests/test_compare_issue53_residual_geometry_earlystop.py
+docs/设计/Issue53_平方根残差P6早停两数据三臂对比协议.md
+```
+
+结果前验证：新增/相关定向 `47 passed`；本机轻量环境可收集的全仓回归 `1577 passed, 7 skipped`，
+仅有 2 个既有 warning。完整全仓首次 collection 因本机轻量环境没有 matplotlib，6 个旧 Stage2
+分析测试无法导入；冻结提交部署到 A6000 后须用完整环境补跑，不把依赖缺失记为测试失败。
+
+正式运行按用户澄清使用 `root@10.8.176.53:6006` 的 RTX A6000，只暴露一张空闲 GPU、一个 worker，
+三个 seed shard 串行，不并占多卡且不触碰 GPU 3 的既有任务。当前尚未部署、未启动生成、未产生输出。
+
 ### 最新暂停点：PR #63 已创建并以 Amendment 3 同步 Issue #53，等待审查（2026-08-17）
 
 > 用户确认不需要为 P=6 先冻结 rho，并授权在 `test_300x10`、`nltcs` 各跑一次后归档 PR；本机两张
