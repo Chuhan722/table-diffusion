@@ -2,11 +2,13 @@
 
 ## 当前阶段
 
-### 最新暂停点：Issue #53 P=6 两数据归档 smoke runner 已冻结，尚未运行（2026-08-17）
+### 最新暂停点：Issue #53 P=6 两数据归档 smoke 已完成，等待归档 PR（2026-08-17）
 
 > 用户确认不需要为 P=6 先冻结 rho，并授权在 `test_300x10`、`nltcs` 各跑一次后归档 PR；本机两张
-> 4090 均有其他用户任务，因此改用旧服务器空闲 GPU 0。本步只实现、测试并准备冻结 runner，没有
-> 读取新运行结果、启动 generator、调整 P/rho/C/alpha/Gibbs 或访问原始参考表。
+> 4090 均有其他用户任务，因此改用旧服务器空闲 GPU 0。冻结 runner 在提交
+> `d220ba4d04606c4ed99c89d98da314a31f1d0d71` 上只运行一次；两个数据均由 B/`early_stopped`
+> 正常结束，没有触及 C=6000。运行前后没有调整 P/rho/C/alpha/Gibbs，也没有访问原始参考表或消耗
+> 隐私预算。
 
 新增固定入口：
 
@@ -37,12 +39,32 @@ runner 原样使用当前 relative-f8 主臂的 `initial_rms` 方向尺度；alp
 SHA 以及历史 relative-f8 seed 200、2000-round 归档 JSON SHA 全部固定。历史结果只作描述性同 seed
 对照，不构成新验收阈值，不允许据此调参。在线停止不读取 L1，runner 也不读取原始 reference table。
 
-验证：新增 runner `10 passed`；Issue #53 当前停止链路相关 `113 passed`；全仓 CPU 回归
-`1605 passed, 7 skipped, 2 个既有 warning`。result-blind plan 已通过，正式输出目录不存在。
+冻结提交前验证：新增 runner `10 passed`；Issue #53 当前停止链路相关 `113 passed`；全仓 CPU 回归
+`1605 passed, 7 skipped, 2 个既有 warning`。正式执行使用完整 protocol SHA 确认，只暴露远端
+RTX A6000 GPU 0，单 worker 按 `test_300x10 -> nltcs` 串行运行；运行结束后 GPU 0 回到
+`3 MiB / 0%`，隔离代码树仍干净，GPU 3 的既有无关任务从未触碰。
 
-远端只读预检：`root@10.8.176.53:6006` / `Cardiff_VM_6` 的 GPU 0 是 RTX A6000 46GB，检查时
-`3 MiB / 0%` 且无 compute process；GPU 3 的既有无关任务不触碰。下一步先提交本节冻结版本，再次
-确认 GPU 0 空闲后用 Git bundle 部署到全新隔离目录，只暴露 GPU 0、单 worker 串行执行两个数据。
+正式结果：
+
+| 数据 | 停止原因 | 实际轮数 / 6000 | normalized work | terminal loss | terminal normalized L1 | 相对历史同 seed 2000 轮 |
+|---|---|---:|---:|---:|---:|---|
+| `test_300x10` | `early_stopped` | 2128 | 21.0000 | 49.5 | 0.0036666667 | 多 128 轮；L1 相同；loss +1.0 |
+| `nltcs` | `early_stopped` | 2500 | 25.0062 | 17649.5 | 0.0002645522 | 多 500 轮；L1 -0.0000006791；loss +182.5 |
+
+这里的 6000 是绝对 raw-round/candidate 上限；`P=6` 是六个 natural-work ticks 的连续无最好 loss
+刷新耐心。在 `rho=0.01` 下，一个 tick 约对应 100 raw rounds，所以“约 600 轮”只描述一次完整
+无改善耐心，不是总轮数或新上限；任何新最好值都会重新累计耐心。本次实际停止在 2128/2500 轮正好
+验证了两者不能混同。
+
+两个目标数据 smoke 都证明 B 能在 C 前自行结束，并保持 terminal-current、无门控输出身份；但相对
+旧的任意 2000 轮参考并未节省 raw rounds（分别多 6.4% 和 25%）。单 seed 的 L1 为相同/极小改善，
+terminal squared loss 则略高，属于描述性混合结果，不能宣称收敛、真实数据质量正式通过、P=6 全局
+最优或计算成本优于 2000 轮。历史 2000 轮结果从始至终不是验收门禁，也没有据此调参。
+
+完整结果记录见 `docs/实验结果/Issue53_P6两数据归档Smoke结果.md`；本地忽略目录
+`outputs/issue53_p6_dataset_smoke_seed200/` 与远端逐文件 SHA-256 完全一致，顶层 report SHA-256 为
+`cd1e10f9034f63ec4a4caed39370e1b7bb802720e41c9ed5dae8716667ee90fa`。当前在结果归档点停止；下一步
+只需检查并提交这次文档更新，然后由用户决定何时归档 PR，不自动重跑、调 P/rho 或进入外层 DP。
 
 ### 最新暂停点：Issue #53 P=6 正式质量—计算验收通过（2026-08-17）
 
