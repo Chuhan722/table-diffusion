@@ -2,13 +2,30 @@
 
 ## 当前阶段
 
-### 最新暂停点：Issue #53 P=6 两数据归档 smoke 已完成，等待归档 PR（2026-08-17）
+### 最新暂停点：Issue #53 P=6 两数据 smoke 已归入 PR #63，等待审查（2026-08-17）
 
 > 用户确认不需要为 P=6 先冻结 rho，并授权在 `test_300x10`、`nltcs` 各跑一次后归档 PR；本机两张
 > 4090 均有其他用户任务，因此改用旧服务器空闲 GPU 0。冻结 runner 在提交
 > `d220ba4d04606c4ed99c89d98da314a31f1d0d71` 上只运行一次；两个数据均由 B/`early_stopped`
 > 正常结束，没有触及 C=6000。运行前后没有调整 P/rho/C/alpha/Gibbs，也没有访问原始参考表或消耗
 > 隐私预算。
+
+已将本分支首次推送并创建非 Draft PR：
+
+```text
+PR       #63
+title    研究：Issue #53 无门控内层 A/B/C 早停、P=6 验收与两数据 smoke
+base     master
+head     research/issue-53-stage2-v2-evidence
+url      https://github.com/Chuhan722/table-diffusion/pull/63
+state    OPEN
+merge    CLEAN（创建后核对时尚无 CI check 回报）
+```
+
+PR 正文按“目标与边界 → 最终 A/B/C 设计 → 旧 V2/V2b/V2c/RMSE+MAX 负证据 → 主要实现 → P=6
+未见人工轨迹正式验收 → test/nltcs smoke → 测试审计 → review 顺序 → 后续 rho 板块”组织。正文明确
+600 只是在 `rho=0.01` 下 P=6 的近似单次无改善耐心，6000 才是 smoke 的绝对上限；同时保留单 seed
+真实链路 smoke 不能证明收敛、P=6 全局最优或计算优于固定 2000 轮的边界。
 
 新增固定入口：
 
@@ -63,8 +80,9 @@ terminal squared loss 则略高，属于描述性混合结果，不能宣称收�
 
 完整结果记录见 `docs/实验结果/Issue53_P6两数据归档Smoke结果.md`；本地忽略目录
 `outputs/issue53_p6_dataset_smoke_seed200/` 与远端逐文件 SHA-256 完全一致，顶层 report SHA-256 为
-`cd1e10f9034f63ec4a4caed39370e1b7bb802720e41c9ed5dae8716667ee90fa`。当前在结果归档点停止；下一步
-只需检查并提交这次文档更新，然后由用户决定何时归档 PR，不自动重跑、调 P/rho 或进入外层 DP。
+`cd1e10f9034f63ec4a4caed39370e1b7bb802720e41c9ed5dae8716667ee90fa`。当前停在 PR #63 已创建、等待
+CI/审查的节点；不得自动合并，也不自动重跑、调 P/rho 或进入外层 DP。审查完成并由用户确认归档后，
+再单独开启 rho 板块。
 
 ### 最新暂停点：Issue #53 P=6 正式质量—计算验收通过（2026-08-17）
 
