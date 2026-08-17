@@ -95,6 +95,19 @@ def test_plan_is_result_blind_and_has_no_threshold_overrides(monkeypatch):
     assert plan["mode"] == "plan_only_no_collection_read"
     assert plan["protocol_sha256"] == protocol.FROZEN_PROTOCOL_SHA256
     assert plan["required_case_count"] == 12
+    assert plan["erratum_id"] == evaluator.ERRATUM_ID
+    assert plan["required_collection_git_commit"] == (
+        evaluator.ERRATUM_COLLECTION_GIT_COMMIT
+    )
+    assert plan["required_collection_manifest_sha256"] == (
+        evaluator.ERRATUM_COLLECTION_MANIFEST_SHA256
+    )
+    assert plan["raw_collection_rerun_allowed"] is False
+    assert plan["collector_source_drift_allowed"] is False
+    assert plan["evaluator_only_commit_drift_allowed_after_source_identity"] is True
+    assert plan["allowed_commit_drift_paths"] == sorted(
+        evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+    )
     assert plan["threshold_overrides_allowed"] is False
     assert plan["artifact_read_started"] is False
     assert plan["generation_started"] is False
@@ -387,6 +400,11 @@ def test_b_shadow_artifacts_are_independently_replayed_and_audited(
         workload,
         execution_sha,
     )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    diagnostics_path = (
+        manifest_path.parent / manifest["online"]["files"]["diagnostics"]["path"]
+    )
+    persisted_diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
 
     evidence = evaluator._audit_case_manifest(
         manifest_path,
@@ -396,6 +414,7 @@ def test_b_shadow_artifacts_are_independently_replayed_and_audited(
 
     assert evidence["termination_reason"] == "early_stopped"
     assert evidence["stop_normalized_work"] == 6.0
+    assert persisted_diagnostics["state_evaluation_count"] == 6
     assert [item["work_offset"] for item in evidence["checkpoints"]] == [6, 12]
     assert all(item["status"] == "observed" for item in evidence["checkpoints"])
 
@@ -689,6 +708,12 @@ def test_formal_evaluation_writes_once_without_generator(tmp_path, monkeypatch):
         "evaluated_at_utc": "2026-08-17T00:00:00+00:00",
         "git_commit": "d" * 40,
         "git_worktree_clean_including_untracked": True,
+        "erratum_commit_drift_paths": sorted(
+            evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+        ),
+        "erratum_allowed_commit_drift_paths": sorted(
+            evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+        ),
         "source_sha256": source_sha,
         "runtime": {
             "python_version": "fake-python",
@@ -699,9 +724,9 @@ def test_formal_evaluation_writes_once_without_generator(tmp_path, monkeypatch):
     }
     audit = {
         "collection_manifest_path": "fake",
-        "collection_manifest_sha256": "e" * 64,
+        "collection_manifest_sha256": (evaluator.ERRATUM_COLLECTION_MANIFEST_SHA256),
         "execution_manifest_sha256": "f" * 64,
-        "execution_git_commit": environment["git_commit"],
+        "execution_git_commit": evaluator.ERRATUM_COLLECTION_GIT_COMMIT,
         "execution_source_sha256": {
             str(path): source_sha[str(path)] for path in collector.SOURCE_PATHS
         },
@@ -740,6 +765,19 @@ def test_formal_evaluation_writes_once_without_generator(tmp_path, monkeypatch):
     assert report["generator_called"] is False
     assert report["real_data_accessed"] is False
     assert report["privacy_budget_consumed"] is False
+    assert report["contract_version"] == evaluator.EVALUATION_CONTRACT_VERSION
+    assert report["erratum"]["erratum_id"] == evaluator.ERRATUM_ID
+    assert report["erratum"]["same_git_commit"] is False
+    assert report["erratum"]["commit_drift_paths"] == sorted(
+        evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+    )
+    assert report["erratum"]["allowed_commit_drift_paths"] == sorted(
+        evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+    )
+    assert report["erratum"]["all_collector_source_sha256_equal"] is True
+    assert report["erratum"]["protocol_thresholds_changed"] is False
+    assert report["erratum"]["classification_rules_changed"] is False
+    assert report["erratum"]["raw_collection_rerun"] is False
     with pytest.raises(FileExistsError, match="已存在"):
         evaluator.evaluate_collection(
             tmp_path,
@@ -762,7 +800,8 @@ def test_formal_evaluation_rejects_collection_runtime_drift(tmp_path, monkeypatc
         },
     }
     audit = {
-        "execution_git_commit": environment["git_commit"],
+        "collection_manifest_sha256": (evaluator.ERRATUM_COLLECTION_MANIFEST_SHA256),
+        "execution_git_commit": evaluator.ERRATUM_COLLECTION_GIT_COMMIT,
         "execution_source_sha256": {
             str(path): source_sha[str(path)] for path in collector.SOURCE_PATHS
         },
@@ -790,3 +829,100 @@ def test_formal_evaluation_rejects_collection_runtime_drift(tmp_path, monkeypatc
             protocol.FROZEN_PROTOCOL_SHA256,
         )
     assert not (tmp_path / evaluator.EVALUATION_REPORT_FILENAME).exists()
+
+
+def test_erratum_rejects_any_other_collection_identity(tmp_path, monkeypatch):
+    environment = {
+        "git_commit": "c" * 40,
+        "source_sha256": {},
+        "runtime": {},
+    }
+    audit = {
+        "collection_manifest_sha256": "0" * 64,
+        "execution_git_commit": evaluator.ERRATUM_COLLECTION_GIT_COMMIT,
+    }
+    monkeypatch.setattr(
+        evaluator,
+        "_evaluation_environment",
+        lambda _root: environment,
+    )
+    monkeypatch.setattr(evaluator, "audit_collection", lambda _path: audit)
+
+    with pytest.raises(RuntimeError, match="已登记的原始 collection"):
+        evaluator.evaluate_collection(
+            tmp_path,
+            protocol.FROZEN_PROTOCOL_SHA256,
+        )
+
+
+def test_erratum_rejects_collector_source_drift(tmp_path, monkeypatch):
+    current_source = {str(path): "a" * 64 for path in evaluator.SOURCE_PATHS}
+    recorded_source = {
+        str(path): current_source[str(path)] for path in collector.SOURCE_PATHS
+    }
+    drifted_path = str(collector.SOURCE_PATHS[0])
+    recorded_source[drifted_path] = "b" * 64
+    runtime = {
+        "python_version": "same-python",
+        "numpy_version": "same-numpy",
+        "pandas_version": "same-pandas",
+        "device": "numpy",
+    }
+    environment = {
+        "git_commit": "c" * 40,
+        "source_sha256": current_source,
+        "runtime": runtime,
+    }
+    audit = {
+        "collection_manifest_sha256": (evaluator.ERRATUM_COLLECTION_MANIFEST_SHA256),
+        "execution_git_commit": evaluator.ERRATUM_COLLECTION_GIT_COMMIT,
+        "execution_source_sha256": recorded_source,
+        "execution_environment": runtime,
+    }
+    monkeypatch.setattr(
+        evaluator,
+        "_evaluation_environment",
+        lambda _root: environment,
+    )
+    monkeypatch.setattr(evaluator, "audit_collection", lambda _path: audit)
+
+    with pytest.raises(RuntimeError, match="源文件 SHA 漂移"):
+        evaluator.evaluate_collection(
+            tmp_path,
+            protocol.FROZEN_PROTOCOL_SHA256,
+        )
+
+
+def test_evaluation_environment_rejects_unallowed_commit_drift(
+    tmp_path,
+    monkeypatch,
+):
+    responses = iter(
+        [
+            "",
+            "c" * 40,
+            "scripts/evaluate_issue53_p6_unseen.py\nREADME.md",
+        ]
+    )
+    monkeypatch.setattr(collector, "_git_text", lambda *_args: next(responses))
+
+    with pytest.raises(RuntimeError, match="未授权路径漂移.*README.md"):
+        evaluator._evaluation_environment(tmp_path)
+
+
+def test_evaluation_environment_accepts_exact_erratum_commit_scope(
+    tmp_path,
+    monkeypatch,
+):
+    for path in evaluator.SOURCE_PATHS:
+        destination = tmp_path / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(path), encoding="utf-8")
+    allowed_paths = sorted(evaluator.ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS)
+    responses = iter(["", "c" * 40, "\n".join(allowed_paths)])
+    monkeypatch.setattr(collector, "_git_text", lambda *_args: next(responses))
+
+    environment = evaluator._evaluation_environment(tmp_path)
+
+    assert environment["erratum_commit_drift_paths"] == allowed_paths
+    assert environment["erratum_allowed_commit_drift_paths"] == allowed_paths

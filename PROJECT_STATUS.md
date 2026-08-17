@@ -2,6 +2,142 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 P=6 evaluator 审计计数勘误已完成，尚未重新评价（2026-08-17）
+
+> 用户授权本步只做 auditor erratum、测试、记录和提交。本步没有重新运行 collector，没有修改 raw
+> artifacts、generator、停止规则、协议阈值、聚合/classification 规则或回退规则，也没有运行正式
+> evaluator；因此仍然没有 P=6 验收结论，`p6_evaluation_report.json` 仍不存在。
+
+本次把首次 fail-closed 暴露出的唯一审计错误修正为真实运行语义：
+
+```text
+state_evaluation_count == max(1, rounds_run)
+```
+
+`current_state_metrics_history` 仍必须保留初始状态和每轮后的 terminal-current 状态，即长度仍为
+`rounds_run+1`；本次没有把二者混成一个计数。测试中的假 B artifact 同步改为真实计数，并用真实 B
+artifact 明确回归 `rounds_run=6 -> state_evaluation_count=6`。
+
+由于 evaluator 修订必然产生不同于原 collection 的 Git commit，本次没有简单删除身份门禁，而是增加
+了更窄的 fail-closed 勘误门禁：
+
+1. 只接受原 collection commit
+   `34b477acff11adabfc22b6eb9c14e4fb3939b7a1` 与 collection manifest SHA
+   `aa4b34f80cbe72546c6a085845d205e988e04ccdeb0ee843ec135fbfa3505133` 的组合；
+2. 原 execution manifest 中 6 个 collector/generator/protocol 源文件 SHA 必须逐项等于当前文件；
+3. 从原 collection commit 到 evaluator commit 的 Git 路径差异只能出现在 evaluator、两份相关测试、
+   `PROJECT_STATUS.md` 与新勘误文档；任何其他路径都 fail closed；
+4. 将原 collection commit、当前 evaluator commit、实际/允许的漂移路径、计数修正和首次诊断暴露范围
+   一并写进未来正式 report。
+
+勘误细节登记于 `docs/设计/Issue53_P6评价器审计计数勘误.md`。冻结的 collector、generator、停止实现、
+验收协议文档均未修改。提交前复核结果：
+
+```text
+定向 collector/evaluator tests：34 passed
+Issue #53 相关回归：103 passed
+全仓库 CPU 回归：1595 passed, 7 skipped, 2 个既有 warning
+原 collection manifest SHA：未变
+原 execution manifest 的 6 个 source SHA：全部 MATCH
+正式 evaluation report：不存在
+```
+
+当前在本节所在勘误提交处停止。下一步必须由用户另行授权，才能先核验 clean worktree 与完整 protocol
+SHA，再用修订 evaluator 对现有唯一原始 collection 做一次只读正式评价。不得重跑 collection，也不得
+自动运行 P=12/P=4 回退。
+
+### 最新暂停点：Issue #53 P=6 evaluator 因审计计数公式错误 fail closed，尚无结论（2026-08-17）
+
+> 用户单独授权运行冻结 evaluator。本步没有重新采集、修改 raw artifacts、调用 generator、运行回退
+> P、访问真实数据或消耗隐私预算。evaluator 在聚合判定前按预期 fail closed，没有生成 report，因此
+> 当前不能声明 P=6 通过/失败、质量/计算通过/失败或任何回退方向。
+
+正式 evaluate 前把唯一的 `PROJECT_STATUS.md` 改动保存到独立 stash，确认 HEAD 为 collection 绑定的
+`34b477acff11adabfc22b6eb9c14e4fb3939b7a1`、工作树干净、collection manifest SHA 仍为
+`aa4b34f80cbe72546c6a085845d205e988e04ccdeb0ee843ec135fbfa3505133`，随后使用完整 protocol SHA 启动
+只读 evaluator。它在 `_audit_online_diagnostics` 抛出：
+
+```text
+RuntimeError: online current metrics terminal 身份不一致
+```
+
+失败发生在逐 case online diagnostics 审计阶段，尚未进入 B shadow checkpoint 审计、证据聚合、质量/
+计算门禁或 classification；`p6_evaluation_report.json` 不存在。
+
+只读诊断定位到错误不在 terminal table/loss/L1 身份，而在 evaluator 新增的计数断言：
+
+```text
+错误断言：state_evaluation_count == rounds_run + 1
+真实语义：rounds_run == 0 时 count=1；rounds_run > 0 时 count=rounds_run
+```
+
+原因是初始 current 做一次完整 state evaluation；每个已接受 proposal 的 query/loss 已在 candidate
+evaluation 中得到，下一轮才在 cache 失效后重新做 state evaluation，所以 terminal proposal 会增加
+`current_state_metrics_history`，但不会额外增加 `state_evaluation_count`。冻结无门控路径每轮一个直接
+生效的 proposal，因此本批 12 条均表现为 `metrics length = rounds_run+1`、`state_evaluation_count =
+rounds_run`。evaluator 把“状态记录数”误当成“完整 state evaluation 次数”。
+
+诊断脚本为定位失败解析了 12 个 case manifest 的 online 部分和 online diagnostics，控制台暴露了全部
+12 条 termination reason（均为 B/`early_stopped`）、stop state 以及 terminal loss/L1；逐条确认
+diagnostics 末状态与 case terminal loss/L1 精确相等。脚本没有访问或输出 shadow checkpoint 字段，
+没有计算 delta_L1、saving、coverage、family median、quality/compute gate 或 classification。因此质量—
+计算验收的核心续跑结果仍未查看，但“12 条均为 B”及 terminal 指标已经暴露，后续必须透明记录，不能
+再把整个流程描述成完全未见。
+
+原始 collection 未改变，manifest SHA 复核未变；失败报告不存在；工作记录 stash 已完整恢复并删除，
+现在仍只有 `PROJECT_STATUS.md` 为 tracked 改动。测试之所以漏掉该问题，是完整假 B artifact 使用了同样
+错误的 `rounds+1` 假计数，未按真实 `run_evolution` 计数语义构造。
+
+当前停止，不得直接放宽断言、手改报告或重跑 collection。建议的最小严谨修复是单独建立“结果无关的
+auditor erratum”：只修正该计数公式和假 B 测试，不改协议阈值、聚合公式或 raw artifacts；同时把
+collection/evaluator 的同 commit 要求改为“所有 collector/generator/protocol 源文件 SHA 必须逐项与
+原 collection 相同，允许仅 evaluator/test/status 形成新的审计修订 commit”，并在报告中同时记录原
+collection commit 与 erratum evaluator commit。该方案不重跑已暴露 seed，但属于冻结后审计规则修订，
+必须先由用户明确同意，不能由当前失败自动授权。
+
+### 最新暂停点：Issue #53 P=6 primary raw collection 已完成，尚未评价（2026-08-17）
+
+> 用户在看到完整冻结 protocol SHA 后明确授权继续。本步只执行已经提交的 12-case primary raw
+> collector，并在集合级做不含结果的结构核对；没有调用 evaluator、没有读取 case manifest/terminal
+> table/shadow 内容，没有查看或汇总 A/B/C、loss、L1、delta、saving，也没有形成通过/失败、回退或
+> P 调整结论。没有访问真实数据、使用 GPU、消耗隐私预算或实现外层 DP。
+
+正式命令使用：
+
+```text
+protocol SHA = 759cddb3e75a8a1d04e9568ae0fff30b0e26969dd6e95020500330838269b317
+Git commit  = 34b477acff11adabfc22b6eb9c14e4fb3939b7a1
+output      = outputs/issue53_p6_unseen_primary/
+```
+
+运行前确认包含 untracked 在内的工作树干净、输出目录不存在，并先执行 result-blind plan；plan 固定为
+2 family × 3 seed × 2 rho 的 12 条 P=6 cases。正式 collector 顺序报告 1/12—12/12 全部 collected，
+进程正常退出，总墙钟约 7.53 秒。控制台没有输出单条 loss/L1。
+
+采集结束后只读取不含 case 结果的 collection/execution manifest 顶层元数据，得到：
+
+```text
+contract = issue53-p6-unseen-primary-collection-v1
+formal_primary_collection_complete = true
+case_count = 12
+case_manifest_file_count = 12
+acceptance_evaluated = false
+partial_matrix_classification_emitted = false
+real_data_accessed = false
+privacy_budget_consumed = false
+evaluation_report_exists = false
+collection manifest SHA-256 = aa4b34f80cbe72546c6a085845d205e988e04ccdeb0ee843ec135fbfa3505133
+```
+
+同时只按目录名计数确认有 12 个 case 目录；没有打开其中任何 artifact。原始输出位于 `.gitignore` 的
+`outputs/` 下，不进入提交。为了遵守每步更新状态的规则，本节使 `PROJECT_STATUS.md` 成为当前唯一
+tracked 改动；不得提交它，因为 evaluator 要求与 collection 保持同一 Git commit `34b477a`。
+
+当前立即停止。下一步只有用户单独授权后，才运行冻结的只读 evaluator。正式 evaluate 前应把这份
+状态更新安全暂存，使工作树临时恢复到 `34b477a` 的 clean 状态；评价完成后再恢复并追加评价记录。
+不得重新采集、不得修改或覆盖现有 raw artifacts、不得先偷看 case 结果，也不得自动触发 P=12/P=4
+回退实验。
+
 ### 最新暂停点：Issue #53 terminal-current P=6 冻结链路已提交，正式 12 cases 尚未运行（2026-08-17）
 
 > 用户授权本步只做提交前回归并提交当前完整冻结实现，提交后停止。本步没有执行 formal collector、

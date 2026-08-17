@@ -36,13 +36,29 @@ from table_diffevo.metrics import compute_normalized_l1, compute_squared_loss
 from table_diffevo.queries import evaluate_table
 from table_diffevo.stationarity import load_stationarity_trace
 
-EVALUATION_CONTRACT_VERSION = "issue53-p6-unseen-evaluation-v1"
+EVALUATION_CONTRACT_VERSION = "issue53-p6-unseen-evaluation-v1-erratum1"
 EVALUATION_REPORT_FILENAME = "p6_evaluation_report.json"
+ERRATUM_ID = "issue53-p6-state-evaluation-count-audit-erratum-20260817"
+ERRATUM_DOCUMENT = Path("docs/设计/Issue53_P6评价器审计计数勘误.md")
+ERRATUM_COLLECTION_GIT_COMMIT = "34b477acff11adabfc22b6eb9c14e4fb3939b7a1"
+ERRATUM_COLLECTION_MANIFEST_SHA256 = (
+    "aa4b34f80cbe72546c6a085845d205e988e04ccdeb0ee843ec135fbfa3505133"
+)
+ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS = frozenset(
+    {
+        "PROJECT_STATUS.md",
+        "docs/设计/Issue53_P6评价器审计计数勘误.md",
+        "scripts/evaluate_issue53_p6_unseen.py",
+        "tests/test_collect_issue53_p6_unseen.py",
+        "tests/test_evaluate_issue53_p6_unseen.py",
+    }
+)
 SOURCE_PATHS = tuple(
     dict.fromkeys(
         (
             *collector.SOURCE_PATHS,
             Path("scripts/evaluate_issue53_p6_unseen.py"),
+            ERRATUM_DOCUMENT,
         )
     )
 )
@@ -494,6 +510,9 @@ def build_evaluation_plan() -> dict[str, Any]:
         "mode": "plan_only_no_collection_read",
         "protocol_sha256": protocol.assert_frozen_protocol_identity(),
         "required_collection_contract": collector.COLLECTION_CONTRACT_VERSION,
+        "erratum_id": ERRATUM_ID,
+        "required_collection_git_commit": ERRATUM_COLLECTION_GIT_COMMIT,
+        "required_collection_manifest_sha256": (ERRATUM_COLLECTION_MANIFEST_SHA256),
         "required_case_count": 12,
         "classification_values": [
             "supports_p6_on_frozen_artificial_development",
@@ -503,6 +522,11 @@ def build_evaluation_plan() -> dict[str, Any]:
             "reject_b_redesign",
         ],
         "threshold_overrides_allowed": False,
+        "protocol_or_classification_rule_changes_allowed": False,
+        "raw_collection_rerun_allowed": False,
+        "collector_source_drift_allowed": False,
+        "evaluator_only_commit_drift_allowed_after_source_identity": True,
+        "allowed_commit_drift_paths": sorted(ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS),
         "artifact_read_started": False,
         "generation_started": False,
     }
@@ -802,8 +826,9 @@ def _audit_online_diagnostics(
         raise RuntimeError("online stopped_early 标志与 reason 不一致")
     if diagnostics["output_squared_loss"] != online["terminal_current_squared_loss"]:
         raise RuntimeError("online output loss 不是 terminal current loss")
+    expected_state_evaluation_count = max(1, diagnostics["rounds_run"])
     if (
-        diagnostics["state_evaluation_count"] != diagnostics["rounds_run"] + 1
+        diagnostics["state_evaluation_count"] != expected_state_evaluation_count
         or metrics[-1]["current_squared_loss"]
         != online["terminal_current_squared_loss"]
         or metrics[-1]["current_normalized_l1"]
@@ -1308,13 +1333,35 @@ def _evaluation_environment(root: Path) -> dict[str, Any]:
     )
     if status:
         raise RuntimeError("正式 P6 判定要求包含 untracked 在内的干净工作树")
+    git_commit = collector._git_text(root, "rev-parse", "HEAD")
+    commit_diff = collector._git_text(
+        root,
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--name-only",
+        f"{ERRATUM_COLLECTION_GIT_COMMIT}..{git_commit}",
+        "--",
+    )
+    commit_drift_paths = sorted(filter(None, commit_diff.splitlines()))
+    unexpected_drift_paths = sorted(
+        set(commit_drift_paths) - ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+    )
+    if unexpected_drift_paths:
+        raise RuntimeError(
+            f"erratum evaluator commit 含未授权路径漂移：{unexpected_drift_paths}"
+        )
     missing = [str(path) for path in SOURCE_PATHS if not (root / path).is_file()]
     if missing:
         raise RuntimeError(f"正式 P6 判定源文件缺失：{missing}")
     return {
         "evaluated_at_utc": datetime.now(UTC).isoformat(),
-        "git_commit": collector._git_text(root, "rev-parse", "HEAD"),
+        "git_commit": git_commit,
         "git_worktree_clean_including_untracked": True,
+        "erratum_commit_drift_paths": commit_drift_paths,
+        "erratum_allowed_commit_drift_paths": sorted(
+            ERRATUM_ALLOWED_COMMIT_DRIFT_PATHS
+        ),
         "source_sha256": {
             str(path): collector._sha256_file(root / path) for path in SOURCE_PATHS
         },
@@ -1343,8 +1390,11 @@ def evaluate_collection(
     root = collector._repo_root()
     environment = _evaluation_environment(root)
     audit = audit_collection(collection_dir)
-    if audit["execution_git_commit"] != environment["git_commit"]:
-        raise RuntimeError("collection 与 evaluator Git commit 不一致")
+    if (
+        audit["collection_manifest_sha256"] != ERRATUM_COLLECTION_MANIFEST_SHA256
+        or audit["execution_git_commit"] != ERRATUM_COLLECTION_GIT_COMMIT
+    ):
+        raise RuntimeError("erratum 只允许审计已登记的原始 collection")
     for path, recorded_sha256 in audit["execution_source_sha256"].items():
         if environment["source_sha256"].get(path) != recorded_sha256:
             raise RuntimeError(f"collection 记录的源文件 SHA 漂移：{path}")
@@ -1359,6 +1409,33 @@ def evaluate_collection(
             key: value for key, value in audit.items() if key != "evidence_rows"
         },
         "evaluation_environment": environment,
+        "erratum": {
+            "erratum_id": ERRATUM_ID,
+            "document": str(ERRATUM_DOCUMENT),
+            "collection_manifest_sha256": (ERRATUM_COLLECTION_MANIFEST_SHA256),
+            "collection_git_commit": ERRATUM_COLLECTION_GIT_COMMIT,
+            "evaluator_git_commit": environment["git_commit"],
+            "same_git_commit": (
+                environment["git_commit"] == ERRATUM_COLLECTION_GIT_COMMIT
+            ),
+            "commit_drift_allowed_scope": (
+                "evaluator_tests_status_and_erratum_document_only"
+            ),
+            "commit_drift_paths": environment["erratum_commit_drift_paths"],
+            "allowed_commit_drift_paths": environment[
+                "erratum_allowed_commit_drift_paths"
+            ],
+            "all_collector_source_sha256_equal": True,
+            "corrected_invariant": ("state_evaluation_count=max(1,rounds_run)"),
+            "protocol_thresholds_changed": False,
+            "classification_rules_changed": False,
+            "raw_collection_rerun": False,
+            "known_pre_erratum_exposure": [
+                "all_12_termination_reasons_were_early_stopped",
+                "stop_state_and_terminal_loss_l1_were_printed",
+                "shadow_checkpoint_quality_compute_results_not_viewed",
+            ],
+        },
         "decision": decision,
         "real_data_accessed": False,
         "privacy_budget_consumed": False,

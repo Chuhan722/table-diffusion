@@ -146,7 +146,7 @@ def _fake_diagnostics(
         "normalized_l1_max": float(np.max(per_query)),
         "best_loss_diagnostic_only": loss,
         "normalized_l1_at_best_squared_loss_diagnostic_only": normalized_l1,
-        "state_evaluation_count": rounds_run + 1,
+        "state_evaluation_count": max(1, rounds_run),
         "candidate_evaluation_count": rounds_run,
         "candidate_budget_exhausted": not online,
         "initial_table_sha256": trace.observations[0]["current_table_sha256"],
