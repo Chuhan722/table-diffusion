@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-### 最新暂停点：test 残差几何 fresh-seed 确认完成，准备 stacked PR（2026-08-18）
+### 最新暂停点：test 残差几何 fresh-seed 确认完成，stacked PR #64 等待审查（2026-08-18）
 
 > 本步按结果前协议在用户指定的 A6000 服务器完成 seed 313–317、三种 residual geometry 的 15 条
 > fresh 轨迹，再按 measured 1-way、全部未测量 2-way、冻结 held-out 3/4-way 分阶评价。没有按结果
@@ -52,9 +52,23 @@ commit 分开审计；同一 collection 重放后 CSV SHA 不变，删除 mode/e
 `docs/实验结果/Issue53_test残差几何fresh-seed确认结果.md`。
 
 当前验证：相关回归 `42 passed`；confirmation 定向 12 tests 在本机/A6000 均通过；研究新增脚本与
-测试 Ruff 0.16.3 通过；24,075 行 CSV 独立重聚合与报告一致。下一步先创建依赖 PR #63 head 分支
-`research/issue-53-stage2-v2-evidence` 的 stacked PR，只归档研究证据、不改默认值；之后 residual 板块
-收口，先冻结跨 workload 的分阶质量—计算门禁，再进入 donor/alpha。
+测试 Ruff 0.16.3 通过；24,075 行 CSV 独立重聚合与报告一致。
+
+已创建依赖 PR #63 的 stacked PR：
+
+```text
+PR       #64
+title    研究：Issue #53 残差几何分阶诊断与 fresh-seed 确认
+base     research/issue-53-stage2-v2-evidence （PR #63 head）
+head     research/issue53-sqrt-residual-earlystop
+url      https://github.com/Chuhan722/table-diffusion/pull/64
+state    OPEN，非 Draft
+merge    CLEAN（创建后回读时无 CI check 回报）
+```
+
+PR 正文明确了依赖/review 顺序、审计 SHA、元数据勘误和“不改默认 residual、不作跨数据 canonical、
+不自行 review/merge”的边界。当前停在等待他人审查，不对 #63/#64 做合并动作。研究上的下一步是在
+新板块中先冻结跨 workload 的分阶质量—计算门禁，再进入 donor/alpha；不得把它顺带塞进本 PR。
 
 ### 最新暂停点：test 分阶 held-out 诊断完成，排除简单 order-aware 接续（2026-08-18）
 
