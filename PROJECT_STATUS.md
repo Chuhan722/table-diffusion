@@ -2,7 +2,61 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 正式执行服务器重新冻结完成（2026-08-18）
+### 最新暂停点：test query-workload A/B 正式 30-case 采集与聚合完成（2026-08-18）
+
+> 本步按用户确认的新服务器绑定在 `linyao-system` 正式运行全部 30 条轨迹，并只聚合
+> generation collection；没有打开 raw reference，没有运行四组公共查询评价，没有
+> 结果后调参或增加 seed，也没有 push 或操作 PR。
+
+正式身份：
+
+```text
+execution commit    4f80b962d290ba896bc93cb5e3129380ed1d7e7c
+protocol SHA        5b27cc3ddd5b39829a584f1cdc06b961ef50204840d957481444297023a18f0f
+collection report   outputs/issue53_test_query_workload_ab_v1/collection_report.json
+collection SHA      67f3ebbcf06100b0ba508b465dd4aea7b6ee69825a46b5eec5a768245b69e44a
+```
+
+5 个 seed shard 并行，shard 内按冻结顺序串行六臂；实际环境均为
+`hostname=linyao-system`、clean worktree、NumPy 2.4.6、pandas 3.0.5、
+`CUDA_VISIBLE_DEVICES=""`、generator device NumPy。五份 manifest 的 protocol、
+execution commit 和六个输入 SHA 完全一致。
+
+完整性与停止审计：
+
+```text
+case identities                    30/30 unique
+termination                        30 early_stopped
+normal completion                  30/30
+resource_cap_reached               0
+paired initial state seed shards   5/5
+terminal table SHA                 30/30
+result JSON                        30/30
+B cases with five full 4-way       15/15
+factorized Gibbs active            0/30
+raw reference accessed             false
+privacy budget consumed            false
+parameter retuning performed       false
+```
+
+generation workload 内部拟合与成本均值如下；A/B 的 measured 查询不同，因此这些 L1
+只描述各自拟合，不能直接用来判断新查询设计优劣：
+
+| workload | geometry | terminal measured L1 | rounds | normalized work |
+|---|---|---:|---:|---:|
+| A | absolute | 0.0029333333 | 1977.8 | 19.8053 |
+| A | sqrt-relative | 0.0029333333 | 1362.2 | 13.6013 |
+| A | relative | 0.0029733333 | 1498.2 | 15.0020 |
+| B | absolute | 0.0024266667 | 1660.0 | 16.6040 |
+| B | sqrt-relative | 0.0024133333 | 1382.8 | 13.8047 |
+| B | relative | 0.0023600000 | 984.0 | 9.8053 |
+
+该 collection 已满足公共评价的执行资格，但目前还不能回答 workload B 或哪种 geometry
+更好。下一个独立小步骤：以完整 collection SHA
+`67f3ebbc...b69e44a` 显式确认 evaluator；它将先重新审计 30 张表和四组查询身份，
+然后才读取固定 reference，生成 47,100 条 query-seed error 和冻结门禁结论。
+
+### 历史暂停点：test query-workload A/B 正式执行服务器重新冻结完成（2026-08-18）
 
 > 用户已确认后续改在当前有空闲资源的服务器执行。本步只在看到正式结果前重新绑定
 > execution server、重算 protocol SHA 并增加运行时硬校验；没有启动正式 30 cases，
