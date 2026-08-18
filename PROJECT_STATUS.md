@@ -2,7 +2,50 @@
 
 ## 当前阶段
 
-### 最新暂停点：test 30/15/5 workload B 答案附加与身份审计完成（2026-08-18）
+### 最新暂停点：test query-workload A/B 采集器与评估器实现完成（2026-08-18）
+
+> 本步只实现已冻结 30-case 实验的 collector、evaluator 和回归测试，并执行
+> plan/本地测试；没有启动 seeds 318–322 的正式生成，没有产生正式结果，没有
+> push 或操作 PR。
+
+新增入口：
+
+```text
+collector  scripts/run_issue53_test_query_workload_ab.py
+evaluator  scripts/evaluate_issue53_test_query_workload_ab.py
+output     outputs/issue53_test_query_workload_ab_v1
+protocol   e40317be5a21c0c7a59928865c31cb56071b78e1206dba00bcb574b3cd3b198a
+```
+
+collector 固定执行 `A/B × absolute/sqrt_relative/relative × seeds 318–322 =
+30 cases`；每个 seed 的六个 case 串行且强制使用相同初始表和 RNG 状态。A/B
+分别审计为 `25×1-way + 20×2-way + 5×3-way` 和
+`30×2-way + 15×3-way + 5×4-way`。B 的完整 50 条 query/target 不截断传入
+objective 和 residual direction，运行后还会用全部 50 条查询独立重算 terminal
+loss/L1 并与 early-stop 末次指标对齐。`factorized_gibbs_sweeps=0` 且 compiled
+workload 关闭，因此 `factorized_gibbs_max_order=3` 只属于未启用的 Gibbs 路径，
+不会排除 B 的 5 条 4-way；正式结果还会记录并断言该路径事实。
+
+evaluator 先冻结并审计四组公共查询身份，再读取固定 reference 附答案；它会逐项
+校验 30 个 terminal table 的身份和 SHA，输出 47,100 条 query-seed error。报告先在
+每种 geometry 内比较 workload `B-A`，再只在 B 内比较
+`sqrt_relative/relative - absolute`；521 条 common unseen 2-way、512 条 fixed
+held-out 3-way、512 条 fixed held-out 4-way 分开判定，25 条 1-way 只作 safety
+门禁，不做跨组 aggregate。资源上限或未完成 case 只会使相关比较无效，不会被误判
+为科学结论。
+
+collector/evaluator 的 plan 均已验证为只展示冻结协议：前者不读取输入、结果或 raw
+reference，后者不读取 collection 或 raw reference，且二者都明确
+`generation_started=false`。冻结输入与公共评价身份重新审计一致。Ruff 通过；相关
+身份、物化、collector、evaluator 测试合计 `29 passed, 1 skipped`。唯一跳过项是真实
+核心算法的一轮 4-way 冒烟测试，因为当前本机轻量测试环境缺少完整运行依赖；fake
+runtime 测试已证明 50 条 target 和 5 条 4-way 不被截断。
+
+下一个独立小步骤：到用户指定的 A6000 服务器做轻量验证，先让真实核心算法的一轮
+4-way 冒烟测试实际通过，并验证一个非正式短 shard 的采集/聚合/评价闭环；确认路径、
+依赖和输出审计都正确后，再单独决定是否启动 30 个正式 case。
+
+### 历史暂停点：test 30/15/5 workload B 答案附加与身份审计完成（2026-08-18）
 
 > 本步在上一步的查询身份和实验协议已冻结后，读取固定 SHA 的
 > `test_300x10.csv`，仅为 workload B 的 50 条查询附加精确计数答案。没有根据
