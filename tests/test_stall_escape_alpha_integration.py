@@ -125,6 +125,41 @@ def test_main_loop_uses_frozen_16_16_12_12_16_16_timeline(
     ]
 
 
+def test_nonformal_numpy_cuda_smoke_has_identical_schedule_events(
+    monkeypatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the NumPy/CUDA smoke comparison")
+
+    results = {}
+    for device in ("numpy", "cuda"):
+        _install_scripted_kernel(
+            monkeypatch,
+            initial_count=2,
+            proposal_counts=(3, 3, 3, 3, 3, 3),
+        )
+        parameters = _adaptive_parameters(n_rounds=10)
+        parameters.update({"device": device, "return_final_table": True})
+        results[device] = run_evolution(**parameters)
+
+    numpy_table, numpy_diagnostics = results["numpy"]
+    cuda_table, cuda_diagnostics = results["cuda"]
+    pd.testing.assert_frame_equal(numpy_table, cuda_table)
+    assert numpy_diagnostics["alpha_history"] == cuda_diagnostics[
+        "alpha_history"
+    ] == [16.0, 16.0, 12.0, 12.0, 16.0, 16.0]
+    assert numpy_diagnostics["adaptive_alpha"] == cuda_diagnostics[
+        "adaptive_alpha"
+    ]
+    assert numpy_diagnostics["termination_reason"] == cuda_diagnostics[
+        "termination_reason"
+    ] == "early_stopped"
+    assert numpy_diagnostics["primary_rng_state_sha256"] == cuda_diagnostics[
+        "primary_rng_state_sha256"
+    ]
+
+
 def test_before_trigger_matches_fixed_alpha_16_without_extra_rng() -> None:
     schema, queries = _binary_problem()
     common = {
