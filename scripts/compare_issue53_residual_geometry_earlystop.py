@@ -1,18 +1,17 @@
-#!/usr/bin/env python
 """Frozen two-dataset, three-arm P=6 residual-geometry comparison."""
 
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import statistics
 import tempfile
 import time
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -23,7 +22,6 @@ from table_diffevo.marginals import load_marginals
 from table_diffevo.metrics import compute_normalized_l1, compute_squared_loss
 from table_diffevo.queries import evaluate_table, load_queries
 from table_diffevo.schema import load_schema
-
 
 PROTOCOL_VERSION = "issue53-sqrt-residual-earlystop-comparison-v1"
 FROZEN_PROTOCOL_SHA256 = (
