@@ -2,7 +2,53 @@
 
 ## 当前阶段
 
-### 最新暂停点：test 30/15/5 workload A/B 结果前身份与协议冻结完成（2026-08-18）
+### 最新暂停点：test 30/15/5 workload B 答案附加与身份审计完成（2026-08-18）
+
+> 本步在上一步的查询身份和实验协议已冻结后，读取固定 SHA 的
+> `test_300x10.csv`，仅为 workload B 的 50 条查询附加精确计数答案。没有根据
+> 答案替换、重排或删除查询，没有实现 runner 或运行生成实验，也没有
+> push 或操作 PR。
+
+附答案入口与产物：
+
+```text
+materializer       scripts/materialize_issue53_test_query_workload_b.py
+identity input     configs/test_300x10/issue53_query_workload_ab_v1.json
+identity input SHA a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+raw reference      data/test_300x10/test_300x10.csv
+reference SHA      c211133455c4fdd19f01f34eca511cf089667452d038265897eec15b5b84baeb
+answered workload  configs/test_300x10/measured_50query_30_15_5.json
+workload file SHA  708afe2863b797fae714c39699457dd91ac97a9dbcd35b900d46fcf6c01e9e14
+target vector SHA  e04988c93076fd0a8ce820d0635080b33d88030415b97f1b804186e017c02e3d
+```
+
+信息流审计先在禁止打开 CSV 的条件下逐字段重建 identity artifact，确认 B 为
+`30×2-way + 15×3-way + 5×4-way`、50 条无重复且无 1-way，然后才加载 raw
+reference。附答案前后 query identity 均为：
+
+```text
+602d8b7fcbe3f56a3abf62ffe4e2b6b3638578f47ea9fe346a18583923969af1
+```
+
+为防止新评价器的类型对齐或边界语义有误，先用它重算旧 workload A 的 50 条已知
+答案，`50/50` 逐条精确一致；再用正式 `table_diffevo.queries.evaluate_table` 独立
+重算 B，也是 `50/50` 精确一致。这证明物化的 target vector 与后续 generator
+实际使用的查询语义一致。
+
+结果盲选取的 25 条新查询中，10 条 2-way 计数均大于 0；10 条 3-way 中
+N3_01 计数为 0；5 条 4-way 中 N4_01、N4_05 计数为 0。这 3 条保留，因为按
+答案过滤零计数会破坏结果前冻结；relative/sqrt-relative 仍使用已冻结 floor=8
+处理这些 target。
+
+新增附答案回归与上一步身份回归合计 `13 passed`；Ruff 通过，formal
+workload 可用固定 reference 逐字段确定性重建，`git diff --check` 通过。正式文件
+正确记录 `raw_reference_data_accessed=true`、`selection_used_reference_answers=false`、
+`privacy_budget_consumed=false`。
+
+下一个独立小步骤：基于已冻结 A/B 输入和 30-case 协议实现 collector、公共分阶
+evaluator 及其测试；只做 plan/smoke 级本地验证，不启动 seeds 318–322 正式实验。
+
+### 历史暂停点：test 30/15/5 workload A/B 结果前身份与协议冻结完成（2026-08-18）
 
 > 本步在新 namespace 下用 SHA-256 排序结果盲选定 10 条新 2-way、10 条新
 > 3-way 和 5 条新 4-way，并冻结 A/B 公共评价身份与 30-case 协议。没有读取
