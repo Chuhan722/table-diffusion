@@ -128,7 +128,7 @@ def _audit_collection(
     current_commit = base._git_text(root, "rev-parse", "HEAD")
     execution_commit = report.get("execution_git_commit")
     if not isinstance(execution_commit, str):
-        raise RuntimeError("collection execution commit 缺失")
+        raise TypeError("collection execution commit 缺失")
     merge_base = base._git_text(
         root,
         "merge-base",
