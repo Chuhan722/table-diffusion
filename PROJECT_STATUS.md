@@ -2,6 +2,60 @@
 
 ## 当前阶段
 
+### 最新暂停点：test 残差几何 fresh-seed 确认完成，准备 stacked PR（2026-08-18）
+
+> 本步按结果前协议在用户指定的 A6000 服务器完成 seed 313–317、三种 residual geometry 的 15 条
+> fresh 轨迹，再按 measured 1-way、全部未测量 2-way、冻结 held-out 3/4-way 分阶评价。没有按结果
+> 增加 seed、修改门禁、扫描 floor/gamma/rho 或触碰等待外部审查的 PR #63 分支。
+
+冻结与产物身份：
+
+```text
+protocol commit       abf676e93b07837ced96ac4a311a5b401364770d
+collection commit     9f1873c1ebf7466e781687b7a17ea028f310b9cb
+collection protocol   9708f994c6c479b8e08c75cc662d0f79ec3ab5ec39cd9322e2ba5e8b7b30373b
+collection report     98e1b09bea3691d2c1d10b1ff6fc8830f4f5782b6f7d3b6ef49060dc82e98da8
+evaluation commit     f7775dde2c6fdef67e0a9ed7fbb4ac21f279b8d3
+evaluation report     54f586462c13e23a285d91d238d25246c8e7afd86016b8ee82ff6704bc5fe60f
+query-seed CSV        1f158acd491add3164fb93ab0219d1323761cd7c12ec2f5c09b72d047a77466b
+```
+
+15/15 cases 全部 `early_stopped`，无资源上限结束。正式采集使用 NumPy、5 个 seed shard 并行、
+shard 内三臂串行；`CUDA_VISIBLE_DEVICES` 为空，未触碰 GPU 3 的既有约 34 GiB 任务。远端 36 个
+collection 文件回收到本地后逐项 SHA-256 一致。评价先审计查询身份，再读取固定 reference；没有生成
+新表或消耗隐私预算，也没有跨组 aggregate/canonical selection。
+
+五 seed 平均绝对计数误差：
+
+| 查询组 | 数量 | absolute | sqrt | relative | 最低 |
+|---|---:|---:|---:|---:|---|
+| measured 1-way | 25 | **0.8000** | 0.9200 | 1.0080 | absolute |
+| measured 2-way | 20 | **0.8600** | 0.8700 | 1.0200 | absolute |
+| measured 3-way | 5 | 1.0000 | 1.1200 | **0.8000** | relative，仅描述 |
+| all unmeasured 2-way | 531 | **6.7910** | 7.0177 | 7.4614 | absolute |
+| frozen held-out 3-way | 512 | **3.9477** | 4.1637 | 4.4484 | absolute |
+| frozen held-out 4-way | 512 | **1.6930** | 1.7441 | 1.8082 | absolute |
+
+sqrt 相对 absolute 的 primary delta 为 `+0.2267/+0.2160/+0.0512`，paired-seed 更好数为
+`1/5、0/5、1/5`；measured 1-way delta `+0.1200`，0/5 更好、1/5 平局。relative 对应 primary
+delta 为 `+0.6704/+0.5008/+0.1152`，更好数 `1/5、1/5、2/5`；1-way delta `+0.2080`。
+两候选的 unseen/safety 门禁都失败，总分类为 `no_unified_test_candidate_under_frozen_rule`。
+
+这说明平方根方法确实比 relative 更接近 absolute，但不是 test 的统一赢家；seed 310–312 上 sqrt
+在未测量 2-way/4-way 的微小改善没有 fresh 复现。原 25 条 measured 1-way 会放大差异，却不是失败
+唯一原因，因为三个 primary 未测量组也全部偏 absolute。按冻结规则保留 absolute 作为 test 参考，
+停止调 residual 新公式；nltcs 既有 Pareto 结论保持不变。
+
+评价归档时发现首次报告错误继承 plan-only mode。提交 `f7775dd` 仅修元数据并允许 collection/evaluation
+commit 分开审计；同一 collection 重放后 CSV SHA 不变，删除 mode/evaluation commit 后新旧 JSON
+逐位一致，科学结果没有变化。完整说明见
+`docs/实验结果/Issue53_test残差几何fresh-seed确认结果.md`。
+
+当前验证：相关回归 `42 passed`；confirmation 定向 12 tests 在本机/A6000 均通过；研究新增脚本与
+测试 Ruff 0.16.3 通过；24,075 行 CSV 独立重聚合与报告一致。下一步先创建依赖 PR #63 head 分支
+`research/issue-53-stage2-v2-evidence` 的 stacked PR，只归档研究证据、不改默认值；之后 residual 板块
+收口，先冻结跨 workload 的分阶质量—计算门禁，再进入 donor/alpha。
+
 ### 最新暂停点：test 分阶 held-out 诊断完成，排除简单 order-aware 接续（2026-08-18）
 
 > 用户确认先核对 AIM/Private-GSD 的 1-way 语义，再要求检查当前 test 查询设计。为避免用同一批结果
