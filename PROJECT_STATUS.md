@@ -2,7 +2,62 @@
 
 ## 当前阶段
 
-### 最新暂停点：test 30/15/5 generation workload A/B 候选空间审计完成（2026-08-18）
+### 最新暂停点：test 30/15/5 workload A/B 结果前身份与协议冻结完成（2026-08-18）
+
+> 本步在新 namespace 下用 SHA-256 排序结果盲选定 10 条新 2-way、10 条新
+> 3-way 和 5 条新 4-way，并冻结 A/B 公共评价身份与 30-case 协议。没有读取
+> 原始 reference CSV，没有为 B 附加 query answers，没有实现 runner 或运行实验，
+> 也没有 push 或操作 PR。
+
+冻结入口与产物：
+
+```text
+protocol doc       docs/设计/Issue53_test查询workload_AB结果前冻结协议.md
+protocol doc SHA   291c591ba5408e046005b24122bfe602bf8a97f7c175ee45e59f81daf96b44b6
+freezer            scripts/freeze_issue53_test_query_workload_ab.py
+identity artifact  configs/test_300x10/issue53_query_workload_ab_v1.json
+artifact SHA       a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+```
+
+冻结的 workload 身份：
+
+```text
+A = 25×1-way + 20×2-way + 5×3-way
+    cbb501f5c2f8c230b6d68d85baf40be7b17be713d41c5b97f54ac30457e90fc8
+B = 30×2-way + 15×3-way + 5×4-way
+    602d8b7fcbe3f56a3abf62ffe4e2b6b3638578f47ea9fe346a18583923969af1
+```
+
+B 保留 D01–D20/T01–T05，新增 N2_01–N2_10、N3_01–N3_10、N4_01–N4_05。
+新查询仅使用公开属性 `type/values/bins` 及查询语义选取；选择器不访问
+marginal counts、query results、raw reference、terminal errors 或稀有度。3/4-way 候选排除
+原 `issue53-heldout-v1` 各 512 条身份，且使用旧 A 结果盲重建原 held-out，没有
+用 B 改抽评价集。
+
+四个公共评价身份：
+
+| 查询组 | 数量 | query identity SHA-256 |
+|---|---:|---|
+| one-way safety | 25 | `b144694657b98b27ac92173b10d641981ce5f16e5c8ab00191b26ef5c143250c` |
+| common unseen 2-way | 521 | `fabbdc8de6aa9ebbc9d6c5bc209e3c47ee9a678c98f41bc71c168e470d9f1fc2` |
+| fixed held-out 3-way | 512 | `d70e87c3bceb1203a6df8d0d6f7279764ca5b9801467e73ed839e84589dae78a` |
+| fixed held-out 4-way | 512 | `2e0788fa13347f867d7cb9bfc5b3c63d7d5e7c9397cd44079bc071e9b04ec171` |
+
+协议冻结 `workloads=[A,B] × geometries=[absolute,sqrt_relative,relative] ×
+seeds=[318,319,320,321,322] = 30 cases`，其余参数完全复用 P=6 fresh-seed 实验。
+判定先在每个 geometry 内比 B 相对 A，然后才在 B 内比 geometry；三个 common
+unseen 组分开报告并要求 Pareto 不劣，1-way 只作安全门禁，不作跨组 aggregate。
+
+审计与验证：正式身份文件可逐字段确定性重建，SHA 一致；递归 `result`
+key 审计为 0；更改旧 query results 和 marginal counts 不改变选取身份；新 B 阶数构成、
+无 1-way、A/B 并集与公共评价集不相交、固定 held-out 与既有存档身份等价均有
+定向测试。结果为 `7 passed`，Ruff 通过，`git diff --check` 通过。
+
+下一个独立小步骤：在不改变任何冻结身份的前提下，读取固定 raw reference 仅为
+B 的 50 条查询附加答案，物化新 measured workload 输入，再审计附答案前后的
+query identity 仍为 `602d8b...9af1`。本步完成后再进入 collector/evaluator 实现。
+
+### 历史暂停点：test 30/15/5 generation workload A/B 候选空间审计完成（2026-08-18）
 
 > 用户已确认把新 generation workload 固定为 50 条：30 条 2-way、15 条
 > 3-way、5 条 4-way；不在 measured generation workload 中放 1-way。本步只建立
