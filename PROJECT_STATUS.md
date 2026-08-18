@@ -2,7 +2,54 @@
 
 ## 当前阶段
 
-### 最新暂停点：test 残差几何 fresh-seed 确认完成，stacked PR #64 等待审查（2026-08-18）
+### 最新暂停点：test 30/15/5 generation workload A/B 候选空间审计完成（2026-08-18）
+
+> 用户已确认把新 generation workload 固定为 50 条：30 条 2-way、15 条
+> 3-way、5 条 4-way；不在 measured generation workload 中放 1-way。本步只建立
+> 本地分支并审计公开候选空间，没有生成新查询、没有读取原始 reference CSV、
+> 没有运行实验，也没有 push 或操作 PR。
+
+当前本地分支：
+
+```text
+branch   research/issue53-query-workload-ab
+base     88853c29a9cc1f571a06a2537e57cddcca665628
+remote   未创建，未 push
+```
+
+对照组 A 保留旧 `measured_50query.json`：25 条 1-way + 20 条 2-way + 5 条
+3-way。新组 B 保留旧 D01–D20 和 T01–T05，再用 10 条新 2-way、10 条新
+3-way、5 条新 4-way 替换 S01–S25，因而恰好是 `30 + 15 + 5 = 50`。A/B 仍使用
+同一份 1-way `init_marginals.json` 初始化；改变的只是后续 measured generation workload。
+
+结果盲审计结论：
+
+| 阶数 | 公开标准 cell 总数 | 已保留旧查询精确重叠 | 固定 held-out 排除 | B 可选新查询 |
+|---|---:|---:|---:|---:|
+| 2-way | 548 | 17 | 0 | 531 |
+| 3-way | 5,056 | 5 | 512 | 4,539 |
+| 4-way | 30,450 | 0 | 512 | 29,938 |
+
+旧 20 条 2-way 中 D04、D05、D07 使用合并/单边年龄区间条件，不是公开边际网格中
+的单个标准 cell；它们仍保留在 B，但去重必须使用语义指纹，不能只看 `type`
+或 ID。新 2/3/4-way 只能从公开 `init_marginals` 定义的 cell 中用新 namespace
+的 SHA-256 排序确定性选取；不许用 target count、稀有度、旧 terminal error 或实验结果
+挑查询。3/4-way 还必须排除已存档的各 512 条 held-out 身份；不能用 B 重建
+held-out，否则评价集会跟着训练集变化。
+
+选完 10 条新 2-way 后，A/B 公共未见 2-way 评价集将固定为 521 条；另外分开
+报告 25 条 1-way safety、既有 512 条 held-out 3-way 和 512 条 held-out 4-way，不做
+跨组 aggregate。
+
+GitHub 状态更正：PR #64 已按用户要求关闭，未合并；PR #63 仍保持原状态并
+等待他人审查。下方原“PR #64 等待审查”板块仅保留为历史实验记录，其 OPEN
+描述已被本板块取代。
+
+下一个独立小步骤：先写并测试结果前查询身份冻结器/协议，只产生不含
+`result` 的 30/15/5 身份和 A/B 公共评价身份；审计通过后才可以读取 reference
+附答案，再进入 runner 实现。
+
+### 历史暂停点：test 残差几何 fresh-seed 确认完成，stacked PR #64 后已关闭（2026-08-18）
 
 > 本步按结果前协议在用户指定的 A6000 服务器完成 seed 313–317、三种 residual geometry 的 15 条
 > fresh 轨迹，再按 measured 1-way、全部未测量 2-way、冻结 held-out 3/4-way 分阶评价。没有按结果
