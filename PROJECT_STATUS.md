@@ -2,7 +2,53 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 真实核心与一轮闭环验证通过（2026-08-18）
+### 最新暂停点：test query-workload A/B 正式执行服务器重新冻结完成（2026-08-18）
+
+> 用户已确认后续改在当前有空闲资源的服务器执行。本步只在看到正式结果前重新绑定
+> execution server、重算 protocol SHA 并增加运行时硬校验；没有启动正式 30 cases，
+> 没有读取 collection 结果或 raw reference，没有 push 或操作 PR。
+
+正式 collector protocol 从：
+
+```text
+old server    root@10.8.176.53:6006
+old SHA       e40317be5a21c0c7a59928865c31cb56071b78e1206dba00bcb574b3cd3b198a
+```
+
+结果前重新冻结为：
+
+```text
+new server    linyao-system
+new SHA       5b27cc3ddd5b39829a584f1cdc06b961ef50204840d957481444297023a18f0f
+```
+
+规范化 manifest 差异审计证明唯一变化是
+`execution_concurrency.server`：把新 manifest 的该字段临时还原为旧 SSH target 后，
+SHA 精确重建为旧 `e40317...b198a`。workload A/B 身份、target vector、30-case
+矩阵、seeds 318–322、全部 generator 参数、公共评价身份和冻结门禁均未改变。
+
+正式 runner 现在除要求 clean worktree、`CUDA_VISIBLE_DEVICES` 为空外，还会要求
+`platform.node() == "linyao-system"`，并把 hostname 写入 shard environment；因此
+新 protocol 不能被误拿到其他服务器执行。结果前协议文档、身份 artifact 和附答案
+workload 仍保留原 SHA：
+
+```text
+protocol doc       291c591ba5408e046005b24122bfe602bf8a97f7c175ee45e59f81daf96b44b6
+identity artifact  a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+answered workload  708afe2863b797fae714c39699457dd91ac97a9dbcd35b900d46fcf6c01e9e14
+```
+
+这样避免因只改运行位置而重写已经结果盲冻结、随后附答案的科学输入；服务器变更由新
+collector manifest 和 Git 历史单独审计。collector/evaluator plan 均显示新 SHA、
+`server=linyao-system`、`generation_started=false`。Ruff 通过；使用当前完整运行环境
+的相关测试为 `32 passed`，包含错误 hostname 拒绝和正确 hostname 记录测试。正式
+output namespace 仍不存在。
+
+下一个独立小步骤：在 `linyao-system` 做正式运行前只读资源/环境预检，然后按冻结
+SHA `5b27cc...a18f0f` 启动 5 个 seed shard；每个 shard 内六臂串行，全部 30 cases
+完成后再聚合。正式运行期间不修改协议、不增加 seed、不读取离线评价结果。
+
+### 历史暂停点：test query-workload A/B 真实核心与一轮闭环验证通过（2026-08-18）
 
 > 本步在用户确认当前服务器已有空闲资源后，只做非正式轻量验证；没有启动
 > 6000-round 的正式 30-case 采集，没有保留任何生成表或评价结果，没有 push 或

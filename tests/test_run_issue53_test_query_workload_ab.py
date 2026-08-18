@@ -23,6 +23,7 @@ def test_frozen_protocol_is_exact_30_case_numpy_matrix():
         "relative",
     ]
     assert protocol["trajectory_count"] == 30
+    assert protocol["execution_concurrency"]["server"] == "linyao-system"
     assert protocol["common_generator"]["inner_early_stopping_patience_ticks"] == 6
     assert protocol["common_generator"]["n_rounds"] == 6000
     assert protocol["common_generator"]["candidate_budget"] == 6000
@@ -93,6 +94,44 @@ def test_generator_rejects_nonfrozen_cases_and_has_inert_max_order():
         collection.generator_params(999, "absolute")
     with pytest.raises(ValueError, match="geometry 不在冻结矩阵"):
         collection.generator_params(318, "new_geometry")
+
+
+def test_formal_environment_rejects_a_different_hostname(monkeypatch):
+    monkeypatch.setattr(collection, "_git_text", lambda *_args: "")
+    monkeypatch.setattr(collection.platform, "node", lambda: "other-server")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    runtime = SimpleNamespace(
+        np=SimpleNamespace(__version__="test"),
+        pd=SimpleNamespace(__version__="test"),
+    )
+
+    with pytest.raises(RuntimeError, match="服务器身份漂移"):
+        collection._environment(ROOT, runtime)
+
+
+def test_formal_environment_records_the_frozen_hostname(monkeypatch):
+    def fake_git(_root, *arguments):
+        if arguments[0] == "status":
+            return ""
+        assert arguments == ("rev-parse", "HEAD")
+        return "1" * 40
+
+    monkeypatch.setattr(collection, "_git_text", fake_git)
+    monkeypatch.setattr(
+        collection.platform,
+        "node",
+        lambda: collection.EXECUTION_HOSTNAME,
+    )
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    runtime = SimpleNamespace(
+        np=SimpleNamespace(__version__="test-numpy"),
+        pd=SimpleNamespace(__version__="test-pandas"),
+    )
+
+    environment = collection._environment(ROOT, runtime)
+
+    assert environment["hostname"] == "linyao-system"
+    assert environment["git_commit"] == "1" * 40
 
 
 class _FakeVector(list):

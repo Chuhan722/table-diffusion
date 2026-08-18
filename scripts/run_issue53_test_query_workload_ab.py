@@ -30,7 +30,7 @@ else:
 
 PROTOCOL_VERSION = "issue53-test-query-workload-ab-collection-v1"
 FROZEN_PROTOCOL_SHA256 = (
-    "e40317be5a21c0c7a59928865c31cb56071b78e1206dba00bcb574b3cd3b198a"
+    "5b27cc3ddd5b39829a584f1cdc06b961ef50204840d957481444297023a18f0f"
 )
 PROTOCOL_DOC = freeze.PROTOCOL_DOC
 PROTOCOL_DOC_SHA256 = materialize.PROTOCOL_DOC_SHA256
@@ -88,6 +88,7 @@ PATIENCE_TICKS = 6
 RHO = 0.01
 ROUND_CAP = 6000
 CANDIDATE_BUDGET = 6000
+EXECUTION_HOSTNAME = "linyao-system"
 
 
 def _repo_root() -> Path:
@@ -255,7 +256,7 @@ def frozen_protocol_manifest() -> dict[str, Any]:
         "parameter_retuning_allowed": False,
         "canonical_selection_allowed": False,
         "execution_concurrency": {
-            "server": "root@10.8.176.53:6006",
+            "server": EXECUTION_HOSTNAME,
             "generator_device": "numpy",
             "cuda_visible_devices": "empty",
             "worker_count": 5,
@@ -404,9 +405,16 @@ def _environment(root: Path, runtime: SimpleNamespace) -> dict[str, Any]:
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if visible != "":
         raise RuntimeError("本协议要求 CUDA_VISIBLE_DEVICES 为空")
+    hostname = platform.node()
+    if hostname != EXECUTION_HOSTNAME:
+        raise RuntimeError(
+            "正式采集服务器身份漂移："
+            f"expected={EXECUTION_HOSTNAME}, observed={hostname}"
+        )
     return {
         "git_commit": _git_text(root, "rev-parse", "HEAD"),
         "worktree_clean_including_untracked": True,
+        "hostname": hostname,
         "python": sys.version,
         "numpy": runtime.np.__version__,
         "pandas": runtime.pd.__version__,
