@@ -2,7 +2,50 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 采集器与评估器实现完成（2026-08-18）
+### 最新暂停点：test query-workload A/B 真实核心与一轮闭环验证通过（2026-08-18）
+
+> 本步在用户确认当前服务器已有空闲资源后，只做非正式轻量验证；没有启动
+> 6000-round 的正式 30-case 采集，没有保留任何生成表或评价结果，没有 push 或
+> 操作 PR。
+
+验证环境为当前 `linyao-system`（2×RTX 4090）；冻结 generator 仍按 NumPy/CPU
+执行，没有改走 GPU。完整依赖环境默认指向另一个 worktree，因此验证时显式设置
+`PYTHONPATH=src:.`，确认加载的是当前提交 `ec14608a9073a5cf756af25d12fec98611431c86`
+下的 `src/table_diffevo`。
+
+真实核心算法的一轮 4-way 定向测试实际通过：workload B 的答案和 target shape 均为
+50，阶数构成为 `30×2-way + 15×3-way + 5×4-way`，5 条 4-way 进入完整
+objective；`factorized_gibbs_factor_count=0`，证明关闭 Gibbs 时
+`factorized_gibbs_max_order=3` 没有截断 measured 4-way。使用完整运行环境重跑相关
+身份、物化、collector、evaluator 测试，结果为 `30 passed`，无 skip。
+
+随后在仓库 `outputs/` 下的忽略临时目录运行 `30 cases × 1 round` 非正式结构冒烟：
+
+```text
+cases                         30/30
+rounds per case               1
+termination                   30 resource_cap_reached（预期）
+paired seed shards            5/5
+B cases with full 4-way path  15/15
+terminal table SHA audit      30/30
+query-seed error rows         47,100
+evaluation groups             25 / 521 / 512 / 512
+scientific gates              全部 inconclusive_resource_cap（预期）
+temporary artifacts           已自动清理
+```
+
+该冒烟只证明真实 generation、六臂配对、terminal table 读取、公共查询附答案、分阶
+汇总和资源上限门禁可以贯通，不是科学实验结果。评价仍严格先冻结查询身份，再读取固定
+reference；没有消耗隐私预算。正式 output namespace
+`outputs/issue53_test_query_workload_ab_v1` 仍不存在。
+
+注意：当前冻结 protocol 的执行服务器字段仍是此前指定的 A6000
+`root@10.8.176.53:6006`，而本次轻量验证按用户最新指示在 `linyao-system` 完成。
+下一个独立小步骤若要在当前服务器正式跑，应先在看到正式结果前把 execution server
+元数据改为 `linyao-system`、重算并冻结 protocol SHA；若保持现有 protocol，则正式
+30 cases 应回到原 A6000 执行。
+
+### 历史暂停点：test query-workload A/B 采集器与评估器实现完成（2026-08-18）
 
 > 本步只实现已冻结 30-case 实验的 collector、evaluator 和回归测试，并执行
 > plan/本地测试；没有启动 seeds 318–322 的正式生成，没有产生正式结果，没有
