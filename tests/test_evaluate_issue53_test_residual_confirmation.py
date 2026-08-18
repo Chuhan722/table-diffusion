@@ -132,6 +132,13 @@ def test_plan_and_cli_have_no_scientific_overrides():
     assert plan["scientific_overrides_allowed"] is False
     assert plan["raw_reference_access_only_after_query_identity_audit"] is True
 
+    evaluated = evaluation.build_evaluation_preamble()
+    assert evaluated["mode"] == (
+        "evaluate_frozen_collection_after_query_identity_audit"
+    )
+    assert evaluated["mode"] != plan["mode"]
+    assert evaluated["generation_started"] is False
+
     parser = evaluation._build_parser()
     parsed = parser.parse_args(
         ["evaluate", "--confirm-collection-report-sha", "a" * 64]

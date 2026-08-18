@@ -19,6 +19,7 @@ from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.queries import evaluate_table
 
 EVALUATION_VERSION = "issue53-test-residual-confirmation-evaluation-v1"
+EVALUATION_MODE = "evaluate_frozen_collection_after_query_identity_audit"
 EVALUATION_REPORT = "evaluation_report.json"
 ERROR_ARTIFACT = "query_seed_errors.csv"
 GROUP_ORDER = workloads.GROUP_ORDER
@@ -80,6 +81,15 @@ def build_plan() -> dict[str, Any]:
     }
 
 
+def build_evaluation_preamble() -> dict[str, Any]:
+    """Return the frozen plan fields with an evaluated-report mode."""
+
+    return {
+        **build_plan(),
+        "mode": EVALUATION_MODE,
+    }
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         value = json.load(handle)
@@ -116,8 +126,17 @@ def _audit_collection(
     if report.get("parameter_retuning_performed"):
         raise RuntimeError("collection 不得结果后调参")
     current_commit = base._git_text(root, "rev-parse", "HEAD")
-    if report.get("execution_git_commit") != current_commit:
-        raise RuntimeError("评价必须在 collection execution commit 上运行")
+    execution_commit = report.get("execution_git_commit")
+    if not isinstance(execution_commit, str):
+        raise RuntimeError("collection execution commit 缺失")
+    merge_base = base._git_text(
+        root,
+        "merge-base",
+        execution_commit,
+        current_commit,
+    )
+    if merge_base != execution_commit:
+        raise RuntimeError("collection execution commit 不是评价提交的祖先")
 
     rows = report.get("raw_results")
     if not isinstance(rows, list) or len(rows) != 15:
@@ -131,7 +150,7 @@ def _audit_collection(
             raise RuntimeError(f"collection case 不在冻结矩阵：{key}")
         if row["protocol_sha256"] != collection.FROZEN_PROTOCOL_SHA256:
             raise RuntimeError(f"collection case protocol 漂移：{key}")
-        if row["git_commit"] != current_commit:
+        if row["git_commit"] != execution_commit:
             raise RuntimeError(f"collection case commit 漂移：{key}")
         if row["dataset"] != collection.DATASET:
             raise RuntimeError(f"collection dataset 漂移：{key}")
@@ -468,7 +487,7 @@ def evaluate(confirmed_collection_report_sha256: str) -> Path:
     artifact_sha = base._sha256_file(temporary_error_path)
 
     report = {
-        **build_plan(),
+        **build_evaluation_preamble(),
         "evaluation_git_commit": base._git_text(root, "rev-parse", "HEAD"),
         "collection_report_sha256": confirmed_collection_report_sha256,
         "collection_execution_git_commit": collection_report[
