@@ -2,7 +2,28 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 结果后解释修正，residual 板块收口（2026-08-18）
+### 最新暂停点：residual geometry 收口已提交 stacked PR #65（2026-08-18）
+
+> 用户明确授权 push 后，当前分支已推送并创建新的 stacked PR；没有自行 review、approve
+> 或 merge，也没有操作依赖 PR #63。PR #65 替代此前按用户要求关闭的 #64，包含原 residual
+> geometry 证据链以及后续 query-workload A/B 正式实验与结果后解释修正。
+
+```text
+PR       #65
+title    研究：Issue #53 残差几何与高阶查询 workload 确认
+state    OPEN, non-Draft
+url      https://github.com/Chuhan722/table-diffusion/pull/65
+base     research/issue-53-stage2-v2-evidence（PR #63）
+head     research/issue53-query-workload-ab
+```
+
+PR 正文明确保留正式 `mixed_no_workload_replacement` 作为历史辅助分类，但不再以 A/B
+总体高低选择 residual geometry；当前主结论读取 B 内比较。后续 development baseline 为
+“1-way marginal 初始化 + 高阶 measured workload + relative/floor=8”，公共 API 默认值仍
+保持 `absolute`。当前停在等待外部审查，不自行处理 #63/#65 的 review 或 merge；下一科学
+板块 donor/alpha 另行讨论和冻结，不顺带加入本 PR。
+
+### 历史暂停点：test query-workload A/B 结果后解释修正，residual 板块收口（2026-08-18）
 
 > 本步不修改正式 evaluator、原始 artifacts、查询、seed、门禁或 SHA，只修正结果解释：
 > A/B 的持续监督不同，`B - A` 不能作为正常查询设计或 residual geometry 的选择门槛；
