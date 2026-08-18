@@ -2,11 +2,12 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 正式公共评价与冻结结论完成（2026-08-18）
+### 最新暂停点：test query-workload A/B 结果后解释修正，residual 板块收口（2026-08-18）
 
-> 本步以完整 collection SHA 显式确认 evaluator，先审计四组查询身份和 30 张
-> terminal table，再读取固定 raw reference 做统一评价。没有重新生成表、调整规则、
-> 增加 seed 或形成跨数据集 canonical 结论，也没有 push 或操作 PR。
+> 本步不修改正式 evaluator、原始 artifacts、查询、seed、门禁或 SHA，只修正结果解释：
+> A/B 的持续监督不同，`B - A` 不能作为正常查询设计或 residual geometry 的选择门槛；
+> 当前主结论应读取 workload B 内部比较。没有重新生成表、调整规则、增加 seed、修改
+> 公共 API 默认值、形成全局 canonical 结论，也没有 push 或操作 Issue/PR。
 
 正式评价身份：
 
@@ -36,7 +37,13 @@ data rows             47,100（文件 47,101 行，含 header）
 | fixed held-out 3-way | 4.2859 | 5.1699 | 4.1855 | 5.1148 | 4.5813 | 4.5902 |
 | fixed held-out 4-way | 1.7578 | 1.9848 | 1.7715 | 1.9516 | 1.8809 | 1.8949 |
 
-### 冻结问题 1：workload B 能否替代 A
+完整结果后解释归档于：
+
+```text
+docs/实验结果/Issue53_test查询workload_AB正式结果.md
+```
+
+### 冻结问题 1：workload B 能否替代 A（保留为历史辅助判定）
 
 `B - A` mean delta 均为正数时表示 B 更差：
 
@@ -51,11 +58,16 @@ data rows             47,100（文件 47,101 行，含 header）
 的 common unseen 2-way 都是 5/5 paired seeds 下 B 更差。relative 已把 3/4-way
 差距压到接近零，但仍没有让 B 通过替代门禁，而且 1-way 与 2-way 仍明显退化。
 
-结论是：当前 `30×2-way + 15×3-way + 5×4-way`、完全不含 measured 1-way 的 B
-不能替代旧 A。两组虽然使用相同 1-way marginal 初始化，但演化过程中 B 没有持续
-1-way measured 约束，最终 1-way 漂移很大；这与 unseen 2-way 同时退化一致。由于 B
-还同时加入了新高维查询，本实验严格证明的是“整套 B 设计失败”，不能把全部因果只
-归到某一条具体查询。
+上述正式数值与分类保持有效，但它回答的是：移除 A 的持续 1-way measured supervision、
+同时换入更多高阶查询后，B 能否在 A 直接或间接监督的公共统计上不劣于 A。答案是否定的。
+它不回答正常高阶 workload 应使用哪种 residual geometry，也不能证明 B 的查询设置失败。
+
+A 的 `25×1-way + 20×2-way + 5×3-way` 中，25 条 1-way target 与 marginal 初始化
+25/25 精确一致，初态残差为零，并继续占固定 objective 的一半；B 使用相同 marginal
+初始化，后续只拟合 `30×2-way + 15×3-way + 5×4-way`。两者持续监督不同，不能以
+A/B 总体高低选择方法。B 还同时换入新 2/3/4-way，因此也不能声称 1-way 单一因素解释
+全部 A/B 数值；可以确认的是旧 geometry 排序依赖 workload，零残差 1-way 是 A 偏向
+absolute 的明确机制。
 
 ### 冻结问题 2：workload B 内哪种 geometry 更好
 
@@ -72,14 +84,39 @@ paired-seed 稳定改善，正式分类为 `supports_geometry_under_workload_B`�
 没有任何 primary group 达到预先要求的 4/5，正式分类为
 `mixed_no_unified_geometry_candidate`。
 
-因此本实验的最终结论是：**不采用无 1-way 的 workload B 替换 A；如果只讨论 B
-内部的 residual geometry，则支持 relative，而不是 sqrt-relative。** 这只适用于
-`test_300x10` 当前协议，不能直接外推为跨数据集默认方法。
+### 结果后研究解释与当前决定
 
-下一步不应结果后继续加 seed 或微调 30/15/5。更合理的是先决定产品化方向：
-若继续研究查询设计，应结果前另建 mixed workload 协议，保留持续的 1-way anchor
-同时加入部分 3/4-way，并重新冻结等量查询预算；若准备交付当前实验，则整理本地
-commit/PR 说明即可。按用户要求，未明确说 push 前不推远端。
+当前项目要研究的内层语义是“1-way marginal 初始化 + 尚未满足的高阶 measured
+workload”。因此 workload A 只保留为解释旧 test 反转的机制对照；选择 residual geometry
+时，以 B 内部比较为当前主问题，不要求 B 先通过相对 A 的 replacement gate。
+
+正式 B 内结果支持 `relative`：四组 mean 全部优于 B/absolute，unseen 2-way 与 held-out
+3-way 都有 4/5 paired seeds 改善；1-way safety mean 也从 16.184 降至 13.008，因此
+没有证据要求为挽救 relative 再加入持续 1-way anchor。sqrt-relative 的 primary 稳定性
+不足，仍是 mixed。
+
+结合既有 nltcs 无 measured 1-way workload 下 relative 的 3/3 paired-seed 优势，当前
+development baseline 冻结为：
+
+```text
+1-way marginal initialization
++ higher-order measured workload
++ relative residual geometry (floor=8)
+```
+
+这不修改 `run_evolution` 为兼容性保留的 `absolute` 默认值，也不外推到所有数据、带噪
+阶段或公共 API。residual 板块到此停止增加公式、seed 和 A/B 变体；下一科学板块进入
+donor/alpha，并须另写结果前协议。当前先完成本地文档收口与验证；按用户要求停在 push
+之前，不创建、更新、审查或合并远端 PR。
+
+本次收口验证：A/B freeze/runner/evaluator、fresh-seed evaluator 与 ordered-heldout
+相关定向回归 `37 passed`；`git diff --check` 通过。没有运行 generator 或读取新的实验
+结果。新增结果文档及两份历史结果顶部的后续说明均使用仓库内有效相对链接。
+
+### 历史暂停点：test query-workload A/B 正式公共评价完成（2026-08-18）
+
+> 以下保留正式评价执行、不可变身份与原始冻结分类；上方结果后解释只改变这些证据
+> 在当前研究问题中的角色，不覆盖历史结果。
 
 ### 历史暂停点：test query-workload A/B 正式 30-case 采集与聚合完成（2026-08-18）
 

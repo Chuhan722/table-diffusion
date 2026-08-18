@@ -1,5 +1,11 @@
 # Issue #53：`test_300x10` 残差几何 fresh-seed 确认结果
 
+> **后续结果更新（2026-08-18）：** 本文使用旧 workload A，不能决定“1-way 只初始化、
+> 后续拟合高阶 queries”的正常设置应选哪种 residual geometry。后续 workload B 正式实验
+> 在 B 内支持 `relative`，并将 A 重新定位为机制对照。当前解释见
+> [Issue53_test查询workload_AB正式结果.md](Issue53_test查询workload_AB正式结果.md)；本文
+> 的协议、数值与当时分类原样保留。
+
 日期：2026-08-18
 
 ## 1. 结论

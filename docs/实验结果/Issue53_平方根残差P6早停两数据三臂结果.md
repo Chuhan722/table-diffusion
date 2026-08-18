@@ -2,6 +2,14 @@
 
 日期：2026-08-17
 
+> **后续结果更新（2026-08-18）：** 本文的 `test_300x10` 结论只适用于旧 workload A。
+> 后续 result-blind workload B 正式实验表明，在“相同 1-way marginal 初始化 + 只拟合
+> 高阶 measured queries”的设置下，`relative` 在公共 unseen 2-way、held-out 3-way、
+> held-out 4-way 和 1-way safety 的 mean 均优于 `absolute`，其中 2/3-way 达到 4/5
+> paired-seed 稳定改善。当前结果后解释与收口决定见
+> [Issue53_test查询workload_AB正式结果.md](Issue53_test查询workload_AB正式结果.md)。本文
+> 原始数值和当时的冻结结论继续保留，不再作为正常 workload 的 residual 选择结论。
+
 ## 1. 结论
 
 在同一套 P=6 natural-work 早停、terminal-current 输出和其余固定生成参数下，三种残差几何没有一个
