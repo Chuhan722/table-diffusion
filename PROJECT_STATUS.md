@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-### 最新暂停点：平方根残差 P=6 两数据三臂矩阵完成，跨数据反转仍存在（2026-08-17）
+### 最新暂停点：残差几何查询级诊断完成，下一候选转为一阶边缘保护（2026-08-18）
 
 > 本工作在独立 worktree/分支 `research/issue53-sqrt-residual-earlystop` 上进行，不修改等待外部审查的
 > PR #63 分支。用户授权直接比较 absolute、平方根中间方法和 relative 在 test/nltcs 的 P=6 早停
@@ -68,10 +68,23 @@ sqrt 的 L1 再低 29.53%，但 work 高 50.03%，二者构成 Pareto 取舍。�
 `241618e80cce3549e2626fc668467e4c9029be968858e09a2dffb029716de143`；本地与远端 40 个文件逐项
 SHA-256 完全一致。运行结束后远端树 clean、GPU 0 已释放，GPU 3 未触碰。
 
-下一步不扫更多固定指数、不调 rho。先只读分析现有 18 个终态，按 generation-visible target 频率、
-查询阶数和重叠度分解配对误差，定位跨数据反转发生在哪些查询区间；该分析是已见结果后的 development
-diagnostic，不作选择证据。之后再结果前冻结确定性 geometry selector/双尺度组合，或明确采用数据集级
-Pareto 选择；新候选必须用 fresh seeds 并补 held-out、高阶联合、支持集和多样性门禁。
+已完成不需 GPU 的 query-level 只读诊断：固定读取原 18 张 terminal-current 表，形成 9459 条
+query/seed/arm error 和 1051 条 query summary；逐臂复算 overall L1 与 source report 一致。入口提交
+`deb659f3346f3dac92763a4479418b619027b061`，报告 SHA-256 为
+`876b7cc2f75ddf315800dd36853ca617fbbbbbf6258bc908709bec49c251e48b`。本分析明确为已见结果后的
+development diagnostic，没有生成新表、读取 raw reference 或消耗隐私预算。
+
+机制结论：频率不是唯一或最强分流。`test_300x10` 没有 rare query，但 25/50 条为 1-way，且 25/25
+target 与初始化 marginal count 精确一致；relative terminal 上 1-way mean abs count 从 absolute 的
+0.693 升到 1.373、exact rate 从 45.33% 降到 17.33%，该阶占 relative 总误差 60.95%。`nltcs`
+没有 1-way；relative 在 rare/medium/common × 2/3-way 六格中全部最低，并在 3003 个 query×seed
+配对中相对 absolute 为 2197 better / 145 tie / 661 worse。结构 overlap low/middle/high 不改变各数据
+方向。完整结果见 `docs/实验结果/Issue53_残差几何查询级诊断结果.md`。
+
+下一步不做频率 selector、不扫 gamma/floor、不调 rho。先结果前设计 `order_aware_relative`：1-way
+使用 absolute 恢复力、order>=2 使用 relative-f8。设计必须先解决两块原始尺度不同的问题，禁止根据
+310–312 调混合系数；无 1-way workload 必须与 relative 数值等价。设计和单测审查后，才使用 fresh
+seeds 在 test 上比较 absolute/relative/candidate；nltcs 先证明路径等价，再决定是否冗余重跑。
 
 ### 最新暂停点：PR #63 已创建并以 Amendment 3 同步 Issue #53，等待审查（2026-08-17）
 

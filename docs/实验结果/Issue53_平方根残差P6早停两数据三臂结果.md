@@ -85,18 +85,16 @@ outputs/issue53_sqrt_residual_earlystop_comparison_v1/
 本地与远端共 40 个文件已逐文件比较 SHA-256，内容完全一致。远端运行树在结束后保持 clean，GPU 0
 已回到 `3 MiB / 0%`；GPU 3 的既有无关任务未触碰。
 
-## 5. 下一步建议
+## 5. 后续查询级诊断（已完成）
 
-本结果不支持继续盲扫固定指数，也不支持现在转去调 rho。最小且信息量最高的下一步是：只使用这 18
-个既有 terminal artifacts 和 generation-visible target/query，做配对的查询级误差分解：
+已使用这 18 个 terminal artifacts 完成固定的 result-aware 查询级误差分解，完整结果见：
 
-1. 按 target 计数/频率分箱，分别汇总三臂的绝对误差、胜率和总 L1 贡献；
-2. 检查跨数据反转来自哪些频率区间，以及 `test_300x10` 的小 N/离散分辨率是否使相对化放大了
-   不可消除的小计数误差；
-3. 同时检查查询阶数和重叠度，避免把频率效应误判为 workload 结构效应；
-4. 将该分析明确标为已见结果后的 development diagnostic，不用于宣称选择规则已验证。
+```text
+docs/实验结果/Issue53_残差几何查询级诊断结果.md
+report SHA 876b7cc2f75ddf315800dd36853ca617fbbbbbf6258bc908709bec49c251e48b
+```
 
-诊断后再结果前冻结一个候选，而不是继续扫 gamma：若存在稳定、可解释的频率交叉点，优先研究仅依赖
-generation-visible workload 统计的确定性 geometry selector 或双尺度组合；若没有稳定交叉点，则保留
-数据集级 Pareto 选择，并先冻结跨方案质量—成本门禁。任何候选都应使用 fresh seeds，并补 held-out、
-高阶联合、支持集和多样性评价后，才可能进入 canonical 选择。
+诊断否定了简单频率分流：nltcs 的 relative 在所有频率档都改善。更强的解释是 test 有 25 条由
+marginal 初始化精确满足的 1-way 查询，而 nltcs measured workload 没有 1-way。下一候选改为结果前
+设计 order-aware geometry：1-way absolute、order>=2 relative；必须先解决两块尺度对齐，再用 fresh
+seeds 验证，不能把本诊断当成选择证据。
