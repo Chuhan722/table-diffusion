@@ -104,6 +104,16 @@ def test_evaluation_plan_prevents_fixed_or_adaptive_selection():
     assert plan["concentration_monotonic_metric"].startswith("tail_mean")
 
 
+def test_measured_l1_audit_allows_only_float_operation_order_noise():
+    collected = 0.002666666666666667
+    evaluated = 0.0026666666666666666
+
+    assert evaluator._measured_l1_matches_collection(evaluated, collected)
+    assert not evaluator._measured_l1_matches_collection(
+        evaluated + 1e-12, collected
+    )
+
+
 def _metric_block(value):
     return {"normalized_l1_mean": value}
 
@@ -230,4 +240,3 @@ def test_nltcs_and_test_offline_query_identities_are_rebuilt_result_blind():
     )
     assert nltcs_audit["identity_sha256"] == evaluator.NLTCS_GROUP_IDENTITIES
     assert all("result" not in query for query in test_groups["common_unseen_2way"])
-

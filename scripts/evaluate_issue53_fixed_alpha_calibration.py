@@ -32,6 +32,7 @@ STABLE_WIN_MINIMUM = 4
 BASELINE_ALPHA = 16.0
 PROBE_ALPHAS = (12.0, 24.0)
 NORMAL_REASONS = {"fit_target_reached", "early_stopped"}
+MEASURED_L1_AUDIT_ABS_TOL = 1e-15
 
 REFERENCE_PATHS = {
     "test_300x10": Path("data/test_300x10/test_300x10.csv"),
@@ -167,6 +168,19 @@ def _load_runtime() -> SimpleNamespace:
         evaluate_table=evaluate_table,
         load_queries=load_queries,
         load_schema=load_schema,
+    )
+
+
+def _measured_l1_matches_collection(
+    evaluated: float, collected: float
+) -> bool:
+    """Allow only floating-operation-order noise in the L1 audit."""
+
+    return math.isclose(
+        evaluated,
+        collected,
+        rel_tol=0.0,
+        abs_tol=MEASURED_L1_AUDIT_ABS_TOL,
     )
 
 
@@ -1036,7 +1050,9 @@ def evaluate(confirmed_collection_report_sha256: str) -> Path:
                     references[dataset],
                 )
             measured_l1 = metrics["measured"]["overall"]["normalized_l1_mean"]
-            if measured_l1 != source["terminal_current_normalized_l1"]:
+            if not _measured_l1_matches_collection(
+                measured_l1, source["terminal_current_normalized_l1"]
+            ):
                 raise RuntimeError(
                     f"{dataset}/alpha{alpha}/seed{seed} measured L1 复算漂移"
                 )
