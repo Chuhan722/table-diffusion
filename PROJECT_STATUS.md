@@ -2,6 +2,54 @@
 
 ## 当前阶段
 
+### 最新暂停点：test 分阶 held-out 诊断完成，排除简单 order-aware 接续（2026-08-18）
+
+> 用户确认先核对 AIM/Private-GSD 的 1-way 语义，再要求检查当前 test 查询设计。为避免用同一批结果
+> 事后挑口径，本步先提交分阶诊断协议，再实现并在干净提交上只读评价既有 9 张
+> `test_300x10/terminal_current.csv`；没有重新生成、修改早停/残差参数或消耗隐私预算。
+
+冻结入口：
+
+```text
+protocol doc     docs/设计/Issue53_test分阶heldout只读诊断协议.md
+protocol commit  d427db68b927375a58e87ea8b172476e1ed5dcbd
+analysis script  scripts/analyze_issue53_test_ordered_heldout.py
+analysis commit  219bf74ea753823058c0b2842d7c90a543d47079
+source report    241618e80cce3549e2626fc668467e4c9029be968858e09a2dffb029716de143
+result report    cb88a5bbbd6de494fd97f60ca3984dfe53fe714379978137ae69436773feff24
+```
+
+查询身份在读取 raw reference 前冻结：公开标准 2-way cell 共 548 条，与 measured 精确重叠 17 条；
+其余 531 条全部纳入，不按 target/终态误差抽样。既有 result-blind 3/4-way held-out 身份确定性重建
+一致，各 512 条、与 measured 重叠为 0。六组始终分开报告，没有总体加权分。该离线诊断随后读取
+原表为 531 条查询附答案，因此报告正确标记 `raw_reference_data_accessed=true`。
+
+三 seed 平均绝对计数误差：
+
+| 查询组 | 数量 | absolute | sqrt | relative | 最低 |
+|---|---:|---:|---:|---:|---|
+| measured 1-way | 25 | **0.6933** | 0.7333 | 1.3733 | absolute |
+| measured 2-way | 20 | **0.8500** | 1.0833 | 0.9000 | absolute |
+| measured 3-way | 5 | 0.9333 | 0.9333 | **0.8000** | relative |
+| all unmeasured 2-way | 531 | 7.0929 | **6.8763** | 7.1620 | sqrt |
+| frozen held-out 3-way | 512 | **4.1296** | 4.2637 | 4.2435 | absolute |
+| frozen held-out 4-way | 512 | 1.7760 | **1.7650** | 1.8737 | sqrt |
+
+关键判断：原 50-query aggregate 确实因 25 条 marginal 1-way 放大 relative 劣势；但 relative 相对
+absolute 在全部未测量 2-way、held-out 3-way、held-out 4-way 的均值仍分别差 0.0691、0.1139、
+0.0977 count/query，三个组都是 1/3 paired seed 更好、2/3 更差。因此问题不只是 test 查询设计，
+但差值很小、seed 方向仅 2:1，不能声称稳定显著劣化。
+
+sqrt 相对 absolute 在未测量 2-way 改善 0.2166、4-way 改善 0.0111 count/query，在 held-out 3-way
+变差 0.1341；measured 1-way 只差 0.04，但 measured 2-way 差 0.2333。它是 mixed 中间点，不是统一
+赢家。完整结果见 `docs/实验结果/Issue53_test分阶heldout只读诊断结果.md`；实现及既有相关回归
+`30 passed`，Ruff 通过，CSV 独立重聚合与报告一致。
+
+下一步不实现 `order_aware_relative`，因为其 order>=2 路径正是当前三个未测量组都未胜出的 relative；
+也不扫 gamma/floor 或按 310–312 调权重。若继续 residual 板块，先结果前冻结 fresh-seed 的 test 专用
+复核，仍将未测量 2/3/4-way 分开，检查这些很小的 2:1 方向能否复现；若仍 mixed，则停止寻找单一
+跨数据 residual，先冻结 workload 级质量—成本选择门禁，再进入 donor/alpha。
+
 ### 最新暂停点：残差几何查询级诊断完成，下一候选转为一阶边缘保护（2026-08-18）
 
 > 本工作在独立 worktree/分支 `research/issue53-sqrt-residual-earlystop` 上进行，不修改等待外部审查的
