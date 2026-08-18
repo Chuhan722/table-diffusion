@@ -2,7 +2,86 @@
 
 ## 当前阶段
 
-### 最新暂停点：test query-workload A/B 正式 30-case 采集与聚合完成（2026-08-18）
+### 最新暂停点：test query-workload A/B 正式公共评价与冻结结论完成（2026-08-18）
+
+> 本步以完整 collection SHA 显式确认 evaluator，先审计四组查询身份和 30 张
+> terminal table，再读取固定 raw reference 做统一评价。没有重新生成表、调整规则、
+> 增加 seed 或形成跨数据集 canonical 结论，也没有 push 或操作 PR。
+
+正式评价身份：
+
+```text
+collection SHA       67f3ebbcf06100b0ba508b465dd4aea7b6ee69825a46b5eec5a768245b69e44a
+evaluation commit    4c275b7789f6b08efafa3959ccf278c4c5dbba39
+evaluation report    outputs/issue53_test_query_workload_ab_v1/evaluation_report.json
+evaluation SHA       a389504c92e87461d84c4eb8322b659afea0dabb58a256bedcd6c19f78c06651
+query-seed CSV       outputs/issue53_test_query_workload_ab_v1/query_seed_errors.csv
+query-seed CSV SHA   2bbcfba869187cfdd1b7198f9d2e675437f38d8a6e4081c73f9b03289b6c467c
+data rows             47,100（文件 47,101 行，含 header）
+```
+
+查询身份在 reference load 前冻结，四组数量仍为 `25 / 521 / 512 / 512`，身份 SHA
+与结果前协议完全一致；fixed held-out 3/4-way answers 与既有 archive 精确一致。
+30/30 terminal table SHA 再审计通过。评价阶段记录
+`new_generation_performed=false`、`cross_group_aggregate_present=false`、
+`canonical_selection_performed=false`、`privacy_budget_consumed=false`。独立从 CSV
+重算 24 个 group/workload/geometry cell 的 mean，全部与正式报告逐项精确一致。
+
+统一测试的 mean absolute count error：
+
+| 查询组 | A abs | B abs | A sqrt | B sqrt | A relative | B relative |
+|---|---:|---:|---:|---:|---:|---:|
+| 1-way safety | 0.8560 | 16.1840 | 0.8560 | 15.2400 | 0.9280 | 13.0080 |
+| common unseen 2-way | 7.4779 | 10.8088 | 7.1328 | 10.4791 | 7.6891 | 9.1708 |
+| fixed held-out 3-way | 4.2859 | 5.1699 | 4.1855 | 5.1148 | 4.5813 | 4.5902 |
+| fixed held-out 4-way | 1.7578 | 1.9848 | 1.7715 | 1.9516 | 1.8809 | 1.8949 |
+
+### 冻结问题 1：workload B 能否替代 A
+
+`B - A` mean delta 均为正数时表示 B 更差：
+
+| geometry | 1-way | unseen 2-way | held-out 3-way | held-out 4-way | 冻结结论 |
+|---|---:|---:|---:|---:|---|
+| absolute | +15.3280 | +3.3309 | +0.8840 | +0.2270 | mixed/no replacement |
+| sqrt-relative | +14.3840 | +3.3463 | +0.9293 | +0.1801 | mixed/no replacement |
+| relative | +12.0800 | +1.4818 | +0.0090 | +0.0141 | mixed/no replacement |
+
+三种 geometry 的 unseen Pareto 和 1-way safety 均失败，正式分类全部为
+`mixed_no_workload_replacement`；因此结论方向在 geometry 间一致。尤其三个 geometry
+的 common unseen 2-way 都是 5/5 paired seeds 下 B 更差。relative 已把 3/4-way
+差距压到接近零，但仍没有让 B 通过替代门禁，而且 1-way 与 2-way 仍明显退化。
+
+结论是：当前 `30×2-way + 15×3-way + 5×4-way`、完全不含 measured 1-way 的 B
+不能替代旧 A。两组虽然使用相同 1-way marginal 初始化，但演化过程中 B 没有持续
+1-way measured 约束，最终 1-way 漂移很大；这与 unseen 2-way 同时退化一致。由于 B
+还同时加入了新高维查询，本实验严格证明的是“整套 B 设计失败”，不能把全部因果只
+归到某一条具体查询。
+
+### 冻结问题 2：workload B 内哪种 geometry 更好
+
+候选相对 B/absolute 的 mean delta：
+
+| candidate | 1-way | unseen 2-way | held-out 3-way | held-out 4-way | paired 稳定改善 | 冻结结论 |
+|---|---:|---:|---:|---:|---|---|
+| sqrt-relative | -0.9440 | -0.3298 | -0.0551 | -0.0332 | 无（3/5、3/5、2/5） | mixed |
+| relative | -3.1760 | -1.6380 | -0.5797 | -0.0898 | 2-way 4/5；3-way 4/5 | supported |
+
+relative 的三个 primary mean 和 1-way mean 全部不劣，2-way、3-way 都达到 4/5
+paired-seed 稳定改善，正式分类为 `supports_geometry_under_workload_B`。4-way mean
+也改善，但只有 3/5 seeds，不单独宣称稳定。sqrt-relative 虽然四组 mean 都略有改善，
+没有任何 primary group 达到预先要求的 4/5，正式分类为
+`mixed_no_unified_geometry_candidate`。
+
+因此本实验的最终结论是：**不采用无 1-way 的 workload B 替换 A；如果只讨论 B
+内部的 residual geometry，则支持 relative，而不是 sqrt-relative。** 这只适用于
+`test_300x10` 当前协议，不能直接外推为跨数据集默认方法。
+
+下一步不应结果后继续加 seed 或微调 30/15/5。更合理的是先决定产品化方向：
+若继续研究查询设计，应结果前另建 mixed workload 协议，保留持续的 1-way anchor
+同时加入部分 3/4-way，并重新冻结等量查询预算；若准备交付当前实验，则整理本地
+commit/PR 说明即可。按用户要求，未明确说 push 前不推远端。
+
+### 历史暂停点：test query-workload A/B 正式 30-case 采集与聚合完成（2026-08-18）
 
 > 本步按用户确认的新服务器绑定在 `linyao-system` 正式运行全部 30 条轨迹，并只聚合
 > generation collection；没有打开 raw reference，没有运行四组公共查询评价，没有
