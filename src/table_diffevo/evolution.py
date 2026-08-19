@@ -222,6 +222,7 @@ def run_evolution(
     ),
     record_transition_clocks: bool = False,
     record_stationarity_trace: bool = False,
+    record_natural_work_snapshots: bool = False,
     stop_on_exact_residual: bool = True,
     horizon_invariant: bool = False,
     inner_early_stopping_patience_ticks: Optional[int] = None,
@@ -431,6 +432,11 @@ def run_evolution(
         真实 post-round 的查询答案、多样性、实际状态运动、工作量和哈希；不重算
         查询、不消费 RNG。该对象不是 JSON，调用方持久化前必须从 diagnostics
         弹出。默认关闭以保持旧诊断和开销。
+    record_natural_work_snapshots : bool, default False
+        是否为状态库记录初态、每个完整自然工作 tick 与 terminal current 的表
+        快照。该观测仅允许与 inner early stopping 一起启用；不消费 RNG，也不
+        参与生成决策。快照包含 DataFrame 的 records，调用方持久化普通诊断前应
+        弹出 ``natural_work_snapshots``。默认关闭。
     stop_on_exact_residual : bool, default True
         是否保留历史 ``residual == 0`` 的 proposal 前早停。Stage 2 校准入口会
         显式关闭，因为精确命中 measured target 不等于长期 current-state 稳定。
@@ -618,6 +624,7 @@ def run_evolution(
     for value, name in (
         (record_transition_clocks, "record_transition_clocks"),
         (record_stationarity_trace, "record_stationarity_trace"),
+        (record_natural_work_snapshots, "record_natural_work_snapshots"),
         (stop_on_exact_residual, "stop_on_exact_residual"),
         (horizon_invariant, "horizon_invariant"),
     ):
@@ -625,6 +632,7 @@ def run_evolution(
             raise ValueError(f"{name} 必须是布尔值")
     record_transition_clocks = bool(record_transition_clocks)
     record_stationarity_trace = bool(record_stationarity_trace)
+    record_natural_work_snapshots = bool(record_natural_work_snapshots)
     stop_on_exact_residual = bool(stop_on_exact_residual)
     horizon_invariant = bool(horizon_invariant)
     if candidate_budget is not None:
@@ -675,6 +683,10 @@ def run_evolution(
     inner_early_stopping_enabled = (
         inner_early_stopping_patience_ticks is not None
     )
+    if record_natural_work_snapshots and not inner_early_stopping_enabled:
+        raise ValueError(
+            "record_natural_work_snapshots 需要启用 inner early stopping"
+        )
     if inner_early_stopping_enabled:
         if (
             isinstance(inner_early_stopping_patience_ticks, bool)
@@ -1065,7 +1077,11 @@ def run_evolution(
         initialization_diagnostics = {"method": "random"}
     initial_table_sha256 = (
         _table_sha256(S)
-        if residual_directed_diffusion or record_stationarity_trace
+        if (
+            residual_directed_diffusion
+            or record_stationarity_trace
+            or record_natural_work_snapshots
+        )
         else None
     )
     primary_rng_post_initialization_state_sha256 = _rng_state_sha256(rng)
@@ -1108,6 +1124,7 @@ def run_evolution(
     transition_clock_history: List[Dict[str, Any]] = []
     stationarity_observations: List[Dict[str, Any]] = []
     stationarity_query_answers: List[np.ndarray] = []
+    natural_work_snapshots: List[Dict[str, Any]] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
@@ -1197,6 +1214,45 @@ def run_evolution(
                 inner_early_stopping_decision.termination_reason
             )
             stopped_early = termination_reason == "fit_target_reached"
+        if record_natural_work_snapshots:
+            natural_work_snapshots.append({
+                "snapshot_format": "natural_work_current_v1",
+                "state_index": 0,
+                "round": 0,
+                "phase": "initial",
+                "completed_work_ticks": 0,
+                "cumulative_participating_rows": 0,
+                "normalized_work": 0.0,
+                "work_tick_completed": False,
+                "termination_reason": (
+                    inner_early_stopping_decision.termination_reason
+                ),
+                "current_squared_loss": float(initial_loss),
+                "current_normalized_l1": float(
+                    current_state_metrics_history[0][
+                        "current_normalized_l1"
+                    ]
+                ),
+                "current_query_answers": np.asarray(
+                    initial_q, dtype=float
+                ).tolist(),
+                "current_residual_signal": np.asarray(
+                    initial_residual, dtype=float
+                ).tolist(),
+                "current_table_sha256": initial_table_sha256,
+                "table_columns": list(S.columns),
+                "table_records": S.reset_index(drop=True).to_dict(
+                    orient="records"
+                ),
+                "primary_rng_state_sha256": (
+                    primary_rng_post_initialization_state_sha256
+                ),
+                "factorized_gibbs_rng_state_sha256": (
+                    factorized_gibbs_initial_rng_state_sha256
+                ),
+                "candidate_evaluation_count_cumulative": 0,
+                "direction_reference_scale": None,
+            })
     if record_stationarity_trace:
         stationarity_query_answers.append(
             np.asarray(initial_q, dtype=float).copy()
@@ -1797,7 +1853,11 @@ def run_evolution(
         post_current_table_sha256 = None
         post_primary_rng_state_sha256 = None
         post_factorized_gibbs_rng_state_sha256 = None
-        if record_transition_clocks or record_stationarity_trace:
+        if (
+            record_transition_clocks
+            or record_stationarity_trace
+            or record_natural_work_snapshots
+        ):
             post_current_table_sha256 = _table_sha256(S)
             post_primary_rng_state_sha256 = _rng_state_sha256(rng)
             post_factorized_gibbs_rng_state_sha256 = (
@@ -1936,6 +1996,73 @@ def run_evolution(
                 adaptive_alpha_observation_history.append(
                     asdict(adaptive_alpha_last_observation)
                 )
+            if (
+                record_natural_work_snapshots
+                and (
+                    inner_early_stopping_decision.work_tick_completed
+                    or inner_early_stopping_decision.should_stop
+                )
+            ):
+                post_round_residual = compute_residual(
+                    target,
+                    post_round_q,
+                    n_records,
+                    geometry=residual_geometry,
+                    geometry_floor=residual_geometry_floor,
+                )
+                post_metrics = current_state_metrics_history[-1]
+                natural_work_snapshots.append({
+                    "snapshot_format": "natural_work_current_v1",
+                    "state_index": int(
+                        inner_early_stopping_decision.state_index
+                    ),
+                    "round": int(t + 1),
+                    "phase": "post_round",
+                    "completed_work_ticks": int(
+                        inner_early_stopping_decision.completed_work_ticks
+                    ),
+                    "cumulative_participating_rows": int(
+                        inner_early_stopping_decision
+                        .cumulative_participating_rows
+                    ),
+                    "normalized_work": float(
+                        inner_early_stopping_decision.normalized_work
+                    ),
+                    "work_tick_completed": bool(
+                        inner_early_stopping_decision.work_tick_completed
+                    ),
+                    "termination_reason": (
+                        inner_early_stopping_decision.termination_reason
+                    ),
+                    "current_squared_loss": float(current_loss),
+                    "current_normalized_l1": float(
+                        post_metrics["current_normalized_l1"]
+                    ),
+                    "current_query_answers": np.asarray(
+                        post_round_q, dtype=float
+                    ).tolist(),
+                    "current_residual_signal": np.asarray(
+                        post_round_residual, dtype=float
+                    ).tolist(),
+                    "current_table_sha256": post_current_table_sha256,
+                    "table_columns": list(S.columns),
+                    "table_records": S.reset_index(drop=True).to_dict(
+                        orient="records"
+                    ),
+                    "primary_rng_state_sha256": (
+                        post_primary_rng_state_sha256
+                    ),
+                    "factorized_gibbs_rng_state_sha256": (
+                        post_factorized_gibbs_rng_state_sha256
+                    ),
+                    "candidate_evaluation_count_cumulative": int(
+                        candidate_evaluation_count
+                    ),
+                    "direction_reference_scale": (
+                        float(direction_reference_scale)
+                        if direction_reference_scale is not None else None
+                    ),
+                })
             if inner_early_stopping_decision.should_stop:
                 termination_reason = (
                     inner_early_stopping_decision.termination_reason
@@ -1961,6 +2088,17 @@ def run_evolution(
 
     if termination_reason is None:
         termination_reason = "max_rounds"
+
+    # initial_rms 的 s0 在首个非零方向场出现时才建立，建立后全轨迹固定。
+    # 状态库要求每个时间切片绑定同一个轨迹级 s0，因此在运行结束后仅回填这项
+    # 已冻结的诊断元数据；不改变任何表、随机状态或生成决策。
+    if record_natural_work_snapshots:
+        frozen_reference_scale = (
+            float(direction_reference_scale)
+            if direction_reference_scale is not None else None
+        )
+        for snapshot in natural_work_snapshots:
+            snapshot["direction_reference_scale"] = frozen_reference_scale
 
     elapsed_sec = time.perf_counter() - loop_start
     sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
@@ -2287,6 +2425,9 @@ def run_evolution(
             ),
             "record_transition_clocks": record_transition_clocks,
             "record_stationarity_trace": record_stationarity_trace,
+            "record_natural_work_snapshots": (
+                record_natural_work_snapshots
+            ),
             "stop_on_exact_residual": stop_on_exact_residual,
             "inner_early_stopping_patience_ticks": (
                 inner_early_stopping_patience_ticks
@@ -2305,6 +2446,8 @@ def run_evolution(
             ),
             termination_reason=termination_reason,
         )
+    if record_natural_work_snapshots:
+        diagnostics["natural_work_snapshots"] = natural_work_snapshots
     if return_final_table:
         diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
