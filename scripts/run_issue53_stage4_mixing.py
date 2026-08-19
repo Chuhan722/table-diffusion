@@ -94,20 +94,47 @@ def _validate_library(
     path = Path(library_path).resolve()
     library = _load_json_strict(path)
     state_ids = [state.get("state_id") for state in library.get("states", [])]
+    raw_manifest = library.get("manifest")
+    manifest = raw_manifest if isinstance(raw_manifest, dict) else {}
+    shard_provenance = manifest.get("source_seed_shard_sha256")
+    expected_shard_keys = [str(seed) for seed in protocol["seeds"]]
     gates = {
         "format": library.get("state_library_format")
         == frozen.STATE_LIBRARY_FORMAT,
         "status": library.get("status") == "complete",
         "mode": library.get("mode") == mode,
+        "artifact_scope": library.get("artifact_scope") == "full",
+        "selected_seeds": library.get("selected_seeds")
+        == protocol["seeds"],
+        "manifest_type": isinstance(raw_manifest, dict),
         "protocol": library.get("protocol") == protocol,
         "protocol_sha256": library.get("protocol_sha256")
         == frozen.protocol_sha256(mode),
         "state_ids": state_ids == _expected_state_ids(protocol),
         "state_ids_unique": len(state_ids) == len(set(state_ids)),
-        "manifest": library.get("manifest", {}).get(
-            "state_ids_in_fixed_order"
-        )
+        "manifest_state_count": manifest.get("state_count")
+        == len(state_ids),
+        "manifest_state_ids": manifest.get("state_ids_in_fixed_order")
         == state_ids,
+        "manifest_dataset_order": manifest.get("dataset_order")
+        == protocol["dataset_order"],
+        "manifest_seed_order": manifest.get("seed_order")
+        == protocol["seeds"],
+        "manifest_state_group_order": manifest.get("state_group_order")
+        == protocol["state_groups"],
+        "shard_provenance": isinstance(shard_provenance, dict)
+        and (
+            shard_provenance == {}
+            or (
+                list(shard_provenance) == expected_shard_keys
+                and all(
+                    isinstance(value, str)
+                    and len(value) == 64
+                    and set(value) <= set("0123456789abcdef")
+                    for value in shard_provenance.values()
+                )
+            )
+        ),
         "scientific_sha256": library.get(
             "state_library_scientific_sha256"
         )

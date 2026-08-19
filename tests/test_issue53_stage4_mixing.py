@@ -284,6 +284,8 @@ def test_real_two_dataset_smoke_is_complete_audited_and_nonformal(real_smoke):
     audit = real_smoke["audit"]
 
     assert library["status"] == "complete"
+    assert library["artifact_scope"] == "full"
+    assert library["selected_seeds"] == [9904]
     assert library["formal_result_valid"] is False
     assert library["manifest"]["state_count"] == 10
     assert report["formal_result_valid"] is False
@@ -302,6 +304,51 @@ def test_real_two_dataset_smoke_is_complete_audited_and_nonformal(real_smoke):
     assert audit["execution_scientific_sha256"] == report[
         "execution_scientific_sha256"
     ]
+
+
+def test_seed_shard_aggregation_is_deterministic_and_science_preserving(
+    real_smoke,
+):
+    root = real_smoke["root"]
+    shard_path, shard = builder.build_state_library(
+        "smoke",
+        root / "seed_9904.json",
+        selected_seeds=[9904],
+    )
+    assert shard["state_library_format"] == builder.STATE_LIBRARY_SHARD_FORMAT
+    assert shard["artifact_scope"] == "seed_shard"
+    assert shard["selected_seeds"] == [9904]
+
+    aggregate_path, aggregate = builder.aggregate_state_library_shards(
+        "smoke", [shard_path], root / "aggregated_library.json"
+    )
+    _, validated, gates = runner._validate_library(
+        "smoke", aggregate_path, None
+    )
+
+    assert all(gates.values())
+    assert validated == aggregate
+    assert aggregate["states"] == real_smoke["library"]["states"]
+    assert aggregate["state_library_scientific_sha256"] == real_smoke[
+        "library"
+    ]["state_library_scientific_sha256"]
+    assert auditor._library_scientific_payload(
+        aggregate
+    ) == builder._scientific_payload(aggregate)
+    assert list(
+        aggregate["manifest"]["source_seed_shard_sha256"]
+    ) == ["9904"]
+
+    with pytest.raises(RuntimeError, match="重复"):
+        builder.aggregate_state_library_shards(
+            "smoke",
+            [shard_path, shard_path],
+            root / "duplicate_aggregate.json",
+        )
+    with pytest.raises(RuntimeError, match="恰好覆盖"):
+        builder.aggregate_state_library_shards(
+            "smoke", [], root / "missing_aggregate.json"
+        )
 
 
 def test_independent_audit_rejects_condition_metric_and_state_tampering(

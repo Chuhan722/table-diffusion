@@ -28,6 +28,7 @@ else:
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+STATE_LIBRARY_SHARD_FORMAT = "issue53_stage4_state_library_seed_shard_v1"
 MILESTONE_FRACTIONS = {
     "initial": 0.0,
     "work_q25": 0.25,
@@ -217,6 +218,10 @@ def _validate_run(
 
 def _scientific_payload(library: dict) -> dict:
     return {
+        "state_library_format": library["state_library_format"],
+        "mode": library["mode"],
+        "artifact_scope": library["artifact_scope"],
+        "selected_seeds": library["selected_seeds"],
         "protocol_sha256": library["protocol_sha256"],
         "input_audit": library["input_audit"],
         "trajectories": [
@@ -290,17 +295,51 @@ def _scientific_payload(library: dict) -> dict:
     }
 
 
+def _expected_state_ids(protocol: dict, seeds: list[int]) -> list[str]:
+    return [
+        f"{dataset}__seed_{seed}__{group}"
+        for dataset in protocol["dataset_order"]
+        for seed in seeds
+        for group in protocol["state_groups"]
+    ]
+
+
 def build_state_library(
     mode: str,
     output_path: str | Path,
     *,
     confirmed_protocol_sha256: str | None = None,
+    selected_seeds: list[int] | tuple[int, ...] | None = None,
 ) -> tuple[Path, dict]:
     frozen.require_qualification_confirmation(
         mode, confirmed_protocol_sha256
     )
     protocol = frozen.stage4_protocol(mode)
     protocol_sha = frozen.protocol_sha256(mode)
+    if selected_seeds is None:
+        seed_selection = list(protocol["seeds"])
+        artifact_scope = "full"
+        library_format = frozen.STATE_LIBRARY_FORMAT
+    else:
+        seed_selection = list(selected_seeds)
+        if (
+            not seed_selection
+            or len(seed_selection) != len(set(seed_selection))
+            or any(
+                seed not in protocol["seeds"] for seed in seed_selection
+            )
+            or seed_selection
+            != [
+                seed
+                for seed in protocol["seeds"]
+                if seed in seed_selection
+            ]
+        ):
+            raise ValueError(
+                "selected_seeds 必须是冻结 seed 顺序中的非空唯一子序列"
+            )
+        artifact_scope = "seed_shard"
+        library_format = STATE_LIBRARY_SHARD_FORMAT
     output_file = Path(output_path).resolve()
     if output_file.exists():
         raise FileExistsError(f"状态库输出已存在，不覆盖：{output_file}")
@@ -345,7 +384,7 @@ def build_state_library(
             np.asarray(observed["targets"], dtype=float), dataset
         )
         runtime_target_sha = frozen.canonical_sha256(target.tolist())
-        for seed in protocol["seeds"]:
+        for seed in seed_selection:
             params = _generator_parameters(protocol, dataset, seed)
             trajectory_started = time.perf_counter()
             output, diagnostics = run_evolution(
@@ -371,9 +410,9 @@ def build_state_library(
                 final_table,
                 {**diagnostics, "natural_work_snapshots": snapshots},
             )
-            selected = _select_milestones(snapshots)
+            selected_milestones = _select_milestones(snapshots)
             selected_state_ids = []
-            for item in selected:
+            for item in selected_milestones:
                 group = item["state_group"]
                 state_id = f"{dataset_name}__seed_{seed}__{group}"
                 selected_state_ids.append(state_id)
@@ -475,15 +514,22 @@ def build_state_library(
 
     expected_count = (
         len(protocol["dataset_order"])
-        * protocol["expected_states_per_dataset"]
+        * len(seed_selection)
+        * len(protocol["state_groups"])
     )
     state_ids = [state["state_id"] for state in states]
-    if len(states) != expected_count or len(state_ids) != len(set(state_ids)):
+    if (
+        len(states) != expected_count
+        or len(state_ids) != len(set(state_ids))
+        or state_ids != _expected_state_ids(protocol, seed_selection)
+    ):
         raise RuntimeError("Stage 4 状态库数量或唯一性失败")
     library = {
-        "state_library_format": frozen.STATE_LIBRARY_FORMAT,
+        "state_library_format": library_format,
         "status": "complete",
         "mode": mode,
+        "artifact_scope": artifact_scope,
+        "selected_seeds": seed_selection,
         "formal_result_valid": bool(
             protocol["formal_result_valid"] and not git["dirty"]
         ),
@@ -497,8 +543,9 @@ def build_state_library(
             "state_count": len(states),
             "state_ids_in_fixed_order": state_ids,
             "dataset_order": protocol["dataset_order"],
-            "seed_order": protocol["seeds"],
+            "seed_order": seed_selection,
             "state_group_order": protocol["state_groups"],
+            "source_seed_shard_sha256": {},
         },
         "elapsed_sec_diagnostic_only": time.perf_counter() - started,
     }
@@ -519,6 +566,182 @@ def build_state_library(
     return output_file, library
 
 
+def _load_json_strict(path: str | Path) -> dict:
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"JSON 包含非标准数值：{value}")
+
+    with Path(path).open(encoding="utf-8") as handle:
+        value = json.load(handle, parse_constant=reject_constant)
+    if not isinstance(value, dict):
+        raise TypeError("状态库 shard JSON 根必须是 object")
+    return value
+
+
+def aggregate_state_library_shards(
+    mode: str,
+    shard_paths: list[str | Path] | tuple[str | Path, ...],
+    output_path: str | Path,
+    *,
+    confirmed_protocol_sha256: str | None = None,
+) -> tuple[Path, dict]:
+    """Deterministically combine one complete seed shard per frozen seed."""
+    frozen.require_qualification_confirmation(
+        mode, confirmed_protocol_sha256
+    )
+    protocol = frozen.stage4_protocol(mode)
+    output_file = Path(output_path).resolve()
+    if output_file.exists():
+        raise FileExistsError(f"状态库输出已存在，不覆盖：{output_file}")
+    git = _git_identity()
+    if mode == "qualification" and git["dirty"]:
+        raise RuntimeError("qualification 状态库聚合必须在 clean worktree")
+
+    indexed = {}
+    indexed_paths = {}
+    input_audit = None
+    total_elapsed = 0.0
+    for raw_path in shard_paths:
+        path = Path(raw_path).resolve()
+        shard = _load_json_strict(path)
+        seeds = shard.get("selected_seeds")
+        if (
+            shard.get("state_library_format")
+            != STATE_LIBRARY_SHARD_FORMAT
+            or shard.get("status") != "complete"
+            or shard.get("mode") != mode
+            or shard.get("artifact_scope") != "seed_shard"
+            or shard.get("protocol") != protocol
+            or shard.get("protocol_sha256")
+            != frozen.protocol_sha256(mode)
+            or not isinstance(seeds, list)
+            or len(seeds) != 1
+            or seeds[0] not in protocol["seeds"]
+            or shard.get("state_library_scientific_sha256")
+            != frozen.canonical_sha256(_scientific_payload(shard))
+            or shard.get("git", {}).get("commit") != git["commit"]
+            or (mode == "qualification" and shard["git"].get("dirty"))
+            or (
+                mode == "qualification"
+                and shard.get("formal_result_valid") is not True
+            )
+        ):
+            raise RuntimeError(f"状态库 seed shard 身份失败：{path}")
+        seed = seeds[0]
+        if seed in indexed:
+            raise RuntimeError(f"状态库 seed shard 重复：{seed}")
+        if input_audit is None:
+            input_audit = shard["input_audit"]
+        elif shard["input_audit"] != input_audit:
+            raise RuntimeError("状态库 shards 的输入审计不一致")
+        expected_shard_ids = _expected_state_ids(protocol, [seed])
+        shard_trajectories = shard.get("trajectories", [])
+        shard_states = shard.get("states", [])
+        raw_shard_manifest = shard.get("manifest")
+        shard_manifest = (
+            raw_shard_manifest
+            if isinstance(raw_shard_manifest, dict)
+            else {}
+        )
+        if (
+            not isinstance(raw_shard_manifest, dict)
+            or [
+                (row.get("dataset"), row.get("seed"))
+                for row in shard_trajectories
+            ]
+            != [(dataset, seed) for dataset in protocol["dataset_order"]]
+            or [row.get("state_id") for row in shard_states]
+            != expected_shard_ids
+            or shard_manifest.get("state_count") != len(expected_shard_ids)
+            or shard_manifest.get("state_ids_in_fixed_order")
+            != expected_shard_ids
+            or shard_manifest.get("dataset_order")
+            != protocol["dataset_order"]
+            or shard_manifest.get("seed_order") != [seed]
+            or shard_manifest.get("state_group_order")
+            != protocol["state_groups"]
+            or shard_manifest.get("source_seed_shard_sha256") != {}
+        ):
+            raise RuntimeError(f"状态库 seed shard 覆盖失败：{path}")
+        indexed[seed] = shard
+        indexed_paths[seed] = path
+        total_elapsed += float(shard["elapsed_sec_diagnostic_only"])
+
+    if set(indexed) != set(protocol["seeds"]):
+        raise RuntimeError("状态库 shards 必须恰好覆盖全部冻结 seeds")
+    trajectory_index = {
+        (row["dataset"], row["seed"]): row
+        for shard in indexed.values()
+        for row in shard["trajectories"]
+    }
+    state_index = {
+        row["state_id"]: row
+        for shard in indexed.values()
+        for row in shard["states"]
+    }
+    trajectories = [
+        trajectory_index[(dataset, seed)]
+        for dataset in protocol["dataset_order"]
+        for seed in protocol["seeds"]
+    ]
+    expected_state_ids = _expected_state_ids(
+        protocol, list(protocol["seeds"])
+    )
+    if (
+        sum(len(shard["trajectories"]) for shard in indexed.values())
+        != len(protocol["dataset_order"]) * len(protocol["seeds"])
+        or sum(len(shard["states"]) for shard in indexed.values())
+        != len(expected_state_ids)
+        or len(trajectory_index)
+        != len(protocol["dataset_order"]) * len(protocol["seeds"])
+        or set(state_index) != set(expected_state_ids)
+    ):
+        raise RuntimeError("状态库 shard 内的轨迹或状态覆盖不完整")
+    states = [state_index[state_id] for state_id in expected_state_ids]
+    library = {
+        "state_library_format": frozen.STATE_LIBRARY_FORMAT,
+        "status": "complete",
+        "mode": mode,
+        "artifact_scope": "full",
+        "selected_seeds": list(protocol["seeds"]),
+        "formal_result_valid": bool(
+            protocol["formal_result_valid"] and not git["dirty"]
+        ),
+        "protocol": protocol,
+        "protocol_sha256": frozen.protocol_sha256(mode),
+        "git": git,
+        "input_audit": input_audit,
+        "trajectories": trajectories,
+        "states": states,
+        "manifest": {
+            "state_count": len(states),
+            "state_ids_in_fixed_order": expected_state_ids,
+            "dataset_order": protocol["dataset_order"],
+            "seed_order": protocol["seeds"],
+            "state_group_order": protocol["state_groups"],
+            "source_seed_shard_sha256": {
+                str(seed): frozen.file_sha256(indexed_paths[seed])
+                for seed in protocol["seeds"]
+            },
+        },
+        "elapsed_sec_diagnostic_only": total_elapsed,
+    }
+    library["state_library_scientific_sha256"] = frozen.canonical_sha256(
+        _scientific_payload(library)
+    )
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8") as handle:
+        json.dump(
+            library,
+            handle,
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        )
+        handle.write("\n")
+    print(f"Stage 4 聚合状态库：{output_file}", flush=True)
+    return output_file, library
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -528,15 +751,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", required=True)
     parser.add_argument("--confirmed-protocol-sha256")
+    parser.add_argument("--shard-index", type=int)
+    parser.add_argument("--aggregate-shards", nargs="+")
     return parser
 
 
 def main() -> None:
     args = _build_parser().parse_args()
+    if args.shard_index is not None and args.aggregate_shards is not None:
+        raise ValueError("--shard-index 与 --aggregate-shards 不能同时使用")
+    if args.aggregate_shards is not None:
+        aggregate_state_library_shards(
+            args.mode,
+            args.aggregate_shards,
+            args.output,
+            confirmed_protocol_sha256=args.confirmed_protocol_sha256,
+        )
+        return
+    selected_seeds = None
+    if args.shard_index is not None:
+        seeds = frozen.stage4_protocol(args.mode)["seeds"]
+        if not 0 <= args.shard_index < len(seeds):
+            raise ValueError("--shard-index 超出冻结 seed 范围")
+        selected_seeds = [seeds[args.shard_index]]
     build_state_library(
         args.mode,
         args.output,
         confirmed_protocol_sha256=args.confirmed_protocol_sha256,
+        selected_seeds=selected_seeds,
     )
 
 
