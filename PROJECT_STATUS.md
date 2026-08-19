@@ -2,7 +2,56 @@
 
 ## 当前阶段
 
-### 最新暂停点：固定 α 响应曲线完成，等待讨论自适应目标（2026-08-18）
+### 最新暂停点：两档自适应 α 正式负结果完成，准备 stacked PR（2026-08-19）
+
+> 本板块基于 PR #65 head `a2bc496` 的独立分支完成；没有修改、自行审查、批准或合并 PR #63/#65。
+> 固定 α 响应与两档自适应实验均使用更新后无 measured 1-way 的 test workload，并保持无门控、
+> terminal-current 输出身份。
+
+```text
+worktree              /home/chuhan/projects/table-diffusion-issue53-fixed-alpha
+branch                research/issue53-fixed-alpha
+adaptive protocol     5a88ddc5077df82528b7fda3cd12a4fb79c1b8e5c027d6d555d4a50e869e911e
+execution commit      4e0270c587f2efdf8aa47b5581b200815cffd3d2
+collection SHA        ec2d81a954e1e0e85478a7dc26df190edec9c5b1e6beaec439e815dd6ec2057e
+evaluation SHA        0646e7b2a52653995e3af96c51e2730056fe0bda1f688ac8e5f7ff6da2a9be4a
+cases                 30/30 early_stopped；0 resource caps
+```
+
+状态机固定为：α16 正常档；连续 2 个自然工作刻度没有严格新最好后，α12 探索恰好 2 个自然工作
+刻度，再恢复 α16；现有 P=6 不清零、不暂停或延长。同一无改善阶段最多触发一次，只有严格新最好
+创建新的 progress epoch。控制器不读取 held-out、raw reference、未来预算或其他轨迹，不消费 RNG。
+
+自适应在两套数据的 5/5 seeds 都触发：test 共 7 个探索段，nltcs 共 8 个。阶段诊断确认 α12 确实
+扩大供体覆盖：test 有效供体比例从约 0.01296 增至 0.01925，nltcs 从约 0.09315 增至 0.12660。
+但 15 个探索段中只有 1 个在 α12 期间产生新最好，4 个在恢复 α16 后产生，10 个没有新最好。
+
+正式主结果：test 自适应 measured L1 比固定 α16 高 8.29%，只有 1/5 更好；nltcs 高 17.40%，
+只有 3/5 更好，并且 1-way safety 高 33.96%、work 高 17.71%。固定 α12 在 test 的均值低 5.70%，
+但只有 3 胜、1 平、1 负，未达到 4/5；nltcs measured L1 高 23.80%。冻结结论为：
+
+```text
+test mechanism         no_supported_alpha12_strategy
+nltcs mechanism        no_supported_alpha12_strategy
+cross dataset          no_shared_adaptive_support
+```
+
+该结果不支持当前 2/2/6 两档自适应策略，也不支持事后把回滚或 best 输出加入同一个无门控算法。
+回滚会形成分段接受门，若未来研究必须改成另一种算法身份并另写协议。完整设计、逐 seed 主值、阶段
+集中度、新最好位置、全部门禁与执行勘误见：
+
+```text
+docs/实验结果/Issue53_两档自适应alpha正式结果.md
+```
+
+相关定向回归 `40 passed, 1 skipped`，GPU 0 的 NumPy/CUDA 小前缀对拍 `1 passed`；排除当前测试
+环境缺少 matplotlib 的 6 个旧 Stage2B 文件后，全仓为 `1680 passed, 8 skipped`。正式输出目录约
+63 MiB，保持 ignored，不把 30 张 CSV 和大 JSON 提交进 Git，只通过报告 SHA 和结果文档绑定。
+
+下一动作是把当前分支作为依赖 PR #65 的 stacked PR 推送，详细说明固定 α 设计、两档状态机、
+正式负结果和结论边界；不自行 review、approve 或 merge。
+
+### 历史暂停点：固定 α 响应曲线完成，等待讨论自适应目标（2026-08-18）
 
 > 本板块基于 PR #65 的提交 `a2bc496` 新建独立分支完成；没有修改或推送 PR #65，没有自行
 > review（审查）、approve（批准）或 merge（合并）。当前分支只在本地，尚未 push（推送）或创建 PR。
