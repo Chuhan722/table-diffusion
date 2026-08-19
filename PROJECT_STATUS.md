@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-### 最新暂停点：两档自适应 α 正式负结果完成，准备 stacked PR（2026-08-19）
+### 最新暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
 
 > 本板块基于 PR #65 head `a2bc496` 的独立分支完成；没有修改、自行审查、批准或合并 PR #63/#65。
 > 固定 α 响应与两档自适应实验均使用更新后无 measured 1-way 的 test workload，并保持无门控、
@@ -48,8 +48,10 @@ docs/实验结果/Issue53_两档自适应alpha正式结果.md
 环境缺少 matplotlib 的 6 个旧 Stage2B 文件后，全仓为 `1680 passed, 8 skipped`。正式输出目录约
 63 MiB，保持 ignored，不把 30 张 CSV 和大 JSON 提交进 Git，只通过报告 SHA 和结果文档绑定。
 
-下一动作是把当前分支作为依赖 PR #65 的 stacked PR 推送，详细说明固定 α 设计、两档状态机、
-正式负结果和结论边界；不自行 review、approve 或 merge。
+当前分支已推送并创建 stacked PR #66：
+`https://github.com/Chuhan722/table-diffusion/pull/66`。其 base 是 PR #65 的 head
+`research/issue53-query-workload-ab`，正文详细说明固定 α 设计、两档状态机、正式负结果和结论边界。
+下一动作是等待他人按 #63 → #65 → #66 的顺序审查；不自行 review、approve 或 merge。
 
 ### 历史暂停点：固定 α 响应曲线完成，等待讨论自适应目标（2026-08-18）
 
