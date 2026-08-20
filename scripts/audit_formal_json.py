@@ -101,6 +101,36 @@ def main():
     payload = json.loads(json_path.read_text())
     changed = []
 
+    # 0. 协议身份复核（PR #62 审查意见 3）：新产物（provenance 含
+    # protocol_sha256）必须与协议模块当前可复算值一致，且 formal=true
+    # 时 protocol_match 必须为 true；缺字段的旧正式产物标记 legacy
+    # 跳过（其身份由 git_commit + 输入哈希锚定）。
+    provenance = payload.get("provenance", {})
+    recorded_protocol_sha = provenance.get("protocol_sha256")
+    if recorded_protocol_sha is not None:
+        if not hasattr(protocol, "protocol_sha256"):
+            print("FATAL: 产物记录了 protocol_sha256 但协议模块无法复算")
+            sys.exit(1)
+        current_sha = protocol.protocol_sha256()
+        if recorded_protocol_sha != current_sha:
+            print(
+                "FATAL: 协议身份不一致——产物 "
+                f"{recorded_protocol_sha[:12]}… != 当前协议模块 "
+                f"{current_sha[:12]}…（协议已漂移，审计无效）"
+            )
+            sys.exit(1)
+        if provenance.get("formal") and not provenance.get(
+            "protocol_match", False
+        ):
+            print("FATAL: formal=true 但 protocol_match 不为 true")
+            sys.exit(1)
+        changed.append("provenance: 协议 SHA 复核一致")
+    else:
+        changed.append(
+            "provenance: 无 protocol_sha256 字段（legacy 产物，身份由 "
+            "git_commit + input_sha256 锚定）"
+        )
+
     for ds_name, ds in payload["datasets"].items():
         # 1. test 撤回迁移
         refs = ds.get("reference_sha256", {})

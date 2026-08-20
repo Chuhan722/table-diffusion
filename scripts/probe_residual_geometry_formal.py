@@ -187,7 +187,12 @@ def _protocol_identity():
 
 
 def protocol_sha256():
-    """从入库代码独立复算的协议 SHA-256。"""
+    """从入库代码独立复算的冻结协议常量 SHA-256。
+
+    边界（有意）：只覆盖协议常量（种子/轮数/臂/共享参数/判定阈值/
+    冻结输入与参考哈希），不覆盖判定函数实现本身（其正确性由脚本级
+    测试锚定）也不含 device（运行环境单独记录于 provenance.environment）。
+    """
     payload = json.dumps(
         _protocol_identity(), ensure_ascii=False, sort_keys=True,
         separators=(",", ":"),
@@ -251,12 +256,25 @@ def _git(*args):
 
 
 def _environment():
-    return {
+    env = {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "numpy": np.__version__,
         "pandas": pd.__version__,
     }
+    # PR #62 审查意见：协议 SHA 有意不含 device（冻结协议常量边界），
+    # 实际运行环境（device/torch/CUDA/GPU）单独入档供跨环境复现判读。
+    try:
+        import torch
+
+        env["torch"] = torch.__version__
+        env["cuda_available"] = bool(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            env["cuda_version"] = torch.version.cuda
+            env["gpu_name"] = torch.cuda.get_device_name(0)
+    except Exception:
+        env["torch"] = None
+    return env
 
 
 def _load_reference(path, columns):
@@ -269,6 +287,38 @@ def _load_reference(path, columns):
     else:
         frame = pd.read_csv(path, header=None, names=columns)
     return frame[columns]
+
+
+def _load_verified_reference(dataset_name, ref_name, path, columns):
+    """一次读取参考文件原始字节 → 先验 SHA-256 → 再从同一份字节解析。
+
+    fail-closed（Issue #60 + PR #62 审查意见 1/4）：哈希校验先于任何
+    内容使用，消除"读取与验哈希之间"的变化窗口；本函数是生产与测试
+    共用的唯一校验入口。未登记预期值的数据集跳过哈希对拍（其正式
+    身份由协议 SHA 罩住——登记后才可能 formal）。
+
+    Returns (frame, sha256_hex)。
+    """
+    import io
+
+    payload = Path(path).read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    expected_refs = EXPECTED_REFERENCE_SHA256.get(dataset_name)
+    if expected_refs is not None:
+        expected = expected_refs.get(ref_name)
+        if digest != expected:
+            raise RuntimeError(
+                f"[{dataset_name}] 参考 {ref_name} SHA-256 与冻结值不符："
+                f"实际 {digest[:12]}… != 预期 {str(expected)[:12]}…"
+            )
+    buffer = io.BytesIO(payload)
+    if str(path).endswith(".csv"):
+        frame = pd.read_csv(buffer)
+        if list(frame.columns) != columns:
+            frame.columns = columns
+    else:
+        frame = pd.read_csv(buffer, header=None, names=columns)
+    return frame[columns], digest
 
 
 def _run_dataset(name, spec, seeds, rounds):
@@ -387,10 +437,15 @@ def _run_dataset(name, spec, seeds, rounds):
     measured_triples = offline_helpers._measured_cell_keys(
         queries, marginals, order=3
     )
-    references = {
-        ref_name: _load_reference(path, columns)
-        for ref_name, path in spec["references"].items()
-    }
+    references = {}
+    reference_sha256 = {}
+    for ref_name, path in spec["references"].items():
+        # 先验 SHA 再解析（fail-closed，生产与测试共用同一入口）。
+        frame, digest = _load_verified_reference(
+            name, ref_name, path, columns
+        )
+        references[ref_name] = frame
+        reference_sha256[ref_name] = digest
     for ref_name, reference in references.items():
         if len(reference) != n_records:
             raise RuntimeError(
@@ -420,28 +475,15 @@ def _run_dataset(name, spec, seeds, rounds):
                     metrics["raw_joint"]["support_overlap"]
                 ),
             }
-    reference_sha256 = {
-        ref_name: _sha256_file(path)
-        for ref_name, path in spec["references"].items()
-    }
-    # fail-closed（Issue #60）：离线参考表身份必须与冻结值一致；数据
-    # 完整性问题在任何运行模式下都直接终止。未登记预期值的新数据集
-    # 跳过（其正式身份由协议 SHA 罩住——登记后才可能 formal）。
-    expected_refs = EXPECTED_REFERENCE_SHA256.get(name)
-    if expected_refs is not None:
-        for ref_name, digest in reference_sha256.items():
-            if digest != expected_refs.get(ref_name):
-                raise RuntimeError(
-                    f"[{name}] 参考 {ref_name} SHA-256 与冻结值不符："
-                    f"实际 {digest[:12]}… != 预期 "
-                    f"{str(expected_refs.get(ref_name))[:12]}…"
-                )
+    # reference_sha256 已在 _load_verified_reference 中"先验后用"得到，
+    # 此处不再重复读文件或后置校验（PR #62 审查意见 4）。
     return runs, initial_state, reference_sha256
 
 
 def _assert_offline_complete(name, runs, formal):
-    """fail-closed（Issue #60）：正式运行中任何 run 缺失离线指标视为
-    协议违规直接失败，而不是被 _judge 静默跳过降级为无风险。"""
+    """fail-closed（Issue #60）：正式运行中任何 run 缺失或非有限的
+    离线指标视为协议违规直接失败，而不是被 _judge 静默跳过降级为
+    无风险（NaN/inf 同样拒绝，PR #62 审查意见 2）。"""
     required = (
         "unmeasured_3way_l1", "unmeasured_4way_l1", "binned_joint_tvd",
     )
@@ -450,16 +492,24 @@ def _assert_offline_complete(name, runs, formal):
         offline = run.get("offline") or {}
         for ref_name, metrics in offline.items():
             for key in required:
-                if metrics.get(key) is None:
+                value = metrics.get(key)
+                if (
+                    value is None
+                    or not isinstance(
+                        value, (int, float, np.integer, np.floating)
+                    )
+                    or isinstance(value, bool)
+                    or not np.isfinite(value)
+                ):
                     missing.append(
                         f"seed={run['seed']} arm={run['arm']} "
-                        f"{ref_name}/{key}"
+                        f"{ref_name}/{key}={value!r}"
                     )
         if not offline:
             missing.append(f"seed={run['seed']} arm={run['arm']} 无 offline")
     if missing and formal:
         raise RuntimeError(
-            f"[{name}] 正式运行存在缺失离线指标（fail-closed）：\n  "
+            f"[{name}] 正式运行存在缺失或非有限离线指标（fail-closed）：\n  "
             + "\n  ".join(missing[:10])
         )
     if missing:
