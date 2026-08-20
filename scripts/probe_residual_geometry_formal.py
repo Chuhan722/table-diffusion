@@ -206,6 +206,15 @@ FROZEN_PROTOCOL_SHA256 = (
     "620c76d3d9b3e868b4119b6884ceffbd7bbdeae99f2715d71c0296b2ed77a850"
 )
 
+# 已知 legacy 正式产物白名单（PR #62 二轮审查）：protocol_sha256 机制
+# 引入前生成的正式 JSON，按整体文件字节 SHA-256 登记；审计器只接受
+# 名单内的缺字段文件，其余一律 fail-closed 拒绝。
+# 51aff541…：首个正式实验产物（commit aac1aff，五种子 supports，
+# 已归档 docs/实验结果/，PR #59 审查复核过）。
+KNOWN_LEGACY_ARTIFACT_SHA256 = {
+    "51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64",
+}
+
 
 # 冻结的预期输入身份（fail-closed）：正式运行必须精确匹配这组公开输入。
 # 与首次正式产物（commit aac1aff）记录的 input_sha256 一致。

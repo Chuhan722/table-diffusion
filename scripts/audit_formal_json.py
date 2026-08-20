@@ -126,9 +126,94 @@ def main():
             sys.exit(1)
         changed.append("provenance: 协议 SHA 复核一致")
     else:
+        # legacy 白名单（PR #62 二轮审查）：缺 protocol_sha256 的文件
+        # 只有整体字节 SHA 命中协议模块登记的已知旧正式产物才被接受；
+        # 未定义白名单的旧协议模块保持原行为（身份由 git_commit +
+        # input_sha256 锚定，仅标注）。
+        known_legacy = getattr(
+            protocol, "KNOWN_LEGACY_ARTIFACT_SHA256", None
+        )
+        if known_legacy is not None:
+            file_sha = hashlib.sha256(json_path.read_bytes()).hexdigest()
+            if file_sha not in known_legacy:
+                print(
+                    "FATAL: 无 protocol_sha256 且文件 SHA "
+                    f"{file_sha[:12]}… 不在已知 legacy 产物白名单中"
+                    "（损坏或被修改的结果不被接受）"
+                )
+                sys.exit(1)
+            changed.append(
+                f"provenance: 已知 legacy 产物（{file_sha[:12]}…）"
+            )
+        else:
+            changed.append(
+                "provenance: 无 protocol_sha256 字段（legacy 产物，身份由 "
+                "git_commit + input_sha256 锚定）"
+            )
+
+    # 0b. 结果完整性复核（PR #62 二轮审查）：formal=true 的产物必须
+    # 覆盖协议预注册的全部数据集与 seed×arm 组合，且每个 run 的主
+    # 指标与离线指标存在且有限——空壳/缺组合/坏值不得通过审计。
+    if provenance.get("formal") and all(
+        hasattr(protocol, attr)
+        for attr in ("DATASETS", "FORMAL_SEEDS", "ARMS")
+    ):
+        expected_datasets = set(protocol.DATASETS)
+        got_datasets = set(payload.get("datasets", {}))
+        if got_datasets != expected_datasets:
+            print(
+                "FATAL: formal 产物数据集不完整——期望 "
+                f"{sorted(expected_datasets)}，实际 {sorted(got_datasets)}"
+            )
+            sys.exit(1)
+        required_metrics = ("final_table_measured_l1",)
+        offline_metrics = (
+            "unmeasured_3way_l1", "unmeasured_4way_l1", "binned_joint_tvd",
+        )
+        for ds_name, ds in payload["datasets"].items():
+            got_combos = {
+                (run.get("seed"), run.get("arm"))
+                for run in ds.get("runs", [])
+            }
+            expected_combos = {
+                (seed, arm)
+                for seed in protocol.FORMAL_SEEDS
+                for arm in protocol.ARMS
+            }
+            if got_combos != expected_combos:
+                print(
+                    f"FATAL: {ds_name} 的 seed×arm 组合不完整——缺失 "
+                    f"{sorted(expected_combos - got_combos)[:5]}"
+                )
+                sys.exit(1)
+            for run in ds["runs"]:
+                for key in required_metrics:
+                    value = run.get(key)
+                    if value is None or not np.isfinite(value):
+                        print(
+                            f"FATAL: {ds_name} seed={run.get('seed')} "
+                            f"arm={run.get('arm')} 指标 {key}={value!r} "
+                            "缺失或非有限"
+                        )
+                        sys.exit(1)
+                for ref_name, metrics in (run.get("offline") or {}).items():
+                    for key in offline_metrics:
+                        value = metrics.get(key)
+                        if value is None or not np.isfinite(value):
+                            print(
+                                f"FATAL: {ds_name} seed={run.get('seed')} "
+                                f"arm={run.get('arm')} {ref_name}/{key}"
+                                f"={value!r} 缺失或非有限"
+                            )
+                            sys.exit(1)
+                if not run.get("offline"):
+                    print(
+                        f"FATAL: {ds_name} seed={run.get('seed')} "
+                        f"arm={run.get('arm')} 无 offline 指标"
+                    )
+                    sys.exit(1)
         changed.append(
-            "provenance: 无 protocol_sha256 字段（legacy 产物，身份由 "
-            "git_commit + input_sha256 锚定）"
+            "formal 完整性: 数据集/seed×arm/指标有限性全部通过"
         )
 
     for ds_name, ds in payload["datasets"].items():
