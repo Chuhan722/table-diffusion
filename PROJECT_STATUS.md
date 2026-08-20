@@ -2,7 +2,34 @@
 
 ## 当前阶段
 
-### 最新暂停点：能量门禁真凶已修复——oracle torch 路径 float32 累加缺陷（验尸位级证实），待决策是否跑 v3（2026-08-20）
+### 最新暂停点：development v3 全绿通过——能量门禁史上首次通过，等待 qualification 授权（2026-08-20）
+
+> float32 修复（`5a61b7b`）后的首次全链路重跑。GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行
+> 采集（15:50–16:51，10-14 分/seed）→ 聚合 → mixing（~9 分）→ 审计（17:00:32 完成）。
+> 产物 `outputs/issue53_stage4_development_v3/`（ignored，永久归档）。
+
+```text
+正式结果      qualified_random_scan_s8（v1/v2 均为 invalid_or_incomplete）
+能量门禁      首次通过：nltcs exact_energy_max_error 2.08e-17（v2 为 4.75e-9，改善 8 个
+              数量级）、tolerance_ratio_max 2.08e-7 ≤ 1.0；test max_error 3.47e-18、
+              ratio 3.47e-8——与验尸预测（seed 326 重放 2.08e-17）严丝合缝
+性能门槛      与 v1/v2 同水平：test TVD 0.001161 / recovery 98.91%；
+              nltcs TVD 0.000011 / recovery 99.95%
+validity      8 项全 True；零 clip；production tape replay 零失配
+独立审计      passed=True（重算一致）；protocol SHA dd344a08…（吻合冻结修订协议）
+report SHA    7599514254fbac16e0774b141c98aad86582de90debeedabcf7ead194f6ab726
+audit  SHA    1d3521fb0879f34ad0972132ebed4b05a48a55d81b36b211c274a62eaf347c5c
+library SHA   c5e6b5e72a84d012ac57d3c4a2ed18d4c97a84ce17bc1399664e6d7d95904dc8
+```
+
+修复的科学结论闭环：性能指标与修复前完全同水平（修复只提精度不改算法），唯一失败点
+（nltcs initial 状态能量恒等）彻底消失——float32 根因诊断与最小修复面均被 v3 证实。
+
+下一步（需用户单独授权）：qualification `333..337` 正式资格实验（协议 SHA 以
+`protocol_sha256('qualification')` 实算为准；要求 clean worktree、库/mixing 同 commit）。
+未 push、未建 PR、未评论 Issue。
+
+### 历史暂停点：能量门禁真凶已修复——oracle torch 路径 float32 累加缺陷（验尸位级证实），待决策是否跑 v3（2026-08-20）
 
 > 本节推翻上一节（v2 暂停点）的"灾难性相消"初判。只读验尸脚本
 > `scripts/diagnose_issue53_stage4_energy_cancellation.py`（确定性重放 probe 能量比对、
