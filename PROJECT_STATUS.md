@@ -2,7 +2,37 @@
 
 ## 当前阶段
 
-### 最新暂停点：环境已修复（CUDA torch + matplotlib），development v2 待重新开跑（2026-08-20）
+### 最新暂停点：development v2 已跑完——能量门禁再次失败且 v1 诊断被证伪（cancellation 根因），待决策（2026-08-20）
+
+> GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行采集 5 分片（13:38–14:39，9-14 分/seed）→ 聚合 →
+> mixing → 独立审计通过。产物 `outputs/issue53_stage4_development_v2/`（ignored，永久归档）。
+
+```text
+性能门槛      全过且与 v1 同水平：test TVD 0.0011614 / recovery 98.91%；
+              nltcs TVD 0.0000109 / recovery 99.95%；零 clip；tape replay 0/12440 失配
+能量门禁      nltcs exact_factor_energy 仍失败：仅 5 个 initial 状态，ratio 36.8~47.5（>1）；
+              其余 20 状态 ratio 0.03~0.44 全过；test 侧 ratio_max 3.5e-8 全过
+正式标签      invalid_or_incomplete（16/32 按 invalid-stop 未尝试）；独立审计通过（重算一致）
+report SHA    13c85f0603b7b04a977ecead758abacc2c3fb925d6a90f71f524a479112a38ac
+audit  SHA    60d58df6c22cf0734ee8d5b0bff85d2e5c4b46e5565431f7cc4f8f35eb178cc8
+```
+
+**重大发现：v1 的"大能量 2~3 ulp 舍入"诊断是误诊。** v2 新增的 worst-case 分量证明：
+最大差值（如 seed 326 initial 的 4.746210391717853e-09，与 v1 **位级相同**，确定性差异、
+与 GPU/CPU 无关）发生在**能量仅 ~1e-3 量级的元素**上，相对误差 ~1e-4 级，远超 float64
+舍入极限。机理是**灾难性相消**：能量是大量 ~1e7 量级项的和（initial 状态 loss ~6.9e8），
+大项几乎相消后结果仅 1e-3；factor 侧与 oracle 侧求和顺序不同，各自舍入停留在大项 ulp 级
+（~2e-9），差值天然 1e-9 级。混合容差用"结果能量量级"做 scale 在相消场景下物理上错误
+（分母退化为 atol），正确 scale 应反映**求和项量级**（如 Σ|term|）。
+
+纪律：按已冻结修订协议第 6 节，再次触发只能记失败、**不得改容差后重跑同批 seeds**——
+development `323..327` 在当前协议下到此为止。下一步候选（待用户决策）：
+(a) 写独立诊断脚本确证 initial 状态能量求和的相消结构（只读产物，不碰资格管线）；
+(b) 第二次协议修订：scale 改为求和项量级，换新 development seeds；
+(c) 改能量计算为补偿求和（动被测实现，影响面最大）。
+未 push、未建 PR、未评论 Issue；qualification `333..337` 仍未运行。
+
+### 历史暂停点：环境已修复（CUDA torch + matplotlib）（2026-08-20）
 
 > 环境变更事件：`.issue49-tools/venv` 的 torch 从 `2.13.0+cpu` 换为 `2.13.0+cu130`
 > （版本号不变，只换 CUDA build；驱动 CUDA 13.0，2×RTX 4090 就绪），并补装 matplotlib 3.11.1。
