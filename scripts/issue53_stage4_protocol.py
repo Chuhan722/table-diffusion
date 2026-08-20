@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 
@@ -39,7 +40,8 @@ FIXED_ALPHA = 16.0
 PATIENCE_TICKS = 6
 RESOURCE_CAP = 6000
 GIBBS_LOGIT_CLIP = 30.0
-ENERGY_TOLERANCE = 1e-10
+ENERGY_ATOL = 1e-10
+ENERGY_RTOL = 1e-12
 TVD_THRESHOLD = 0.05
 RECOVERY_THRESHOLD = 0.80
 TVD_MONOTONIC_TOLERANCE = 1e-12
@@ -163,6 +165,23 @@ def canonical_sha256(value: object) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
+def energy_tolerance_ratio(abs_diff: float, scale: float) -> float:
+    """Frozen mixed absolute/relative energy identity ratio.
+
+    The exact factor-energy gate passes when the per-element ratio
+    ``abs(E_factor - E_oracle) / (ENERGY_ATOL + ENERGY_RTOL * scale)``
+    never exceeds 1.0, where ``scale = max(abs(E_factor), abs(E_oracle))``.
+    """
+    if not (
+        math.isfinite(abs_diff)
+        and math.isfinite(scale)
+        and abs_diff >= 0.0
+        and scale >= 0.0
+    ):
+        raise ValueError("能量恒等分量必须是非负有限数")
+    return abs_diff / (ENERGY_ATOL + ENERGY_RTOL * scale)
+
+
 def file_sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -258,7 +277,15 @@ def stage4_protocol(mode: str) -> dict:
         "tvd_threshold": TVD_THRESHOLD,
         "gap_recovery_threshold": RECOVERY_THRESHOLD,
         "conditional_clip_hit_count_required": 0,
-        "energy_tolerance": ENERGY_TOLERANCE,
+        "energy_identity_gate": {
+            "rule": "mixed_absolute_relative",
+            "formula": (
+                "abs(E_factor - E_oracle) <= atol + rtol * "
+                "max(abs(E_factor), abs(E_oracle))"
+            ),
+            "atol": ENERGY_ATOL,
+            "rtol": ENERGY_RTOL,
+        },
         "probability_sum_tolerance": PROBABILITY_SUM_TOLERANCE,
         "tvd_monotonic_tolerance": TVD_MONOTONIC_TOLERANCE,
         "production_exact_tape_replay_required": True,

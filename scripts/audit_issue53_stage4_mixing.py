@@ -694,6 +694,44 @@ def _recompute_dataset(
             )
         ):
             raise RuntimeError(f"{row['state_id']} factor diagnostics 无效")
+        if (
+            factors.get("energy_atol") != frozen.ENERGY_ATOL
+            or factors.get("energy_rtol") != frozen.ENERGY_RTOL
+        ):
+            raise RuntimeError(
+                f"{row['state_id']} energy atol/rtol 与冻结协议不一致"
+            )
+        worst_case = factors.get("exact_energy_worst_case", {})
+        worst_abs_diff = float(worst_case.get("abs_diff", math.inf))
+        worst_scale = float(worst_case.get("scale", math.inf))
+        recorded_ratio = float(
+            factors.get("exact_energy_tolerance_ratio_max", math.inf)
+        )
+        recorded_relative = float(
+            factors.get("exact_energy_max_relative_error", math.inf)
+        )
+        recomputed_ratio = frozen.energy_tolerance_ratio(
+            worst_abs_diff, worst_scale
+        )
+        if recomputed_ratio != recorded_ratio:
+            raise RuntimeError(
+                f"{row['state_id']} energy tolerance ratio 与 worst-case "
+                "分量重算不一致"
+            )
+        if (
+            not math.isfinite(recorded_relative)
+            or recorded_relative < 0.0
+            or worst_abs_diff
+            > float(factors["exact_energy_max_error"])
+            or (
+                worst_scale > 0.0
+                and worst_abs_diff / worst_scale > recorded_relative
+            )
+            or (worst_scale == 0.0 and worst_abs_diff != 0.0)
+        ):
+            raise RuntimeError(
+                f"{row['state_id']} energy 恒等诊断分量不自洽"
+            )
         for group in protocol["active_width_groups"]:
             if set(
                 probe_result["kernel_summary_by_active_width"][group]
@@ -758,6 +796,17 @@ def _recompute_dataset(
     energy_error = max(
         float(item["exact_energy_max_error"]) for item in factors
     )
+    energy_relative_error = max(
+        float(item["exact_energy_max_relative_error"])
+        for item in factors
+    )
+    energy_ratio = max(
+        frozen.energy_tolerance_ratio(
+            float(item["exact_energy_worst_case"]["abs_diff"]),
+            float(item["exact_energy_worst_case"]["scale"]),
+        )
+        for item in factors
+    )
     current_tvd = {"global": global_group["tvd_to_joint"]}
     current_tvd.update({
         f"stage:{group}": value["tvd_to_joint"]
@@ -784,7 +833,7 @@ def _recompute_dataset(
             value["nonempty"] for value in stage_groups.values()
         ),
         "probabilities_valid": probability_gate,
-        "exact_factor_energy": energy_error <= frozen.ENERGY_TOLERANCE,
+        "exact_factor_energy": energy_ratio <= 1.0,
         "production_tape_replay": comparisons > 0 and mismatches == 0,
         "shared_conditions_exact": conditions_equal,
         "tvd_monotonic_across_candidates": monotonic,
@@ -810,6 +859,8 @@ def _recompute_dataset(
             for item in probabilities
         ),
         "exact_energy_max_error": energy_error,
+        "exact_energy_max_relative_error": energy_relative_error,
+        "exact_energy_tolerance_ratio_max": energy_ratio,
         "production_sampler_comparison_count": comparisons,
         "production_sampler_mismatch_count": mismatches,
     }

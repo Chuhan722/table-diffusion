@@ -294,6 +294,8 @@ def _run_state(
         selection_scale_invariant_min_spread=1e-3,
         residual_geometry="relative",
         residual_geometry_floor=8.0,
+        energy_atol=frozen.ENERGY_ATOL,
+        energy_rtol=frozen.ENERGY_RTOL,
     )
     if (
         result["state_sha256"] != entry["snapshot"][
@@ -453,6 +455,20 @@ def _dataset_attempt(
         (float(item["exact_energy_max_error"]) for item in factors),
         default=math.inf,
     )
+    energy_max_relative_error = max(
+        (
+            float(item["exact_energy_max_relative_error"])
+            for item in factors
+        ),
+        default=math.inf,
+    )
+    energy_ratio_max = max(
+        (
+            float(item["exact_energy_tolerance_ratio_max"])
+            for item in factors
+        ),
+        default=math.inf,
+    )
 
     condition_rows = []
     next_expected_conditions = dict(expected_conditions)
@@ -498,8 +514,7 @@ def _dataset_attempt(
             value["nonempty"] for value in stage_groups.values()
         ),
         "probabilities_valid": probability_gate,
-        "exact_factor_energy": energy_max_error
-        <= frozen.ENERGY_TOLERANCE,
+        "exact_factor_energy": energy_ratio_max <= 1.0,
         "production_tape_replay": sampler_comparisons > 0
         and sampler_mismatches == 0,
         "shared_conditions_exact": conditions_equal,
@@ -552,6 +567,8 @@ def _dataset_attempt(
                 default=math.inf,
             ),
             "exact_energy_max_error": energy_max_error,
+            "exact_energy_max_relative_error": energy_max_relative_error,
+            "exact_energy_tolerance_ratio_max": energy_ratio_max,
             "production_sampler_comparison_count": sampler_comparisons,
             "production_sampler_mismatch_count": sampler_mismatches,
         },

@@ -934,6 +934,8 @@ def _probe_state(
     selection_scale_invariant_min_spread=1e-3,
     residual_geometry="absolute",
     residual_geometry_floor=8.0,
+    energy_atol=None,
+    energy_rtol=None,
 ):
     if n_records != len(state):
         raise ValueError("n_records 必须等于 probe state 的记录数")
@@ -941,6 +943,23 @@ def _probe_state(
         raise ValueError("rho 必须位于 [0, 1]")
     if not 0.0 < eta < 1.0:
         raise ValueError("eta 必须位于 (0, 1)")
+    mixed_energy_tracking = (
+        energy_atol is not None or energy_rtol is not None
+    )
+    if mixed_energy_tracking:
+        if (
+            energy_atol is None
+            or energy_rtol is None
+            or not np.isfinite(energy_atol)
+            or not np.isfinite(energy_rtol)
+            or energy_atol <= 0.0
+            or energy_rtol <= 0.0
+        ):
+            raise ValueError(
+                "energy_atol 与 energy_rtol 必须同时给定且为正有限数"
+            )
+        energy_atol = float(energy_atol)
+        energy_rtol = float(energy_rtol)
     q, residual, fitness = evaluate_vectorized(
         state,
         queries,
@@ -1027,6 +1046,10 @@ def _probe_state(
         for tau in temperatures
     }
     exact_energy_max_error = 0.0
+    exact_energy_max_relative_error = 0.0
+    exact_energy_worst_ratio = -1.0
+    exact_energy_worst_abs_diff = 0.0
+    exact_energy_worst_scale = 0.0
     one_hot_max_error = 0.0
     factor_count_sum = 0
     factor_table_entries_sum = 0
@@ -1145,12 +1168,41 @@ def _probe_state(
                     "稀疏因子与完整 oracle 的活跃属性顺序不一致"
                 )
             factor_energies = evaluate_sparse_mask_energies(model, masks)
+            energy_abs_diff = np.abs(
+                factor_energies - landscape.directions
+            )
             exact_energy_max_error = max(
                 exact_energy_max_error,
-                float(np.max(np.abs(
-                    factor_energies - landscape.directions
-                ))),
+                float(np.max(energy_abs_diff)),
             )
+            if mixed_energy_tracking and energy_abs_diff.size:
+                energy_scale = np.maximum(
+                    np.abs(factor_energies),
+                    np.abs(landscape.directions),
+                )
+                positive_scale = energy_scale > 0.0
+                if np.any(positive_scale):
+                    exact_energy_max_relative_error = max(
+                        exact_energy_max_relative_error,
+                        float(np.max(
+                            energy_abs_diff[positive_scale]
+                            / energy_scale[positive_scale]
+                        )),
+                    )
+                energy_ratio = energy_abs_diff / (
+                    energy_atol + energy_rtol * energy_scale
+                )
+                worst_index = int(np.argmax(energy_ratio))
+                if float(energy_ratio[worst_index]) > exact_energy_worst_ratio:
+                    exact_energy_worst_ratio = float(
+                        energy_ratio[worst_index]
+                    )
+                    exact_energy_worst_abs_diff = float(
+                        energy_abs_diff[worst_index]
+                    )
+                    exact_energy_worst_scale = float(
+                        energy_scale[worst_index]
+                    )
             singles = sparse_single_directions(model)
             one_hot_max_error = max(
                 one_hot_max_error,
@@ -1411,6 +1463,55 @@ def _probe_state(
             shared_digest, "proposal_sha256", proposal_digest
         )
 
+    factor_diagnostics = {
+        "active_rows": active_factor_rows,
+        "exact_energy_max_error": exact_energy_max_error,
+        "one_hot_direction_max_error": one_hot_max_error,
+        "mean_factor_count": (
+            factor_count_sum / active_factor_rows
+            if active_factor_rows else 0.0
+        ),
+        "total_factor_count": int(factor_count_sum),
+        "total_factor_table_entries": int(
+            factor_table_entries_sum
+        ),
+        "mean_factor_table_entries": (
+            factor_table_entries_sum / active_factor_rows
+            if active_factor_rows else 0.0
+        ),
+        "maximum_active_factor_order": maximum_factor_order,
+        "tvd_snapshot_increase_max": tvd_snapshot_increase_max,
+        "tvd_snapshot_increase_max_by_temperature": {
+            f"tau_{_tau_label(tau)}": float(
+                tvd_snapshot_increase_max_by_temperature[tau]
+            )
+            for tau in temperatures
+        },
+        "factor_build_elapsed_sec": factor_build_elapsed,
+        "exact_finite_state_propagation_elapsed_sec": (
+            exact_propagation_elapsed
+        ),
+    }
+    if mixed_energy_tracking:
+        # The official gate value is recomputed in scalar arithmetic from
+        # the recorded worst-case components so that an independent auditor
+        # reproduces it bit-for-bit from {abs_diff, scale, atol, rtol}.
+        factor_diagnostics.update({
+            "exact_energy_max_relative_error": (
+                exact_energy_max_relative_error
+            ),
+            "exact_energy_tolerance_ratio_max": (
+                exact_energy_worst_abs_diff
+                / (energy_atol + energy_rtol * exact_energy_worst_scale)
+            ),
+            "exact_energy_worst_case": {
+                "abs_diff": exact_energy_worst_abs_diff,
+                "scale": exact_energy_worst_scale,
+            },
+            "energy_atol": energy_atol,
+            "energy_rtol": energy_rtol,
+        })
+
     result = {
         "seed": int(seed),
         "state_rounds": int(state_rounds),
@@ -1423,35 +1524,7 @@ def _probe_state(
         "mu": 0.0,
         "direction_reference_scale": direction_reference_scale,
         "reference_scale_proposal_index": reference_scale_proposal_index,
-        "factor_diagnostics": {
-            "active_rows": active_factor_rows,
-            "exact_energy_max_error": exact_energy_max_error,
-            "one_hot_direction_max_error": one_hot_max_error,
-            "mean_factor_count": (
-                factor_count_sum / active_factor_rows
-                if active_factor_rows else 0.0
-            ),
-            "total_factor_count": int(factor_count_sum),
-            "total_factor_table_entries": int(
-                factor_table_entries_sum
-            ),
-            "mean_factor_table_entries": (
-                factor_table_entries_sum / active_factor_rows
-                if active_factor_rows else 0.0
-            ),
-            "maximum_active_factor_order": maximum_factor_order,
-            "tvd_snapshot_increase_max": tvd_snapshot_increase_max,
-            "tvd_snapshot_increase_max_by_temperature": {
-                f"tau_{_tau_label(tau)}": float(
-                    tvd_snapshot_increase_max_by_temperature[tau]
-                )
-                for tau in temperatures
-            },
-            "factor_build_elapsed_sec": factor_build_elapsed,
-            "exact_finite_state_propagation_elapsed_sec": (
-                exact_propagation_elapsed
-            ),
-        },
+        "factor_diagnostics": factor_diagnostics,
         "conditional_logit_diagnostics": conditional_logit_diagnostics,
         "probability_diagnostics": _finalize_probability_diagnostics(
             probability_diagnostics

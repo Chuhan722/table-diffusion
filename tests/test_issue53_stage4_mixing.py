@@ -25,6 +25,17 @@ def _write_payload(path, payload):
     return path
 
 
+# Archived pre-revision protocol identities (development run of 2026-08-19,
+# labelled invalid_or_incomplete).  The mixed-tolerance revision must produce
+# different SHAs so that stale state libraries can never be silently reused.
+ARCHIVED_V1_DEVELOPMENT_PROTOCOL_SHA256 = (
+    "f2602f2238cd1b2c8ec14623e4335d5cb1402cd58b710ef0492bb152ca542cf7"
+)
+ARCHIVED_V1_QUALIFICATION_PROTOCOL_SHA256 = (
+    "31662dbb58bd213fcf6462a50d38d8b2da83cc35edd835a4e06ad4b365e6a5ea"
+)
+
+
 @pytest.fixture(scope="module")
 def real_smoke(tmp_path_factory):
     root = tmp_path_factory.mktemp("issue53-stage4-smoke")
@@ -78,6 +89,26 @@ def test_protocol_freezes_shared_tau_sweeps_seeds_and_dataset_specific_limits():
     assert smoke["formal_result_valid"] is False
     assert smoke["datasets"]["test_300x10"]["proposals_per_state"] == 8
     assert smoke["datasets"]["nltcs"]["proposals_per_state"] == 8
+    expected_energy_gate = {
+        "rule": "mixed_absolute_relative",
+        "formula": (
+            "abs(E_factor - E_oracle) <= atol + rtol * "
+            "max(abs(E_factor), abs(E_oracle))"
+        ),
+        "atol": 1e-10,
+        "rtol": 1e-12,
+    }
+    for frozen_protocol in (development, qualification, smoke):
+        assert frozen_protocol["energy_identity_gate"] == expected_energy_gate
+        assert "energy_tolerance" not in frozen_protocol
+    assert (
+        protocol.protocol_sha256("development")
+        != ARCHIVED_V1_DEVELOPMENT_PROTOCOL_SHA256
+    )
+    assert (
+        protocol.protocol_sha256("qualification")
+        != ARCHIVED_V1_QUALIFICATION_PROTOCOL_SHA256
+    )
     assert set(qualification["allowed_results"]) == {
         "qualified_random_scan_s8",
         "qualified_random_scan_s16",
@@ -278,6 +309,131 @@ def test_generalized_probe_supports_four_way_and_shared_candidate_tape(
     ) == at_eight["shared_condition_identity"]["scientific_sha256"]
 
 
+def test_energy_identity_ratio_is_scale_robust_and_fail_closed():
+    two_ulp_factor = 4.0 * float(np.finfo(np.float64).eps)
+    for scale in (1e-3, 1.0, 1e8):
+        assert (
+            protocol.energy_tolerance_ratio(scale * two_ulp_factor, scale)
+            <= 1.0
+        )
+    assert protocol.energy_tolerance_ratio(0.0, 0.0) == 0.0
+    assert protocol.energy_tolerance_ratio(9e-11, 0.0) <= 1.0
+    assert protocol.energy_tolerance_ratio(2e-10, 2e-10) > 1.0
+    assert protocol.energy_tolerance_ratio(1e7 * 1e-6, 1e7) > 1.0
+    for bad_abs, bad_scale in (
+        (float("nan"), 1.0),
+        (float("inf"), 1.0),
+        (-1e-12, 1.0),
+        (1e-12, float("nan")),
+        (1e-12, -1.0),
+    ):
+        with pytest.raises(ValueError, match="非负有限"):
+            protocol.energy_tolerance_ratio(bad_abs, bad_scale)
+
+
+def test_probe_mixed_energy_tracking_is_consistent_and_optional(monkeypatch):
+    state, target, queries, schema = _four_way_problem()
+    q, _, _ = evaluate_vectorized(
+        state,
+        queries,
+        schema,
+        target=target,
+        n_records=len(state),
+        want_fitness=False,
+        device="numpy",
+        verbose=False,
+    )
+    controls = {
+        "source_seed": 53,
+        "state_round": 0,
+        "state_sha256": probe._frame_sha256(state),
+        "current_loss": float(compute_loss(target, q)),
+        "probe_alpha": 16.0,
+        "direction_reference_scale": 1.0,
+    }
+    monkeypatch.setattr(
+        probe,
+        "sample_donors",
+        lambda probabilities, rng, device: np.arange(len(state)) ^ 15,
+    )
+
+    def run_probe(**extra):
+        return probe._probe_state(
+            state,
+            target,
+            queries,
+            schema,
+            seed=53,
+            state_index=0,
+            state_rounds=0,
+            temperatures=[2.0],
+            sweeps=[0, 8],
+            proposals=2,
+            device="numpy",
+            max_active_attributes=4,
+            external_snapshot_controls=controls,
+            n_records=len(state),
+            rho=1.0,
+            eta=0.5,
+            max_factor_order=4,
+            selection_scale_invariant=True,
+            selection_scale_invariant_min_spread=1e-3,
+            residual_geometry="relative",
+            residual_geometry_floor=8.0,
+            **extra,
+        )
+
+    tracked = run_probe(
+        energy_atol=protocol.ENERGY_ATOL,
+        energy_rtol=protocol.ENERGY_RTOL,
+    )
+    untracked = run_probe()
+
+    diagnostics = tracked["factor_diagnostics"]
+    assert diagnostics["energy_atol"] == protocol.ENERGY_ATOL
+    assert diagnostics["energy_rtol"] == protocol.ENERGY_RTOL
+    worst = diagnostics["exact_energy_worst_case"]
+    assert set(worst) == {"abs_diff", "scale"}
+    assert diagnostics[
+        "exact_energy_tolerance_ratio_max"
+    ] == protocol.energy_tolerance_ratio(
+        worst["abs_diff"], worst["scale"]
+    )
+    assert diagnostics["exact_energy_tolerance_ratio_max"] <= 1.0
+    assert worst["abs_diff"] <= diagnostics["exact_energy_max_error"]
+    assert diagnostics["exact_energy_max_relative_error"] >= 0.0
+    if worst["scale"] > 0.0:
+        assert (
+            worst["abs_diff"] / worst["scale"]
+            <= diagnostics["exact_energy_max_relative_error"]
+        )
+
+    for absent in (
+        "exact_energy_max_relative_error",
+        "exact_energy_tolerance_ratio_max",
+        "exact_energy_worst_case",
+        "energy_atol",
+        "energy_rtol",
+    ):
+        assert absent not in untracked["factor_diagnostics"]
+    assert tracked["shared_condition_identity"] == untracked[
+        "shared_condition_identity"
+    ]
+    assert tracked["kernel_summary_by_active_width"] == untracked[
+        "kernel_summary_by_active_width"
+    ]
+    assert tracked["factor_diagnostics"][
+        "exact_energy_max_error"
+    ] == untracked["factor_diagnostics"]["exact_energy_max_error"]
+
+    with pytest.raises(ValueError, match="同时给定"):
+        run_probe(energy_atol=protocol.ENERGY_ATOL)
+    with pytest.raises(ValueError, match="同时给定"):
+        run_probe(energy_rtol=protocol.ENERGY_RTOL)
+    with pytest.raises(ValueError, match="同时给定"):
+        run_probe(energy_atol=0.0, energy_rtol=protocol.ENERGY_RTOL)
+
+
 def test_real_two_dataset_smoke_is_complete_audited_and_nonformal(real_smoke):
     library = real_smoke["library"]
     report = real_smoke["report"]
@@ -396,6 +552,59 @@ def test_independent_audit_rejects_condition_metric_and_state_tampering(
             library_path,
             root / "tampered_library_audit.json",
         )
+
+
+def test_independent_audit_rejects_energy_identity_tampering(real_smoke):
+    root = real_smoke["root"]
+
+    def _first_diagnostics(report):
+        return report["attempts"][0]["datasets"]["test_300x10"][
+            "state_results"
+        ][0]["probe"]["factor_diagnostics"]
+
+    ratio = copy.deepcopy(real_smoke["report"])
+    _first_diagnostics(ratio)["exact_energy_tolerance_ratio_max"] = 0.0
+    ratio_path = _write_payload(root / "tampered_ratio.json", ratio)
+    with pytest.raises(RuntimeError, match="重算不一致"):
+        auditor.audit_stage4_mixing(
+            ratio_path,
+            real_smoke["library_path"],
+            root / "tampered_ratio_audit.json",
+        )
+
+    scale = copy.deepcopy(real_smoke["report"])
+    worst = _first_diagnostics(scale)["exact_energy_worst_case"]
+    worst["scale"] = worst["scale"] * 2.0 + 1.0
+    scale_path = _write_payload(root / "tampered_scale.json", scale)
+    with pytest.raises(RuntimeError, match="重算不一致"):
+        auditor.audit_stage4_mixing(
+            scale_path,
+            real_smoke["library_path"],
+            root / "tampered_scale_audit.json",
+        )
+
+    constants = copy.deepcopy(real_smoke["report"])
+    _first_diagnostics(constants)["energy_atol"] = 1e-8
+    constants_path = _write_payload(
+        root / "tampered_constants.json", constants
+    )
+    with pytest.raises(RuntimeError, match="冻结协议不一致"):
+        auditor.audit_stage4_mixing(
+            constants_path,
+            real_smoke["library_path"],
+            root / "tampered_constants_audit.json",
+        )
+
+
+def test_state_library_from_old_protocol_revision_is_rejected(real_smoke):
+    root = real_smoke["root"]
+    library = copy.deepcopy(real_smoke["library"])
+    library["protocol_sha256"] = ARCHIVED_V1_DEVELOPMENT_PROTOCOL_SHA256
+    library_path = _write_payload(
+        root / "old_protocol_library.json", library
+    )
+    with pytest.raises(RuntimeError, match="状态库绑定失败"):
+        runner._validate_library("smoke", library_path, None)
 
 
 def test_artifacts_are_no_overwrite_and_formal_entry_is_fail_closed(

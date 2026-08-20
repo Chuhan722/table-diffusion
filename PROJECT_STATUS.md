@@ -2,7 +2,56 @@
 
 ## 当前阶段
 
-### 最新暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
+### 最新暂停点：Stage 4 能量门禁混合容差修订已冻结并实施，等待 development v2 重跑授权（2026-08-20）
+
+> 本板块在独立 worktree `research/issue53-factor-gibbs-stage4`（起点 PR #66 head `8570187`）上进行。
+> Stage 4 factor Gibbs 资格管线已以本地提交 `3c19ec3`（管线）与 `6d102af`（一种子一分片）落盘；
+> 未 push、未建 PR、未评论 Issue、未操作 #63/#65/#66。补记：这两个提交当时漏更本文件，本节一并补上。
+
+development `323..327` 状态库与共享 sweep=8 mixing 已完成（非正式，不产生资格结论）：
+
+```text
+状态库            2 数据 × 5 seeds × 5 状态 = 50 个，分片聚合与 SHA 绑定全部通过
+性能门槛          全过：test TVD 0.0011614 / recovery 98.91%；nltcs TVD 0.0000109 / recovery 99.95%
+                  全部 stage groups 与非空 width groups 通过；零 clip；tape replay 0 失配
+结构门禁          nltcs exact_factor_energy 失败：绝对容差 1e-10，五个 initial 状态误差
+                  3.68e-9 ~ 4.75e-9（能量 ~1e7 量级的 2~3 ulp 浮点舍入）；其余 45 个状态全过
+正式标签          invalid_or_incomplete；按 invalid-stop 规则 16/32 未尝试
+独立审计          通过且重算结论一致（报告未损坏，是容差公式缺尺度稳健性）
+report SHA        7268800e37238a733c483ca755572344f35b84d5226adc015ce5139082a76d9c
+audit SHA         6a263bfed443890bcba66ba2e943fe0c514bd0b443763860736a75e591fe12a1
+产物              outputs/issue53_stage4_development_v1/（ignored，永久归档不改写）
+```
+
+已核对远端（只读）：PR #63/#65/#66 均 OPEN、CLEAN、零 review 零评论；Issue #53 最新为
+Amendment 5，无新动态。
+
+当前动作：结果后协议修订
+`docs/设计/Issue53_Stage4能量恒等门禁混合容差修订协议.md` **已经用户确认冻结并完成实施**。
+`exact_factor_energy` 改为逐元素混合容差
+`abs_diff <= atol(1e-10) + rtol(1e-12) × max(|E_factor|, |E_oracle|)`，常量按浮点精度
+第一性原理推导、明确禁止按观察值反推。实施与验证情况：
+
+```text
+protocol.py       ENERGY_ATOL/ENERGY_RTOL + energy_tolerance_ratio() + energy_identity_gate 结构
+probe             opt-in energy_atol/energy_rtol；新增 max_relative_error / tolerance_ratio_max /
+                  worst_case{abs_diff,scale} / atol / rtol 五字段；不传参时字段不出现（issue49/52 兼容）
+runner            门禁改 ratio_max <= 1.0；numerical_diagnostics 增两字段
+auditor           断言 atol/rtol 与冻结常量相等；从 worst_case 用协议常量独立重算 ratio 并要求
+                  与记录值位级相等；自洽不等式；聚合门禁独立重算
+新 protocol SHA   development dd344a087478f686d4a72409c4bf4855ed18a5dd0cacaaa83cf4cfc37b097a51
+                  qualification 6a2834db4cb75fffbaac3330bbb1923fa2e864572ca05ac901c3142ecd443680
+测试              Stage 4 专项 13 passed（新增 4：跨尺度/注错必抓、probe 一致性与省略兼容、
+                  审计篡改必拒、旧协议库绑定必拒）；probe 共用方回归 17 passed；
+                  全仓 1695 passed / 8 skipped / 0 failed（6 个文件因环境缺 matplotlib 无法收集，
+                  属既有环境问题，与本次改动无关）
+```
+
+**尚未重跑任何实验**：development `323..327` v2 重跑（状态库重采集约 1 小时 + mixing + audit，
+写 `outputs/issue53_stage4_development_v2/`）需用户另行授权；qualification `333..337` 更需
+单独授权。未 push、未建 PR、未评论 Issue、未操作 #63/#65/#66。
+
+### 历史暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
 
 > 本板块基于 PR #65 head `a2bc496` 的独立分支完成；没有修改、自行审查、批准或合并 PR #63/#65。
 > 固定 α 响应与两档自适应实验均使用更新后无 measured 1-way 的 test workload，并保持无门控、
