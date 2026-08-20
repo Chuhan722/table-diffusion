@@ -2,7 +2,20 @@
 
 ## 当前阶段
 
-### 最新暂停点：Stage 4 能量门禁混合容差修订已冻结并实施，等待 development v2 重跑授权（2026-08-20）
+### 最新暂停点：环境已修复（CUDA torch + matplotlib），development v2 待重新开跑（2026-08-20）
+
+> 环境变更事件：`.issue49-tools/venv` 的 torch 从 `2.13.0+cpu` 换为 `2.13.0+cu130`
+> （版本号不变，只换 CUDA build；驱动 CUDA 13.0，2×RTX 4090 就绪），并补装 matplotlib 3.11.1。
+> 背景：协议规定 nltcs `device: "cuda"`，但旧环境 torch 是 CPU-only 版，实际一直走
+> `_run_batches_torch` 的 "CUDA not available, falling back to CPU" 回退——**v1 及此前
+> 各阶段的 nltcs 轨迹都是该回退下的 CPU float32 产物**。修复后 nltcs 才真正按协议在 GPU
+> 上执行；GPU float32 归约顺序与 CPU 不同，故 GPU 轨迹与 CPU 轨迹不位级可比（v2 是新
+> 协议 SHA 下的全新实验，本就无需与 v1 可比）。
+> 环境验证：全仓 1755 passed / 0 failed / 0 skipped（含此前因无 CUDA 跳过的 GPU 用例
+> 与因缺 matplotlib 无法收集的 6 个 stage2b 文件，全部恢复并通过）。
+> 首次 v2 开跑尝试（5 分片并行）已在完成前全部终止并清理，未留任何 v2 产物。
+
+### 历史暂停点：Stage 4 能量门禁混合容差修订已冻结并实施（2026-08-20）
 
 > 本板块在独立 worktree `research/issue53-factor-gibbs-stage4`（起点 PR #66 head `8570187`）上进行。
 > Stage 4 factor Gibbs 资格管线已以本地提交 `3c19ec3`（管线）与 `6d102af`（一种子一分片）落盘；
