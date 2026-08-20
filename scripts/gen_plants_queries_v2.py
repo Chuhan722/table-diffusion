@@ -11,9 +11,10 @@
    每对纳入全部 4 个 cell（联合单元完整成组，计 460 条）。
 3. **3-way 模式覆盖**（意见 1）：v1 用原始计数偏差 |obs−exp| 选 cell，
    偏向高频全 0 模式（383 条全部 000）。v2 改为：
-   - 属性三元组按三阶专属关联度选择：G²_total − G²_AB − G²_AC − G²_BC
-     （完整 2×2×2 列联表对独立模型的 G² 中扣除三个二阶对独立的 G²，
-     近似三阶交互强度），取 top 260 组；
+   - 属性三元组按 v2 使用的启发式三维关联评分选择：
+     G²_total − G²_AB − G²_AC − G²_BC（完整 2×2×2 列联表对独立模型的
+     G² 扣除三个二阶对独立的 G²；这是工程启发式而非标准的纯三阶
+     交互统计量），取 top 260 组；
    - 组内 cell 按标准化残差 |obs−exp_indep|/√max(exp,1) 排序取 top-2，
      且强制两个 cell 取值模式不同（计 520 条）；
    - 输出模式直方图供覆盖检查（tests 锚定非全 0 覆盖下限）。
@@ -122,7 +123,7 @@ def main():
           f"(φ² 范围 {pair_scores[N_DOUBLE_PAIRS-1][0]:.4f}"
           f"~{pair_scores[0][0]:.4f})", flush=True)
 
-    # ---------- 3-way：三阶专属关联度 top 260 组 × 模式互异 2 cell ----
+    # ---------- 3-way：启发式三维关联评分 top 260 组 × 模式互异 2 cell ----
     # 候选池：φ² top 40 属性（控制 C(40,3)=9880 次列联表计算）
     attr_score = np.zeros(69)
     for phi2, i, j, _ in pair_scores:
@@ -207,7 +208,7 @@ def main():
             f"{len(queries)} 个查询（v2：无 single——1-way 由初始化边缘"
             f"单独提供；double {N_DOUBLE_PAIRS} 对完整 2×2 成组共 "
             f"{n_double} 条，φ² 关联度选对；triple {n_groups} 组各 2 条"
-            f"模式互异 cell，三阶专属 G² 交互度选组，标准化残差选 cell）"
+            f"模式互异 cell，启发式三维关联评分选组，标准化残差选 cell）"
         ),
         "queries": queries,
     }

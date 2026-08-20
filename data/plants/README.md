@@ -37,7 +37,7 @@ plants.csv 由 train 原样加表头得到，供离线测量脚本
 ## workload（configs/plants/measured_1000query.json，v2）
 
 980 条查询：double 460 条（φ²=χ²/N 关联度 top 115 属性对，完整 2×2
-成组）+ triple 520 条（三阶专属 G² 交互度 top 260 组，组内标准化残差
+成组）+ triple 520 条（v2 启发式三维关联评分 top 260 组，组内标准化残差
 top-2 且取值模式互异；三属性模式直方图 7/8 覆盖，无 000 塌缩）。
 1-way 不计入主 workload——精确 1-way 边缘由
 configs/plants/init_marginals.json 作为初始化层单独提供（与 nltcs

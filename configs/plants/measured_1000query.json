@@ -4,7 +4,7 @@
   "query_count": 980,
   "result_unit": "records",
   "workload_version": 2,
-  "description": "980 个查询（v2：无 single——1-way 由初始化边缘单独提供；double 115 对完整 2×2 成组共 460 条，φ² 关联度选对；triple 260 组各 2 条模式互异 cell，三阶专属 G² 交互度选组，标准化残差选 cell）",
+  "description": "980 个查询（v2：无 single——1-way 由初始化边缘单独提供；double 115 对完整 2×2 成组共 460 条，φ² 关联度选对；triple 260 组各 2 条模式互异 cell，启发式三维关联评分选组，标准化残差选 cell）",
   "queries": [
     {
       "id": "D0001",
