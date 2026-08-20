@@ -2,7 +2,42 @@
 
 ## 当前阶段
 
-### 最新暂停点：development v2 已跑完——能量门禁再次失败且 v1 诊断被证伪（cancellation 根因），待决策（2026-08-20）
+### 最新暂停点：能量门禁真凶已修复——oracle torch 路径 float32 累加缺陷（验尸位级证实），待决策是否跑 v3（2026-08-20）
+
+> 本节推翻上一节（v2 暂停点）的"灾难性相消"初判。只读验尸脚本
+> `scripts/diagnose_issue53_stage4_energy_cancellation.py`（确定性重放 probe 能量比对、
+> 逐查询项拆解、`math.fsum` 精确参照）对全部 5 个失败 initial 状态给出位级结论：
+
+```text
+numpy 重放     全程 float64 路径差值仅 ~2e-17 —— 未复现，排除 factor/oracle 算法差异
+cuda  重放     位级复现 recorded 差值（如 seed 326 的 4.74621039171785331e-09，bitwise_equal）
+误差归属       factor 侧 vs fsum 精确值：0~2 ulp（无辜）；oracle 侧独扛全部误差（~5.5 亿 ulp）
+相消假说       不成立：相消比仅 1.1~11 倍，远不足以放大 float64 舍入到 1e-9 级
+真凶           src/table_diffevo/vectorized_eval.py::_directional_potential_torch
+               势能累加器 potential_t、残差张量 wr_t、mask 转型全为 float32；
+               float32 eps(1.2e-7) × 势能量级(3.7e-2) ≈ 4.4e-9，与观测严丝合缝
+谜团全解       nltcs 走 torch 路径(float32)而 test 走 numpy(float64)→只有 nltcs 挂；
+               initial 残差大→势能大→float32 绝对误差大→只有 initial 挂；
+               该算法下 torch CPU/GPU float32 舍入相同→v1(CPU 回退)/v2(GPU) 位级同值
+```
+
+**修复（已实施并验证）**：`_directional_potential_torch` 累加链升为 float64
+（`potential_t`/`wr_t` dtype、`mask.to(torch.float64)`）；掩码比较仍在 float32 上进行，
+0/1 语义不变，最小修复面。修 bug 不属于修订协议第 6 节禁止的"改容差重跑同批 seeds"。
+
+验证三件套：
+1. 新回归测试 `tests/test_directional_diffusion.py::test_torch_potential_accumulates_in_float64`
+   （cpu/cuda 参数化，大残差场）：撤掉修复必挂、装回全绿——反向验证成立；
+2. 真实数据重放（v2 库 seed 326 initial worst 元素，cuda）：oracle 误差
+   4.746e-9 → **2.08e-17（≈0.8 ulp）**，门禁容差 1e-10 下余量 7 个数量级；
+   产物 `outputs/issue53_stage4_development_v2/postfix_verification_seed326_cuda.json`；
+3. 全仓测试 **1757 passed / 0 failed / 0 skipped**（1755 基线 + 2 新增）。
+
+下一步（待用户授权）：跑 development v3——修复改变 nltcs 前向轨迹，状态库必须重采集，
+GPU 单卡串行全链路约 1.5 小时；能量门禁预期 ulp 级通过。qualification `333..337`
+仍需之后单独授权。未 push、未建 PR、未评论 Issue。
+
+### 历史暂停点：development v2 已跑完——能量门禁再次失败且 v1 诊断被证伪（当时初判 cancellation，后被验尸推翻，见上节）（2026-08-20）
 
 > GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行采集 5 分片（13:38–14:39，9-14 分/seed）→ 聚合 →
 > mixing → 独立审计通过。产物 `outputs/issue53_stage4_development_v2/`（ignored，永久归档）。

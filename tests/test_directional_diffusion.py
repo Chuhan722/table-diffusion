@@ -85,6 +85,55 @@ class TestDirectionalPotential:
             potential, [0.0, -1.0, 2.0, 4.0], atol=1e-6
         )
 
+    @pytest.mark.parametrize(
+        "device", [d for d in _devices() if d != "numpy"]
+    )
+    def test_torch_potential_accumulates_in_float64(self, device):
+        rng = np.random.default_rng(53)
+        attrs = [f"x{i}" for i in range(8)]
+        schema = Schema([
+            AttributeBlock(
+                name=name,
+                type="categorical",
+                description=name,
+                values=[0, 1],
+            )
+            for name in attrs
+        ])
+        rows = pd.DataFrame(
+            rng.integers(0, 2, size=(64, 8)), columns=attrs
+        )
+        queries = []
+        for _ in range(512):
+            picked = rng.choice(8, size=int(rng.integers(1, 4)),
+                                replace=False)
+            queries.append({
+                "conditions": [
+                    {
+                        "attribute": attrs[i],
+                        "operator": "==",
+                        "value": int(rng.integers(0, 2)),
+                    }
+                    for i in picked
+                ]
+            })
+        # 大残差场：float32 累加会产生 ~1e-2 级绝对误差，float64 必须
+        # 与 numpy 参考路径一致到求和顺序级（<1e-9）。
+        residual = rng.normal(scale=1e3, size=512)
+
+        reference = evaluate_directional_potential(
+            rows, queries, schema, residual,
+            device="numpy", verbose=False,
+        )
+        torch_result = evaluate_directional_potential(
+            rows, queries, schema, residual,
+            device=device, verbose=False,
+        )
+
+        np.testing.assert_allclose(
+            torch_result, reference, rtol=1e-12, atol=1e-9
+        )
+
     def test_weights_are_applied(self):
         schema = _binary_schema()
         queries = _binary_queries()
