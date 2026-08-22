@@ -2,6 +2,55 @@
 
 ## 当前阶段
 
+### 最新暂停点：Stage 4 已发布为 Draft PR #67，等待下层栈同步（2026-08-22）
+
+> Stage 4 qualification 的代码、development 诊断与正式结果已从本地分支推送，并以 Draft PR
+> [#67](https://github.com/Chuhan722/table-diffusion/pull/67) 发布。本节覆盖下方“只在当前分支本地提交、
+> 未 push、未建 PR”的旧暂停描述；正式实验本身没有重跑或改写。
+
+PR 身份与边界：
+
+```text
+PR                     #67（Draft / OPEN）
+title                  研究：Issue #53 Stage 4 factor Gibbs 内层资格验证
+base                   research/issue53-fixed-alpha（PR #66）
+head                   research/issue53-factor-gibbs-stage4
+published result head  82e679ccdad135cf07b8e1fb8818b3db5d8b6d47
+GitHub initial status  MERGEABLE / CLEAN（仍受下层栈审阅与同步顺序约束）
+review order           #63 -> #65 -> #66 -> #67
+```
+
+PR 正文明确限定：Stage 4 只证明冻结 `tau=2` 提议分布下 factor random-scan Gibbs
+`sweeps=8` 取得内层资格；不决定最佳 tau、不比较最终外层 independent/Gibbs 质量、不改公开默认，
+也不包含 Stage 5。约 171MB 状态库与约 2.1MB report 继续保持 ignored 本地归档；PR 只提交代码、
+协议、测试、结果说明与产物哈希。发布后逐项核对 base/head、Draft 状态与三个产物 SHA；PR 正文中
+一次 report SHA 粘贴错误已立即更正为正式值
+`15751180b96c6a466f7096a63935d93eb60f47b836f2aa9462a1842ee58b7fa5`，没有改动仓库或产物。
+
+PR 前验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.11 / CUDA Stage 4 定向     109 passed
+Python 3.11 / CUDA 全仓             1757 passed，2 个既有 NumPy warning
+Python 3.9 / CUDA Stage 4 核心       95 passed
+Python 3.9 Stage 4 新增集成断言       2 passed
+Python 3.9 当前叠加头全仓收集         4 errors（下层基线阻断，尚未进入测试执行）
+```
+
+Python 3.9 的四个收集错误均来自 PR #66 尚未同步的 PR #63 旧基线：三处
+`datetime.UTC` 与一处未延迟求值的 `int | None`。PR #63 已在提交 `5efbcb8` 修复这些兼容点，
+并在其后记录 Python 3.9 CUDA 全量通过；Stage 4 新文件的核心测试与新增集成断言均已单独通过。
+因此本 PR 不重复修改下层代码，待 #63 -> #65 -> #66 同步后，在 #67 上再跑一次常规 Python 3.9
+全量回归。
+
+不重跑正式 qualification 的依据：正式执行绑定 clean commit `e7cbcc0`，之后只有结果/状态文档提交
+`82e679c`，科学代码、冻结协议、runner、auditor 与 ignored 正式产物均未改变；当前 Python 3.11
+全量回归和 Python 3.9 Stage 4 验证也未发现需要改变科学实现的问题。只有将来测试暴露真实代码缺陷，
+且修复触及科学代码、协议或运行器时，才重新判断是否需要生成新身份的实验，而不是覆盖本次资格结果。
+
+下一步：先等待并处理下层 PR 栈同步；同步到 #67 后补跑 Python 3.9 全量测试并更新 Draft 状态。
+Stage 5 的 same-tau independent vs factor 结果前协议仍是独立后续工作，未实现、未运行。
+
 ### 最新暂停点：Stage 4 qualification 正式通过并完成仓库内收口，下一步为 Stage 5 结果前协议（2026-08-22）
 
 > qualification `333..337` 已于 2026-08-20 运行完成，并于 2026-08-22 逐字段核验、写入正式结果
