@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-### 最新暂停点：PR #63 三项补强完成并同步 PR #61 后 master，已推送并回复 reviewer（2026-08-22）
+### 最新暂停点：PR #63 三项补强及 Python 3.9/CUDA 验证全绿，已推送并回复 reviewer（2026-08-22）
 
 > 用户授权修复上一轮只读复核发现的全部问题，并要求同步刚合并的 PR；完成检查后又明确授权提交、
 > push 并发布拟好的 reviewer 回复。已确认刚合并的是 PR #61（merge commit
@@ -44,10 +44,28 @@ old remote PR63     24478dde3f639ee8f55100d3e7741506631bbc12
 全仓 Python 3.11.15
   1638 passed, 2 个既有空切片 warning
 
-全仓 Python 3.9.25（NumPy 1.26.4 / Pandas 2.2.3 / PyTorch 2.8.0+cpu）
-  1618 passed, 7 skipped, 15 warnings
+全仓 Python 3.9.25（NumPy 1.26.4 / Pandas 2.2.3 / PyTorch 2.8.0+cu128 / RTX 4090）
+  1638 passed, 0 skipped, 15 warnings
   warning：13 条临时 Matplotlib/PyParsing 依赖弃用提示 + 2 条既有空切片 warning
 ```
+
+最初 Python 3.9 临时环境使用 CPU-only PyTorch，因此 7 条 CUDA 测试被 pytest 按设计跳过。用户要求
+补齐后，将同一临时环境从 `torch 2.8.0+cpu` 替换为官方 `torch 2.8.0+cu128`，固定使用一张空闲
+RTX 4090：
+
+```text
+CUDA smoke
+  Python 3.9.25 / torch 2.8.0+cu128 / CUDA runtime 12.8
+  torch.cuda.is_available() == True；真实 1024x1024 CUDA 矩阵乘成功
+
+原 skip 所在 GPU/采样测试组
+  206 passed, 0 skipped（原 7 条全部执行通过，CUDA 可用时另收集 9 条路径）
+
+全仓复验
+  1638 passed, 0 skipped, 15 warnings in 121.57s
+```
+
+该补充只更换临时测试环境并运行测试，没有源码、依赖声明、实验产物或协议改动。
 
 协议与冻结 artifact 边界保持不变：
 
