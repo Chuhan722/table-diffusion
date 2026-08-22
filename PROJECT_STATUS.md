@@ -2,6 +2,60 @@
 
 ## 当前阶段
 
+### 最新暂停点：Stage 4 qualification 正式通过并完成仓库内收口，下一步为 Stage 5 结果前协议（2026-08-22）
+
+> qualification `333..337` 已于 2026-08-20 运行完成，并于 2026-08-22 逐字段核验、写入正式结果
+> 文档。本节覆盖下方“等待 qualification 授权”的旧暂停点。正式实验产物保持 ignored 本地归档，
+> 没有重跑、改写或强行纳入 Git；本节与结果文档只在当前分支本地提交，未 push、未建 PR、未评论
+> Issue #53，也未修改 #63/#65/#66。
+
+正式身份：
+
+```text
+execution commit       e7cbcc0beaf6718f7f4ad148a8ee07f8cc9a089f（clean）
+mode                   qualification / formal_result_valid=true
+seeds                  333..337
+states                 2 datasets × 5 seeds × 5 stages = 50
+protocol SHA           6a2834db4cb75fffbaac3330bbb1923fa2e864572ca05ac901c3142ecd443680
+result                 qualified_random_scan_s8
+attempted sweeps       [8]（两数据同时通过后依协议停止，16/32 未运行）
+independent audit      status=complete / passed=true / 同一结果与 selected sweeps=8
+```
+
+正式主结果：
+
+| dataset | global TVD（≤0.05） | gap recovery（≥0.80） | valid | passed |
+|---|---:|---:|---|---|
+| test_300x10 | 0.0015438274 | 98.7275% | true | true |
+| nltcs | 0.0000104018 | 99.9486% | true | true |
+
+- 10/10 条来源轨迹均由 P=6 `early_stopped`；test rounds 1209–1758，nltcs 1895–3400，均未触及
+  C=6000。
+- 50 状态最差单状态为 test seed 337 initial：TVD 0.0133081、recovery 97.6778%，仍明显优于门槛。
+- 两数据所有 validity gates、全部 required stage groups 与全部非空 width groups 均通过；零 clip；
+  25,650 次 production exact-tape replay 零失配。
+- max energy error / tolerance ratio：test `2.60e-18 / 2.60e-8`；nltcs
+  `1.39e-17 / 1.39e-7`，正式 fresh seeds 继续证实 float64 累加修复。
+- 科学边界：只证明冻结提议分布上 factor random-scan Gibbs 8 sweeps 的内层资格，不证明 factor 外层
+  生成优于 same-tau independent，不修改公共默认。
+
+只读复核文件 SHA-256：
+
+```text
+state_library  3c7475e89d693bd2240846bb78dec6b7a8d2abc14a71beea25fd6be3e2a02561
+mixing_report  15751180b96c6a466f7096a63935d93eb60f47b836f2aa9462a1842ee58b7fa5
+mixing_audit   fde7929a39cb039d26dd56b91063fa4151a639ea0e483ba8b9303e912a42ed6d
+```
+
+正式结果文档：
+`docs/实验结果/Issue53_Stage4_factor_Gibbs正式资格结果.md`。状态库约 171MB、report 约 2.1MB，
+继续留在 `outputs/issue53_stage4_qualification_v1/` ignored 归档，不因文档收口改变 artifact 身份。
+
+下一小步是 Stage 5 same-tau independent vs factor **结果前协议设计**：独立臂 sweeps=0、factor 臂
+固定使用已取得资格的 sweeps=8，采用全新 paired seeds，冻结质量、支持集、多样性、validity、
+normalized work、Gibbs 微步、查询评价次数与墙钟口径。未获用户后续确认前不实现、不跑 smoke/正式
+实验、不处理 PR #65 冲突、不 push。
+
 ### 最新暂停点：development v3 全绿通过——能量门禁史上首次通过，等待 qualification 授权（2026-08-20）
 
 > float32 修复（`5a61b7b`）后的首次全链路重跑。GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行
