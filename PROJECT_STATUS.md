@@ -2,6 +2,341 @@
 
 ## 当前阶段
 
+### 最新暂停点：Draft PR #67 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
+
+> 用户检查本地结果后明确授权“推”。本步只发布上一节已经完成并验证的 #67 同步提交；没有修改
+> PR 正文、发布评论、请求 review、催促审阅者、转为 Ready、Approve/merge PR，也没有开始 Stage 5。
+
+```text
+published merge head  6ac9d600695d38ea589f5285f0c1f9f0c6310afe
+remote branch         research/issue53-factor-gibbs-stage4
+PR                     #67 / OPEN / Draft
+base                   research/issue53-fixed-alpha（PR #66）
+GitHub status          MERGEABLE / CLEAN
+checks                 none reported
+```
+
+远端从 `3c69686` fast-forward 到 `6ac9d60`，本地与 upstream 在发布后为 `0 behind / 0 ahead`。
+推送内容为：同步 #66 最新头 `4bc0bad`、完整保留下层与 Stage 4 状态历史，并继承完整 Python 3.9
+兼容链。发布前 Python 3.9/3.11 全仓均为 `1770 passed`，Stage 4 Python 3.9 定向为
+`112 passed`；三个正式资格产物 SHA 均保持原值，没有重跑实验或改写 artifacts。
+
+按本次“推送”范围，PR 正文没有改动，仍保留同步前“Python 3.9 全量被旧下层基线阻断”的历史说明；
+在将 Draft 转为 Ready 前，应单独更新正文为本次常规 Python 3.9 全量 `1770 passed` 的最终状态。
+该动作需用户后续决定，本步不自行修改远端描述。
+
+本节作为发布后的仓库内状态记录随同一 #67 分支推送。Stage 5 仍未实现或运行；#63 自然等待外部
+反馈，不评论、不催促。
+
+### 最新暂停点：Draft PR #67 已在本地同步最新 #66，Python 3.9/3.11 全仓通过（2026-08-22）
+
+> 用户授权继续按 PR 栈逐层处理，但没有授权 push。本步只在 #67 本地 worktree 合入 #66 最新
+> 远端头、解决状态文档冲突、复查 Stage 4 兼容性、跑双版本回归并只读复核正式产物；没有 push、
+> 修改 PR 正文、发布评论、review request、催促审阅者、Approve/merge PR，也没有开始 Stage 5。
+
+同步身份：
+
+```text
+#67 pre-sync head     3c696869e74e1d836a9d87752017365416b48a0a
+#66 synced head       4bc0bad7d86278aed680538a027d9607eff3a362
+common ancestor       8570187287ce826d5b65fe6b70559e0c3c9d6652
+divergence            #66 侧 11 commits / #67 侧 9 commits
+merge conflict        PROJECT_STATUS.md only
+resolution            双方新增记录完整保留；重复的 #66 旧标题只保留一份并标为历史
+remote #67            保持 3c69686，GitHub 远端仍显示 CONFLICTING / Draft
+```
+
+#66 已验证的全部下层同步与 Python 3.9 兼容修复自动合入；
+`tests/test_inner_early_stopping_integration.py` 同时自动合并 Stage 4 natural-work 测试与下层 postponed
+annotations/stationarity-trace 测试，无代码冲突。对 Stage 4 独有 11 个 Python 文件完整扫描，未发现
+`zip(strict=True)`、`datetime.UTC` 或 `from datetime import UTC`；需要联合类型的文件均具备
+postponed annotations，Stage 4 不需要新增兼容修复。
+
+最终验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.9 / CUDA Stage 4 定向   112 passed
+Python 3.9 / CUDA 全仓           1770 passed, 15 warnings, 0 skipped
+Python 3.11 / CUDA 全仓          1770 passed, 2 warnings, 0 skipped
+git diff --check                 clean
+outputs tracked diff             empty
+```
+
+Python 3.9 的 15 条 warning 为临时 Matplotlib/PyParsing 依赖弃用提示 13 条与既有空切片 NumPy
+warning 2 条；Python 3.11 只有后两条。原先由旧 #66 基线造成的四个 Python 3.9 收集错误已全部消失，
+Stage 4 新增集成测试现在由常规 pytest 正常收集与执行。
+
+正式 qualification 未重跑。三个 ignored 产物只读 SHA-256 复核仍精确等于归档身份：
+
+```text
+state_library  3c7475e89d693bd2240846bb78dec6b7a8d2abc14a71beea25fd6be3e2a02561
+mixing_report  15751180b96c6a466f7096a63935d93eb60f47b836f2aa9462a1842ee58b7fa5
+mixing_audit   fde7929a39cb039d26dd56b91063fa4151a639ea0e483ba8b9303e912a42ed6d
+```
+
+同步只改变下层代码历史与状态文档，没有改变 Stage 4 冻结协议、runner、auditor、正式执行提交或
+ignored artifacts，因此资格结论 `qualified_random_scan_s8` 保持原身份有效。
+
+本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #67；只有用户明确说“推”才可
+push。Stage 5 仍未实现或运行，#63 继续自然等待外部反馈，不评论、不催促。
+
+### 最新暂停点：Stage 4 已发布为 Draft PR #67，等待下层栈同步（2026-08-22）
+
+> Stage 4 qualification 的代码、development 诊断与正式结果已从本地分支推送，并以 Draft PR
+> [#67](https://github.com/Chuhan722/table-diffusion/pull/67) 发布。本节覆盖下方“只在当前分支本地提交、
+> 未 push、未建 PR”的旧暂停描述；正式实验本身没有重跑或改写。
+
+PR 身份与边界：
+
+```text
+PR                     #67（Draft / OPEN）
+title                  研究：Issue #53 Stage 4 factor Gibbs 内层资格验证
+base                   research/issue53-fixed-alpha（PR #66）
+head                   research/issue53-factor-gibbs-stage4
+published result head  82e679ccdad135cf07b8e1fb8818b3db5d8b6d47
+GitHub initial status  MERGEABLE / CLEAN（仍受下层栈审阅与同步顺序约束）
+review order           #63 -> #65 -> #66 -> #67
+```
+
+PR 正文明确限定：Stage 4 只证明冻结 `tau=2` 提议分布下 factor random-scan Gibbs
+`sweeps=8` 取得内层资格；不决定最佳 tau、不比较最终外层 independent/Gibbs 质量、不改公开默认，
+也不包含 Stage 5。约 171MB 状态库与约 2.1MB report 继续保持 ignored 本地归档；PR 只提交代码、
+协议、测试、结果说明与产物哈希。发布后逐项核对 base/head、Draft 状态与三个产物 SHA；PR 正文中
+一次 report SHA 粘贴错误已立即更正为正式值
+`15751180b96c6a466f7096a63935d93eb60f47b836f2aa9462a1842ee58b7fa5`，没有改动仓库或产物。
+
+PR 前验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.11 / CUDA Stage 4 定向     109 passed
+Python 3.11 / CUDA 全仓             1757 passed，2 个既有 NumPy warning
+Python 3.9 / CUDA Stage 4 核心       95 passed
+Python 3.9 Stage 4 新增集成断言       2 passed
+Python 3.9 当前叠加头全仓收集         4 errors（下层基线阻断，尚未进入测试执行）
+```
+
+Python 3.9 的四个收集错误均来自 PR #66 尚未同步的 PR #63 旧基线：三处
+`datetime.UTC` 与一处未延迟求值的 `int | None`。PR #63 已在提交 `5efbcb8` 修复这些兼容点，
+并在其后记录 Python 3.9 CUDA 全量通过；Stage 4 新文件的核心测试与新增集成断言均已单独通过。
+因此本 PR 不重复修改下层代码，待 #63 -> #65 -> #66 同步后，在 #67 上再跑一次常规 Python 3.9
+全量回归。
+
+不重跑正式 qualification 的依据：正式执行绑定 clean commit `e7cbcc0`，之后只有结果/状态文档提交
+`82e679c`，科学代码、冻结协议、runner、auditor 与 ignored 正式产物均未改变；当前 Python 3.11
+全量回归和 Python 3.9 Stage 4 验证也未发现需要改变科学实现的问题。只有将来测试暴露真实代码缺陷，
+且修复触及科学代码、协议或运行器时，才重新判断是否需要生成新身份的实验，而不是覆盖本次资格结果。
+
+下一步：先等待并处理下层 PR 栈同步；同步到 #67 后补跑 Python 3.9 全量测试并更新 Draft 状态。
+Stage 5 的 same-tau independent vs factor 结果前协议仍是独立后续工作，未实现、未运行。
+
+### 最新暂停点：Stage 4 qualification 正式通过并完成仓库内收口，下一步为 Stage 5 结果前协议（2026-08-22）
+
+> qualification `333..337` 已于 2026-08-20 运行完成，并于 2026-08-22 逐字段核验、写入正式结果
+> 文档。本节覆盖下方“等待 qualification 授权”的旧暂停点。正式实验产物保持 ignored 本地归档，
+> 没有重跑、改写或强行纳入 Git；本节与结果文档只在当前分支本地提交，未 push、未建 PR、未评论
+> Issue #53，也未修改 #63/#65/#66。
+
+正式身份：
+
+```text
+execution commit       e7cbcc0beaf6718f7f4ad148a8ee07f8cc9a089f（clean）
+mode                   qualification / formal_result_valid=true
+seeds                  333..337
+states                 2 datasets × 5 seeds × 5 stages = 50
+protocol SHA           6a2834db4cb75fffbaac3330bbb1923fa2e864572ca05ac901c3142ecd443680
+result                 qualified_random_scan_s8
+attempted sweeps       [8]（两数据同时通过后依协议停止，16/32 未运行）
+independent audit      status=complete / passed=true / 同一结果与 selected sweeps=8
+```
+
+正式主结果：
+
+| dataset | global TVD（≤0.05） | gap recovery（≥0.80） | valid | passed |
+|---|---:|---:|---|---|
+| test_300x10 | 0.0015438274 | 98.7275% | true | true |
+| nltcs | 0.0000104018 | 99.9486% | true | true |
+
+- 10/10 条来源轨迹均由 P=6 `early_stopped`；test rounds 1209–1758，nltcs 1895–3400，均未触及
+  C=6000。
+- 50 状态最差单状态为 test seed 337 initial：TVD 0.0133081、recovery 97.6778%，仍明显优于门槛。
+- 两数据所有 validity gates、全部 required stage groups 与全部非空 width groups 均通过；零 clip；
+  25,650 次 production exact-tape replay 零失配。
+- max energy error / tolerance ratio：test `2.60e-18 / 2.60e-8`；nltcs
+  `1.39e-17 / 1.39e-7`，正式 fresh seeds 继续证实 float64 累加修复。
+- 科学边界：只证明冻结提议分布上 factor random-scan Gibbs 8 sweeps 的内层资格，不证明 factor 外层
+  生成优于 same-tau independent，不修改公共默认。
+
+只读复核文件 SHA-256：
+
+```text
+state_library  3c7475e89d693bd2240846bb78dec6b7a8d2abc14a71beea25fd6be3e2a02561
+mixing_report  15751180b96c6a466f7096a63935d93eb60f47b836f2aa9462a1842ee58b7fa5
+mixing_audit   fde7929a39cb039d26dd56b91063fa4151a639ea0e483ba8b9303e912a42ed6d
+```
+
+正式结果文档：
+`docs/实验结果/Issue53_Stage4_factor_Gibbs正式资格结果.md`。状态库约 171MB、report 约 2.1MB，
+继续留在 `outputs/issue53_stage4_qualification_v1/` ignored 归档，不因文档收口改变 artifact 身份。
+
+下一小步是 Stage 5 same-tau independent vs factor **结果前协议设计**：独立臂 sweeps=0、factor 臂
+固定使用已取得资格的 sweeps=8，采用全新 paired seeds，冻结质量、支持集、多样性、validity、
+normalized work、Gibbs 微步、查询评价次数与墙钟口径。未获用户后续确认前不实现、不跑 smoke/正式
+实验、不处理 PR #65 冲突、不 push。
+
+### 最新暂停点：development v3 全绿通过——能量门禁史上首次通过，等待 qualification 授权（2026-08-20）
+
+> float32 修复（`5a61b7b`）后的首次全链路重跑。GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行
+> 采集（15:50–16:51，10-14 分/seed）→ 聚合 → mixing（~9 分）→ 审计（17:00:32 完成）。
+> 产物 `outputs/issue53_stage4_development_v3/`（ignored，永久归档）。
+
+```text
+正式结果      qualified_random_scan_s8（v1/v2 均为 invalid_or_incomplete）
+能量门禁      首次通过：nltcs exact_energy_max_error 2.08e-17（v2 为 4.75e-9，改善 8 个
+              数量级）、tolerance_ratio_max 2.08e-7 ≤ 1.0；test max_error 3.47e-18、
+              ratio 3.47e-8——与验尸预测（seed 326 重放 2.08e-17）严丝合缝
+性能门槛      与 v1/v2 同水平：test TVD 0.001161 / recovery 98.91%；
+              nltcs TVD 0.000011 / recovery 99.95%
+validity      8 项全 True；零 clip；production tape replay 零失配
+独立审计      passed=True（重算一致）；protocol SHA dd344a08…（吻合冻结修订协议）
+report SHA    7599514254fbac16e0774b141c98aad86582de90debeedabcf7ead194f6ab726
+audit  SHA    1d3521fb0879f34ad0972132ebed4b05a48a55d81b36b211c274a62eaf347c5c
+library SHA   c5e6b5e72a84d012ac57d3c4a2ed18d4c97a84ce17bc1399664e6d7d95904dc8
+```
+
+修复的科学结论闭环：性能指标与修复前完全同水平（修复只提精度不改算法），唯一失败点
+（nltcs initial 状态能量恒等）彻底消失——float32 根因诊断与最小修复面均被 v3 证实。
+
+下一步（需用户单独授权）：qualification `333..337` 正式资格实验（协议 SHA 以
+`protocol_sha256('qualification')` 实算为准；要求 clean worktree、库/mixing 同 commit）。
+未 push、未建 PR、未评论 Issue。
+
+### 历史暂停点：能量门禁真凶已修复——oracle torch 路径 float32 累加缺陷（验尸位级证实），待决策是否跑 v3（2026-08-20）
+
+> 本节推翻上一节（v2 暂停点）的"灾难性相消"初判。只读验尸脚本
+> `scripts/diagnose_issue53_stage4_energy_cancellation.py`（确定性重放 probe 能量比对、
+> 逐查询项拆解、`math.fsum` 精确参照）对全部 5 个失败 initial 状态给出位级结论：
+
+```text
+numpy 重放     全程 float64 路径差值仅 ~2e-17 —— 未复现，排除 factor/oracle 算法差异
+cuda  重放     位级复现 recorded 差值（如 seed 326 的 4.74621039171785331e-09，bitwise_equal）
+误差归属       factor 侧 vs fsum 精确值：0~2 ulp（无辜）；oracle 侧独扛全部误差（~5.5 亿 ulp）
+相消假说       不成立：相消比仅 1.1~11 倍，远不足以放大 float64 舍入到 1e-9 级
+真凶           src/table_diffevo/vectorized_eval.py::_directional_potential_torch
+               势能累加器 potential_t、残差张量 wr_t、mask 转型全为 float32；
+               float32 eps(1.2e-7) × 势能量级(3.7e-2) ≈ 4.4e-9，与观测严丝合缝
+谜团全解       nltcs 走 torch 路径(float32)而 test 走 numpy(float64)→只有 nltcs 挂；
+               initial 残差大→势能大→float32 绝对误差大→只有 initial 挂；
+               该算法下 torch CPU/GPU float32 舍入相同→v1(CPU 回退)/v2(GPU) 位级同值
+```
+
+**修复（已实施并验证）**：`_directional_potential_torch` 累加链升为 float64
+（`potential_t`/`wr_t` dtype、`mask.to(torch.float64)`）；掩码比较仍在 float32 上进行，
+0/1 语义不变，最小修复面。修 bug 不属于修订协议第 6 节禁止的"改容差重跑同批 seeds"。
+
+验证三件套：
+1. 新回归测试 `tests/test_directional_diffusion.py::test_torch_potential_accumulates_in_float64`
+   （cpu/cuda 参数化，大残差场）：撤掉修复必挂、装回全绿——反向验证成立；
+2. 真实数据重放（v2 库 seed 326 initial worst 元素，cuda）：oracle 误差
+   4.746e-9 → **2.08e-17（≈0.8 ulp）**，门禁容差 1e-10 下余量 7 个数量级；
+   产物 `outputs/issue53_stage4_development_v2/postfix_verification_seed326_cuda.json`；
+3. 全仓测试 **1757 passed / 0 failed / 0 skipped**（1755 基线 + 2 新增）。
+
+下一步（待用户授权）：跑 development v3——修复改变 nltcs 前向轨迹，状态库必须重采集，
+GPU 单卡串行全链路约 1.5 小时；能量门禁预期 ulp 级通过。qualification `333..337`
+仍需之后单独授权。未 push、未建 PR、未评论 Issue。
+
+### 历史暂停点：development v2 已跑完——能量门禁再次失败且 v1 诊断被证伪（当时初判 cancellation，后被验尸推翻，见上节）（2026-08-20）
+
+> GPU 单卡（CUDA_VISIBLE_DEVICES=1）串行采集 5 分片（13:38–14:39，9-14 分/seed）→ 聚合 →
+> mixing → 独立审计通过。产物 `outputs/issue53_stage4_development_v2/`（ignored，永久归档）。
+
+```text
+性能门槛      全过且与 v1 同水平：test TVD 0.0011614 / recovery 98.91%；
+              nltcs TVD 0.0000109 / recovery 99.95%；零 clip；tape replay 0/12440 失配
+能量门禁      nltcs exact_factor_energy 仍失败：仅 5 个 initial 状态，ratio 36.8~47.5（>1）；
+              其余 20 状态 ratio 0.03~0.44 全过；test 侧 ratio_max 3.5e-8 全过
+正式标签      invalid_or_incomplete（16/32 按 invalid-stop 未尝试）；独立审计通过（重算一致）
+report SHA    13c85f0603b7b04a977ecead758abacc2c3fb925d6a90f71f524a479112a38ac
+audit  SHA    60d58df6c22cf0734ee8d5b0bff85d2e5c4b46e5565431f7cc4f8f35eb178cc8
+```
+
+**重大发现：v1 的"大能量 2~3 ulp 舍入"诊断是误诊。** v2 新增的 worst-case 分量证明：
+最大差值（如 seed 326 initial 的 4.746210391717853e-09，与 v1 **位级相同**，确定性差异、
+与 GPU/CPU 无关）发生在**能量仅 ~1e-3 量级的元素**上，相对误差 ~1e-4 级，远超 float64
+舍入极限。机理是**灾难性相消**：能量是大量 ~1e7 量级项的和（initial 状态 loss ~6.9e8），
+大项几乎相消后结果仅 1e-3；factor 侧与 oracle 侧求和顺序不同，各自舍入停留在大项 ulp 级
+（~2e-9），差值天然 1e-9 级。混合容差用"结果能量量级"做 scale 在相消场景下物理上错误
+（分母退化为 atol），正确 scale 应反映**求和项量级**（如 Σ|term|）。
+
+纪律：按已冻结修订协议第 6 节，再次触发只能记失败、**不得改容差后重跑同批 seeds**——
+development `323..327` 在当前协议下到此为止。下一步候选（待用户决策）：
+(a) 写独立诊断脚本确证 initial 状态能量求和的相消结构（只读产物，不碰资格管线）；
+(b) 第二次协议修订：scale 改为求和项量级，换新 development seeds；
+(c) 改能量计算为补偿求和（动被测实现，影响面最大）。
+未 push、未建 PR、未评论 Issue；qualification `333..337` 仍未运行。
+
+### 历史暂停点：环境已修复（CUDA torch + matplotlib）（2026-08-20）
+
+> 环境变更事件：`.issue49-tools/venv` 的 torch 从 `2.13.0+cpu` 换为 `2.13.0+cu130`
+> （版本号不变，只换 CUDA build；驱动 CUDA 13.0，2×RTX 4090 就绪），并补装 matplotlib 3.11.1。
+> 背景：协议规定 nltcs `device: "cuda"`，但旧环境 torch 是 CPU-only 版，实际一直走
+> `_run_batches_torch` 的 "CUDA not available, falling back to CPU" 回退——**v1 及此前
+> 各阶段的 nltcs 轨迹都是该回退下的 CPU float32 产物**。修复后 nltcs 才真正按协议在 GPU
+> 上执行；GPU float32 归约顺序与 CPU 不同，故 GPU 轨迹与 CPU 轨迹不位级可比（v2 是新
+> 协议 SHA 下的全新实验，本就无需与 v1 可比）。
+> 环境验证：全仓 1755 passed / 0 failed / 0 skipped（含此前因无 CUDA 跳过的 GPU 用例
+> 与因缺 matplotlib 无法收集的 6 个 stage2b 文件，全部恢复并通过）。
+> 首次 v2 开跑尝试（5 分片并行）已在完成前全部终止并清理，未留任何 v2 产物。
+
+### 历史暂停点：Stage 4 能量门禁混合容差修订已冻结并实施（2026-08-20）
+
+> 本板块在独立 worktree `research/issue53-factor-gibbs-stage4`（起点 PR #66 head `8570187`）上进行。
+> Stage 4 factor Gibbs 资格管线已以本地提交 `3c19ec3`（管线）与 `6d102af`（一种子一分片）落盘；
+> 未 push、未建 PR、未评论 Issue、未操作 #63/#65/#66。补记：这两个提交当时漏更本文件，本节一并补上。
+
+development `323..327` 状态库与共享 sweep=8 mixing 已完成（非正式，不产生资格结论）：
+
+```text
+状态库            2 数据 × 5 seeds × 5 状态 = 50 个，分片聚合与 SHA 绑定全部通过
+性能门槛          全过：test TVD 0.0011614 / recovery 98.91%；nltcs TVD 0.0000109 / recovery 99.95%
+                  全部 stage groups 与非空 width groups 通过；零 clip；tape replay 0 失配
+结构门禁          nltcs exact_factor_energy 失败：绝对容差 1e-10，五个 initial 状态误差
+                  3.68e-9 ~ 4.75e-9（能量 ~1e7 量级的 2~3 ulp 浮点舍入）；其余 45 个状态全过
+正式标签          invalid_or_incomplete；按 invalid-stop 规则 16/32 未尝试
+独立审计          通过且重算结论一致（报告未损坏，是容差公式缺尺度稳健性）
+report SHA        7268800e37238a733c483ca755572344f35b84d5226adc015ce5139082a76d9c
+audit SHA         6a263bfed443890bcba66ba2e943fe0c514bd0b443763860736a75e591fe12a1
+产物              outputs/issue53_stage4_development_v1/（ignored，永久归档不改写）
+```
+
+已核对远端（只读）：PR #63/#65/#66 均 OPEN、CLEAN、零 review 零评论；Issue #53 最新为
+Amendment 5，无新动态。
+
+当前动作：结果后协议修订
+`docs/设计/Issue53_Stage4能量恒等门禁混合容差修订协议.md` **已经用户确认冻结并完成实施**。
+`exact_factor_energy` 改为逐元素混合容差
+`abs_diff <= atol(1e-10) + rtol(1e-12) × max(|E_factor|, |E_oracle|)`，常量按浮点精度
+第一性原理推导、明确禁止按观察值反推。实施与验证情况：
+
+```text
+protocol.py       ENERGY_ATOL/ENERGY_RTOL + energy_tolerance_ratio() + energy_identity_gate 结构
+probe             opt-in energy_atol/energy_rtol；新增 max_relative_error / tolerance_ratio_max /
+                  worst_case{abs_diff,scale} / atol / rtol 五字段；不传参时字段不出现（issue49/52 兼容）
+runner            门禁改 ratio_max <= 1.0；numerical_diagnostics 增两字段
+auditor           断言 atol/rtol 与冻结常量相等；从 worst_case 用协议常量独立重算 ratio 并要求
+                  与记录值位级相等；自洽不等式；聚合门禁独立重算
+新 protocol SHA   development dd344a087478f686d4a72409c4bf4855ed18a5dd0cacaaa83cf4cfc37b097a51
+                  qualification 6a2834db4cb75fffbaac3330bbb1923fa2e864572ca05ac901c3142ecd443680
+测试              Stage 4 专项 13 passed（新增 4：跨尺度/注错必抓、probe 一致性与省略兼容、
+                  审计篡改必拒、旧协议库绑定必拒）；probe 共用方回归 17 passed；
+                  全仓 1695 passed / 8 skipped / 0 failed（6 个文件因环境缺 matplotlib 无法收集，
+                  属既有环境问题，与本次改动无关）
+```
+
+**尚未重跑任何实验**：development `323..327` v2 重跑（状态库重采集约 1 小时 + mixing + audit，
+写 `outputs/issue53_stage4_development_v2/`）需用户另行授权；qualification `333..337` 更需
+单独授权。未 push、未建 PR、未评论 Issue、未操作 #63/#65/#66。
+
 ### 最新暂停点：PR #66 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
 
 > 用户检查本地结果后明确授权“推吧”。本步只发布上一节已经完成并验证的 #66 同步提交；没有修改
@@ -64,7 +399,7 @@ artifacts、已归档负结果或公共默认，因此没有重跑正式实验�
 本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #66；只有用户明确说“推”才可
 push。#67 尚未同步或修改，#63 继续自然等待外部反馈，不评论、不催促。
 
-### 最新暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
+### 历史暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
 
 > 本板块基于 PR #65 head `a2bc496` 的独立分支完成；没有修改、自行审查、批准或合并 PR #63/#65。
 > 固定 α 响应与两档自适应实验均使用更新后无 measured 1-way 的 test workload，并保持无门控、

@@ -363,3 +363,77 @@ def test_rejects_invalid_or_conflicting_wiring(overrides, message) -> None:
 
     with pytest.raises(ValueError, match=message):
         run_evolution(**parameters)
+
+
+def test_natural_work_snapshots_are_observational_and_terminal_current(
+    monkeypatch,
+) -> None:
+    schema, queries = _binary_problem()
+    parameters = {
+        "target": np.array([1.5]),
+        "queries": queries,
+        "schema": schema,
+        "n_records": 4,
+        "n_rounds": 3,
+        "seed": 5304,
+        "tol": float("inf"),
+        "max_retries": 0,
+        "inner_early_stopping_patience_ticks": 100,
+        "return_final_table": True,
+        "record_transition_clocks": True,
+        "log_every": 100_000,
+        "device": "numpy",
+    }
+
+    _install_scripted_kernel(
+        monkeypatch,
+        initial_count=2,
+        proposal_counts=(1, 3, 2),
+    )
+    baseline, baseline_diagnostics = run_evolution(**parameters)
+    _install_scripted_kernel(
+        monkeypatch,
+        initial_count=2,
+        proposal_counts=(1, 3, 2),
+    )
+    observed, observed_diagnostics = run_evolution(
+        **parameters,
+        record_natural_work_snapshots=True,
+    )
+
+    pd.testing.assert_frame_equal(observed, baseline)
+    assert observed_diagnostics["primary_rng_state_sha256"] == (
+        baseline_diagnostics["primary_rng_state_sha256"]
+    )
+    assert observed_diagnostics["current_state_metrics_history"] == (
+        baseline_diagnostics["current_state_metrics_history"]
+    )
+    assert observed_diagnostics["transition_clock_history"] == (
+        baseline_diagnostics["transition_clock_history"]
+    )
+    snapshots = observed_diagnostics["natural_work_snapshots"]
+    assert [item["completed_work_ticks"] for item in snapshots] == [0, 1, 2, 3]
+    assert [item["round"] for item in snapshots] == [0, 1, 2, 3]
+    assert snapshots[-1]["termination_reason"] == "resource_cap_reached"
+    assert snapshots[-1]["current_table_sha256"] == evolution_module._table_sha256(
+        observed
+    )
+    rebuilt = pd.DataFrame(
+        snapshots[-1]["table_records"],
+        columns=snapshots[-1]["table_columns"],
+    )
+    pd.testing.assert_frame_equal(rebuilt, observed)
+
+
+def test_natural_work_snapshots_require_inner_early_stopping() -> None:
+    schema, queries = _binary_problem()
+    with pytest.raises(ValueError, match="需要启用 inner early stopping"):
+        run_evolution(
+            np.array([0.0]),
+            queries,
+            schema,
+            n_records=4,
+            n_rounds=1,
+            record_natural_work_snapshots=True,
+            device="numpy",
+        )

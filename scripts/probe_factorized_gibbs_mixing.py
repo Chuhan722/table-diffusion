@@ -58,6 +58,7 @@ RHO = 0.01
 ETA = 0.5
 GIBBS_LOGIT_CLIP = DEFAULT_LOGIT_CLIP
 CURRENT_SNAPSHOT_FORMAT = "issue49_unfiltered_current_v1"
+ACTIVE_WIDTH_GROUPS = ((1, 4), (5, 8), (9, 12), (13, 16))
 
 
 def _git_commit():
@@ -260,6 +261,27 @@ def _address_seed(seed, state_index, proposal_index, stream):
         [int(seed), int(state_index), int(proposal_index), int(stream)]
     )
     return int(sequence.generate_state(1, dtype=np.uint64)[0])
+
+
+def _active_width_group(n_active):
+    for lower, upper in ACTIVE_WIDTH_GROUPS:
+        if lower <= n_active <= upper:
+            return f"active_width_{lower}_{upper}"
+    raise ValueError(f"活跃属性宽度超出冻结分组：{n_active}")
+
+
+def _digest_value(digest, label, value):
+    """Append one typed value to a condition-tape identity digest."""
+    digest.update(label.encode("utf-8"))
+    digest.update(b"\0")
+    if isinstance(value, np.ndarray):
+        array = np.ascontiguousarray(value)
+        digest.update(str(array.dtype).encode("ascii"))
+        digest.update(repr(array.shape).encode("ascii"))
+        digest.update(array.tobytes())
+    else:
+        digest.update(repr(value).encode("utf-8"))
+    digest.update(b"\0")
 
 
 def _make_baseline_state(
@@ -904,17 +926,52 @@ def _probe_state(
     device,
     max_active_attributes,
     external_snapshot_controls=None,
+    n_records=N_RECORDS,
+    rho=RHO,
+    eta=ETA,
+    max_factor_order=3,
+    selection_scale_invariant=False,
+    selection_scale_invariant_min_spread=1e-3,
+    residual_geometry="absolute",
+    residual_geometry_floor=8.0,
+    energy_atol=None,
+    energy_rtol=None,
 ):
+    if n_records != len(state):
+        raise ValueError("n_records 必须等于 probe state 的记录数")
+    if not 0.0 <= rho <= 1.0:
+        raise ValueError("rho 必须位于 [0, 1]")
+    if not 0.0 < eta < 1.0:
+        raise ValueError("eta 必须位于 (0, 1)")
+    mixed_energy_tracking = (
+        energy_atol is not None or energy_rtol is not None
+    )
+    if mixed_energy_tracking:
+        if (
+            energy_atol is None
+            or energy_rtol is None
+            or not np.isfinite(energy_atol)
+            or not np.isfinite(energy_rtol)
+            or energy_atol <= 0.0
+            or energy_rtol <= 0.0
+        ):
+            raise ValueError(
+                "energy_atol 与 energy_rtol 必须同时给定且为正有限数"
+            )
+        energy_atol = float(energy_atol)
+        energy_rtol = float(energy_rtol)
     q, residual, fitness = evaluate_vectorized(
         state,
         queries,
         schema,
         target=target,
-        n_records=N_RECORDS,
+        n_records=n_records,
         batch_size=256,
         device=device,
         want_fitness=True,
         verbose=False,
+        residual_geometry=residual_geometry,
+        residual_geometry_floor=residual_geometry_floor,
     )
     loss = compute_loss(target, q)
     use_torch = device in ("cuda", "cpu")
@@ -959,6 +1016,10 @@ def _probe_state(
         delta=0.05,
         winsorize_quantiles=(0.01, 0.99),
         exclude_self=True,
+        scale_invariant=selection_scale_invariant,
+        scale_invariant_min_spread=(
+            selection_scale_invariant_min_spread
+        ),
     )
 
     attr_names = schema.attribute_names()
@@ -966,6 +1027,12 @@ def _probe_state(
     proposal_rows = {name: [] for name in configs}
     global_kernel = {
         name: _empty_kernel_accumulator() for name in configs
+    }
+    global_kernel_by_active_width = {
+        f"active_width_{lower}_{upper}": {
+            name: _empty_kernel_accumulator() for name in configs
+        }
+        for lower, upper in ACTIVE_WIDTH_GROUPS
     }
     global_logit = {
         tau: _empty_logit_accumulator() for tau in temperatures
@@ -979,6 +1046,10 @@ def _probe_state(
         for tau in temperatures
     }
     exact_energy_max_error = 0.0
+    exact_energy_max_relative_error = 0.0
+    exact_energy_worst_ratio = -1.0
+    exact_energy_worst_abs_diff = 0.0
+    exact_energy_worst_scale = 0.0
     one_hot_max_error = 0.0
     factor_count_sum = 0
     factor_table_entries_sum = 0
@@ -991,13 +1062,22 @@ def _probe_state(
     factor_build_elapsed = 0.0
     exact_propagation_elapsed = 0.0
     probe_start = time.perf_counter()
+    proposal_condition_sha256 = []
 
     for proposal_index in range(proposals):
+        condition_digest = hashlib.sha256()
+        _digest_value(condition_digest, "condition_format", "v1")
+        _digest_value(condition_digest, "proposal_index", proposal_index)
         donor_rng = np.random.default_rng(
             _address_seed(seed, state_index, proposal_index, 0)
         )
         donor_idx = sample_donors(
             sampling_probabilities, donor_rng, device=device
+        )
+        _digest_value(
+            condition_digest,
+            "donor_indices",
+            np.asarray(donor_idx, dtype=np.int64),
         )
         donors = state.iloc[donor_idx].reset_index(drop=True)
         directions = compute_copy_direction_scores(
@@ -1025,7 +1105,12 @@ def _probe_state(
             _address_seed(seed, state_index, proposal_index, 1)
         )
         participating_rows = np.flatnonzero(
-            participation_rng.random(N_RECORDS) < RHO
+            participation_rng.random(n_records) < rho
+        )
+        _digest_value(
+            condition_digest,
+            "participating_rows",
+            np.asarray(participating_rows, dtype=np.int64),
         )
         landscapes = compute_joint_mask_landscapes(
             state,
@@ -1055,6 +1140,15 @@ def _probe_state(
             n_active = masks.shape[1]
             if n_active == 0:
                 continue
+            active_width_group = _active_width_group(n_active)
+            _digest_value(condition_digest, "row_index", int(row_index))
+            _digest_value(
+                condition_digest,
+                "active_attribute_indices",
+                np.asarray(
+                    landscape.active_attribute_indices, dtype=np.int64
+                ),
+            )
 
             build_start = time.perf_counter()
             model = build_sparse_mask_energy(
@@ -1063,7 +1157,7 @@ def _probe_state(
                 schema,
                 queries,
                 residual,
-                max_factor_order=3,
+                max_factor_order=max_factor_order,
             )
             factor_build_elapsed += time.perf_counter() - build_start
             if not np.array_equal(
@@ -1074,12 +1168,41 @@ def _probe_state(
                     "稀疏因子与完整 oracle 的活跃属性顺序不一致"
                 )
             factor_energies = evaluate_sparse_mask_energies(model, masks)
+            energy_abs_diff = np.abs(
+                factor_energies - landscape.directions
+            )
             exact_energy_max_error = max(
                 exact_energy_max_error,
-                float(np.max(np.abs(
-                    factor_energies - landscape.directions
-                ))),
+                float(np.max(energy_abs_diff)),
             )
+            if mixed_energy_tracking and energy_abs_diff.size:
+                energy_scale = np.maximum(
+                    np.abs(factor_energies),
+                    np.abs(landscape.directions),
+                )
+                positive_scale = energy_scale > 0.0
+                if np.any(positive_scale):
+                    exact_energy_max_relative_error = max(
+                        exact_energy_max_relative_error,
+                        float(np.max(
+                            energy_abs_diff[positive_scale]
+                            / energy_scale[positive_scale]
+                        )),
+                    )
+                energy_ratio = energy_abs_diff / (
+                    energy_atol + energy_rtol * energy_scale
+                )
+                worst_index = int(np.argmax(energy_ratio))
+                if float(energy_ratio[worst_index]) > exact_energy_worst_ratio:
+                    exact_energy_worst_ratio = float(
+                        energy_ratio[worst_index]
+                    )
+                    exact_energy_worst_abs_diff = float(
+                        energy_abs_diff[worst_index]
+                    )
+                    exact_energy_worst_scale = float(
+                        energy_scale[worst_index]
+                    )
             singles = sparse_single_directions(model)
             one_hot_max_error = max(
                 one_hot_max_error,
@@ -1097,10 +1220,11 @@ def _probe_state(
             )
             active_factor_rows += 1
 
-            reference_log = baseline_mask_log_probabilities(masks, ETA)
+            reference_log = baseline_mask_log_probabilities(masks, eta)
             reference = np.exp(reference_log)
             additive = additive_mask_directions(masks, singles)
             gumbels = gumbel_rng.gumbel(size=len(masks))
+            _digest_value(condition_digest, "mask_gumbels", gumbels)
 
             for tau in temperatures:
                 strength = (
@@ -1108,7 +1232,7 @@ def _probe_state(
                     if direction_reference_scale is not None else 0.0
                 )
                 raw_logits = _raw_conditional_logits(
-                    masks, factor_energies, ETA, strength
+                    masks, factor_energies, eta, strength
                 )
                 _accumulate_logit_diagnostics(
                     global_logit[tau],
@@ -1141,7 +1265,7 @@ def _probe_state(
                         current = propagate_random_scan_distribution(
                             model,
                             current,
-                            ETA,
+                            eta,
                             strength,
                             (sweep - previous_sweep) * n_active,
                             max_active_attributes=max_active_attributes,
@@ -1166,6 +1290,17 @@ def _probe_state(
                 variants[_joint_name(tau)] = joint
 
                 initial_mask = masks[_sample_index(independent, gumbels)]
+                _digest_value(condition_digest, "temperature", float(tau))
+                _digest_value(
+                    condition_digest,
+                    "independent_initial_mask",
+                    np.asarray(initial_mask, dtype=np.uint8),
+                )
+                _digest_value(
+                    condition_digest,
+                    "exact_joint_mask_index",
+                    int(_sample_index(joint, gumbels)),
+                )
                 for sweep in sweeps:
                     if sweep == 0:
                         continue
@@ -1174,14 +1309,19 @@ def _probe_state(
                         state_index,
                         proposal_index,
                         10_000
-                        + int(round(float(tau) * 1_000)) * N_RECORDS
+                        + int(round(float(tau) * 1_000)) * n_records
                         + row_index,
+                    )
+                    _digest_value(
+                        condition_digest,
+                        "production_tape_seed",
+                        int(production_seed),
                     )
                     _compare_production_sampler(
                         production_sampler_diagnostics[tau],
                         model,
                         initial_mask,
-                        ETA,
+                        eta,
                         strength,
                         sweep * n_active,
                         production_seed,
@@ -1208,6 +1348,13 @@ def _probe_state(
                     _accumulate_kernel(
                         global_kernel[name], metrics, n_active
                     )
+                    _accumulate_kernel(
+                        global_kernel_by_active_width[
+                            active_width_group
+                        ][name],
+                        metrics,
+                        n_active,
+                    )
                     selected_index = _sample_index(probabilities, gumbels)
                     _apply_selected_mask(
                         generated[name],
@@ -1233,10 +1380,18 @@ def _probe_state(
                 proposal_kernel[name]
             )
             proposal_rows[name].append(measurement)
+        proposal_condition_sha256.append(condition_digest.hexdigest())
 
     kernel_summary = {
         name: _finalize_kernel(accumulator)
         for name, accumulator in global_kernel.items()
+    }
+    kernel_summary_by_active_width = {
+        group: {
+            name: _finalize_kernel(accumulator)
+            for name, accumulator in accumulators.items()
+        }
+        for group, accumulators in global_kernel_by_active_width.items()
     }
     proposal_summary = {
         name: _summarize_proposals(rows)
@@ -1266,6 +1421,9 @@ def _probe_state(
     }
     paired = {}
     recovery = {}
+    recovery_by_active_width = {
+        group: {} for group in kernel_summary_by_active_width
+    }
     for tau in temperatures:
         baseline_name = _gibbs_name(tau, 0)
         oracle_name = _joint_name(tau)
@@ -1287,6 +1445,72 @@ def _probe_state(
                 1.0 - remaining_gap / initial_gap
                 if initial_gap > 0.0 else 1.0
             )
+            for group, summaries in kernel_summary_by_active_width.items():
+                group_initial_gap = summaries[baseline_name][
+                    "absolute_expected_direction_gap"
+                ]
+                group_remaining_gap = summaries[name][
+                    "absolute_expected_direction_gap"
+                ]
+                recovery_by_active_width[group][name] = (
+                    1.0 - group_remaining_gap / group_initial_gap
+                    if group_initial_gap > 0.0 else 1.0
+                )
+
+    shared_digest = hashlib.sha256()
+    for proposal_digest in proposal_condition_sha256:
+        _digest_value(
+            shared_digest, "proposal_sha256", proposal_digest
+        )
+
+    factor_diagnostics = {
+        "active_rows": active_factor_rows,
+        "exact_energy_max_error": exact_energy_max_error,
+        "one_hot_direction_max_error": one_hot_max_error,
+        "mean_factor_count": (
+            factor_count_sum / active_factor_rows
+            if active_factor_rows else 0.0
+        ),
+        "total_factor_count": int(factor_count_sum),
+        "total_factor_table_entries": int(
+            factor_table_entries_sum
+        ),
+        "mean_factor_table_entries": (
+            factor_table_entries_sum / active_factor_rows
+            if active_factor_rows else 0.0
+        ),
+        "maximum_active_factor_order": maximum_factor_order,
+        "tvd_snapshot_increase_max": tvd_snapshot_increase_max,
+        "tvd_snapshot_increase_max_by_temperature": {
+            f"tau_{_tau_label(tau)}": float(
+                tvd_snapshot_increase_max_by_temperature[tau]
+            )
+            for tau in temperatures
+        },
+        "factor_build_elapsed_sec": factor_build_elapsed,
+        "exact_finite_state_propagation_elapsed_sec": (
+            exact_propagation_elapsed
+        ),
+    }
+    if mixed_energy_tracking:
+        # The official gate value is recomputed in scalar arithmetic from
+        # the recorded worst-case components so that an independent auditor
+        # reproduces it bit-for-bit from {abs_diff, scale, atol, rtol}.
+        factor_diagnostics.update({
+            "exact_energy_max_relative_error": (
+                exact_energy_max_relative_error
+            ),
+            "exact_energy_tolerance_ratio_max": (
+                exact_energy_worst_abs_diff
+                / (energy_atol + energy_rtol * exact_energy_worst_scale)
+            ),
+            "exact_energy_worst_case": {
+                "abs_diff": exact_energy_worst_abs_diff,
+                "scale": exact_energy_worst_scale,
+            },
+            "energy_atol": energy_atol,
+            "energy_rtol": energy_rtol,
+        })
 
     result = {
         "seed": int(seed),
@@ -1295,36 +1519,12 @@ def _probe_state(
         "probe_alpha": probe_alpha,
         "state_sha256": _frame_sha256(state),
         "n_proposals": int(proposals),
-        "rho": RHO,
-        "eta": ETA,
+        "rho": float(rho),
+        "eta": float(eta),
         "mu": 0.0,
         "direction_reference_scale": direction_reference_scale,
         "reference_scale_proposal_index": reference_scale_proposal_index,
-        "factor_diagnostics": {
-            "active_rows": active_factor_rows,
-            "exact_energy_max_error": exact_energy_max_error,
-            "one_hot_direction_max_error": one_hot_max_error,
-            "mean_factor_count": (
-                factor_count_sum / active_factor_rows
-                if active_factor_rows else 0.0
-            ),
-            "mean_factor_table_entries": (
-                factor_table_entries_sum / active_factor_rows
-                if active_factor_rows else 0.0
-            ),
-            "maximum_active_factor_order": maximum_factor_order,
-            "tvd_snapshot_increase_max": tvd_snapshot_increase_max,
-            "tvd_snapshot_increase_max_by_temperature": {
-                f"tau_{_tau_label(tau)}": float(
-                    tvd_snapshot_increase_max_by_temperature[tau]
-                )
-                for tau in temperatures
-            },
-            "factor_build_elapsed_sec": factor_build_elapsed,
-            "exact_finite_state_propagation_elapsed_sec": (
-                exact_propagation_elapsed
-            ),
-        },
+        "factor_diagnostics": factor_diagnostics,
         "conditional_logit_diagnostics": conditional_logit_diagnostics,
         "probability_diagnostics": _finalize_probability_diagnostics(
             probability_diagnostics
@@ -1336,9 +1536,35 @@ def _probe_state(
             finalized_production_sampler_diagnostics
         ),
         "kernel_summary": kernel_summary,
+        "kernel_summary_by_active_width": (
+            kernel_summary_by_active_width
+        ),
         "proposal_summary": proposal_summary,
         "paired": paired,
         "expected_direction_gap_recovery": recovery,
+        "expected_direction_gap_recovery_by_active_width": (
+            recovery_by_active_width
+        ),
+        "shared_condition_identity": {
+            "format": "factor_gibbs_shared_condition_v1",
+            "proposal_sha256": proposal_condition_sha256,
+            "scientific_sha256": shared_digest.hexdigest(),
+        },
+        "probe_controls": {
+            "n_records": int(n_records),
+            "rho": float(rho),
+            "eta": float(eta),
+            "max_factor_order": int(max_factor_order),
+            "max_active_attributes": int(max_active_attributes),
+            "selection_scale_invariant": bool(
+                selection_scale_invariant
+            ),
+            "selection_scale_invariant_min_spread": float(
+                selection_scale_invariant_min_spread
+            ),
+            "residual_geometry": residual_geometry,
+            "residual_geometry_floor": float(residual_geometry_floor),
+        },
         "proposal_rows": proposal_rows,
         "elapsed_sec": time.perf_counter() - probe_start,
     }
