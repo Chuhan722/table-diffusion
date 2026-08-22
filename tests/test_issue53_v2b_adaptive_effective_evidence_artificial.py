@@ -307,6 +307,37 @@ def test_strict_json_loader_rejects_duplicate_and_nonfinite_values(
         auditor._load_json_strict(nonfinite)
 
 
+def test_manifest_path_is_portable_and_legacy_absolute_metadata_is_supported(
+    tmp_path,
+) -> None:
+    report_path = tmp_path / "adaptive_evidence_report.json"
+    manifest_path = tmp_path / "protocol_manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+
+    expected = manifest_path.resolve()
+    assert (
+        auditor._resolve_sibling_manifest(
+            report_path,
+            "protocol_manifest.json",
+        )
+        == expected
+    )
+    assert (
+        auditor._resolve_sibling_manifest(
+            report_path,
+            "/legacy/author/output/protocol_manifest.json",
+        )
+        == expected
+    )
+    with pytest.raises(ValueError, match="portable sibling"):
+        auditor._resolve_sibling_manifest(report_path, "../protocol_manifest.json")
+    with pytest.raises(ValueError, match="must name"):
+        auditor._resolve_sibling_manifest(
+            report_path,
+            "/legacy/author/output/other.json",
+        )
+
+
 def test_special_seed_end_to_end_report_passes_independent_audit(
     monkeypatch,
     tmp_path,
@@ -357,7 +388,10 @@ def test_special_seed_end_to_end_report_passes_independent_audit(
 
     assert report["execution"]["trajectory_count"] == 10
     assert report["status"] == "candidate_failed"
+    assert report["manifest_path"] == "protocol_manifest.json"
     assert audit["passed"] is True
+    assert audit["report_path"] == report_path.name
+    assert audit["manifest_path"] == "protocol_manifest.json"
     assert audit["recorded_scientific_result_sha256"] == audit[
         "recomputed_scientific_result_sha256"
     ]

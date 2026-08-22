@@ -21,7 +21,7 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -746,7 +746,6 @@ def extract_replay_trace(
         zip(
             trace.observations,
             trace.measured_query_answers,
-            strict=True,
         )
     ):
         answers_array = np.asarray(answers, dtype=np.float64)
@@ -1273,7 +1272,7 @@ def build_execution_manifest(root: Path) -> dict[str, Any]:
     protocol = frozen_protocol()
     manifest = {
         "contract_version": CONTRACT_VERSION,
-        "created_at_utc": datetime.now(UTC).isoformat(),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_text(root, "rev-parse", "HEAD"),
         "git_worktree_clean_including_untracked": True,
         "protocol_sha256": _sha256_json(protocol),

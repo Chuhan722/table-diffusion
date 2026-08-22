@@ -1393,6 +1393,32 @@ def _assert_exact(label: str, actual: Any, expected: Any) -> None:
         raise ValueError(f"{label} does not match the frozen audit contract")
 
 
+def _resolve_sibling_manifest(
+    report_file: Path,
+    recorded_manifest_path: Any,
+) -> Path:
+    """Resolve the bound sibling while accepting the legacy absolute metadata."""
+
+    if not isinstance(recorded_manifest_path, str):
+        raise ValueError("report manifest path must be a string")
+    recorded = Path(recorded_manifest_path)
+    if recorded.is_absolute():
+        if recorded.name != "protocol_manifest.json":
+            raise ValueError(
+                "legacy absolute manifest path must name protocol_manifest.json"
+            )
+    elif recorded.parts != ("protocol_manifest.json",):
+        raise ValueError(
+            "report manifest path must be the portable sibling filename"
+        )
+    manifest_file = (report_file.parent / "protocol_manifest.json").resolve(
+        strict=True
+    )
+    if manifest_file.parent != report_file.parent:
+        raise ValueError("resolved manifest must remain a sibling artifact")
+    return manifest_file
+
+
 def _validate_report_and_manifest(
     report_path: Path,
 ) -> tuple[Dict[str, Any], Dict[str, Any], Path, Path]:
@@ -1444,14 +1470,9 @@ def _validate_report_and_manifest(
         _sha256_json(report["scientific_payload"]),
     )
 
-    manifest_file = (report_file.parent / "protocol_manifest.json").resolve(
-        strict=True
-    )
-    recorded_manifest_path = Path(report["manifest_path"]).resolve()
-    _assert_exact(
-        "report manifest path",
-        recorded_manifest_path,
-        manifest_file,
+    manifest_file = _resolve_sibling_manifest(
+        report_file,
+        report["manifest_path"],
     )
     _assert_exact(
         "report manifest SHA-256",
@@ -1675,9 +1696,9 @@ def audit_artificial_report(
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": "complete" if passed else "failed",
         "passed": passed,
-        "report_path": str(report_file),
+        "report_path": report_file.name,
         "report_sha256": _sha256_file(report_file),
-        "manifest_path": str(manifest_file),
+        "manifest_path": manifest_file.name,
         "manifest_sha256": _sha256_file(manifest_file),
         "git_commit": manifest["git_commit"],
         "protocol_sha256": manifest["protocol_sha256"],

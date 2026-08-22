@@ -147,7 +147,9 @@ def freeze_unmeasured_2way(
 
     selected = []
     overlap_count = 0
-    for query, fingerprint in zip(all_queries, all_fingerprints, strict=True):
+    if len(all_queries) != len(all_fingerprints):
+        raise RuntimeError("公开域查询与 fingerprint 数量不一致")
+    for query, fingerprint in zip(all_queries, all_fingerprints):
         if fingerprint in measured_set:
             overlap_count += 1
             continue
@@ -289,9 +291,10 @@ def _validate_stored_heldout(
         "fingerprint_sha256",
         "conditions",
     )
-    for index, (observed, expected) in enumerate(
-        zip(stored, rebuilt["queries"], strict=True)
-    ):
+    rebuilt_queries = rebuilt["queries"]
+    if len(stored) != len(rebuilt_queries):
+        raise RuntimeError("held-out query identity rebuild 数量漂移")
+    for index, (observed, expected) in enumerate(zip(stored, rebuilt_queries)):
         if {key: observed.get(key) for key in comparison_keys} != {
             key: expected.get(key) for key in comparison_keys
         }:
@@ -431,8 +434,10 @@ def attach_reference_answers(
 
     frozen_unmeasured = result["unmeasured_2way_all"]
     answers = evaluate_table(reference, frozen_unmeasured)
+    if len(frozen_unmeasured) != len(answers):
+        raise RuntimeError("unmeasured 2-way 查询与答案数量不一致")
     decorated = []
-    for query, answer in zip(frozen_unmeasured, answers, strict=True):
+    for query, answer in zip(frozen_unmeasured, answers):
         decorated.append({**query, "result": int(answer)})
     result["unmeasured_2way_all"] = decorated
     answer_audit["unmeasured_2way_all"] = {
@@ -523,7 +528,9 @@ def _build_error_frame(
                     "recomputed_measured_normalized_l1": float(measured_l1),
                 }
             )
-            for metadata, answer in zip(catalog, answers, strict=True):
+            if len(catalog) != len(answers):
+                raise RuntimeError(f"seed={seed}/{arm} query answer 数量漂移")
+            for metadata, answer in zip(catalog, answers):
                 signed_error = int(answer) - metadata["target_count"]
                 records.append(
                     {

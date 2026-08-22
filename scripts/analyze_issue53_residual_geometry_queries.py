@@ -84,9 +84,11 @@ def _query_features(
 
     q25, q75 = np.quantile(np.asarray(overlap_scores), [0.25, 0.75])
     thresholds = {"q25": float(q25), "q75": float(q75)}
+    if not len(queries) == len(attribute_sets) == len(overlap_scores):
+        raise RuntimeError("query feature 数量漂移")
     features = []
     for index, (query, attributes, overlap) in enumerate(
-        zip(queries, attribute_sets, overlap_scores, strict=True)
+        zip(queries, attribute_sets, overlap_scores)
     ):
         target = int(query["result"])
         if float(query["result"]) != target:
@@ -210,7 +212,9 @@ def _group_summaries(
     for values, subset in frame.groupby(grouper, sort=True):
         if not isinstance(values, tuple):
             values = (values,)
-        group_values = dict(zip(columns, values, strict=True))
+        if len(columns) != len(values):
+            raise RuntimeError("group columns 与 values 数量漂移")
+        group_values = dict(zip(columns, values))
         key = "|".join(f"{name}={value}" for name, value in group_values.items())
         result[key] = {
             "group_values": group_values,
@@ -357,7 +361,9 @@ def _build_error_frame(
                     atol=1e-15,
                 ):
                     raise RuntimeError(f"{dataset}/{seed}/{arm} L1 复算漂移")
-                for feature, answer in zip(features, answers, strict=True):
+                if len(features) != len(answers):
+                    raise RuntimeError(f"{dataset}/{seed}/{arm} answer 数量漂移")
+                for feature, answer in zip(features, answers):
                     signed_error = int(answer) - feature["target_count"]
                     records.append(
                         {

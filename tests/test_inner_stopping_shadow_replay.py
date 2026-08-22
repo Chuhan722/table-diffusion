@@ -141,7 +141,8 @@ def test_unmodified_gate_free_run_can_be_replayed_in_loss_only_shadow() -> None:
     candidate_decision = None
     delayed_improvement_decision = None
     shadow_prefix_losses = [initial.current_loss]
-    for state, clock in zip(loss_only_states[1:], clocks, strict=True):
+    assert len(loss_only_states) == len(clocks) + 1
+    for state, clock in zip(loss_only_states[1:], clocks):
         assert clock["state_index"] == state["state_index"]
         assert clock["round"] == state["round"]
         accepted_attempt = clock["accepted_attempt"]

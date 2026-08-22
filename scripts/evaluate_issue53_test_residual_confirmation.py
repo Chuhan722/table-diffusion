@@ -265,7 +265,9 @@ def _build_error_frame(
                     "recomputed_measured_normalized_l1": float(measured_l1),
                 }
             )
-            for metadata, answer in zip(catalog, answers, strict=True):
+            if len(catalog) != len(answers):
+                raise RuntimeError(f"seed={seed}/{arm} query answer 数量漂移")
+            for metadata, answer in zip(catalog, answers):
                 signed_error = int(answer) - metadata["target_count"]
                 records.append(
                     {

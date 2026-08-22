@@ -2,6 +2,51 @@
 
 ## 当前阶段
 
+### 最新暂停点：PR #65 已在本地同步最新 #63，并补齐自身 Python 3.9 兼容（2026-08-22）
+
+> 用户要求先处理 PR 栈，并再次明确“未说推就不 push、不要催审阅者”。本步只在 #65 本地
+> worktree 合入 #63 最新远端头、解决冲突、补齐 #65 自身兼容遗漏并测试；没有 push、PR 评论、
+> review request、Approve、merge 远端 PR，也没有开始 #66/#67 或 Stage 5。
+
+同步身份：
+
+```text
+#65 pre-sync head     a2bc496da223ef49a5a1e8a8e5ac6f60252ab62b
+#63 synced head       6cc7825c68ad8b4247737e010cbd5d184fbfb53a
+common ancestor       24478dde3f639ee8f55100d3e7741506631bbc12
+divergence            #63 侧 7 commits / #65 侧 24 commits
+merge conflict        PROJECT_STATUS.md only
+resolution            双方进度历史完整保留；科学代码无内容冲突
+remote #65            保持 a2bc496，GitHub 冲突状态不会因本地工作自动改变
+```
+
+#63 的 Python 3.9 兼容修复、stationarity trace 补强、V2b 路径便携修复以及其同步的 PR #61
+plants 数据/workload 均自动合入。首次合并后验证：Python 3.11 全仓 `1712 passed, 2 warnings`；
+Python 3.9 已不再发生 #63 的收集错误，但暴露 #65 自身 11 处 `zip(strict=True)` 遗漏，其中当次
+全仓实际触发 `4 failed + 4 errors`，其余 `1704 passed`。
+
+兼容修复覆盖 #65 的 5 个脚本与 1 个测试文件：全部 11 处 strict zip 改为 Python 3.9 支持的普通
+`zip`，并逐处保留既有等长检查或补充显式长度漂移拒绝。合法等长输入的查询、答案、fingerprint、
+分组和误差计算顺序及数值不变；不把静默截断当作兼容方案。全范围扫描确认 #65 新增 Python 文件不再
+包含 `zip(strict=True)`、`datetime.UTC` 或 `from datetime import UTC`。
+
+最终验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.9 / CUDA 相关专项     38 passed
+Python 3.9 / CUDA 全仓         1712 passed, 15 warnings
+Python 3.11 / CUDA 全仓        1712 passed, 2 warnings
+git diff --check               clean
+outputs tracked diff           empty
+```
+
+Python 3.9 的 15 条 warning 为临时 Matplotlib/PyParsing 依赖弃用提示 13 条，加既有空切片 NumPy
+warning 2 条；Python 3.11 只有后两条。兼容改写没有改变冻结协议、正式输入、ignored artifacts、
+已归档结果或公共默认，因此没有重跑任何正式实验。
+
+本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #65；下一步必须由用户明确决定，
+且只有用户明确说“推”才可 push。#66 尚未同步或修改，#63 继续自然等待外部反馈，不催促。
+
 ### 最新暂停点：residual geometry 收口已提交 stacked PR #65（2026-08-18）
 
 > 用户明确授权 push 后，当前分支已推送并创建新的 stacked PR；没有自行 review、approve
@@ -672,6 +717,137 @@ target 与初始化 marginal count 精确一致；relative terminal 上 1-way me
 使用 absolute 恢复力、order>=2 使用 relative-f8。设计必须先解决两块原始尺度不同的问题，禁止根据
 310–312 调混合系数；无 1-way workload 必须与 relative 数值等价。设计和单测审查后，才使用 fresh
 seeds 在 test 上比较 absolute/relative/candidate；nltcs 先证明路径等价，再决定是否冗余重跑。
+
+### 最新暂停点：PR #63 三项补强及 Python 3.9/CUDA 验证全绿，已推送并回复 reviewer（2026-08-22）
+
+> 用户授权修复上一轮只读复核发现的全部问题，并要求同步刚合并的 PR；完成检查后又明确授权提交、
+> push 并发布拟好的 reviewer 回复。已确认刚合并的是 PR #61（merge commit
+> `e6d84cf1fc071706e52610d8593f488b7137092c`）；PR #62 仍为 OPEN。本轮没有重跑或改写正式实验产物，
+> 也没有提交新的 Review、Approve 或 merge PR #63。
+
+先从 `origin/master` 取回 PR #61，并确认其 11 个变更文件只涉及 plants 数据/workload、
+`scripts/build_marginals.py`、生成脚本和 plants 测试，与 PR #63 当时的 11 个未提交兼容文件无交叉。
+随后以普通 merge 无冲突同步到本地 PR #63 分支：
+
+```text
+origin/master       e6d84cf  Merge pull request #61 from Chuhan722/feat/plants-dataset
+local merge commit  caad0c687b74b0e613db9fedad93e38ff61c0d0d
+old remote PR63     24478dde3f639ee8f55100d3e7741506631bbc12
+```
+
+在此前 Python 3.9 兼容补丁之上，本轮完成三项补强：
+
+1. **A/B/C 与 stationarity trace 组合崩溃**：`StationarityTrace` 的 v1 终止原因白名单补入
+   `fit_target_reached`、`early_stopped`、`resource_cap_reached`。增加 A/B/C 三条真实
+   `run_evolution(record_stationarity_trace=True)` 接线回归，逐项要求 diagnostics/trace 原因一致、
+   state count 对齐并可再次 `trace.validate()`。修复前最小 C 反例会在返回前抛“未知
+   termination_reason”；修复后 A/B/C 全部正常返回。
+2. **development audit 在 `python -O` 下 fail-open**：
+   `scripts/analyze_issue53_terminal_early_stop_development.py` 的关键运行时 `assert` 全部替换为带明确信息的
+   `_require`/`AssertionError`；新增 AST 契约，禁止该审计脚本重新出现会被优化器删除的 `assert`。
+   另以真实 `python -O` 调用故障注入确认 `_require(False, ...)` 仍抛 `AssertionError`。
+3. **V2b 路径不便携**：未来 V2b runner/report/audit 统一只写 sibling 文件名；auditor 只实际读取并
+   SHA 校验 report 同目录的 `protocol_manifest.json`，接受新相对格式，也兼容旧报告仅作元数据的绝对
+   `.../protocol_manifest.json`，同时拒绝 `..` 相对逃逸、错误绝对文件名和解析后离开 sibling 的
+   symlink。既有 V2b/V2c 冻结负结果及其哈希链没有被改写或冒充重跑。
+
+验证结果（包含刚同步的 PR #61 plants workload 测试）：
+
+```text
+针对性回归（A/B/C trace + development audit + V2b runner/auditor）
+  Python 3.11.15: 50 passed
+
+全仓 Python 3.11.15
+  1638 passed, 2 个既有空切片 warning
+
+全仓 Python 3.9.25（NumPy 1.26.4 / Pandas 2.2.3 / PyTorch 2.8.0+cu128 / RTX 4090）
+  1638 passed, 0 skipped, 15 warnings
+  warning：13 条临时 Matplotlib/PyParsing 依赖弃用提示 + 2 条既有空切片 warning
+```
+
+最初 Python 3.9 临时环境使用 CPU-only PyTorch，因此 7 条 CUDA 测试被 pytest 按设计跳过。用户要求
+补齐后，将同一临时环境从 `torch 2.8.0+cpu` 替换为官方 `torch 2.8.0+cu128`，固定使用一张空闲
+RTX 4090：
+
+```text
+CUDA smoke
+  Python 3.9.25 / torch 2.8.0+cu128 / CUDA runtime 12.8
+  torch.cuda.is_available() == True；真实 1024x1024 CUDA 矩阵乘成功
+
+原 skip 所在 GPU/采样测试组
+  206 passed, 0 skipped（原 7 条全部执行通过，CUDA 可用时另收集 9 条路径）
+
+全仓复验
+  1638 passed, 0 skipped, 15 warnings in 121.57s
+```
+
+该补充只更换临时测试环境并运行测试，没有源码、依赖声明、实验产物或协议改动。
+
+协议与冻结 artifact 边界保持不变：
+
+```text
+P=6 protocol SHA             759cddb3e75a8a1d04e9568ae0fff30b0e26969dd6e95020500330838269b317
+RMSE frozen protocol SHA     cb1224ac797191b74aa40f7baadfab08928b5cb25414971fe8ee091a297d433a
+RMSE result-blind plan SHA   aadcebcf68ff3ed5a05bb3164e8199951e11b749a3fbff82cedcfcc11a4b56cd
+V2b protocol SHA             a7dde6b7867e215c9147131f085eaa47b47e04495b5d1bed37355f95a69dd33f
+```
+
+`git diff -- outputs` 为空，`git diff --check` 通过。用户检查拟稿后明确授权，本节所述兼容补丁、三项
+修复、测试与状态记录已提交并推送到 PR #63；随后已发布回复，向 reviewer 说明实际 Python 3.9 修复面、
+额外补强、双版本全仓测试结果和冻结证据边界。当前等待 reviewer 增量复核；未经新的明确授权，不再
+修改远端、不提交 Review、不 Approve 或 merge，也不重跑任何正式科学实验。
+
+### 最新暂停点：PR #63 Python 3.9 兼容补丁本地全绿，待用户确认提交/推送（2026-08-22）
+
+> 外部 Review 将 Conda `gsd`（Python 3.9）测试兼容列为合并阻塞。用户同意修改，但再次明确未授权
+> push；本轮只在 PR #63 本地工作树实施最小兼容补丁、运行测试和对拍协议摘要，没有 commit、push、
+> PR 评论、Review、正式产物重跑或参数/算法修改。
+
+独立复现先确认 Review 对失败文件的归因不完整：四个 collection error 中，只有
+`tests/test_inner_early_stopping_integration.py` 真正因 `int | None` 缺 future annotations；另外三个
+实际来自 P=6 collector/evaluator 和 RMSE runner 使用 Python 3.11 才提供的 `datetime.UTC`。排除这
+四个 collection error 后，原生 Python 3.9 的 23 个失败全部来自本 PR 的 10 处
+`zip(..., strict=True)`。
+
+本地兼容补丁共改 10 个文件，当前 diff 为 `24 insertions / 17 deletions`：
+
+- wiring test 增加 `from __future__ import annotations`；
+- 三个脚本将 `datetime.UTC` 等价替换为 `timezone.utc`；
+- 10 处 strict zip 改为普通 `zip`，并保留既有等长校验；原本缺少显式校验的测试辅助路径补
+  `len(...)` 断言；
+- 不改 A/B/C、自然工作时钟、阈值、seed、rho、C、alpha、Gibbs、terminal-current 或任何聚合规则。
+
+验证结果：
+
+```text
+Python 3.9.25 临时环境（NumPy 1.26.4 / Pandas 2.2.3 / PyTorch 2.8.0+cpu）
+  PR #63 改动测试：414 passed
+  全仓测试：1605 passed, 7 skipped, 15 warnings
+  warning：13 条临时 Matplotlib/PyParsing 依赖弃用提示 + 2 条既有空切片 warning
+
+Python 3.11.15 项目环境
+  PR #63 改动测试：414 passed
+  全仓测试：1625 passed, 2 个既有 warning
+```
+
+兼容前后对拍保持不变：
+
+```text
+P=6 protocol / manifest SHA
+  759cddb3e75a8a1d04e9568ae0fff30b0e26969dd6e95020500330838269b317
+RMSE frozen protocol canonical SHA
+  cb1224ac797191b74aa40f7baadfab08928b5cb25414971fe8ee091a297d433a
+RMSE result-blind plan canonical SHA
+  aadcebcf68ff3ed5a05bb3164e8199951e11b749a3fbff82cedcfcc11a4b56cd
+```
+
+既有 P=6 collection/evaluation 与 RMSE JSON 文件均未写入，文件 SHA 保持原值；它们继续诚实绑定原
+运行 commit 和原 source SHA。当前源码 SHA 会因兼容补丁变化，但科学 protocol/plan 和历史 artifact
+没有被回填或冒充重跑，因此不需要重新运行正式实验。若后续提交，应在 PR 回复中说明这是运行时兼容
+修改、协议摘要逐位不变，并附 Python 3.9/3.11 全仓结果。
+
+当前停止在本地工作树有上述未提交改动。下一步必须先向用户展示结果；只有用户明确授权后才能 commit
+或 push，且 push 后仍需等待原 reviewer 增量复核，不能自动 Approve/merge。
 
 ### 最新暂停点：PR #63 已创建并以 Amendment 3 同步 Issue #53，等待审查（2026-08-17）
 
