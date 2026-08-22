@@ -2,6 +2,160 @@
 
 ## 当前阶段
 
+### 最新暂停点：PR #66 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
+
+> 用户检查本地结果后明确授权“推吧”。本步只发布上一节已经完成并验证的 #66 同步提交；没有修改
+> PR 正文、发布评论、请求 review、催促审阅者、Approve/merge PR，也没有操作 #67。
+
+```text
+published merge head  92a21d65740e291ea37dc76b3013f8fe42a1a0cf
+remote branch         research/issue53-fixed-alpha
+PR                     #66 / OPEN / non-Draft
+base                   research/issue53-query-workload-ab（PR #65）
+GitHub status          MERGEABLE / CLEAN
+checks                 none reported
+```
+
+远端从 `8570187` fast-forward 到 `92a21d6`，本地与 upstream 在发布后为 `0 behind / 0 ahead`。
+推送内容为：同步 #65 最新头 `c87af50`，完整保留双方状态历史，并继承下层 Python 3.9 兼容修复。
+#66 自身无需额外兼容代码修改；发布前 Python 3.9/3.11 全仓均为 `1753 passed`，没有重跑正式
+alpha 实验或改写 artifacts。
+
+本节作为发布后的仓库内状态记录随同一 #66 分支推送。下一步仍需用户单独决定；未经再次明确授权，
+不 push #67。#63 自然等待外部反馈，不评论、不催促。
+
+### 最新暂停点：PR #66 已在本地同步最新 #65，双版本全仓通过（2026-08-22）
+
+> 用户授权继续按 PR 栈逐层处理，但没有授权 push。本步只在 #66 本地 worktree 合入 #65 最新
+> 远端头、解决状态文档冲突、检查 #66 自身兼容性并测试；没有 push、PR 评论、review request、
+> 催促审阅者、Approve/merge 远端 PR，也没有操作 #67 或 Stage 5。
+
+同步身份：
+
+```text
+#66 pre-sync head     8570187287ce826d5b65fe6b70559e0c3c9d6652
+#65 synced head       c87af50e6cd0952366f1f85a595c357dba85eabe
+common ancestor       a2bc496da223ef49a5a1e8a8e5ac6f60252ab62b
+divergence            #65 侧 9 commits / #66 侧 11 commits
+merge conflict        PROJECT_STATUS.md only
+resolution            双方进度历史完整保留；科学代码无内容冲突
+remote #66            保持 8570187，GitHub 远端仍显示 CONFLICTING
+```
+
+#65 已验证的 #63/PR #61 同步、Python 3.9 兼容修复和状态记录均自动合入。另对 #66 独有的 10 个
+Python 文件做完整兼容扫描：未发现 `zip(strict=True)`、`datetime.UTC` 或
+`from datetime import UTC`；使用联合类型的控制器模块已有 postponed annotations。#66 不需要新增
+兼容代码修复。
+
+最终验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.9 / CUDA #66 定向       41 passed
+Python 3.9 / CUDA 全仓           1753 passed, 15 warnings
+Python 3.11 / CUDA 全仓          1753 passed, 2 warnings
+git diff --check                 clean
+outputs tracked diff             empty
+```
+
+Python 3.9 的 15 条 warning 为临时 Matplotlib/PyParsing 依赖弃用提示 13 条与既有空切片 NumPy
+warning 2 条；Python 3.11 只有后两条。同步没有改变 #66 冻结 alpha 协议、正式输入、ignored
+artifacts、已归档负结果或公共默认，因此没有重跑正式实验。
+
+本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #66；只有用户明确说“推”才可
+push。#67 尚未同步或修改，#63 继续自然等待外部反馈，不评论、不催促。
+
+### 最新暂停点：两档自适应 α 正式负结果已提交 stacked PR #66（2026-08-19）
+
+> 本板块基于 PR #65 head `a2bc496` 的独立分支完成；没有修改、自行审查、批准或合并 PR #63/#65。
+> 固定 α 响应与两档自适应实验均使用更新后无 measured 1-way 的 test workload，并保持无门控、
+> terminal-current 输出身份。
+
+```text
+worktree              /home/chuhan/projects/table-diffusion-issue53-fixed-alpha
+branch                research/issue53-fixed-alpha
+adaptive protocol     5a88ddc5077df82528b7fda3cd12a4fb79c1b8e5c027d6d555d4a50e869e911e
+execution commit      4e0270c587f2efdf8aa47b5581b200815cffd3d2
+collection SHA        ec2d81a954e1e0e85478a7dc26df190edec9c5b1e6beaec439e815dd6ec2057e
+evaluation SHA        0646e7b2a52653995e3af96c51e2730056fe0bda1f688ac8e5f7ff6da2a9be4a
+cases                 30/30 early_stopped；0 resource caps
+```
+
+状态机固定为：α16 正常档；连续 2 个自然工作刻度没有严格新最好后，α12 探索恰好 2 个自然工作
+刻度，再恢复 α16；现有 P=6 不清零、不暂停或延长。同一无改善阶段最多触发一次，只有严格新最好
+创建新的 progress epoch。控制器不读取 held-out、raw reference、未来预算或其他轨迹，不消费 RNG。
+
+自适应在两套数据的 5/5 seeds 都触发：test 共 7 个探索段，nltcs 共 8 个。阶段诊断确认 α12 确实
+扩大供体覆盖：test 有效供体比例从约 0.01296 增至 0.01925，nltcs 从约 0.09315 增至 0.12660。
+但 15 个探索段中只有 1 个在 α12 期间产生新最好，4 个在恢复 α16 后产生，10 个没有新最好。
+
+正式主结果：test 自适应 measured L1 比固定 α16 高 8.29%，只有 1/5 更好；nltcs 高 17.40%，
+只有 3/5 更好，并且 1-way safety 高 33.96%、work 高 17.71%。固定 α12 在 test 的均值低 5.70%，
+但只有 3 胜、1 平、1 负，未达到 4/5；nltcs measured L1 高 23.80%。冻结结论为：
+
+```text
+test mechanism         no_supported_alpha12_strategy
+nltcs mechanism        no_supported_alpha12_strategy
+cross dataset          no_shared_adaptive_support
+```
+
+该结果不支持当前 2/2/6 两档自适应策略，也不支持事后把回滚或 best 输出加入同一个无门控算法。
+回滚会形成分段接受门，若未来研究必须改成另一种算法身份并另写协议。完整设计、逐 seed 主值、阶段
+集中度、新最好位置、全部门禁与执行勘误见：
+
+```text
+docs/实验结果/Issue53_两档自适应alpha正式结果.md
+```
+
+相关定向回归 `40 passed, 1 skipped`，GPU 0 的 NumPy/CUDA 小前缀对拍 `1 passed`；排除当前测试
+环境缺少 matplotlib 的 6 个旧 Stage2B 文件后，全仓为 `1680 passed, 8 skipped`。正式输出目录约
+63 MiB，保持 ignored，不把 30 张 CSV 和大 JSON 提交进 Git，只通过报告 SHA 和结果文档绑定。
+
+当前分支已推送并创建 stacked PR #66：
+`https://github.com/Chuhan722/table-diffusion/pull/66`。其 base 是 PR #65 的 head
+`research/issue53-query-workload-ab`，正文详细说明固定 α 设计、两档状态机、正式负结果和结论边界。
+下一动作是等待他人按 #63 → #65 → #66 的顺序审查；不自行 review、approve 或 merge。
+
+### 历史暂停点：固定 α 响应曲线完成，等待讨论自适应目标（2026-08-18）
+
+> 本板块基于 PR #65 的提交 `a2bc496` 新建独立分支完成；没有修改或推送 PR #65，没有自行
+> review（审查）、approve（批准）或 merge（合并）。当前分支只在本地，尚未 push（推送）或创建 PR。
+
+```text
+worktree              /home/chuhan/projects/table-diffusion-issue53-fixed-alpha
+branch                research/issue53-fixed-alpha
+protocol SHA          6a3716f11ed6a4233256b9d3a549fc45281bc464470cc82a6e64d66d0104b311
+collection commit     41f3dc55416d4525819033f5069b4160a8a378bf
+collection SHA        03e26d01cf960fd763219a926a8ae4f5cada9eaa7686aed91e5393fee5625884
+evaluation commit     19f342d8fb38be3de5300cc23ce709eafd91a17f
+evaluation SHA        b27543c2844bd09ae58706116ce315b7dda44ef47b9fc9ac6684674a6a7ed99d
+result commit         44e8d89
+cases                 30/30 early_stopped；0 resource caps
+```
+
+冻结矩阵为两套数据 × α=`12/16/24` × 5 个配对随机种子。`test_300x10` 使用更新后的
+`30×2-way + 15×3-way + 5×4-way` workload（查询负载），没有 1-way 已测查询；`nltcs`
+使用 479 条 2-way 与 522 条 3-way，也没有 1-way 已测查询。
+
+正式结论：α 对供体集中度的作用在两套数据上稳定单调——α 越小，有效供体越多、单行最大供体概率
+越低；α 越大则越集中。但质量和计算取舍不单调，α=12、24 相对 α=16 都没有通过结果前冻结的
+“已测稳定改善 + 离线安全 + 多样性 + 计算量”完整门禁，两套数据支持的 probe α（探测 α）集合均为空，
+跨数据分类为 `mixed_fixed_response`（混合固定响应）。没有选择统一固定 α，也没有事后设计自适应公式。
+
+运行中按用户要求先把剩余 11 条 `nltcs` 分成当前服务器 6 条、A6000 5 条，随后把 A6000 尚未启动
+的 2 条移回；最终当前服务器完成 8 条、A6000 完成 seed 326 的 3 条。跨机器 100 轮初态、随机数、
+终表和完整轨迹签名逐位一致；同一数据集、同一随机种子的三种 α 没有拆到不同硬件。A6000 GPU 0
+和本实验使用的本机 GPU 均已释放。
+
+首次离线评价发现 L1 复算两种数学等价写法存在一个浮点末位差异；提交 `19f342d` 只把一致性审计
+改为绝对容差 `1e-15`，不改指标和门禁。定向测试 `10 passed`，30 条 measured L1（已测查询 L1）
+全部复算通过，关键均值和配对胜负又由独立标准库脚本重聚合一致。完整结果见
+`docs/实验结果/Issue53_固定alpha响应曲线结果.md`。
+
+**当前下一步不是直接写自适应公式。** 先与用户讨论控制目标：本实验已经证明 α 是可靠的集中度执行量，
+但两套数据的集中度绝对尺度不同，而且只追已测误差会伤害未测高阶查询和多样性。建议下一轮先确定
+“运行内归一化的供体集中度主反馈 + 残差进展/当前表多样性保护条件”的语义，再冻结更新频率、步幅、
+上下界和实验矩阵。用户未明确要求前不要 push（推送）。
+
 ### 最新暂停点：PR #65 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
 
 > 用户在检查本地结果后明确授权“直接把本地改的推送上去”。本步只发布上一节已经完成并验证的
@@ -69,7 +223,6 @@ warning 2 条；Python 3.11 只有后两条。兼容改写没有改变冻结协�
 
 本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #65；下一步必须由用户明确决定，
 且只有用户明确说“推”才可 push。#66 尚未同步或修改，#63 继续自然等待外部反馈，不催促。
-
 ### 最新暂停点：residual geometry 收口已提交 stacked PR #65（2026-08-18）
 
 > 用户明确授权 push 后，当前分支已推送并创建新的 stacked PR；没有自行 review、approve
