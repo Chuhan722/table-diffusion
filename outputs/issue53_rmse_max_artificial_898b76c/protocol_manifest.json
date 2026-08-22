@@ -1,0 +1,331 @@
+{
+  "contract_version": "issue53-rmse-max-artificial-v1",
+  "created_at_utc": "2026-08-16T17:55:27.375444+00:00",
+  "environment": {
+    "machine": "x86_64",
+    "numpy_version": "2.4.6",
+    "pandas_version": "3.0.3",
+    "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+    "processor": "x86_64",
+    "python_version": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]"
+  },
+  "execution_started": false,
+  "formal_rng_instantiated": false,
+  "git_commit": "898b76c2a8e60093888bfe05ffce74b89a124c5e",
+  "git_worktree_clean_including_untracked": true,
+  "protocol": {
+    "acceptance": {
+      "all_cases_required": true,
+      "post_result_seed_or_family_replacement_allowed": false,
+      "post_result_threshold_retuning_allowed": false,
+      "qualified_by_boundary_count": 12,
+      "valid_case_count": 12
+    },
+    "case_count": 12,
+    "contract_version": "issue53-rmse-max-artificial-v1",
+    "families": [
+      {
+        "attributes": [
+          "a",
+          "b",
+          "c"
+        ],
+        "n_records": 24,
+        "name": "marginal_skew",
+        "query_attribute_groups": [
+          [
+            "a"
+          ],
+          [
+            "b"
+          ],
+          [
+            "c"
+          ]
+        ],
+        "query_count": 3,
+        "reference_one_rows": 6,
+        "reference_zero_rows": 18,
+        "seeds": [
+          20260901,
+          20260902
+        ],
+        "target": [
+          6.0,
+          6.0,
+          6.0
+        ]
+      },
+      {
+        "attributes": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "n_records": 32,
+        "name": "ring_pair",
+        "query_attribute_groups": [
+          [
+            "a"
+          ],
+          [
+            "b"
+          ],
+          [
+            "c"
+          ],
+          [
+            "d"
+          ],
+          [
+            "e"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "b",
+            "c"
+          ],
+          [
+            "c",
+            "d"
+          ],
+          [
+            "d",
+            "e"
+          ],
+          [
+            "e",
+            "a"
+          ]
+        ],
+        "query_count": 10,
+        "reference_one_rows": 16,
+        "reference_zero_rows": 16,
+        "seeds": [
+          20260911,
+          20260912
+        ],
+        "target": [
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ]
+      },
+      {
+        "attributes": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f"
+        ],
+        "n_records": 64,
+        "name": "nested_overlap",
+        "query_attribute_groups": [
+          [
+            "a"
+          ],
+          [
+            "b"
+          ],
+          [
+            "c"
+          ],
+          [
+            "d"
+          ],
+          [
+            "e"
+          ],
+          [
+            "f"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "b",
+            "c"
+          ],
+          [
+            "c",
+            "d"
+          ],
+          [
+            "d",
+            "e"
+          ],
+          [
+            "e",
+            "f"
+          ],
+          [
+            "a",
+            "b",
+            "c"
+          ],
+          [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ]
+        ],
+        "query_count": 15,
+        "reference_one_rows": 32,
+        "reference_zero_rows": 32,
+        "seeds": [
+          20260921,
+          20260922
+        ],
+        "target": [
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0,
+          32.0
+        ]
+      }
+    ],
+    "fit_target": {
+      "both_required_on_same_current_checkpoint": true,
+      "calibration_source": "exact_integer_counts",
+      "count_rmse_inclusive_maximum": 1.0,
+      "per_query_absolute_count_error_inclusive_maximum": 2.0
+    },
+    "formal_execution_requires_new_authorization": true,
+    "generator": {
+      "alpha_schedule_mode": "fixed",
+      "batch_size": 256,
+      "beta": 1.0,
+      "candidate_budget": null,
+      "delta": 0.05,
+      "device": "numpy",
+      "diffusion_direction_logit_clip": 9.0,
+      "diffusion_direction_normalization": "fixed",
+      "diffusion_direction_reference_scale": 1.25,
+      "diffusion_direction_strength": 0.8,
+      "distance_mode": "geometric",
+      "eta": 0.45,
+      "eval_method": "vectorized",
+      "exclude_self": true,
+      "factorized_gibbs_logit_clip": 30.0,
+      "factorized_gibbs_max_order": 3,
+      "factorized_gibbs_sweeps": 0,
+      "factorized_gibbs_use_compiled_workload": false,
+      "fixed_alpha": 6.0,
+      "h": 0.8,
+      "horizon_invariant": true,
+      "init_method": "random",
+      "lambda_param": 0.5,
+      "log_every": 100000,
+      "max_retries": 0,
+      "mu": 0.02,
+      "record_stationarity_trace": true,
+      "record_transition_clocks": true,
+      "residual_directed_diffusion": true,
+      "residual_geometry": "absolute",
+      "residual_geometry_floor_inactive": 8.0,
+      "residual_self_cooling": null,
+      "rho_anneal_end": null,
+      "rho_anneal_rounds": null,
+      "selection_scale_invariant": false,
+      "stop_on_exact_residual": false,
+      "tol": "positive_infinity",
+      "winsorize_quantiles": [
+        0.01,
+        0.99
+      ]
+    },
+    "protocol_document_sha256": "012d2507f7b3a79a7fb566047a7f2dae3dbf2e9d77e30dbeb5da44bcfbff6245",
+    "resource": {
+      "boundary_state": "first_real_state_with_normalized_work_at_least_20",
+      "inclusive_boundary_work": 20.0,
+      "minimum_post_boundary_tail_work": 10.0,
+      "normalized_work": "cumulative_applied_participating_rows/N",
+      "priority": [
+        "exact_residual",
+        "fit_target_reached",
+        "resource_cap_reached"
+      ]
+    },
+    "rho": [
+      1.0,
+      0.25
+    ],
+    "rounds_by_rho": {
+      "0.25": 160,
+      "1.0": 40
+    },
+    "scope": {
+      "consumes_privacy_budget": false,
+      "convergence_claim_present": false,
+      "fixed_exact_count_workload": true,
+      "online_generator_integration_present": false,
+      "outer_selection_present": false,
+      "reads_project_dataset": false,
+      "reads_real_reference_table": false,
+      "runs_project_generator": true,
+      "sigma": 0.0,
+      "uses_gpu": false
+    },
+    "selection": {
+      "normal_return_is_first_qualified_current_not_loss_only_best": true,
+      "normalized_l1_used_for_selection": false,
+      "qualified": "first_current_checkpoint_satisfying_both_limits",
+      "resource_fallback": "minimum_squared_loss_through_boundary_earliest_tie"
+    }
+  },
+  "protocol_document_sha256": "012d2507f7b3a79a7fb566047a7f2dae3dbf2e9d77e30dbeb5da44bcfbff6245",
+  "protocol_sha256": "cb1224ac797191b74aa40f7baadfab08928b5cb25414971fe8ee091a297d433a",
+  "source_sha256": {
+    "docs/设计/Issue53_RMSEMax全新人工验证协议.md": "012d2507f7b3a79a7fb566047a7f2dae3dbf2e9d77e30dbeb5da44bcfbff6245",
+    "docs/设计/Issue53_无噪声生成内层停止与best输出契约设计稿.md": "4b2fb02dca8154254f7e594d4e55484c1e67c9d089b493ae390b4a870bb02ffe",
+    "scripts/validate_issue53_rmse_max_artificial.py": "271a63a3e8460a69d24a9330a6ae844d730a6fba5da61cf6999e5fd6c9f0c15d",
+    "src/table_diffevo/evolution.py": "ba5609769bafadcdfe7fc7123ca7f78e9f3343f6dec8320b214b2f7fa574a8c1",
+    "src/table_diffevo/generator.py": "a8d01fca89fd368a44d35f116ba258f9766eb1bdbb4c343a6ac1748d5792214c",
+    "src/table_diffevo/inner_fit_target.py": "b38d2d8da2db6662ffe027584cafe41d8a450fc7b2eed09beac6299a9595d25d",
+    "src/table_diffevo/queries.py": "44704ea0f37872ba92292f042faf452f0ce8998b101229b90ef2da86dc8aaec1",
+    "src/table_diffevo/stationarity.py": "eb68a4aa31fdaf3d02ad197caf9259de983ceb306acd289dfb4c163a3cc77ac8",
+    "tests/test_issue53_rmse_max_artificial.py": "8c062c06e5ea40a77d5737ac2300528f295e6d8b821c9b5681331daa8086c51b"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "audit_format": "issue53_v2c_three_scale_effective_evidence_audit_v1",
+  "checks": {
+    "acceptance_status_exact": true,
+    "independent_boundary_checks_pass": true,
+    "scientific_payload_exact": true,
+    "scientific_sha256_exact": true
+  },
+  "contract_version": "issue53-v2c-three-scale-effective-evidence-artificial-v1",
+  "created_at_utc": "2026-08-16T13:00:36.268385+00:00",
+  "first_mismatch_paths": [],
+  "git_commit": "f9db5d6fb4af9bccf36c5fad3c1c2565eb8b57c5",
+  "independence": {
+    "imports_formal_runner": false,
+    "imports_project_v2_core": false,
+    "imports_project_v2b_core": false,
+    "imports_project_v2c_core": false,
+    "recomputes_obm_directly": true,
+    "regenerates_artificial_trajectories": true
+  },
+  "manifest_path": "protocol_manifest.json",
+  "manifest_sha256": "daecf32977f98f28108d2de29b9ca3a51c96554f75e87b5748a62eef7e014ba9",
+  "mismatch_count_at_least": 0,
+  "passed": true,
+  "protocol_sha256": "a9930b440f3483d0bb2e6ad8d3bbf4cd8db097b2d85deed69216a475679cbc04",
+  "recomputed_scientific_result_sha256": "77c054980c4da46bc385fbadd8dbe79e968b6dfada704fadd5eac1329983de0c",
+  "recorded_scientific_result_sha256": "77c054980c4da46bc385fbadd8dbe79e968b6dfada704fadd5eac1329983de0c",
+  "replay_counts": {
+    "checkpoint_classification_count": 150000,
+    "family_count": 5,
+    "scale_evaluation_count": 450000,
+    "trajectory_count": 10000
+  },
+  "report_path": "three_scale_evidence_report.json",
+  "report_sha256": "1404c1ba49e13259c047d55fa1d68e77ae5d954874a59aa5606e831fd7d7eaaf",
+  "status": "complete"
+}
