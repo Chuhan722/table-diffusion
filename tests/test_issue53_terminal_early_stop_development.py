@@ -1,5 +1,8 @@
 """Pure contracts for the terminal-output early-stop development diagnostic."""
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from scripts.analyze_issue53_terminal_early_stop_development import (
@@ -7,6 +10,16 @@ from scripts.analyze_issue53_terminal_early_stop_development import (
     locate_continuation_checkpoints,
     replay_fixed_early_stop,
 )
+
+
+def test_development_audit_checks_survive_python_optimized_mode() -> None:
+    source_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts/analyze_issue53_terminal_early_stop_development.py"
+    )
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    assert not any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 
 def test_best_refresh_can_trigger_clock_but_output_state_is_terminal_current() -> None:

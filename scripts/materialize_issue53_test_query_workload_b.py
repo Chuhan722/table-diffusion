@@ -213,7 +213,7 @@ def _attach_answers(
     if len(workload_b) != len(answers):
         raise ValueError("workload B 与 answer vector 长度不一致")
     attached = []
-    for query, answer in zip(workload_b, answers, strict=True):
+    for query, answer in zip(workload_b, answers):
         if isinstance(answer, bool) or not isinstance(answer, int):
             raise TypeError("query answer 必须是整数")
         decorated = {key: value for key, value in query.items()}

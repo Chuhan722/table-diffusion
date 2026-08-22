@@ -315,10 +315,10 @@ def _build_error_rows(
                 queries = groups[group_name]
                 observed = materialize.evaluate_queries(table, queries)
                 expected = targets[group_name]
-                if len(observed) != len(expected):
+                if not len(queries) == len(expected) == len(observed):
                     raise RuntimeError(f"{case_name}/{group_name} answer 数量漂移")
                 for index, (query, target, current) in enumerate(
-                    zip(queries, expected, observed, strict=True)
+                    zip(queries, expected, observed)
                 ):
                     errors.append({
                         "dataset": collection.DATASET,

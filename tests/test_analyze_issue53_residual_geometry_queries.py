@@ -96,7 +96,8 @@ def test_fractional_win_credit_splits_ties():
 
     result = diagnostic._attach_fractional_win_credit(frame)
 
-    credits = dict(zip(result["arm"], result["fractional_win_credit"], strict=True))
+    assert len(result["arm"]) == len(result["fractional_win_credit"])
+    credits = dict(zip(result["arm"], result["fractional_win_credit"]))
     assert credits == {"absolute": 0.5, "sqrt_relative": 0.5, "relative": 0.0}
 
 

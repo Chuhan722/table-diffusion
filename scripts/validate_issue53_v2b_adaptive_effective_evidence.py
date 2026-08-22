@@ -1484,7 +1484,7 @@ def run_artificial_protocol(
         "report_format": REPORT_FORMAT,
         "contract_version": ARTIFICIAL_PROTOCOL_VERSION,
         "status": acceptance["status"],
-        "manifest_path": str(manifest_path),
+        "manifest_path": manifest_path.name,
         "manifest_sha256": manifest_sha256,
         "protocol_sha256": manifest["protocol_sha256"],
         "git_commit": manifest["git_commit"],
