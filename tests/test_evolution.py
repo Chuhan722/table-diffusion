@@ -1205,6 +1205,15 @@ class TestResidualGeometry:
         assert diag_rel["loss_history"] != diag_abs["loss_history"]
         assert diag_rel["loss_history"][-1] < diag_rel["loss_history"][0]
 
+    def test_sqrt_relative_changes_trajectory_and_runs(self):
+        """sqrt_relative 端到端可跑，轨迹与两端几何均不同。"""
+        _, diag_abs = self._run(residual_geometry="absolute")
+        _, diag_sqrt = self._run(residual_geometry="sqrt_relative")
+        _, diag_rel = self._run(residual_geometry="relative")
+        assert diag_sqrt["loss_history"] != diag_abs["loss_history"]
+        assert diag_sqrt["loss_history"] != diag_rel["loss_history"]
+        assert diag_sqrt["loss_history"][-1] < diag_sqrt["loss_history"][0]
+
     def test_relative_vectorized_matches_legacy(self):
         """relative 下 vectorized 与 legacy 路径轨迹一致（numpy 逐位）"""
         _, diag_vec = self._run(
@@ -1218,6 +1227,19 @@ class TestResidualGeometry:
             diag_vec["final_table"], diag_leg["final_table"]
         )
 
+    def test_sqrt_relative_vectorized_matches_legacy(self):
+        """sqrt_relative 下 vectorized 与 legacy 路径轨迹一致。"""
+        _, diag_vec = self._run(
+            residual_geometry="sqrt_relative", eval_method="vectorized"
+        )
+        _, diag_leg = self._run(
+            residual_geometry="sqrt_relative", eval_method="legacy"
+        )
+        assert diag_vec["loss_history"] == diag_leg["loss_history"]
+        pd.testing.assert_frame_equal(
+            diag_vec["final_table"], diag_leg["final_table"]
+        )
+
     def test_geometry_recorded_in_diagnostics(self):
         """诊断 params 记录几何配置；absolute 时 floor 为 None"""
         _, diag_rel = self._run(
@@ -1225,6 +1247,11 @@ class TestResidualGeometry:
         )
         assert diag_rel["params"]["residual_geometry"] == "relative"
         assert diag_rel["params"]["residual_geometry_floor"] == 4.0
+        _, diag_sqrt = self._run(
+            residual_geometry="sqrt_relative", residual_geometry_floor=4.0
+        )
+        assert diag_sqrt["params"]["residual_geometry"] == "sqrt_relative"
+        assert diag_sqrt["params"]["residual_geometry_floor"] == 4.0
         _, diag_abs = self._run()
         assert diag_abs["params"]["residual_geometry"] == "absolute"
         assert diag_abs["params"]["residual_geometry_floor"] is None
