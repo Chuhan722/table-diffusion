@@ -122,6 +122,100 @@ OUTPUT_PATH = Path(
     ".json"
 )
 
+# 冻结的离线参考表身份（fail-closed，Issue #60）：离线评价阶段读取的
+# 参考文件必须精确匹配，不符即协议违规终止（参考表仍只在该数据集全部
+# 生成结束后读取，隐私边界不变）。
+EXPECTED_REFERENCE_SHA256 = {
+    "test_300x10": {
+        "reference": (
+            "c211133455c4fdd19f01f34eca511cf089667452d038265897eec15b5b84baeb"
+        ),
+    },
+    "nltcs": {
+        "train": (
+            "e547a7aedad1dd2f7177030881ab1b92c7e24ae5464c71a0f1f89daecaf52b30"
+        ),
+    },
+}
+
+
+def _protocol_identity():
+    """协议身份的 canonical 表示（Issue #60：协议漂移必须显式可见）。
+
+    覆盖：种子/轮数/全部臂与共享参数/判定阈值/冻结输入与参考哈希。
+    任何字段变化都会改变 protocol_sha256，正式运行要求与
+    FROZEN_PROTOCOL_SHA256 一致——修改协议必须同步更新该常量，
+    等价于显式重新预注册。
+    """
+    def _canon(value):
+        if isinstance(value, dict):
+            return {str(k): _canon(v) for k, v in sorted(value.items())}
+        if isinstance(value, (list, tuple)):
+            return [_canon(v) for v in value]
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, float) and value == float("inf"):
+            return "inf"
+        return value
+
+    return {
+        "issue": 57,
+        "seeds": FORMAL_SEEDS,
+        "rounds": FORMAL_ROUNDS,
+        "frozen_si_alpha": FROZEN_SI_ALPHA,
+        "frozen_min_spread": FROZEN_MIN_SPREAD,
+        "arms": _canon(ARMS),
+        "shared_params": _canon(SHARED_PARAMS),
+        "datasets": _canon({
+            name: {
+                key: value for key, value in spec.items()
+                if key != "device"  # 设备不属于协议身份
+            }
+            for name, spec in DATASETS.items()
+        }),
+        "judgement_thresholds": {
+            "primary_baseline": PRIMARY_BASELINE,
+            "primary_candidate": PRIMARY_CANDIDATE,
+            "primary_min_wins": PRIMARY_MIN_WINS,
+            "primary_min_improvement": PRIMARY_MIN_IMPROVEMENT,
+            "mixed_min_wins": MIXED_MIN_WINS,
+            "quality_risk_rel": QUALITY_RISK_REL,
+        },
+        "expected_input_sha256": _canon(EXPECTED_INPUT_SHA256),
+        "expected_reference_sha256": _canon(EXPECTED_REFERENCE_SHA256),
+    }
+
+
+def protocol_sha256():
+    """从入库代码独立复算的冻结协议常量 SHA-256。
+
+    边界（有意）：只覆盖协议常量（种子/轮数/臂/共享参数/判定阈值/
+    冻结输入与参考哈希），不覆盖判定函数实现本身（其正确性由脚本级
+    测试锚定）也不含 device（运行环境单独记录于 provenance.environment）。
+    """
+    payload = json.dumps(
+        _protocol_identity(), ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+# 冻结协议身份（运行时 fail-closed 对拍；协议修改必须同步更新 = 显式
+# 重新预注册）。数值在实现后由 protocol_sha256() 一次性生成。
+FROZEN_PROTOCOL_SHA256 = (
+    "620c76d3d9b3e868b4119b6884ceffbd7bbdeae99f2715d71c0296b2ed77a850"
+)
+
+# 已知 legacy 正式产物白名单（PR #62 二轮审查）：protocol_sha256 机制
+# 引入前生成的正式 JSON，按整体文件字节 SHA-256 登记；审计器只接受
+# 名单内的缺字段文件，其余一律 fail-closed 拒绝。
+# 51aff541…：首个正式实验产物（commit aac1aff，五种子 supports，
+# 已归档 docs/实验结果/，PR #59 审查复核过）。
+KNOWN_LEGACY_ARTIFACT_SHA256 = {
+    "51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64",
+}
+
+
 # 冻结的预期输入身份（fail-closed）：正式运行必须精确匹配这组公开输入。
 # 与首次正式产物（commit aac1aff）记录的 input_sha256 一致。
 EXPECTED_INPUT_SHA256 = {
@@ -171,12 +265,25 @@ def _git(*args):
 
 
 def _environment():
-    return {
+    env = {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "numpy": np.__version__,
         "pandas": pd.__version__,
     }
+    # PR #62 审查意见：协议 SHA 有意不含 device（冻结协议常量边界），
+    # 实际运行环境（device/torch/CUDA/GPU）单独入档供跨环境复现判读。
+    try:
+        import torch
+
+        env["torch"] = torch.__version__
+        env["cuda_available"] = bool(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            env["cuda_version"] = torch.version.cuda
+            env["gpu_name"] = torch.cuda.get_device_name(0)
+    except Exception:
+        env["torch"] = None
+    return env
 
 
 def _load_reference(path, columns):
@@ -189,6 +296,38 @@ def _load_reference(path, columns):
     else:
         frame = pd.read_csv(path, header=None, names=columns)
     return frame[columns]
+
+
+def _load_verified_reference(dataset_name, ref_name, path, columns):
+    """一次读取参考文件原始字节 → 先验 SHA-256 → 再从同一份字节解析。
+
+    fail-closed（Issue #60 + PR #62 审查意见 1/4）：哈希校验先于任何
+    内容使用，消除"读取与验哈希之间"的变化窗口；本函数是生产与测试
+    共用的唯一校验入口。未登记预期值的数据集跳过哈希对拍（其正式
+    身份由协议 SHA 罩住——登记后才可能 formal）。
+
+    Returns (frame, sha256_hex)。
+    """
+    import io
+
+    payload = Path(path).read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    expected_refs = EXPECTED_REFERENCE_SHA256.get(dataset_name)
+    if expected_refs is not None:
+        expected = expected_refs.get(ref_name)
+        if digest != expected:
+            raise RuntimeError(
+                f"[{dataset_name}] 参考 {ref_name} SHA-256 与冻结值不符："
+                f"实际 {digest[:12]}… != 预期 {str(expected)[:12]}…"
+            )
+    buffer = io.BytesIO(payload)
+    if str(path).endswith(".csv"):
+        frame = pd.read_csv(buffer)
+        if list(frame.columns) != columns:
+            frame.columns = columns
+    else:
+        frame = pd.read_csv(buffer, header=None, names=columns)
+    return frame[columns], digest
 
 
 def _run_dataset(name, spec, seeds, rounds):
@@ -307,10 +446,15 @@ def _run_dataset(name, spec, seeds, rounds):
     measured_triples = offline_helpers._measured_cell_keys(
         queries, marginals, order=3
     )
-    references = {
-        ref_name: _load_reference(path, columns)
-        for ref_name, path in spec["references"].items()
-    }
+    references = {}
+    reference_sha256 = {}
+    for ref_name, path in spec["references"].items():
+        # 先验 SHA 再解析（fail-closed，生产与测试共用同一入口）。
+        frame, digest = _load_verified_reference(
+            name, ref_name, path, columns
+        )
+        references[ref_name] = frame
+        reference_sha256[ref_name] = digest
     for ref_name, reference in references.items():
         if len(reference) != n_records:
             raise RuntimeError(
@@ -340,11 +484,49 @@ def _run_dataset(name, spec, seeds, rounds):
                     metrics["raw_joint"]["support_overlap"]
                 ),
             }
-    reference_sha256 = {
-        ref_name: _sha256_file(path)
-        for ref_name, path in spec["references"].items()
-    }
+    # reference_sha256 已在 _load_verified_reference 中"先验后用"得到，
+    # 此处不再重复读文件或后置校验（PR #62 审查意见 4）。
     return runs, initial_state, reference_sha256
+
+
+def _assert_offline_complete(name, runs, formal):
+    """fail-closed（Issue #60）：正式运行中任何 run 缺失或非有限的
+    离线指标视为协议违规直接失败，而不是被 _judge 静默跳过降级为
+    无风险（NaN/inf 同样拒绝，PR #62 审查意见 2）。"""
+    required = (
+        "unmeasured_3way_l1", "unmeasured_4way_l1", "binned_joint_tvd",
+    )
+    missing = []
+    for run in runs:
+        offline = run.get("offline") or {}
+        for ref_name, metrics in offline.items():
+            for key in required:
+                value = metrics.get(key)
+                if (
+                    value is None
+                    or not isinstance(
+                        value, (int, float, np.integer, np.floating)
+                    )
+                    or isinstance(value, bool)
+                    or not np.isfinite(value)
+                ):
+                    missing.append(
+                        f"seed={run['seed']} arm={run['arm']} "
+                        f"{ref_name}/{key}={value!r}"
+                    )
+        if not offline:
+            missing.append(f"seed={run['seed']} arm={run['arm']} 无 offline")
+    if missing and formal:
+        raise RuntimeError(
+            f"[{name}] 正式运行存在缺失或非有限离线指标（fail-closed）：\n  "
+            + "\n  ".join(missing[:10])
+        )
+    if missing:
+        print(
+            f"[{name}] 警告：{len(missing)} 项离线指标缺失（探索模式继续，"
+            "质量风险判定将跳过缺失项）",
+            flush=True,
+        )
 
 
 def _arm_metric_by_seed(runs, arm, metric):
@@ -489,13 +671,28 @@ def main():
     if dirty and not args.allow_dirty:
         raise SystemExit("工作树不干净；正式运行要求干净树（或 --allow-dirty）")
 
+    # fail-closed（Issue #60）：协议身份对拍。协议常量（臂/参数/阈值/
+    # 冻结哈希）任何变化都会改变 protocol_sha256；正式运行要求与
+    # FROZEN_PROTOCOL_SHA256 一致——修改协议必须同步更新常量（等价于
+    # 显式重新预注册）。探索模式（--allow-dirty）允许继续但 formal=false。
+    current_protocol_sha = protocol_sha256()
+    protocol_match = current_protocol_sha == FROZEN_PROTOCOL_SHA256
+    if not protocol_match and not args.allow_dirty:
+        raise SystemExit(
+            "协议身份与 FROZEN_PROTOCOL_SHA256 不符，拒绝正式运行"
+            "（协议已修改？请显式重新预注册并更新冻结常量；探索性运行"
+            f"请加 --allow-dirty）。当前协议 SHA: {current_protocol_sha}"
+        )
+
     matches_prereg = (
         not dirty
         and list(args.seeds) == FORMAL_SEEDS
         and args.rounds == FORMAL_ROUNDS
         and sorted(args.datasets) == sorted(DATASETS)
     )
-    formal = bool(matches_prereg and not args.allow_dirty)
+    formal = bool(
+        matches_prereg and not args.allow_dirty and protocol_match
+    )
 
     input_sha256 = {}
     input_hash_mismatches = []
@@ -550,6 +747,8 @@ def main():
         "provenance": {
             "git_commit": _git("rev-parse", "HEAD"),
             "git_dirty": dirty,
+            "protocol_sha256": current_protocol_sha,
+            "protocol_match": protocol_match,
             "formal": formal,
             "started_at": datetime.now().astimezone().isoformat(),
             "environment": _environment(),
@@ -566,6 +765,7 @@ def main():
         runs, initial_state, reference_sha256 = _run_dataset(
             name, spec, args.seeds, args.rounds
         )
+        _assert_offline_complete(name, runs, formal)
         result["datasets"][name] = {
             "initial_state": initial_state,
             "reference_sha256": reference_sha256,
