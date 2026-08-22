@@ -425,7 +425,8 @@ def _reference_frame(family_name: str) -> pd.DataFrame:
     )
     rows = []
     for item in family["reference_multiset"]:
-        row = dict(zip(family["attribute_order"], item["state"], strict=True))
+        assert len(family["attribute_order"]) == len(item["state"])
+        row = dict(zip(family["attribute_order"], item["state"]))
         rows.extend([row.copy() for _ in range(item["count"])])
     return pd.DataFrame(rows, columns=family["attribute_order"])
 

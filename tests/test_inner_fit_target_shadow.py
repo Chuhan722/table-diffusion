@@ -255,6 +255,6 @@ def test_one_count_rmse_target_qualifies_all_fixed_traces_before_cap() -> None:
         (20260818, 0.25, 9, 2.5625, 1.5, 1 / 32, 1.0, 0.0, 0.0),
     ]
     assert len(observed) == len(expected)
-    for actual, frozen in zip(observed, expected, strict=True):
+    for actual, frozen in zip(observed, expected):
         assert actual[:3] == frozen[:3]
         assert actual[3:] == pytest.approx(frozen[3:])
