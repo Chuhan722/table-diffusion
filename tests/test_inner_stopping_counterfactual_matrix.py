@@ -113,7 +113,8 @@ def _classify_trace(*, seed: int, rho: float, n_rounds: int) -> dict:
     cumulative_rows = 0
     cumulative_rows_at_stop = 0
 
-    for state, clock in zip(metrics[1:], clocks, strict=True):
+    assert len(metrics) == len(clocks) + 1
+    for state, clock in zip(metrics[1:], clocks):
         accepted_attempt = clock["accepted_attempt"]
         assert accepted_attempt == 1
         participating_rows = int(

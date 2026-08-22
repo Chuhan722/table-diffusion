@@ -20,7 +20,7 @@ import tempfile
 import time
 from contextlib import redirect_stdout
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -307,7 +307,7 @@ def build_execution_manifest(root: Path) -> dict[str, Any]:
         raise RuntimeError(f"正式 P6 采集源文件缺失：{missing}")
     manifest = {
         "contract_version": COLLECTION_CONTRACT_VERSION,
-        "created_at_utc": datetime.now(UTC).isoformat(),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_text(root, "rev-parse", "HEAD"),
         "git_worktree_clean_including_untracked": True,
         "protocol_sha256": frozen_sha,

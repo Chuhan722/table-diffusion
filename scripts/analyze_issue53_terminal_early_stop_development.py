@@ -61,6 +61,13 @@ class ContinuationCheckpoint:
     actual_extra_work: float | None
 
 
+def _require(condition: object, message: str) -> None:
+    """Keep audit checks active even when Python runs with ``-O``."""
+
+    if not condition:
+        raise AssertionError(message)
+
+
 def _artificial_binary_problem() -> tuple[Schema, list[dict], np.ndarray]:
     schema = Schema(
         [
@@ -145,8 +152,14 @@ def _run_trace(*, seed: int, rho: float, n_rounds: int):
         stop_on_exact_residual=False,
         **_trace_run_kwargs(seed=seed, rho=rho, n_rounds=n_rounds),
     )
-    assert diagnostics["termination_reason"] == "max_rounds"
-    assert diagnostics["rounds_run"] == n_rounds
+    _require(
+        diagnostics["termination_reason"] == "max_rounds",
+        "full development trace must terminate at max_rounds",
+    )
+    _require(
+        diagnostics["rounds_run"] == n_rounds,
+        "full development trace must run the requested horizon",
+    )
     return queries, target, diagnostics
 
 
@@ -206,7 +219,7 @@ def replay_fixed_early_stop(
     tick_had_new_best = False
 
     for state_index, (current_loss, rows) in enumerate(
-        zip(normalized_losses[1:], normalized_rows, strict=True),
+        zip(normalized_losses[1:], normalized_rows),
         start=1,
     ):
         if current_loss < best_loss:
@@ -368,17 +381,29 @@ def _audit_online_wiring_against_full_trace(
         rho=rho,
         n_rounds=n_rounds,
     )
-    assert online_queries == queries
-    assert np.array_equal(online_target, target)
+    _require(online_queries == queries, "online/offline query workloads differ")
+    _require(
+        np.array_equal(online_target, target),
+        "online/offline targets differ",
+    )
 
     stop_state = offline_decision.state_index
     full_metrics = full["current_state_metrics_history"]
     full_clocks = full["transition_clock_history"]
     expected_metrics = full_metrics[: stop_state + 1]
     expected_clocks = full_clocks[:stop_state]
-    assert online["current_state_metrics_history"] == expected_metrics
-    assert online["transition_clock_history"] == expected_clocks
-    assert online["accept_history"] == full["accept_history"][:stop_state]
+    _require(
+        online["current_state_metrics_history"] == expected_metrics,
+        "online current metrics are not the frozen full-trace prefix",
+    )
+    _require(
+        online["transition_clock_history"] == expected_clocks,
+        "online transition clocks are not the frozen full-trace prefix",
+    )
+    _require(
+        online["accept_history"] == full["accept_history"][:stop_state],
+        "online accept history is not the frozen full-trace prefix",
+    )
 
     expected_terminal_sha = (
         full["initial_table_sha256"]
@@ -397,11 +422,26 @@ def _audit_online_wiring_against_full_trace(
     )
     output_sha = _table_sha256(online_output)
     final_table_sha = _table_sha256(online["final_table"])
-    assert output_sha == expected_terminal_sha
-    assert final_table_sha == expected_terminal_sha
-    assert online_output.reset_index(drop=True).equals(online["final_table"])
-    assert online["primary_rng_state_sha256"] == expected_rng_sha
-    assert online["candidate_evaluation_count"] == expected_candidate_evaluations
+    _require(
+        output_sha == expected_terminal_sha,
+        "main output table is not the expected terminal current state",
+    )
+    _require(
+        final_table_sha == expected_terminal_sha,
+        "diagnostic final table is not the expected terminal current state",
+    )
+    _require(
+        online_output.reset_index(drop=True).equals(online["final_table"]),
+        "main output and diagnostic final table differ",
+    )
+    _require(
+        online["primary_rng_state_sha256"] == expected_rng_sha,
+        "online primary RNG state is not the expected prefix state",
+    )
+    _require(
+        online["candidate_evaluation_count"] == expected_candidate_evaluations,
+        "online candidate count is not the expected prefix count",
+    )
 
     expected_current_loss = float(full_metrics[stop_state]["current_squared_loss"])
     expected_current_l1 = float(full_metrics[stop_state]["current_normalized_l1"])
@@ -410,37 +450,82 @@ def _audit_online_wiring_against_full_trace(
         queries,
         target,
     )
-    assert output_loss == expected_current_loss
-    assert output_l1 == expected_current_l1
-    assert online["output_squared_loss"] == expected_current_loss
-    assert online["final_current_squared_loss"] == expected_current_loss
-    assert online["normalized_l1_error"] == expected_current_l1
+    _require(output_loss == expected_current_loss, "terminal loss replay differs")
+    _require(output_l1 == expected_current_l1, "terminal L1 replay differs")
+    _require(
+        online["output_squared_loss"] == expected_current_loss,
+        "output squared loss differs from the terminal current state",
+    )
+    _require(
+        online["final_current_squared_loss"] == expected_current_loss,
+        "final current squared loss differs from replay",
+    )
+    _require(
+        online["normalized_l1_error"] == expected_current_l1,
+        "reported normalized L1 differs from replay",
+    )
 
     last_decision = online["inner_early_stopping"]["last_decision"]
-    assert online["termination_reason"] == offline_decision.reason
-    assert online["rounds_run"] == stop_state
-    assert online["inner_complete"] is True
-    assert online["fit_target_reached"] is (
-        offline_decision.reason == "fit_target_reached"
+    _require(
+        online["termination_reason"] == offline_decision.reason,
+        "online/offline stopping reasons differ",
     )
-    assert online["output_table_identity"] == "terminal_current"
-    assert online["inner_early_stopping"]["resource_cap_source_diagnostic_only"] is None
-    assert last_decision["external_resource_cap_reached"] is False
-    assert last_decision["state_index"] == stop_state
-    assert last_decision["terminal_output_state_index"] == stop_state
-    assert last_decision["current_loss"] == expected_current_loss
-    assert last_decision["terminal_output_loss"] == expected_current_loss
-    assert last_decision["normalized_work"] == offline_decision.normalized_work
-    assert (
-        last_decision["completed_work_ticks"] == offline_decision.completed_work_ticks
+    _require(online["rounds_run"] == stop_state, "online stop state differs")
+    _require(online["inner_complete"] is True, "A/B must complete the inner run")
+    _require(
+        online["fit_target_reached"]
+        is (offline_decision.reason == "fit_target_reached"),
+        "fit-target status differs from the stopping reason",
     )
-    assert (
+    _require(
+        online["output_table_identity"] == "terminal_current",
+        "online output identity must be terminal_current",
+    )
+    _require(
+        online["inner_early_stopping"]["resource_cap_source_diagnostic_only"]
+        is None,
+        "normal A/B termination must not report a resource-cap source",
+    )
+    _require(
+        last_decision["external_resource_cap_reached"] is False,
+        "normal A/B termination must precede external C",
+    )
+    _require(
+        last_decision["state_index"] == stop_state,
+        "last decision state differs from the stop state",
+    )
+    _require(
+        last_decision["terminal_output_state_index"] == stop_state,
+        "terminal output state differs from the stop state",
+    )
+    _require(
+        last_decision["current_loss"] == expected_current_loss,
+        "last decision current loss differs from replay",
+    )
+    _require(
+        last_decision["terminal_output_loss"] == expected_current_loss,
+        "terminal output loss differs from replay",
+    )
+    _require(
+        last_decision["normalized_work"] == offline_decision.normalized_work,
+        "online/offline normalized work differs",
+    )
+    _require(
+        last_decision["completed_work_ticks"]
+        == offline_decision.completed_work_ticks,
+        "online/offline completed work ticks differ",
+    )
+    _require(
         last_decision["consecutive_no_progress_ticks"]
-        == offline_decision.consecutive_no_progress_ticks
+        == offline_decision.consecutive_no_progress_ticks,
+        "online/offline no-progress ticks differ",
     )
 
     best_loss = min(float(row["current_squared_loss"]) for row in expected_metrics)
-    assert online["best_loss_diagnostic_only"] == best_loss
+    _require(
+        online["best_loss_diagnostic_only"] == best_loss,
+        "online best-loss diagnostic differs from the prefix minimum",
+    )
     return {
         "seed": seed,
         "rho": rho,
@@ -521,20 +606,35 @@ def _classify_case(*, seed: int, rho: float, n_rounds: int) -> dict[str, Any]:
         rho=rho,
         n_rounds=stop_state,
     )
-    assert np.array_equal(prefix_target, target)
-    assert prefix["current_state_metrics_history"] == metrics[: stop_state + 1]
-    assert prefix["transition_clock_history"] == clocks[:stop_state]
+    _require(np.array_equal(prefix_target, target), "prefix target differs")
+    _require(
+        prefix["current_state_metrics_history"] == metrics[: stop_state + 1],
+        "prefix current metrics differ from the full trace",
+    )
+    _require(
+        prefix["transition_clock_history"] == clocks[:stop_state],
+        "prefix transition clocks differ from the full trace",
+    )
 
     stop_terminal_table = prefix["final_table"]
     state_hashes = [full["initial_table_sha256"]] + [
         clock["post_current_table_sha256"] for clock in clocks
     ]
     stop_table_sha = _table_sha256(stop_terminal_table)
-    assert stop_table_sha == state_hashes[stop_state]
+    _require(
+        stop_table_sha == state_hashes[stop_state],
+        "stop table identity differs from the full trace",
+    )
 
     stop_loss, stop_l1 = _terminal_metrics(stop_terminal_table, queries, target)
-    assert stop_loss == metrics[stop_state]["current_squared_loss"]
-    assert stop_l1 == metrics[stop_state]["current_normalized_l1"]
+    _require(
+        stop_loss == metrics[stop_state]["current_squared_loss"],
+        "stop-table loss differs from the full trace",
+    )
+    _require(
+        stop_l1 == metrics[stop_state]["current_normalized_l1"],
+        "stop-table L1 differs from the full trace",
+    )
 
     stop_best_loss = min(losses[: stop_state + 1])
     stop_candidate_evaluations = (
@@ -590,32 +690,51 @@ def _classify_case(*, seed: int, rho: float, n_rounds: int) -> dict[str, Any]:
                 continue
 
             checkpoint_state = location.state_index
-            assert checkpoint_state is not None
+            _require(
+                checkpoint_state is not None,
+                "observed continuation checkpoint must identify a state",
+            )
             _, checkpoint_target, checkpoint_prefix = _run_trace(
                 seed=seed,
                 rho=rho,
                 n_rounds=checkpoint_state,
             )
-            assert np.array_equal(checkpoint_target, target)
-            assert (
-                checkpoint_prefix["current_state_metrics_history"]
-                == metrics[: checkpoint_state + 1]
+            _require(
+                np.array_equal(checkpoint_target, target),
+                "continuation checkpoint target differs",
             )
-            assert (
+            _require(
+                checkpoint_prefix["current_state_metrics_history"]
+                == metrics[: checkpoint_state + 1],
+                "continuation metrics are not the full-trace prefix",
+            )
+            _require(
                 checkpoint_prefix["transition_clock_history"]
-                == clocks[:checkpoint_state]
+                == clocks[:checkpoint_state],
+                "continuation clocks are not the full-trace prefix",
             )
 
             checkpoint_table = checkpoint_prefix["final_table"]
             checkpoint_sha = _table_sha256(checkpoint_table)
-            assert checkpoint_sha == state_hashes[checkpoint_state]
+            _require(
+                checkpoint_sha == state_hashes[checkpoint_state],
+                "continuation table identity differs from the full trace",
+            )
             checkpoint_loss, checkpoint_l1 = _terminal_metrics(
                 checkpoint_table,
                 queries,
                 target,
             )
-            assert checkpoint_loss == metrics[checkpoint_state]["current_squared_loss"]
-            assert checkpoint_l1 == metrics[checkpoint_state]["current_normalized_l1"]
+            _require(
+                checkpoint_loss
+                == metrics[checkpoint_state]["current_squared_loss"],
+                "continuation loss differs from the full trace",
+            )
+            _require(
+                checkpoint_l1
+                == metrics[checkpoint_state]["current_normalized_l1"],
+                "continuation L1 differs from the full trace",
+            )
             checkpoint_candidates = int(
                 clocks[checkpoint_state - 1]["candidate_evaluation_count_cumulative"]
             )

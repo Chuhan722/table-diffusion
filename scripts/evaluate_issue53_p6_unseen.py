@@ -14,7 +14,7 @@ import json
 import math
 import sys
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -166,7 +166,7 @@ def _validate_evidence_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raise ValueError("evidence rows 必须恰好覆盖 12 条 primary cases")
     normalized_rows = json.loads(_strict_json_bytes(rows))
     for index, (row, expected_case) in enumerate(
-        zip(normalized_rows, expected_cases, strict=True)
+        zip(normalized_rows, expected_cases)
     ):
         name = f"evidence_rows[{index}]"
         _validate_exact_keys(row, _EVIDENCE_ROW_KEYS, name)
@@ -205,10 +205,13 @@ def _validate_evidence_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if checkpoints != []:
                 raise ValueError(f"{name} 只有 B 可以带 shadow checkpoints")
             continue
-        if not isinstance(checkpoints, list) or len(checkpoints) != 2:
+        if (
+            not isinstance(checkpoints, list)
+            or len(checkpoints) != len(protocol.SHADOW_WORK_OFFSETS)
+        ):
             raise ValueError(f"{name} 的 B 必须恰有 +6/+12 checkpoints")
         for checkpoint_index, (checkpoint, expected_offset) in enumerate(
-            zip(checkpoints, protocol.SHADOW_WORK_OFFSETS, strict=True)
+            zip(checkpoints, protocol.SHADOW_WORK_OFFSETS)
         ):
             checkpoint_name = f"{name}.checkpoints[{checkpoint_index}]"
             _validate_exact_keys(
@@ -1355,7 +1358,7 @@ def _evaluation_environment(root: Path) -> dict[str, Any]:
     if missing:
         raise RuntimeError(f"正式 P6 判定源文件缺失：{missing}")
     return {
-        "evaluated_at_utc": datetime.now(UTC).isoformat(),
+        "evaluated_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": git_commit,
         "git_worktree_clean_including_untracked": True,
         "erratum_commit_drift_paths": commit_drift_paths,

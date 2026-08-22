@@ -216,10 +216,10 @@ def recompute_family_arithmetic(family: Mapping[str, Any]) -> dict[str, Any]:
         if state_key in seen_states:
             raise ValueError("reference state 不得重复")
         seen_states.add(state_key)
-        for attribute_name, value in zip(attribute_order, state, strict=True):
+        for attribute_name, value in zip(attribute_order, state):
             if _strict_value_key(value) not in domains[attribute_name]:
                 raise ValueError(f"{name}.state 的 {attribute_name} 值不在公开 domain")
-        row_values = dict(zip(attribute_order, state, strict=True))
+        row_values = dict(zip(attribute_order, state))
         materialized_rows.append((row_values, count))
         n_records += count
 

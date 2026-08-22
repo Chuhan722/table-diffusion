@@ -1,5 +1,7 @@
 """Wiring contracts for terminal-current A/B/C stopping in run_evolution."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
 import numpy as np
@@ -218,6 +220,59 @@ def test_zero_round_budget_returns_initial_current_through_C(monkeypatch) -> Non
         == "max_rounds"
     )
     pd.testing.assert_frame_equal(output, _table_with_one_count(2))
+
+
+@pytest.mark.parametrize(
+    (
+        "initial_count",
+        "proposal_counts",
+        "target_count",
+        "n_rounds",
+        "patience_ticks",
+        "expected_reason",
+    ),
+    [
+        (0, (), 0.0, 5, 6, "fit_target_reached"),
+        (2, (1, 3, 2), 0.0, 3, 2, "early_stopped"),
+        (2, (1, 3), 0.0, 2, 6, "resource_cap_reached"),
+    ],
+)
+def test_a_b_c_termination_reasons_are_valid_stationarity_trace_values(
+    monkeypatch,
+    initial_count,
+    proposal_counts,
+    target_count,
+    n_rounds,
+    patience_ticks,
+    expected_reason,
+) -> None:
+    _install_scripted_kernel(
+        monkeypatch,
+        initial_count=initial_count,
+        proposal_counts=proposal_counts,
+    )
+    schema, queries = _binary_problem()
+
+    _, diagnostics = run_evolution(
+        np.array([target_count]),
+        queries,
+        schema,
+        n_records=4,
+        n_rounds=n_rounds,
+        seed=53,
+        tol=float("inf"),
+        max_retries=0,
+        inner_early_stopping_patience_ticks=patience_ticks,
+        record_stationarity_trace=True,
+        log_every=100_000,
+        device="numpy",
+    )
+
+    trace = diagnostics["stationarity_trace"]
+    assert diagnostics["termination_reason"] == expected_reason
+    assert trace.termination_reason == expected_reason
+    assert trace.state_count == diagnostics["rounds_run"] + 1
+    trace.validate()
 
 
 def test_observer_does_not_change_the_gate_free_random_trajectory() -> None:
