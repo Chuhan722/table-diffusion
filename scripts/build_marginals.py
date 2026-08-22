@@ -35,13 +35,23 @@ from table_diffevo.queries import load_queries, load_data, eval_condition
 from table_diffevo.marginals import derive_bins_from_queries
 
 
-# ========== 参数配置（改这里） ==========
+# ========== 参数配置（默认 nltcs；其它数据集用 --dataset 覆盖） ==========
 SCHEMA_PATH = "configs/nltcs/schema.yaml"
 QUERY_PATH = "configs/nltcs/measured_1000query.json"
 DATA_PATH = "data/nltcs/nltcs.csv"
 OUT_PATH = "configs/nltcs/init_marginals.json"
 DATASET_NAME = "nltcs"
 # =======================================
+
+
+def _apply_dataset(dataset):
+    """按数据集名切换全部路径（约定布局 configs/<ds>/、data/<ds>/）。"""
+    global SCHEMA_PATH, QUERY_PATH, DATA_PATH, OUT_PATH, DATASET_NAME
+    DATASET_NAME = dataset
+    SCHEMA_PATH = f"configs/{dataset}/schema.yaml"
+    QUERY_PATH = f"configs/{dataset}/measured_1000query.json"
+    DATA_PATH = f"data/{dataset}/{dataset}.csv"
+    OUT_PATH = f"configs/{dataset}/init_marginals.json"
 
 
 def _count_numeric_bins(col: pd.Series, bins):
@@ -122,4 +132,14 @@ def build():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="构建 1-way 边缘测量文件")
+    parser.add_argument(
+        "--dataset", default=None,
+        help="数据集名（configs/<ds>/、data/<ds>/ 布局）；缺省用 nltcs 常量",
+    )
+    args = parser.parse_args()
+    if args.dataset:
+        _apply_dataset(args.dataset)
     build()
