@@ -252,6 +252,38 @@ def test_independent_auditor_has_no_stage6b1_collector_or_evaluator_import():
     )
 
 
+def test_independent_stage1_resource_decision_matches_frozen_protocol():
+    for dataset_label, expected in (
+        (
+            "gap_kernel_development_supported",
+            "advance_to_nltcs_gpu_protocol",
+        ),
+        (
+            "no_stable_gap_error_gain",
+            "stop_before_nltcs_no_test300_support",
+        ),
+        (
+            "execution_invalid",
+            "stage1_inconclusive_or_invalid",
+        ),
+    ):
+        labels = {"test_300x10": dataset_label}
+        assert independent._stage1_label(labels) == expected
+        assert protocol.classify_stage1(labels) == expected
+
+
+def test_smoke_source_bundle_filters_out_non_stage1_dataset():
+    bundle = common.load_source_bundle("smoke", REPOSITORY_ROOT)
+    assert len(bundle.states) == len(protocol.STATE_GROUPS)
+    assert {
+        row["dataset"] for row in bundle.states.values()
+    } == {"test_300x10"}
+    assert all("nltcs" not in identifier for identifier in bundle.states)
+    assert {dataset for dataset, _seed in bundle.trajectories} == {
+        "test_300x10"
+    }
+
+
 def test_result_artifact_validators_keep_smoke_result_blind(monkeypatch):
     monkeypatch.setattr(
         protocol, "expected_pair_ids", lambda mode: ("artificial_pair",)

@@ -1340,16 +1340,15 @@ def _dataset_label(summary: Mapping[str, bool]) -> str:
     return "gap_kernel_development_supported"
 
 
-def _cross_label(labels: Mapping[str, str]) -> str:
-    supported = sum(
-        label == "gap_kernel_development_supported"
-        for label in labels.values()
-    )
-    if supported == len(protocol.DATASET_ORDER):
-        return "shared_development_support"
-    if supported == 1:
-        return "dataset_dependent_development_support"
-    return "no_shared_development_support"
+def _stage1_label(labels: Mapping[str, str]) -> str:
+    if set(labels) != {"test_300x10"}:
+        raise RuntimeError("独立第一阶段标签覆盖失败")
+    label = labels["test_300x10"]
+    if label in protocol.EXECUTION_FAILURE_LABELS:
+        return "stage1_inconclusive_or_invalid"
+    if label == "gap_kernel_development_supported":
+        return "advance_to_nltcs_gpu_protocol"
+    return "stop_before_nltcs_no_test300_support"
 
 
 def _independent_dataset_evaluation(
@@ -2010,9 +2009,9 @@ def audit_arithmetic(
             dataset: computed[dataset]["dataset_classification"]
             for dataset in protocol.DATASET_ORDER
         }
-        final = _cross_label(labels)
+        final = _stage1_label(labels)
         if final != evaluation["final_screen_classification"]:
-            raise RuntimeError("独立跨数据冻结分类不一致")
+            raise RuntimeError("独立第一阶段冻结决定不一致")
         published_computed: Any = computed
         published_final: Any = final
         mechanism_validated = True
@@ -2037,7 +2036,7 @@ def audit_arithmetic(
         "all_exact_gap_gain_harm_metrics_recomputed": True,
         "all_query_geometry_and_old_squared_identities_recomputed": True,
         "all_seed_equal_weight_thresholds_recomputed": True,
-        "frozen_dataset_and_cross_labels_match": True,
+        "frozen_dataset_and_stage1_decision_match": True,
         "no_gate_and_complete_matrix_verified": True,
         "overall_pass": True,
     }

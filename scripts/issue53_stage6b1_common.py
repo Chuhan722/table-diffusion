@@ -142,12 +142,12 @@ def load_source_bundle(
         or library.get("input_audit") != proposals.get("input_audit")
     ):
         raise RuntimeError("第 6A 阶段状态库与候选集合身份不一致")
-    states = {row["state_id"]: row for row in library["states"]}
-    trajectories = {
+    all_states = {row["state_id"]: row for row in library["states"]}
+    all_trajectories = {
         (row["dataset"], int(row["seed"])): row
         for row in library["trajectories"]
     }
-    proposal_states = {
+    all_proposal_states = {
         row["state_id"]: row for row in proposals["states"]
     }
     expected = {
@@ -156,8 +156,23 @@ def load_source_bundle(
         for seed in seeds
         for group in protocol.STATE_GROUPS
     }
-    if set(states) != expected or set(proposal_states) != expected:
+    expected_trajectories = {
+        (dataset, seed)
+        for dataset in protocol.DATASET_ORDER
+        for seed in seeds
+    }
+    if not expected.issubset(all_states) or not expected.issubset(
+        all_proposal_states
+    ) or not expected_trajectories.issubset(all_trajectories):
         raise RuntimeError("第 6A 阶段来源状态覆盖不完整")
+    states = {identifier: all_states[identifier] for identifier in expected}
+    proposal_states = {
+        identifier: all_proposal_states[identifier] for identifier in expected
+    }
+    trajectories = {
+        identifier: all_trajectories[identifier]
+        for identifier in expected_trajectories
+    }
     return SourceBundle(
         mode=mode,
         state_library=library,

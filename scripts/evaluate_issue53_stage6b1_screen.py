@@ -587,7 +587,7 @@ def evaluate_screen(
             dataset: computed[dataset]["dataset_classification"]
             for dataset in protocol.DATASET_ORDER
         }
-        final = protocol.classify_cross_dataset(labels)
+        final = protocol.classify_stage1(labels)
         dataset_evaluations: Any = computed
         smoke_validation = None
         evidence_emitted = True

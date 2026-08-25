@@ -14,25 +14,35 @@ else:
     import issue53_stage6a_protocol as stage6a
 
 
-PROTOCOL_VERSION = "issue53-stage6b1-gap-l1-fixed-state-screen-v1"
+PROTOCOL_VERSION = "issue53-stage6b1a-test300-gap-l1-fixed-state-screen-v1"
+RNG_DOMAIN_VERSION = "issue53-stage6b1-gap-l1-fixed-state-screen-v1"
 PROTOCOL_DOC = Path(
     "docs/设计/Issue53_Stage6B1剩余缺口感知绝对误差Gibbs固定状态筛查结果前协议.md"
 )
 PROTOCOL_DOC_SHA256 = (
-    "0eacb06c5d2a34d58ecbf78029da6c46accbee0385e0b24a60c41a5fe7b9f8a3"
+    "150f4cd84eefc3e0764ac739a11e4ccd1a1ca7e1a4619f08d07cb9b380bdaad0"
 )
-PROTOCOL_DOC_COMMIT = "6db4e1b2dbfebdc8ea71b3ed452fbd105bba9c57"
+PROTOCOL_DOC_COMMIT = "3926ef76dd4dafea8da481eb21753beacb5d1f95"
 
 # 不纳入 manifest，避免自指；在 manifest 定稿后填入。
 FROZEN_PROTOCOL_SHA256 = (
-    "6087598eda6080711f532f07566be28680f86ea2059c7afe09085b1b7e30b0dc"
+    "fbeedb1abdb2be23f71b61c1fa7614f06db31ccec35c84eb02f1f27021aa487e"
 )
 
 UPSTREAM_EXECUTION_COMMIT = "3775413e0bc4684e30803c0b43c752ba57cba6a6"
 UPSTREAM_PROTOCOL_DOC_SHA256 = stage6a.PROTOCOL_DOC_SHA256
 UPSTREAM_PROTOCOL_SHA256 = stage6a.FROZEN_PROTOCOL_SHA256
+PARENT_STAGE6B1_EXECUTION_COMMIT = (
+    "1eb743a43132892e5d4e18c4bf4345e017f220fd"
+)
+PARENT_STAGE6B1_PROTOCOL_DOC_SHA256 = (
+    "0eacb06c5d2a34d58ecbf78029da6c46accbee0385e0b24a60c41a5fe7b9f8a3"
+)
+PARENT_STAGE6B1_PROTOCOL_SHA256 = (
+    "6087598eda6080711f532f07566be28680f86ea2059c7afe09085b1b7e30b0dc"
+)
 
-DATASET_ORDER = stage6a.DATASET_ORDER
+DATASET_ORDER = ("test_300x10",)
 FORMAL_SEEDS = stage6a.FORMAL_SEEDS
 SMOKE_SEED = stage6a.SMOKE_SEED
 STATE_GROUPS = stage6a.STATE_GROUPS
@@ -60,13 +70,63 @@ INITIAL_AND_FULL_NONINFERIOR_RATIO = 1.05
 RETENTION_EQUAL_SEED_MINIMUM = 0.95
 RETENTION_PER_SEED_MINIMUM = 0.90
 
-OUTPUT_DIR = Path("outputs/issue53_stage6b1_gap_l1_screen_v1")
-SMOKE_OUTPUT_DIR = Path("outputs/issue53_stage6b1_gap_l1_screen_smoke_v1")
+OUTPUT_DIR = Path("outputs/issue53_stage6b1a_test300_gap_l1_screen_v1")
+SMOKE_OUTPUT_DIR = Path(
+    "outputs/issue53_stage6b1a_test300_gap_l1_screen_smoke_v1"
+)
 CALIBRATION_FILENAME = "calibration_manifest.json"
 COLLECTION_FILENAME = "screen_collection.json"
 STRUCTURAL_AUDIT_FILENAME = "structural_audit.json"
 EVALUATION_FILENAME = "frozen_evaluation.json"
 ARITHMETIC_AUDIT_FILENAME = "independent_arithmetic_audit.json"
+
+PARENT_STAGE6B1_SMOKE_ARTIFACTS = {
+    "calibration": {
+        "path": Path(
+            "outputs/issue53_stage6b1_gap_l1_screen_smoke_v1/"
+            "calibration_manifest.json"
+        ),
+        "sha256": (
+            "2588692c090f0c7f6282c1c63fc98106b8e17600260bd4f030b51becf13b2d92"
+        ),
+    },
+    "collection": {
+        "path": Path(
+            "outputs/issue53_stage6b1_gap_l1_screen_smoke_v1/"
+            "screen_collection.json"
+        ),
+        "sha256": (
+            "7502866bf0c2fade2f895e8b072fa4b095d7d1f37cc6ac5b5e43d9fe4f573cda"
+        ),
+    },
+    "structural_audit": {
+        "path": Path(
+            "outputs/issue53_stage6b1_gap_l1_screen_smoke_v1/"
+            "structural_audit.json"
+        ),
+        "sha256": (
+            "315676f60fe52ef864d0a53ab6e661bf9576d2f706aedec4d733c54f358add0f"
+        ),
+    },
+    "frozen_evaluation": {
+        "path": Path(
+            "outputs/issue53_stage6b1_gap_l1_screen_smoke_v1/"
+            "frozen_evaluation.json"
+        ),
+        "sha256": (
+            "591b952c1248609672b520a6ee5f79fa0c2b11b7ee44231d85333c927181e5dd"
+        ),
+    },
+    "independent_arithmetic_audit": {
+        "path": Path(
+            "outputs/issue53_stage6b1_gap_l1_screen_smoke_v1/"
+            "independent_arithmetic_audit.json"
+        ),
+        "sha256": (
+            "edfc4cdb28e396a311aa5bc3c30d19ea4d85f3766edbda6a4a6d392bbef320c8"
+        ),
+    },
+}
 
 SOURCE_ARTIFACTS = {
     "formal": {
@@ -161,11 +221,10 @@ DATASET_RESULT_LABELS = (
     "gap_mechanism_with_transition_risk",
     "gap_kernel_development_supported",
 )
-CROSS_DATASET_RESULT_LABELS = (
-    "shared_development_support",
-    "dataset_dependent_development_support",
-    "no_shared_development_support",
-    "inconclusive_or_invalid_screen",
+STAGE1_DECISION_LABELS = (
+    "advance_to_nltcs_gpu_protocol",
+    "stop_before_nltcs_no_test300_support",
+    "stage1_inconclusive_or_invalid",
 )
 
 
@@ -263,7 +322,7 @@ def gibbs_address_seed(
         dataset, seed, group, proposal_index, "update", mode=mode
     )
     payload = _strict_json_bytes({
-        "domain": PROTOCOL_VERSION,
+        "domain": RNG_DOMAIN_VERSION,
         "stream": (
             "factor_b_gibbs_rng" if arm == ARM_FACTOR
             else "gap_l1_gibbs_rng"
@@ -293,7 +352,7 @@ def frozen_protocol_manifest() -> dict[str, Any]:
     return {
         "contract_version": PROTOCOL_VERSION,
         "issue": 53,
-        "stage": "6B-1_gap_l1_fixed_state_development_screen",
+        "stage": "6B-1A_test300_gap_l1_fixed_state_development_screen",
         "protocol_document": {
             "path": str(PROTOCOL_DOC),
             "sha256": PROTOCOL_DOC_SHA256,
@@ -306,7 +365,33 @@ def frozen_protocol_manifest() -> dict[str, Any]:
             "formal_artifacts": _source_manifest("formal"),
             "smoke_artifacts": _source_manifest("smoke"),
         },
+        "parent_stage6b1": {
+            "execution_commit": PARENT_STAGE6B1_EXECUTION_COMMIT,
+            "protocol_doc_sha256": PARENT_STAGE6B1_PROTOCOL_DOC_SHA256,
+            "protocol_sha256": PARENT_STAGE6B1_PROTOCOL_SHA256,
+            "smoke_artifacts": {
+                name: {
+                    "path": str(binding["path"]),
+                    "sha256": binding["sha256"],
+                }
+                for name, binding in PARENT_STAGE6B1_SMOKE_ARTIFACTS.items()
+            },
+        },
         "dataset_order": list(DATASET_ORDER),
+        "gibbs_rng_domain_version": RNG_DOMAIN_VERSION,
+        "execution_scope": {
+            "stage": "test300_first",
+            "only_formal_dataset": "test_300x10",
+            "nltcs_dataset_runtime_constructed": False,
+            "cross_dataset_claim_allowed": False,
+            "stage1_result_may_only_control_stage2_protocol_preparation": True,
+            "stage2_nltcs_authorized": False,
+            "stage2_physical_gpu": 1,
+            "stage2_gap_kernel_cpu_path_allowed": False,
+            "stage2_gap_replay_audit_cpu_path_allowed": False,
+            "stage2_exact_rational_final_check_may_use_cpu": True,
+            "stage2_parameters_may_change_from_stage1_result": False,
+        },
         "formal_seeds": list(FORMAL_SEEDS),
         "smoke_seed": SMOKE_SEED,
         "state_groups": list(STATE_GROUPS),
@@ -364,12 +449,14 @@ def frozen_protocol_manifest() -> dict[str, Any]:
         },
         "no_gate_contract": dict(NO_GATE_CONTRACT),
         "formal_matrix": {
-            "state_count": 50,
+            "state_count": 25,
             "pair_count": formal_pairs,
             "arm_leg_record_count": formal_pairs * len(ARMS) * 2,
+            "dataset_effect_claim": "test_300x10_only",
+            "cross_dataset_claim": None,
         },
         "smoke_matrix": {
-            "state_count": 10,
+            "state_count": 5,
             "pair_count": smoke_pairs,
             "arm_leg_record_count": smoke_pairs * len(ARMS) * 2,
             "formal_result_valid": False,
@@ -388,7 +475,16 @@ def frozen_protocol_manifest() -> dict[str, Any]:
         },
         "execution_failures": list(EXECUTION_FAILURE_LABELS),
         "dataset_result_labels": list(DATASET_RESULT_LABELS),
-        "cross_dataset_result_labels": list(CROSS_DATASET_RESULT_LABELS),
+        "stage1_decision_labels": list(STAGE1_DECISION_LABELS),
+        "stage1_decision_rule": {
+            "gap_kernel_development_supported": (
+                "advance_to_nltcs_gpu_protocol"
+            ),
+            "other_valid_dataset_label": (
+                "stop_before_nltcs_no_test300_support"
+            ),
+            "execution_failure_label": "stage1_inconclusive_or_invalid",
+        },
         "result_blind_pipeline": [
             "calibration_manifest",
             "three_arm_collection",
@@ -412,6 +508,9 @@ def assert_frozen_protocol_identity(repository_root: str | Path) -> None:
         raise RuntimeError("第 6B-1 阶段协议文档身份漂移")
     if protocol_sha256() != FROZEN_PROTOCOL_SHA256:
         raise RuntimeError("第 6B-1 阶段协议 manifest 身份漂移")
+    for name, binding in PARENT_STAGE6B1_SMOKE_ARTIFACTS.items():
+        if file_sha256(root / binding["path"]) != binding["sha256"]:
+            raise RuntimeError(f"原第 6B-1 阶段小规模产物漂移：{name}")
 
 
 def assert_source_artifact_identities(
@@ -464,22 +563,16 @@ def classify_dataset(
     return "gap_kernel_development_supported"
 
 
-def classify_cross_dataset(labels: Mapping[str, str]) -> str:
+def classify_stage1(labels: Mapping[str, str]) -> str:
     if set(labels) != set(DATASET_ORDER):
-        raise ValueError("跨数据标签必须恰好覆盖冻结数据集")
+        raise ValueError("第一阶段标签必须恰好覆盖小数据集")
     if any(label not in DATASET_RESULT_LABELS for label in labels.values()):
         raise ValueError("包含未知数据集标签")
     if any(label in EXECUTION_FAILURE_LABELS for label in labels.values()):
-        return "inconclusive_or_invalid_screen"
-    supported = sum(
-        label == "gap_kernel_development_supported"
-        for label in labels.values()
-    )
-    if supported == len(DATASET_ORDER):
-        return "shared_development_support"
-    if supported == 1:
-        return "dataset_dependent_development_support"
-    return "no_shared_development_support"
+        return "stage1_inconclusive_or_invalid"
+    if labels["test_300x10"] == "gap_kernel_development_supported":
+        return "advance_to_nltcs_gpu_protocol"
+    return "stop_before_nltcs_no_test300_support"
 
 
 def build_plan(mode: str) -> dict[str, Any]:

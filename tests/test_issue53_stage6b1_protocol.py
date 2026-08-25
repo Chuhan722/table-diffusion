@@ -26,15 +26,24 @@ def test_frozen_document_manifest_and_source_artifacts_are_bound():
         "independent_arithmetic_audit",
     }
     protocol.assert_source_artifact_identities(REPOSITORY_ROOT, "smoke")
+    assert protocol.PARENT_STAGE6B1_PROTOCOL_SHA256 == (
+        "6087598eda6080711f532f07566be28680f86ea2059c7afe09085b1b7e30b0dc"
+    )
+    for binding in protocol.PARENT_STAGE6B1_SMOKE_ARTIFACTS.values():
+        assert protocol.file_sha256(
+            REPOSITORY_ROOT / binding["path"]
+        ) == binding["sha256"]
 
 
 def test_frozen_matrices_and_no_gate_contract_are_exact():
     formal = protocol.build_plan("formal")
     smoke = protocol.build_plan("smoke")
-    assert formal["pair_count"] == 5500
-    assert formal["arm_leg_record_count"] == 33000
-    assert smoke["pair_count"] == 20
-    assert smoke["arm_leg_record_count"] == 120
+    assert formal["datasets"] == ["test_300x10"]
+    assert formal["pair_count"] == 5000
+    assert formal["arm_leg_record_count"] == 30000
+    assert smoke["datasets"] == ["test_300x10"]
+    assert smoke["pair_count"] == 10
+    assert smoke["arm_leg_record_count"] == 60
     assert protocol.ARMS == (
         "independent_b_s0",
         "factor_b_s8",
@@ -101,6 +110,46 @@ def test_gibbs_streams_are_deterministic_unique_and_domain_isolated():
         )
 
 
+def test_stage1_reuses_original_stage6b1_gibbs_address_domain():
+    assert protocol.RNG_DOMAIN_VERSION == (
+        "issue53-stage6b1-gap-l1-fixed-state-screen-v1"
+    )
+    assert protocol.gibbs_address_seed(
+        "test_300x10",
+        348,
+        "initial",
+        0,
+        protocol.ARM_FACTOR,
+        mode="formal",
+    ) == 8925589475095895860
+    assert protocol.gibbs_address_seed(
+        "test_300x10",
+        348,
+        "initial",
+        0,
+        protocol.ARM_GAP_L1,
+        mode="formal",
+    ) == 16072142247567796561
+    # 这两个快照同时与已通过双审计的原第 6B-1 阶段
+    # 小规模落盘产物一致，防止分阶段修正重抽随机流。
+    assert protocol.gibbs_address_seed(
+        "test_300x10",
+        9906,
+        "terminal",
+        1,
+        protocol.ARM_FACTOR,
+        mode="smoke",
+    ) == 16938597047447038544
+    assert protocol.gibbs_address_seed(
+        "test_300x10",
+        9906,
+        "terminal",
+        1,
+        protocol.ARM_GAP_L1,
+        mode="smoke",
+    ) == 1282527255084910333
+
+
 def test_every_run_requires_separate_exact_confirmation():
     for mode in ("smoke", "formal"):
         with pytest.raises(PermissionError, match="单独授权"):
@@ -151,18 +200,20 @@ def test_dataset_classification_obeys_frozen_precedence(kwargs, expected):
     assert protocol.classify_dataset(**values) == expected
 
 
-def test_cross_dataset_classification_is_frozen():
+def test_stage1_resource_decision_is_frozen():
     supported = "gap_kernel_development_supported"
     failed = "no_stable_gap_error_gain"
-    assert protocol.classify_cross_dataset({
-        "test_300x10": supported, "nltcs": supported
-    }) == "shared_development_support"
-    assert protocol.classify_cross_dataset({
-        "test_300x10": supported, "nltcs": failed
-    }) == "dataset_dependent_development_support"
-    assert protocol.classify_cross_dataset({
-        "test_300x10": failed, "nltcs": failed
-    }) == "no_shared_development_support"
-    assert protocol.classify_cross_dataset({
-        "test_300x10": "calibration_unsupported", "nltcs": supported
-    }) == "inconclusive_or_invalid_screen"
+    assert protocol.classify_stage1({
+        "test_300x10": supported
+    }) == "advance_to_nltcs_gpu_protocol"
+    assert protocol.classify_stage1({
+        "test_300x10": failed
+    }) == "stop_before_nltcs_no_test300_support"
+    assert protocol.classify_stage1({
+        "test_300x10": "calibration_unsupported"
+    }) == "stage1_inconclusive_or_invalid"
+    with pytest.raises(ValueError, match="恰好覆盖"):
+        protocol.classify_stage1({
+            "test_300x10": supported,
+            "nltcs": supported,
+        })
