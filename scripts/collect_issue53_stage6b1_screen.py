@@ -433,15 +433,17 @@ def validate_collection(value: Mapping[str, Any], *, mode: str) -> None:
     # 防止结果记录自身出现候选门控或筛查结论。
     walk(pairs)
     for pair in pairs:
+        arms = pair.get("arms", {})
         if (
             pair.get("retained_unconditionally") is not True
-            or tuple(pair.get("arms", {}).keys()) != protocol.ARMS
+            or not isinstance(arms, dict)
+            or set(arms) != set(protocol.ARMS)
         ):
             raise RuntimeError("逐地址三组覆盖或无条件保留身份失败")
         for arm in protocol.ARMS:
-            if pair["arms"][arm].get("retained_unconditionally") is not True:
+            if arms[arm].get("retained_unconditionally") is not True:
                 raise RuntimeError("组结果没有无条件保留")
-        gap = pair["arms"][protocol.ARM_GAP_L1]["kernel_diagnostics"]
+        gap = arms[protocol.ARM_GAP_L1]["kernel_diagnostics"]
         if pair["address_status"] == "generated_unconditionally" and (
             gap.get("gibbs_microsteps")
             != protocol.GIBBS_SWEEPS * gap.get("active_switches_k", -1)

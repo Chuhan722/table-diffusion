@@ -2,6 +2,7 @@
 
 import ast
 from fractions import Fraction
+import json
 from pathlib import Path
 
 import numpy as np
@@ -282,7 +283,10 @@ def test_result_artifact_validators_keep_smoke_result_blind(monkeypatch):
     collection["collection_scientific_sha256"] = (
         protocol.canonical_sha256(collector.scientific_payload(collection))
     )
-    collector.validate_collection(collection, mode="smoke")
+    # 产物写盘时会使用 sort_keys=True；校验器必须接受真实落盘后
+    # 的键顺序，同时仍严格要求三个冻结组恰好完整覆盖。
+    persisted_collection = json.loads(json.dumps(collection, sort_keys=True))
+    collector.validate_collection(persisted_collection, mode="smoke")
 
     structural_report = {
         "structural_audit_format": structural.AUDIT_FORMAT,
