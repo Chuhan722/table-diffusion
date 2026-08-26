@@ -38,6 +38,7 @@ DEFAULT_GAP_L1_STRENGTH = 2.0
 DEFAULT_GAP_L1_SWEEPS = 8
 DEFAULT_GAP_L1_LOGIT_CLIP = 30.0
 TRACE_FORMAT = "issue53_gap_l1_microstep_trace_le_v1"
+BATCH_EXECUTION_FORMAT = "issue53_gap_l1_batched_cuda_float64_v2_candidate"
 
 
 @dataclass(frozen=True)
@@ -900,6 +901,230 @@ def _set_coordinate_cuda(
     plan.mask[row_index, attribute_index] = selected
 
 
+def _validate_cuda_batch_inputs(
+    donor_tables: Sequence[Any],
+    participates: Sequence[Any],
+    initial_masks: Sequence[Any],
+    rngs: Sequence[Any],
+) -> int:
+    """在使用显卡前验证逐地址批量输入和随机流。"""
+
+    lengths = (
+        len(donor_tables),
+        len(participates),
+        len(initial_masks),
+        len(rngs),
+    )
+    if lengths[0] == 0 or any(value != lengths[0] for value in lengths[1:]):
+        raise ValueError("逐地址输入与 rngs 必须是同长度非空序列")
+    if any(not isinstance(rng, np.random.Generator) for rng in rngs):
+        raise ValueError("rngs 中每一项都必须是 np.random.Generator")
+    return lengths[0]
+
+
+def _cuda_padded_query_layout(
+    compiled: CompiledGapL1Workload,
+    *,
+    torch: Any,
+    device: Any,
+) -> Tuple[Any, Any, int]:
+    """按属性填充查询索引，并为填充位置建立互不重复的哨兵。"""
+
+    real_widths = [
+        len(indices) for indices in compiled.query_indices_by_attribute
+    ]
+    padded_width = max([1] + real_widths)
+    n_attributes = len(compiled.attribute_names)
+    n_queries = compiled.n_queries
+    indices = np.empty((n_attributes, padded_width), dtype=np.int64)
+    valid = np.zeros((n_attributes, padded_width), dtype=bool)
+    sentinels = np.arange(
+        n_queries, n_queries + padded_width, dtype=np.int64
+    )
+    for attribute_index, query_indices in enumerate(
+        compiled.query_indices_by_attribute
+    ):
+        width = len(query_indices)
+        if width:
+            indices[attribute_index, :width] = query_indices
+            valid[attribute_index, :width] = True
+        indices[attribute_index, width:] = sentinels[: padded_width - width]
+    return (
+        torch.as_tensor(indices, dtype=torch.long, device=device),
+        torch.as_tensor(valid, dtype=torch.bool, device=device),
+        padded_width,
+    )
+
+
+def _gap_l1_padded_batched_microstep_cuda(
+    *,
+    failure_counts: Any,
+    row_indicators: Any,
+    plan_counts: Any,
+    error_terms: Any,
+    error_sum: Any,
+    masks: Any,
+    current_failures: Any,
+    donor_failures: Any,
+    query_indices_by_attribute: Any,
+    query_valid_by_attribute: Any,
+    target: Any,
+    denominators: Any,
+    query_count: int,
+    scale: Any,
+    base_logit: Any,
+    strength: Any,
+    clip: Any,
+    torch: Any,
+    batch_indices: Any,
+    coordinates: Any,
+    local_rows: Any,
+    rolls: Any,
+    step_valid: Any,
+) -> Tuple[Any, Any]:
+    """同时推进多个地址各自的一个严格有序微步。"""
+
+    row_indices = coordinates[:, 0]
+    attribute_indices = coordinates[:, 1]
+    query_indices = query_indices_by_attribute.index_select(
+        0, attribute_indices
+    )
+    query_valid = query_valid_by_attribute.index_select(
+        0, attribute_indices
+    )
+    current = current_failures[
+        batch_indices, attribute_indices, local_rows
+    ]
+    donor = donor_failures[
+        batch_indices, attribute_indices, local_rows
+    ]
+    old_selected = masks[
+        batch_indices, row_indices, attribute_indices
+    ]
+    old_failures = torch.where(
+        old_selected.unsqueeze(1), donor, current
+    )
+
+    full_failure_rows = failure_counts[batch_indices, local_rows]
+    full_indicator_rows = row_indicators[batch_indices, local_rows]
+    failure_rows = full_failure_rows.gather(1, query_indices)
+    indicator_rows = full_indicator_rows.gather(1, query_indices)
+    count_rows = plan_counts.gather(1, query_indices)
+    error_rows = error_terms.gather(1, query_indices)
+    base_failures = failure_rows - old_failures
+    failures0 = base_failures + current
+    failures1 = base_failures + donor
+    indicators0 = failures0 == 0
+    indicators1 = failures1 == 0
+    counts0 = (
+        count_rows
+        + indicators0.to(torch.int64)
+        - indicator_rows.to(torch.int64)
+    )
+    counts1 = (
+        count_rows
+        + indicators1.to(torch.int64)
+        - indicator_rows.to(torch.int64)
+    )
+    target_rows = target[query_indices]
+    denominator_rows = denominators[query_indices]
+    terms0 = (
+        torch.abs(target_rows - counts0.to(torch.float64))
+        / denominator_rows
+    )
+    terms1 = (
+        torch.abs(target_rows - counts1.to(torch.float64))
+        / denominator_rows
+    )
+
+    old_sum = torch.where(query_valid, error_rows, 0.0).sum(
+        dim=1, dtype=torch.float64
+    )
+    sum0 = (
+        error_sum
+        - old_sum
+        + torch.where(query_valid, terms0, 0.0).sum(
+            dim=1, dtype=torch.float64
+        )
+    )
+    sum1 = (
+        error_sum
+        - old_sum
+        + torch.where(query_valid, terms1, 0.0).sum(
+            dim=1, dtype=torch.float64
+        )
+    )
+    e0 = sum0 / query_count
+    e1 = sum1 / query_count
+    score = e0 - e1
+    normalized = score / scale
+    raw_logit = base_logit + strength * normalized
+    effective_logit = raw_logit.clamp(min=-clip, max=clip)
+    probabilities = effective_logit.sigmoid()
+    clipped = raw_logit != effective_logit
+    proposed = rolls < probabilities
+    selected = torch.where(step_valid, proposed, old_selected)
+    changed = step_valid & (selected != old_selected)
+
+    selected_failures = torch.where(
+        selected.unsqueeze(1), failures1, failures0
+    )
+    selected_indicators = torch.where(
+        selected.unsqueeze(1), indicators1, indicators0
+    )
+    selected_counts = torch.where(
+        selected.unsqueeze(1), counts1, counts0
+    )
+    selected_terms = torch.where(
+        selected.unsqueeze(1), terms1, terms0
+    )
+    selected_sum = torch.where(selected, sum1, sum0)
+    update = changed.unsqueeze(1) & query_valid
+
+    updated_failure_rows = full_failure_rows.scatter(
+        1,
+        query_indices,
+        torch.where(update, selected_failures, failure_rows),
+    )
+    updated_indicator_rows = full_indicator_rows.scatter(
+        1,
+        query_indices,
+        torch.where(update, selected_indicators, indicator_rows),
+    )
+    failure_counts[batch_indices, local_rows] = updated_failure_rows
+    row_indicators[batch_indices, local_rows] = updated_indicator_rows
+    plan_counts.scatter_(
+        1,
+        query_indices,
+        torch.where(update, selected_counts, count_rows),
+    )
+    error_terms.scatter_(
+        1,
+        query_indices,
+        torch.where(update, selected_terms, error_rows),
+    )
+    error_sum.copy_(torch.where(changed, selected_sum, error_sum))
+    masks[batch_indices, row_indices, attribute_indices] = selected
+
+    floats = torch.stack((
+        e0,
+        e1,
+        score,
+        normalized,
+        raw_logit,
+        probabilities,
+        rolls,
+    ), dim=1)
+    floats = torch.where(
+        step_valid.unsqueeze(1), floats, torch.zeros_like(floats)
+    )
+    booleans = torch.stack(
+        (old_selected, selected, clipped), dim=1
+    )
+    booleans &= step_valid.unsqueeze(1)
+    return floats, booleans
+
+
 def _attribute_failures(
     values: Tuple[np.ndarray, ...],
     local_row: int,
@@ -1180,33 +1405,35 @@ def _materialize_copy_table(
     return result
 
 
-def _full_query_recount_cuda(
+def _full_query_recount_cuda_compiled(
     frame: pd.DataFrame,
     schema: Schema,
-    plan: _CudaGapPlan,
+    compiled: CompiledGapL1Workload,
+    *,
+    torch: Any,
+    device: Any,
 ) -> np.ndarray:
     """用现有 CUDA 条件评价器完整复算全部合取查询。"""
 
-    torch = plan.torch
     truth = evaluate_conditions_vectorized(
         frame,
-        [item.condition for item in plan.compiled.conditions],
+        [item.condition for item in compiled.conditions],
         schema,
         device="cuda",
         return_tensor=True,
         float64=True,
     )
     counts = torch.empty(
-        plan.compiled.n_queries,
+        compiled.n_queries,
         dtype=torch.int64,
-        device=plan.device,
+        device=device,
     )
     for query_index, indices in enumerate(
-        plan.compiled.query_condition_indices
+        compiled.query_condition_indices
     ):
         if indices:
             condition_t = torch.as_tensor(
-                indices, dtype=torch.long, device=plan.device
+                indices, dtype=torch.long, device=device
             )
             matches = truth[:, condition_t].all(dim=1)
             counts[query_index] = matches.sum(dtype=torch.int64)
@@ -1215,8 +1442,22 @@ def _full_query_recount_cuda(
     result = np.asarray(
         counts.detach().cpu().numpy(), dtype=np.int64
     )
-    torch.cuda.synchronize(plan.device)
+    torch.cuda.synchronize(device)
     return result
+
+
+def _full_query_recount_cuda(
+    frame: pd.DataFrame,
+    schema: Schema,
+    plan: _CudaGapPlan,
+) -> np.ndarray:
+    return _full_query_recount_cuda_compiled(
+        frame,
+        schema,
+        plan.compiled,
+        torch=plan.torch,
+        device=plan.device,
+    )
 
 
 def _build_scan_diagnostics(
@@ -2037,6 +2278,506 @@ def _evolve_step_gap_l1_global_cuda(
         total_elapsed=time.perf_counter() - started,
     )
     return copy_table, final_mask.copy(), diagnostics
+
+
+def _evolve_step_gap_l1_global_cuda_batched(
+    current: pd.DataFrame,
+    donor_tables: Sequence[pd.DataFrame],
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    *,
+    participates: Sequence[Any],
+    initial_masks: Sequence[Any],
+    reference_scale: float,
+    rngs: Sequence[np.random.Generator],
+    n_sweeps: int,
+    eta: float,
+    strength: float,
+    floor: float,
+    logit_clip: float,
+    compiled_workload: Optional[CompiledGapL1Workload],
+    verify_full_recount: bool,
+) -> Tuple[
+    Tuple[Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]], ...],
+    Dict[str, Any],
+]:
+    """不同地址的 CUDA 双精度批量执行及内部对拍轨迹。"""
+
+    batch_size = _validate_cuda_batch_inputs(
+        donor_tables, participates, initial_masks, rngs
+    )
+    sweeps = _require_nonnegative_integer(n_sweeps, "n_sweeps")
+    compiled = (
+        compile_gap_l1_workload(schema, queries)
+        if compiled_workload is None
+        else compiled_workload
+    )
+    started = time.perf_counter()
+    plans = [
+        _prepare_cuda_plan(
+            current,
+            donor_tables[index],
+            schema,
+            queries,
+            target,
+            current_counts,
+            participates[index],
+            initial_masks[index],
+            floor=floor,
+            compiled_workload=compiled,
+        )
+        for index in range(batch_size)
+    ]
+    first = plans[0]
+    torch = first.torch
+    device = first.device
+    n_attributes = len(compiled.attribute_names)
+    n_queries = compiled.n_queries
+    active_row_counts = [len(plan.active_rows) for plan in plans]
+    maximum_active_rows = max(active_row_counts)
+    active_switches = [len(plan.active_coordinates) for plan in plans]
+    microsteps_by_address = [sweeps * value for value in active_switches]
+    maximum_microsteps = max(microsteps_by_address)
+    (
+        query_indices_by_attribute,
+        query_valid_by_attribute,
+        padded_query_width,
+    ) = _cuda_padded_query_layout(
+        compiled, torch=torch, device=device
+    )
+    extended_query_count = n_queries + padded_query_width
+
+    failure_counts = torch.zeros(
+        (batch_size, maximum_active_rows, extended_query_count),
+        dtype=torch.int32,
+        device=device,
+    )
+    row_indicators = torch.ones(
+        (batch_size, maximum_active_rows, extended_query_count),
+        dtype=torch.bool,
+        device=device,
+    )
+    plan_counts = torch.zeros(
+        (batch_size, extended_query_count),
+        dtype=torch.int64,
+        device=device,
+    )
+    error_terms = torch.zeros(
+        (batch_size, extended_query_count),
+        dtype=torch.float64,
+        device=device,
+    )
+    error_sum = torch.stack([plan.error_sum for plan in plans], dim=0)
+    masks = torch.stack([plan.mask for plan in plans], dim=0)
+    current_failures = torch.zeros(
+        (
+            batch_size,
+            n_attributes,
+            maximum_active_rows,
+            padded_query_width,
+        ),
+        dtype=torch.int32,
+        device=device,
+    )
+    donor_failures = torch.zeros_like(current_failures)
+    for batch_index, plan in enumerate(plans):
+        active_rows = active_row_counts[batch_index]
+        if active_rows:
+            failure_counts[
+                batch_index, :active_rows, :n_queries
+            ] = plan.failure_counts
+            row_indicators[
+                batch_index, :active_rows, :n_queries
+            ] = plan.row_indicators
+        plan_counts[batch_index, :n_queries] = plan.plan_counts
+        error_terms[batch_index, :n_queries] = plan.error_terms
+        for attribute_index, query_indices in enumerate(
+            compiled.query_indices_by_attribute
+        ):
+            width = len(query_indices)
+            if active_rows and width:
+                current_failures[
+                    batch_index,
+                    attribute_index,
+                    :active_rows,
+                    :width,
+                ] = plan.current_attribute_failures[attribute_index]
+                donor_failures[
+                    batch_index,
+                    attribute_index,
+                    :active_rows,
+                    :width,
+                ] = plan.donor_attribute_failures[attribute_index]
+
+    target_t = torch.zeros(
+        extended_query_count, dtype=torch.float64, device=device
+    )
+    target_t[:n_queries] = first.target
+    denominators_t = torch.ones_like(target_t)
+    denominators_t[:n_queries] = first.denominators
+    (
+        scale_value,
+        scale_t,
+        base_logit_t,
+        strength_t,
+        clip_t,
+    ) = _cuda_probability_parameters(
+        first,
+        reference_scale,
+        eta=eta,
+        strength=strength,
+        logit_clip=logit_clip,
+    )
+
+    coordinate_tapes = np.zeros(
+        (batch_size, maximum_microsteps, 2), dtype=np.int64
+    )
+    local_row_tapes = np.zeros(
+        (batch_size, maximum_microsteps), dtype=np.int64
+    )
+    roll_tapes = np.zeros(
+        (batch_size, maximum_microsteps), dtype=np.float64
+    )
+    valid_step_mask = np.zeros(
+        (batch_size, maximum_microsteps), dtype=bool
+    )
+    for batch_index, (plan, rng) in enumerate(zip(plans, rngs)):
+        microsteps = microsteps_by_address[batch_index]
+        active_count = active_switches[batch_index]
+        if microsteps == 0:
+            continue
+        coordinate_indices = np.empty(microsteps, dtype=np.int64)
+        rolls = np.empty(microsteps, dtype=np.float64)
+        for step in range(microsteps):
+            coordinate_indices[step] = rng.integers(0, active_count)
+            rolls[step] = rng.random()
+        coordinates = np.asarray(
+            plan.active_coordinates[coordinate_indices], dtype=np.int64
+        )
+        coordinate_tapes[batch_index, :microsteps] = coordinates
+        local_row_tapes[batch_index, :microsteps] = (
+            plan.row_lookup[coordinates[:, 0]]
+        )
+        roll_tapes[batch_index, :microsteps] = rolls
+        valid_step_mask[batch_index, :microsteps] = True
+
+    coordinate_tapes_t = torch.as_tensor(
+        coordinate_tapes, dtype=torch.long, device=device
+    )
+    local_row_tapes_t = torch.as_tensor(
+        local_row_tapes, dtype=torch.long, device=device
+    )
+    roll_tapes_t = torch.as_tensor(
+        roll_tapes, dtype=torch.float64, device=device
+    )
+    valid_step_mask_t = torch.as_tensor(
+        valid_step_mask, dtype=torch.bool, device=device
+    )
+    float_values_t = torch.zeros(
+        (batch_size, maximum_microsteps, 7),
+        dtype=torch.float64,
+        device=device,
+    )
+    bool_values_t = torch.zeros(
+        (batch_size, maximum_microsteps, 3),
+        dtype=torch.bool,
+        device=device,
+    )
+    batch_indices = torch.arange(
+        batch_size, dtype=torch.long, device=device
+    )
+    del plan
+    del first
+    del plans
+    torch.cuda.synchronize(device)
+    prepared_elapsed = time.perf_counter() - started
+
+    scan_started = time.perf_counter()
+    for step in range(maximum_microsteps):
+        floats, booleans = _gap_l1_padded_batched_microstep_cuda(
+            failure_counts=failure_counts,
+            row_indicators=row_indicators,
+            plan_counts=plan_counts,
+            error_terms=error_terms,
+            error_sum=error_sum,
+            masks=masks,
+            current_failures=current_failures,
+            donor_failures=donor_failures,
+            query_indices_by_attribute=query_indices_by_attribute,
+            query_valid_by_attribute=query_valid_by_attribute,
+            target=target_t,
+            denominators=denominators_t,
+            query_count=n_queries,
+            scale=scale_t,
+            base_logit=base_logit_t,
+            strength=strength_t,
+            clip=clip_t,
+            torch=torch,
+            batch_indices=batch_indices,
+            coordinates=coordinate_tapes_t[:, step],
+            local_rows=local_row_tapes_t[:, step],
+            rolls=roll_tapes_t[:, step],
+            step_valid=valid_step_mask_t[:, step],
+        )
+        float_values_t[:, step] = floats
+        bool_values_t[:, step] = booleans
+
+    safe_probabilities_t = torch.where(
+        valid_step_mask_t,
+        float_values_t[:, :, 5],
+        torch.full_like(float_values_t[:, :, 5], 0.5),
+    )
+    one_minus_probability_t = 1.0 - safe_probabilities_t
+    entropy_values_t = -(
+        safe_probabilities_t * safe_probabilities_t.log()
+        + one_minus_probability_t * (-safe_probabilities_t).log1p()
+    )
+    entropy_values_t = torch.where(
+        valid_step_mask_t,
+        entropy_values_t,
+        torch.zeros_like(entropy_values_t),
+    )
+    padded_float_values = np.asarray(
+        float_values_t.detach().cpu().numpy(), dtype=np.float64
+    )
+    padded_bool_values = np.asarray(
+        bool_values_t.detach().cpu().numpy(), dtype=bool
+    )
+    padded_entropy_values = np.asarray(
+        entropy_values_t.detach().cpu().numpy(), dtype=np.float64
+    )
+    final_counts = np.asarray(
+        plan_counts[:, :n_queries].detach().cpu().numpy(), dtype=np.int64
+    )
+    final_masks = np.asarray(
+        masks.detach().cpu().numpy(), dtype=bool
+    )
+    torch.cuda.synchronize(device)
+    scan_elapsed = time.perf_counter() - scan_started
+
+    valid_float_values = padded_float_values[valid_step_mask]
+    if not np.all(np.isfinite(valid_float_values)):
+        raise RuntimeError("CUDA 批量缺口扫描产生非有限条件数值")
+    probabilities = padded_float_values[:, :, 5][valid_step_mask]
+    if np.any((probabilities <= 0.0) | (probabilities >= 1.0)):
+        raise RuntimeError("CUDA 批量缺口扫描产生精确 0/1 条件概率")
+    if not np.array_equal(
+        padded_bool_values[:, :, 1][valid_step_mask],
+        roll_tapes[valid_step_mask] < probabilities,
+    ):
+        raise RuntimeError("CUDA 批量抽样开关与只读随机带不一致")
+    if np.any(padded_float_values[~valid_step_mask] != 0.0) or np.any(
+        padded_bool_values[~valid_step_mask]
+    ):
+        raise RuntimeError("CUDA 批量填充微步意外产生输出")
+
+    post_started = time.perf_counter()
+    address_rows = []
+    coordinates_by_address = []
+    rolls_by_address = []
+    floats_by_address = []
+    booleans_by_address = []
+    for batch_index, microsteps in enumerate(microsteps_by_address):
+        coordinates = coordinate_tapes[batch_index, :microsteps].copy()
+        rolls = roll_tapes[batch_index, :microsteps].copy()
+        float_values = padded_float_values[batch_index, :microsteps].copy()
+        bool_values = padded_bool_values[batch_index, :microsteps].copy()
+        entropy_values = padded_entropy_values[
+            batch_index, :microsteps
+        ].copy()
+        trace = hashlib.sha256()
+        probability_bins = {
+            "open_0_0p001": 0,
+            "closed_0p001_open_0p01": 0,
+            "closed_0p01_0p99": 0,
+            "open_0p99_closed_0p999": 0,
+            "open_0p999_1": 0,
+        }
+        for step in range(microsteps):
+            row_index, attribute_index = map(int, coordinates[step])
+            e0, e1, score, normalized, raw_logit, probability, roll = map(
+                float, float_values[step]
+            )
+            before, after, clipped = map(bool, bool_values[step])
+            _update_trace(
+                trace,
+                step=step,
+                row_index=row_index,
+                attribute_index=attribute_index,
+                e0=e0,
+                e1=e1,
+                score=score,
+                normalized_score=normalized,
+                raw_logit=raw_logit,
+                probability=probability,
+                random_roll=roll,
+                before=before,
+                after=after,
+                clipped=clipped,
+            )
+            probability_bins[_probability_bin(probability)] += 1
+
+        materialize_started = time.perf_counter()
+        copy_table = _materialize_copy_table(
+            current,
+            donor_tables[batch_index],
+            compiled.attribute_names,
+            final_masks[batch_index],
+        )
+        materialize_elapsed = time.perf_counter() - materialize_started
+        recount_elapsed = 0.0
+        if verify_full_recount:
+            recount_started = time.perf_counter()
+            recounted = _full_query_recount_cuda_compiled(
+                copy_table,
+                schema,
+                compiled,
+                torch=torch,
+                device=device,
+            )
+            recount_elapsed = time.perf_counter() - recount_started
+            if not np.array_equal(recounted, final_counts[batch_index]):
+                raise RuntimeError(
+                    "批量增量查询计数与 CUDA 最终完整复算不一致"
+                )
+        address_rows.append({
+            "table": copy_table,
+            "trace": trace,
+            "probability_bins": probability_bins,
+            "entropy_values": entropy_values,
+            "materialize_elapsed": materialize_elapsed,
+            "recount_elapsed": recount_elapsed,
+        })
+        coordinates_by_address.append(coordinates)
+        rolls_by_address.append(rolls)
+        floats_by_address.append(float_values)
+        booleans_by_address.append(bool_values)
+    post_elapsed = time.perf_counter() - post_started
+    total_elapsed = time.perf_counter() - started
+    padding_microsteps = int(
+        batch_size * maximum_microsteps - sum(microsteps_by_address)
+    )
+
+    results = []
+    for batch_index, row in enumerate(address_rows):
+        float_values = floats_by_address[batch_index]
+        bool_values = booleans_by_address[batch_index]
+        diagnostics = _build_scan_diagnostics(
+            backend="torch_cuda_float64_batched",
+            sweeps=sweeps,
+            k=active_switches[batch_index],
+            scale=scale_value,
+            trace=row["trace"],
+            final_query_counts=final_counts[batch_index],
+            final_mask=final_masks[batch_index],
+            scores=float_values[:, 2].tolist(),
+            normalized_scores=float_values[:, 3].tolist(),
+            raw_logits=float_values[:, 4].tolist(),
+            probabilities=float_values[:, 5].tolist(),
+            entropies=row["entropy_values"].tolist(),
+            probability_bins=row["probability_bins"],
+            clip_hits=int(np.sum(bool_values[:, 2], dtype=np.int64)),
+            prepared_elapsed=prepared_elapsed,
+            scan_elapsed=scan_elapsed,
+            materialize_elapsed=row["materialize_elapsed"],
+            recount_elapsed=row["recount_elapsed"],
+            total_elapsed=total_elapsed,
+        )
+        diagnostics["batch_execution"] = {
+            "format": BATCH_EXECUTION_FORMAT,
+            "batch_size": int(batch_size),
+            "batch_index": int(batch_index),
+            "maximum_padded_microsteps": int(maximum_microsteps),
+            "padding_microsteps_across_batch": padding_microsteps,
+            "strict_internal_order_preserved": True,
+            "timing_scope": "shared_batch_not_additive",
+            "shared_prepare_elapsed_sec_diagnostic_only": prepared_elapsed,
+            "shared_scan_elapsed_sec_diagnostic_only": scan_elapsed,
+            "shared_post_elapsed_sec_diagnostic_only": post_elapsed,
+            "shared_elapsed_sec_diagnostic_only": total_elapsed,
+        }
+        results.append((
+            row["table"],
+            final_masks[batch_index].copy(),
+            diagnostics,
+        ))
+
+    debug = {
+        "backend": "torch_cuda_float64_batched",
+        "batch_execution_format": BATCH_EXECUTION_FORMAT,
+        "batch_size": batch_size,
+        "active_switches_k_by_address": tuple(map(int, active_switches)),
+        "microsteps_by_address": tuple(map(int, microsteps_by_address)),
+        "maximum_padded_microsteps": int(maximum_microsteps),
+        "padding_microsteps": padding_microsteps,
+        "valid_step_mask": valid_step_mask,
+        "reference_scale": scale_value,
+        "coordinates": tuple(coordinates_by_address),
+        "random_rolls": tuple(rolls_by_address),
+        "float_values": tuple(floats_by_address),
+        "bool_values": tuple(booleans_by_address),
+        "timings": {
+            "prepare_elapsed_sec": prepared_elapsed,
+            "scan_elapsed_sec": scan_elapsed,
+            "post_elapsed_sec": post_elapsed,
+            "total_elapsed_sec": total_elapsed,
+        },
+    }
+    return tuple(results), debug
+
+
+def evolve_step_gap_l1_global_batched(
+    current: pd.DataFrame,
+    donor_tables: Sequence[pd.DataFrame],
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    *,
+    participates: Sequence[Any],
+    initial_masks: Sequence[Any],
+    reference_scale: float,
+    rngs: Sequence[np.random.Generator],
+    n_sweeps: int = DEFAULT_GAP_L1_SWEEPS,
+    eta: float = DEFAULT_GAP_L1_ETA,
+    strength: float = DEFAULT_GAP_L1_STRENGTH,
+    floor: float = DEFAULT_GAP_L1_FLOOR,
+    logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
+    compiled_workload: Optional[CompiledGapL1Workload] = None,
+    verify_full_recount: bool = True,
+    device: str = "cuda",
+) -> Tuple[Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]], ...]:
+    """同时执行同一状态内多个不同地址的无门控缺口扫描。
+
+    批量化只改变显卡算术的调度方式。每个地址仍使用自己的供体、参与行、
+    初始开关和随机流，并独立执行严格有序的 ``n_sweeps * K`` 个微步；函数
+    不执行接受、拒绝、候选筛选、回滚或赢家选择。
+    """
+
+    if device != "cuda":
+        raise ValueError("批量缺口扫描 device 只支持 'cuda'")
+    results, _ = _evolve_step_gap_l1_global_cuda_batched(
+        current,
+        donor_tables,
+        schema,
+        queries,
+        target,
+        current_counts,
+        participates=participates,
+        initial_masks=initial_masks,
+        reference_scale=reference_scale,
+        rngs=rngs,
+        n_sweeps=n_sweeps,
+        eta=eta,
+        strength=strength,
+        floor=floor,
+        logit_clip=logit_clip,
+        compiled_workload=compiled_workload,
+        verify_full_recount=verify_full_recount,
+    )
+    return results
 
 
 def evolve_step_gap_l1_global(

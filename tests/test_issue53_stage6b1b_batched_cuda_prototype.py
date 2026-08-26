@@ -123,6 +123,10 @@ def test_prototype_is_not_wired_into_formal_pipeline():
     for relative in production_paths:
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
         assert needle not in text
+    batch_entry = "evolve_step_gap_l1_global_batched"
+    for relative in production_paths[1:]:
+        text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
+        assert batch_entry not in text
 
 
 def test_prototype_rejects_empty_address_batch_before_cuda_use():
@@ -193,6 +197,7 @@ def test_two_address_prototype_matches_existing_single_address_replays():
         torch.use_deterministic_algorithms(previous)
 
     assert result["batch_size"] == 2
+    assert result["production_batch_kernel_called"] is True
     assert result["production_pipeline_enabled"] is False
     assert result["formal_state_or_address_read"] is False
     for index, reference in enumerate(references):

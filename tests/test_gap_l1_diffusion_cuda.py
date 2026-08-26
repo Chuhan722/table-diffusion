@@ -281,6 +281,141 @@ def test_cuda_k_zero_consumes_no_rng():
     assert rng.bit_generator.state == before
 
 
+def test_cuda_batched_different_addresses_match_single_results():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    donor_tables = (
+        donors,
+        current.iloc[[1, 2, 3, 4, 5, 0]].reset_index(drop=True),
+        current.copy(deep=True),
+    )
+    participates = (
+        participate,
+        np.array([True, False, True, True, False, True]),
+        np.ones(len(current), dtype=bool),
+    )
+    initial_masks = [initial_mask]
+    for index in range(1, len(donor_tables)):
+        active = participates[index][:, None] & (
+            current.to_numpy() != donor_tables[index].to_numpy()
+        )
+        initial_masks.append(active & (
+            np.random.default_rng(700 + index).random(active.shape) < 0.5
+        ))
+    seeds = (20260841, 20260842, 20260843)
+    reference_rngs = [np.random.default_rng(seed) for seed in seeds]
+    batch_rngs = [np.random.default_rng(seed) for seed in seeds]
+    compiled = gap.compile_gap_l1_workload(schema, queries)
+    references = [
+        gap.evolve_step_gap_l1_global(
+            current,
+            donor_tables[index],
+            schema,
+            queries,
+            targets,
+            counts,
+            participate=participates[index],
+            initial_mask=initial_masks[index],
+            reference_scale=0.02,
+            rng=reference_rngs[index],
+            n_sweeps=8,
+            compiled_workload=compiled,
+            device="cuda",
+        )
+        for index in range(len(donor_tables))
+    ]
+    results = gap.evolve_step_gap_l1_global_batched(
+        current,
+        donor_tables,
+        schema,
+        queries,
+        targets,
+        counts,
+        participates=participates,
+        initial_masks=initial_masks,
+        reference_scale=0.02,
+        rngs=batch_rngs,
+        n_sweeps=8,
+        compiled_workload=compiled,
+        device="cuda",
+    )
+
+    assert len(results) == len(references) == 3
+    assert results[2][2]["active_switches_k"] == 0
+    for index, (result, reference) in enumerate(zip(results, references)):
+        pd.testing.assert_frame_equal(result[0], reference[0])
+        np.testing.assert_array_equal(result[1], reference[1])
+        assert result[2]["final_query_counts"] == (
+            reference[2]["final_query_counts"]
+        )
+        assert result[2]["no_gate"] is True
+        assert result[2]["backend"] == "torch_cuda_float64_batched"
+        assert result[2]["gibbs_microsteps"] == (
+            8 * result[2]["active_switches_k"]
+        )
+        batch = result[2]["batch_execution"]
+        assert batch["format"] == gap.BATCH_EXECUTION_FORMAT
+        assert batch["batch_size"] == 3
+        assert batch["batch_index"] == index
+        assert batch["strict_internal_order_preserved"] is True
+        assert batch["timing_scope"] == "shared_batch_not_additive"
+        assert (
+            batch_rngs[index].bit_generator.state
+            == reference_rngs[index].bit_generator.state
+        )
+
+
+def test_cuda_batched_rejects_invalid_batch_before_preparation():
+    with pytest.raises(ValueError, match="同长度非空序列"):
+        gap.evolve_step_gap_l1_global_batched(
+            None,
+            (),
+            None,
+            [],
+            None,
+            None,
+            participates=(),
+            initial_masks=(),
+            reference_scale=1.0,
+            rngs=(),
+        )
+    with pytest.raises(ValueError, match="np.random.Generator"):
+        gap.evolve_step_gap_l1_global_batched(
+            None,
+            (None,),
+            None,
+            [],
+            None,
+            None,
+            participates=(None,),
+            initial_masks=(None,),
+            reference_scale=1.0,
+            rngs=(7,),
+        )
+    with pytest.raises(ValueError, match="只支持 'cuda'"):
+        gap.evolve_step_gap_l1_global_batched(
+            None,
+            (),
+            None,
+            [],
+            None,
+            None,
+            participates=(),
+            initial_masks=(),
+            reference_scale=1.0,
+            rngs=(),
+            device="numpy",
+        )
+
+
 def test_independent_condition_evaluator_matches_numpy():
     schema = Schema([
         AttributeBlock(

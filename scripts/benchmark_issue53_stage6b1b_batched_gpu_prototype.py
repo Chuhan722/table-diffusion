@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""测量第 6B-1B 阶段不同地址的 CUDA（显卡计算）批量原型。
+"""人工测量第 6B-1B 阶段不同地址的生产 CUDA（显卡计算）批量核。
 
 本脚本只复用公开 NLTCS（数据集）属性结构和查询定义来构造人工表，不读取
 冻结状态、来源轨迹、正式地址或任何方法效果。每个人工地址使用不同供体、
@@ -424,7 +424,7 @@ def main() -> None:
         int(np.sum(address["participate"])) for address in addresses
     ]
     result = {
-        "status": "artificial_variable_batched_gpu_prototype_complete",
+        "status": "artificial_production_batched_gpu_check_complete",
         "environment": environment,
         "artificial_workload": {
             "rows": args.rows,
@@ -461,6 +461,7 @@ def main() -> None:
             "full_query_state_batched": True,
             "variable_length_padding_and_masks": True,
             "strict_internal_address_order_preserved": True,
+            "production_batch_kernel_called": True,
             "production_pipeline_enabled": False,
             "independent_batched_auditor_implemented": False,
             "formal_state_or_address_read": False,
