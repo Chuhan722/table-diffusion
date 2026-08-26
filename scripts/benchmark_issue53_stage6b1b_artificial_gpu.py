@@ -62,15 +62,15 @@ def _measure(torch, operation):
     }
 
 
-def main() -> None:
-    args = _parser().parse_args()
-    if args.rows <= 0 or not 0.0 < args.participation_rate < 1.0:
-        raise ValueError("人工表行数和参与率无效")
-    if args.sweeps < 0:
-        raise ValueError("人工扫描次数必须是非负整数")
-    environment = validate_gpu_environment()
-    import torch
+def build_artificial_workload(
+    *,
+    rows: int,
+    participation_rate: float,
+) -> dict:
+    """构造不读取任何冻结状态或地址的 NLTCS 同尺寸人工工作量。"""
 
+    if rows <= 0 or not 0.0 < participation_rate < 1.0:
+        raise ValueError("人工表行数和参与率无效")
     schema = load_schema(str(REPOSITORY_ROOT / "configs/nltcs/schema.yaml"))
     queries = load_queries(
         str(REPOSITORY_ROOT / "configs/nltcs/measured_1000query.json")
@@ -78,12 +78,12 @@ def main() -> None:
     attributes = schema.attribute_names()
     rng = np.random.default_rng(ARTIFICIAL_TABLE_SEED)
     current = pd.DataFrame(
-        rng.integers(0, 2, size=(args.rows, len(attributes)), dtype=np.int8),
+        rng.integers(0, 2, size=(rows, len(attributes)), dtype=np.int8),
         columns=attributes,
     )
-    donor_indices = rng.integers(0, args.rows, size=args.rows)
+    donor_indices = rng.integers(0, rows, size=rows)
     donors = current.iloc[donor_indices].reset_index(drop=True)
-    participate = rng.random(args.rows) < args.participation_rate
+    participate = rng.random(rows) < participation_rate
     active = participate[:, None] & (
         current.to_numpy() != donors.to_numpy()
     )
@@ -101,7 +101,45 @@ def main() -> None:
     current_counts = np.asarray(current_counts, dtype=np.int64)
     offsets = (np.arange(len(queries), dtype=np.int64) % 5) - 2
     target = np.maximum(current_counts + offsets, 0).astype(np.float64)
-    exact_numerators = target.astype(np.int64)
+    return {
+        "schema": schema,
+        "queries": queries,
+        "attributes": attributes,
+        "current": current,
+        "donors": donors,
+        "participate": participate,
+        "active": active,
+        "initial_mask": initial_mask,
+        "current_counts": current_counts,
+        "target": target,
+        "exact_target_numerators": target.astype(np.int64),
+    }
+
+
+def main() -> None:
+    args = _parser().parse_args()
+    if args.rows <= 0 or not 0.0 < args.participation_rate < 1.0:
+        raise ValueError("人工表行数和参与率无效")
+    if args.sweeps < 0:
+        raise ValueError("人工扫描次数必须是非负整数")
+    environment = validate_gpu_environment()
+    import torch
+
+    workload = build_artificial_workload(
+        rows=args.rows,
+        participation_rate=args.participation_rate,
+    )
+    schema = workload["schema"]
+    queries = workload["queries"]
+    attributes = workload["attributes"]
+    current = workload["current"]
+    donors = workload["donors"]
+    participate = workload["participate"]
+    active = workload["active"]
+    initial_mask = workload["initial_mask"]
+    current_counts = workload["current_counts"]
+    target = workload["target"]
+    exact_numerators = workload["exact_target_numerators"]
 
     production_isolated, production_calibration_timing = _measure(
         torch,
