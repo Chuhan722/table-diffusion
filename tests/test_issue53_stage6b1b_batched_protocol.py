@@ -146,7 +146,8 @@ def test_batch_plan_is_read_only(mode, batch_size, batch_count, pair_count):
     assert plan["gap_l1_address_batch_size"] == batch_size
     assert plan["gap_l1_state_batch_count"] == batch_count
     assert plan["pair_count"] == pair_count
-    assert plan["formal_pipeline_wired"] is False
+    assert plan["pipeline_wiring_available"] is True
+    assert plan["formal_pipeline_wired_at_protocol_freeze"] is False
     assert plan["source_read_started"] is False
     assert plan["generation_started"] is False
     assert plan["confirmation_consumed"] is False
@@ -162,7 +163,7 @@ def test_batch_protocol_confirmation_is_separate_from_freeze():
     )
 
 
-def test_batch_protocol_is_not_wired_into_formal_pipeline():
+def test_batch_protocol_is_selected_only_through_shared_loader():
     needle = "issue53_stage6b1b_batched_protocol"
     production_paths = (
         "src/table_diffevo/gap_l1_diffusion.py",
@@ -176,3 +177,7 @@ def test_batch_protocol_is_not_wired_into_formal_pipeline():
     for relative in production_paths:
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
         assert needle not in text
+    loader = (
+        REPOSITORY_ROOT / "scripts/issue53_stage6b1_protocol_loader.py"
+    ).read_text(encoding="utf-8")
+    assert '"stage6b1b_batched": "issue53_stage6b1b_batched_protocol"' in loader

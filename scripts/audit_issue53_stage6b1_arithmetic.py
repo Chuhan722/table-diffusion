@@ -86,6 +86,12 @@ if getattr(protocol, "GAP_L1_DEVICE", "numpy") == "cuda":
         "independent_cuda_condition_math_used": True,
         "independent_cuda_final_recount_used": True,
     })
+if getattr(protocol, "BATCHED_GAP_EXECUTION", False):
+    AUDIT_BOUNDARY.update({
+        "production_batched_gap_math_imported": False,
+        "independent_batched_cuda_arithmetic_used": True,
+        "state_address_partition_replayed_exactly": True,
+    })
 
 
 def _json_safe(value: Any, path: tuple[str, ...] = ()) -> Any:
@@ -1737,11 +1743,31 @@ def _mutation_specs(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
-def _audit_generated_pair(
+@dataclass(frozen=True)
+class _PreparedGeneratedAudit:
+    pair: Mapping[str, Any]
+    donor_indices: np.ndarray
+    donors: pd.DataFrame
+    participate: np.ndarray
+    initial_mask: np.ndarray
+    arm_tables: Mapping[str, tuple[pd.DataFrame, pd.DataFrame]]
+    arm_counts: Mapping[str, tuple[np.ndarray, np.ndarray]]
+    gap_seed: int
+
+
+def _expected_production_gap_backend() -> str | None:
+    return getattr(
+        protocol,
+        "COLLECTION_GAP_BACKEND",
+        getattr(protocol, "NEW_KERNEL_BACKEND", None),
+    )
+
+
+def _prepare_generated_audit(
     context: _SourceContext,
     pair: Mapping[str, Any],
     scale: float,
-) -> dict[str, Any]:
+) -> _PreparedGeneratedAudit:
     proposal_index = int(pair["proposal_index"])
     source_pair, donor_indices, donors = _replay_donor(context, proposal_index)
     participate, initial_mask, mutations, direction = _replay_common_update(
@@ -1786,22 +1812,49 @@ def _audit_generated_pair(
         protocol.ARM_GAP_L1,
         mode=context.mode,
     )
-    gap_table, gap_mask, gap_diag = _independent_gap_replay(
-        context, donors, participate, initial_mask, scale, gap_seed
+    return _PreparedGeneratedAudit(
+        pair=pair,
+        donor_indices=donor_indices,
+        donors=donors,
+        participate=participate,
+        initial_mask=initial_mask,
+        arm_tables=arm_tables,
+        arm_counts=arm_counts,
+        gap_seed=int(gap_seed),
     )
+
+
+def _finish_generated_audit(
+    context: _SourceContext,
+    prepared: _PreparedGeneratedAudit,
+    gap_table: pd.DataFrame,
+    gap_mask: np.ndarray,
+    gap_diag: Mapping[str, Any],
+) -> dict[str, Any]:
+    pair = prepared.pair
     recorded_gap = pair["arms"][protocol.ARM_GAP_L1]
+    recorded_copy = prepared.arm_tables[protocol.ARM_GAP_L1][0]
     try:
         pd.testing.assert_frame_equal(
             gap_table,
-            arm_tables[protocol.ARM_GAP_L1][0],
+            recorded_copy,
             check_dtype=True,
             check_exact=True,
         )
     except AssertionError as error:
         raise RuntimeError("独立逐微步最终复制表失败") from error
+    current_values = context.current.to_numpy()
+    donor_values = prepared.donors.to_numpy()
+    copy_values = recorded_copy.to_numpy()
+    expected_mask = (
+        (current_values != donor_values)
+        & (copy_values == donor_values)
+        & (copy_values != current_values)
+    )
     diagnostics = recorded_gap["kernel_diagnostics"]
     if (
-        recorded_gap["gibbs_rng"]["address_uint64"] != gap_seed
+        not np.array_equal(gap_mask, expected_mask)
+        or recorded_gap["gibbs_rng"]["address_uint64"] != prepared.gap_seed
         or recorded_gap["gibbs_rng"]["initial_state_sha256"]
         != gap_diag["initial_rng_sha256"]
         or recorded_gap["gibbs_rng"]["endpoint_state_sha256"]
@@ -1814,20 +1867,38 @@ def _audit_generated_pair(
         != gap_diag["final_query_counts"].tolist()
     ):
         raise RuntimeError("独立逐微步坐标/E0/E1/概率/随机结果失败")
-    expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+    expected_backend = _expected_production_gap_backend()
+    expected_independent = (
+        protocol.INDEPENDENT_BATCH_BACKEND
+        if getattr(protocol, "BATCHED_GAP_EXECUTION", False)
+        else "independent_torch_cuda_float64"
+    )
     if expected_backend is not None and (
-        shared.get("new_kernel_device") != expected_backend
+        pair["shared_replay"].get("new_kernel_device") != expected_backend
         or diagnostics.get("backend") != expected_backend
-        or gap_diag.get("backend") != "independent_torch_cuda_float64"
+        or gap_diag.get("backend") != expected_independent
     ):
         raise RuntimeError("独立审计没有绑定生产/独立 CUDA 后端")
+    if getattr(protocol, "BATCHED_GAP_EXECUTION", False):
+        batch = diagnostics.get("batch_execution", {})
+        if (
+            batch.get("format") != protocol.PRODUCTION_BATCH_EXECUTION_FORMAT
+            or batch.get("batch_size")
+            != protocol.address_batch_size(context.mode)
+            or batch.get("batch_index") != int(pair["proposal_index"])
+            or batch.get("strict_internal_order_preserved") is not True
+            or gap_diag.get("no_gate") is not True
+        ):
+            raise RuntimeError("独立审计没有绑定生产批量位置")
     system = _exact_system(context)
     current_units = system.units(context.q)
     copy_units = {
-        arm: system.units(arm_counts[arm][0]) for arm in protocol.ARMS
+        arm: system.units(prepared.arm_counts[arm][0])
+        for arm in protocol.ARMS
     }
     full_units = {
-        arm: system.units(arm_counts[arm][1]) for arm in protocol.ARMS
+        arm: system.units(prepared.arm_counts[arm][1])
+        for arm in protocol.ARMS
     }
     return {
         "pair_id": pair["pair_id"],
@@ -1841,6 +1912,77 @@ def _audit_generated_pair(
             arm: current_units - copy_units[arm] for arm in protocol.ARMS
         },
     }
+
+
+def _audit_generated_pair(
+    context: _SourceContext,
+    pair: Mapping[str, Any],
+    scale: float,
+) -> dict[str, Any]:
+    prepared = _prepare_generated_audit(context, pair, scale)
+    gap_table, gap_mask, gap_diag = _independent_gap_replay(
+        context,
+        prepared.donors,
+        prepared.participate,
+        prepared.initial_mask,
+        scale,
+        prepared.gap_seed,
+    )
+    return _finish_generated_audit(
+        context, prepared, gap_table, gap_mask, gap_diag
+    )
+
+
+def _audit_generated_state_batched(
+    context: _SourceContext,
+    pairs: Sequence[Mapping[str, Any]],
+    scale: float,
+) -> list[dict[str, Any]]:
+    expected = protocol.address_batch_size(context.mode)
+    if len(pairs) != expected:
+        raise RuntimeError("独立审计状态地址数与冻结批大小不一致")
+    prepared = [
+        _prepare_generated_audit(context, pair, scale) for pair in pairs
+    ]
+    result = _independent_cuda_module().replay_gap_l1_batched_cuda(
+        context.current,
+        [item.donors for item in prepared],
+        context.schema,
+        context.queries,
+        context.target,
+        context.q,
+        [item.participate for item in prepared],
+        [item.initial_mask for item in prepared],
+        reference_scale=scale,
+        seeds=[item.gap_seed for item in prepared],
+        n_sweeps=protocol.GIBBS_SWEEPS,
+        eta=protocol.ETA,
+        strength=protocol.GAP_L1_STRENGTH,
+        floor=protocol.GAP_L1_FLOOR,
+        logit_clip=protocol.LOGIT_CLIP,
+    )
+    if (
+        result.get("batch_execution_format")
+        != protocol.INDEPENDENT_BATCH_AUDIT_FORMAT
+        or result.get("batch_size") != expected
+        or result.get("no_gate") is not True
+        or result.get("production_kernel_called") is not False
+        or any(
+            result.get(name) is None or len(result[name]) != expected
+            for name in ("tables", "masks", "diagnostics")
+        )
+    ):
+        raise RuntimeError("独立批量审计执行身份失败")
+    return [
+        _finish_generated_audit(
+            context,
+            item,
+            result["tables"][index],
+            result["masks"][index],
+            result["diagnostics"][index],
+        )
+        for index, item in enumerate(prepared)
+    ]
 
 
 def _audit_exact_pair(
@@ -1938,6 +2080,10 @@ def audit_arithmetic(
     protocol.require_run_confirmation(mode, confirmed_protocol_sha256)
     protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
     output = Path(output_path).resolve()
+    if hasattr(protocol, "assert_stage_output_path"):
+        protocol.assert_stage_output_path(
+            REPOSITORY_ROOT, mode, "arithmetic_audit", output
+        )
     if output.exists():
         raise FileExistsError(f"独立算术审计输出已存在，不覆盖：{output}")
     git = _git_identity()
@@ -2048,20 +2194,34 @@ def audit_arithmetic(
                 ))
                 state_pair_count = 0
                 state_microsteps = 0
-                for proposal_index in range(
-                    protocol.proposals_per_state(dataset, mode=mode)
-                ):
-                    pair_id = protocol.pair_id(
+                state_pairs = [
+                    pair_index[protocol.pair_id(
                         dataset, seed, group, proposal_index, mode=mode
+                    )]
+                    for proposal_index in range(
+                        protocol.proposals_per_state(dataset, mode=mode)
                     )
-                    pair = pair_index[pair_id]
-                    if exact:
-                        metric = _audit_exact_pair(context, pair)
+                ]
+                if exact:
+                    state_metrics = [
+                        _audit_exact_pair(context, pair)
+                        for pair in state_pairs
+                    ]
+                else:
+                    scale = scale_index[(dataset, seed)]
+                    if scale is None or scale <= 0.0:
+                        raise RuntimeError("非精确地址缺少独立正参考尺度")
+                    if getattr(protocol, "BATCHED_GAP_EXECUTION", False):
+                        state_metrics = _audit_generated_state_batched(
+                            context, state_pairs, scale
+                        )
                     else:
-                        scale = scale_index[(dataset, seed)]
-                        if scale is None or scale <= 0.0:
-                            raise RuntimeError("非精确地址缺少独立正参考尺度")
-                        metric = _audit_generated_pair(context, pair, scale)
+                        state_metrics = [
+                            _audit_generated_pair(context, pair, scale)
+                            for pair in state_pairs
+                        ]
+                for pair, metric in zip(state_pairs, state_metrics):
+                    if not exact:
                         microsteps = int(
                             pair["arms"][protocol.ARM_GAP_L1]
                             ["kernel_diagnostics"]["gibbs_microsteps"]

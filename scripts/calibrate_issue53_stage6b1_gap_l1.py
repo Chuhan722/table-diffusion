@@ -33,6 +33,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CALIBRATION_FORMAT = "issue53_stage6b1_gap_l1_calibration_v1"
 
 
+def _calibration_gap_backend() -> str | None:
+    return getattr(
+        protocol,
+        "CALIBRATION_GAP_BACKEND",
+        getattr(protocol, "NEW_KERNEL_BACKEND", None),
+    )
+
+
 def scientific_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: item
@@ -87,8 +95,8 @@ def _calibrate_one(
             context.query_counts
         ),
         "runtime_device_for_donor_replay": context.runtime_device,
-        "new_kernel_device": getattr(
-            protocol, "NEW_KERNEL_BACKEND", "numpy_float64_cpu"
+        "new_kernel_device": (
+            _calibration_gap_backend() or "numpy_float64_cpu"
         ),
         "search_order": "ascending_frozen_proposal_index",
         "current_error_exactly_zero": current_exact,
@@ -203,7 +211,7 @@ def validate_calibration_manifest(
     ):
         raise RuntimeError("第 6B-1 阶段参考尺度清单结构/身份失败")
     for row in rows:
-        expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+        expected_backend = _calibration_gap_backend()
         if expected_backend is not None and (
             row.get("new_kernel_device") != expected_backend
         ):
@@ -245,6 +253,10 @@ def build_calibration_manifest(
     protocol.require_run_confirmation(mode, confirmed_protocol_sha256)
     protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
     output = Path(output_path).resolve()
+    if hasattr(protocol, "assert_stage_output_path"):
+        protocol.assert_stage_output_path(
+            REPOSITORY_ROOT, mode, "calibration", output
+        )
     if output.exists():
         raise FileExistsError(f"参考尺度输出已存在，不覆盖：{output}")
     git, environment = _validate_execution(

@@ -567,6 +567,10 @@ def evaluate_screen(
     protocol.require_run_confirmation(mode, confirmed_protocol_sha256)
     protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
     output = Path(output_path).resolve()
+    if hasattr(protocol, "assert_stage_output_path"):
+        protocol.assert_stage_output_path(
+            REPOSITORY_ROOT, mode, "evaluation", output
+        )
     if output.exists():
         raise FileExistsError(f"冻结评价输出已存在，不覆盖：{output}")
     git, environment = _validate_execution(

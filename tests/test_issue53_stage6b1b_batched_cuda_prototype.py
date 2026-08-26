@@ -113,7 +113,7 @@ def _variable_addresses(current):
     return donors, participates, tuple(initial_masks)
 
 
-def test_prototype_is_not_wired_into_formal_pipeline():
+def test_prototype_stays_isolated_while_audited_batch_entries_are_wired():
     needle = "issue53_stage6b1b_batched_cuda_prototype"
     production_paths = (
         "src/table_diffevo/gap_l1_diffusion.py",
@@ -127,13 +127,22 @@ def test_prototype_is_not_wired_into_formal_pipeline():
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
         assert needle not in text
     batch_entry = "evolve_step_gap_l1_global_batched"
+    production_batch_paths = {
+        "scripts/collect_issue53_stage6b1_screen.py",
+        "scripts/audit_issue53_stage6b1_structure.py",
+    }
     for relative in production_paths[1:]:
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
-        assert batch_entry not in text
+        assert (batch_entry in text) is (relative in production_batch_paths)
     independent_batch_entry = "replay_gap_l1_batched_cuda"
-    for relative in production_paths:
+    independent_batch_paths = {
+        "scripts/audit_issue53_stage6b1_arithmetic.py",
+    }
+    for relative in production_paths[1:]:
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
-        assert independent_batch_entry not in text
+        assert (independent_batch_entry in text) is (
+            relative in independent_batch_paths
+        )
 
 
 def test_prototype_rejects_empty_address_batch_before_cuda_use():

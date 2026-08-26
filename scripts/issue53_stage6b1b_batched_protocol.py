@@ -68,11 +68,52 @@ OUTPUT_DIR = Path(
 SMOKE_OUTPUT_DIR = Path(
     "outputs/issue53_stage6b1b_nltcs_gap_l1_gpu_batched_screen_smoke_v2"
 )
+BATCHED_GAP_EXECUTION = True
+PIPELINE_WIRING_AVAILABLE = True
+COLLECTION_GAP_BACKEND = PRODUCTION_BATCH_BACKEND
+CALIBRATION_GAP_BACKEND = base.NEW_KERNEL_BACKEND
 
 canonical_sha256 = base.canonical_sha256
 file_sha256 = base.file_sha256
 mode_seeds = base.mode_seeds
 expected_pair_ids = base.expected_pair_ids
+
+
+def __getattr__(name: str) -> Any:
+    """未被批量差量覆盖的协议字段严格继承旧协议。"""
+
+    return getattr(base, name)
+
+
+def address_batch_size(mode: str) -> int:
+    mode_seeds(mode)
+    return (
+        FORMAL_ADDRESS_BATCH_SIZE
+        if mode == "formal"
+        else SMOKE_ADDRESS_BATCH_SIZE
+    )
+
+
+def assert_stage_output_path(
+    repository_root: str | Path,
+    mode: str,
+    stage: str,
+    output_path: str | Path,
+) -> None:
+    mode_seeds(mode)
+    filenames = {
+        "calibration": base.CALIBRATION_FILENAME,
+        "collection": base.COLLECTION_FILENAME,
+        "structural_audit": base.STRUCTURAL_AUDIT_FILENAME,
+        "evaluation": base.EVALUATION_FILENAME,
+        "arithmetic_audit": base.ARITHMETIC_AUDIT_FILENAME,
+    }
+    if stage not in filenames:
+        raise ValueError(f"未知批量管线阶段：{stage}")
+    directory = OUTPUT_DIR if mode == "formal" else SMOKE_OUTPUT_DIR
+    expected = (Path(repository_root) / directory / filenames[stage]).resolve()
+    if Path(output_path).resolve() != expected:
+        raise ValueError(f"批量协议 {stage} 输出必须使用全新冻结目录")
 
 
 def _artifact_manifest(bindings: dict[str, dict[str, Any]]) -> dict:
@@ -266,7 +307,9 @@ def build_plan(mode: str) -> dict[str, Any]:
         "gap_l1_address_batch_size": address_batch_size,
         "gap_l1_state_batch_count": state_batch_count,
         "production_batch_backend": PRODUCTION_BATCH_BACKEND,
-        "formal_pipeline_wired": False,
+        "calibration_gap_backend": CALIBRATION_GAP_BACKEND,
+        "pipeline_wiring_available": PIPELINE_WIRING_AVAILABLE,
+        "formal_pipeline_wired_at_protocol_freeze": False,
         "source_read_started": False,
         "generation_started": False,
         "confirmation_consumed": False,

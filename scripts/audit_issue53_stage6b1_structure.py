@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -20,6 +21,7 @@ from table_diffevo.factorized_diffusion import (
 from table_diffevo.gap_l1_diffusion import (
     compile_gap_l1_workload,
     evolve_step_gap_l1_global,
+    evolve_step_gap_l1_global_batched,
 )
 
 if __package__:
@@ -169,6 +171,44 @@ def _reconstruct_arm(
     return copy_table, full_table, mask
 
 
+@dataclass
+class _PreparedStructurePair:
+    replay: common.PairReplay
+    gap_seed: int
+    gap_rng: np.random.Generator
+
+
+def _expected_gap_backend() -> str | None:
+    return getattr(
+        protocol,
+        "COLLECTION_GAP_BACKEND",
+        getattr(protocol, "NEW_KERNEL_BACKEND", None),
+    )
+
+
+def _prepare_structure_pair(
+    context: common.StateContext,
+    pair: Mapping[str, Any],
+    *,
+    mode: str,
+) -> _PreparedStructurePair:
+    proposal_index = int(pair["proposal_index"])
+    replay = common.replay_pair(context, proposal_index, mode=mode)
+    gap_seed = protocol.gibbs_address_seed(
+        context.runtime.dataset,
+        int(context.state["seed"]),
+        context.state["state_group"],
+        proposal_index,
+        protocol.ARM_GAP_L1,
+        mode=mode,
+    )
+    return _PreparedStructurePair(
+        replay=replay,
+        gap_seed=int(gap_seed),
+        gap_rng=np.random.default_rng(gap_seed),
+    )
+
+
 def _audit_generated_pair(
     context: common.StateContext,
     pair: Mapping[str, Any],
@@ -177,9 +217,16 @@ def _audit_generated_pair(
     mode: str,
     factor_compiled: Any,
     gap_compiled: Any,
+    prepared: _PreparedStructurePair | None = None,
+    gap_result: tuple[pd.DataFrame, np.ndarray, dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     proposal_index = int(pair["proposal_index"])
-    replay = common.replay_pair(context, proposal_index, mode=mode)
+    prepared = (
+        _prepare_structure_pair(context, pair, mode=mode)
+        if prepared is None
+        else prepared
+    )
+    replay = prepared.replay
     shared = pair["shared_replay"]
     if (
         shared["current_table_sha256"] != common.frame_sha256(context.current)
@@ -299,44 +346,37 @@ def _audit_generated_pair(
     ):
         raise RuntimeError("factor 吉布斯随机重放/诊断失败")
 
-    gap_seed = protocol.gibbs_address_seed(
-        context.runtime.dataset,
-        int(context.state["seed"]),
-        context.state["state_group"],
-        proposal_index,
-        protocol.ARM_GAP_L1,
-        mode=mode,
-    )
-    gap_rng = np.random.default_rng(gap_seed)
-    gap_copy, gap_mask, gap_diagnostics = evolve_step_gap_l1_global(
-        context.current,
-        replay.donors,
-        context.runtime.schema,
-        context.runtime.queries,
-        context.runtime.runtime_target,
-        context.query_counts,
-        participate=replay.common_update["participate"],
-        initial_mask=replay.common_update["copy_masks"],
-        reference_scale=reference_scale,
-        rng=gap_rng,
-        n_sweeps=protocol.GIBBS_SWEEPS,
-        eta=protocol.ETA,
-        strength=protocol.GAP_L1_STRENGTH,
-        floor=protocol.GAP_L1_FLOOR,
-        logit_clip=protocol.LOGIT_CLIP,
-        compiled_workload=gap_compiled,
-        verify_full_recount=True,
-        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
-    )
+    if gap_result is None:
+        gap_result = evolve_step_gap_l1_global(
+            context.current,
+            replay.donors,
+            context.runtime.schema,
+            context.runtime.queries,
+            context.runtime.runtime_target,
+            context.query_counts,
+            participate=replay.common_update["participate"],
+            initial_mask=replay.common_update["copy_masks"],
+            reference_scale=reference_scale,
+            rng=prepared.gap_rng,
+            n_sweeps=protocol.GIBBS_SWEEPS,
+            eta=protocol.ETA,
+            strength=protocol.GAP_L1_STRENGTH,
+            floor=protocol.GAP_L1_FLOOR,
+            logit_clip=protocol.LOGIT_CLIP,
+            compiled_workload=gap_compiled,
+            verify_full_recount=True,
+            device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+        )
+    gap_copy, gap_mask, gap_diagnostics = gap_result
     recorded_gap = arms[protocol.ARM_GAP_L1]
     _assert_frame_equal(gap_copy, reconstructed[protocol.ARM_GAP_L1][0])
     if (
         not np.array_equal(gap_mask, reconstructed[protocol.ARM_GAP_L1][2])
-        or recorded_gap["gibbs_rng"]["address_uint64"] != gap_seed
+        or recorded_gap["gibbs_rng"]["address_uint64"] != prepared.gap_seed
         or recorded_gap["gibbs_rng"]["initial_state_sha256"]
-        != common.rng_state_sha256(np.random.default_rng(gap_seed))
+        != common.rng_state_sha256(np.random.default_rng(prepared.gap_seed))
         or recorded_gap["gibbs_rng"]["endpoint_state_sha256"]
-        != common.rng_state_sha256(gap_rng)
+        != common.rng_state_sha256(prepared.gap_rng)
         or gap_diagnostics["microstep_trace_sha256"]
         != recorded_gap["kernel_diagnostics"]["microstep_trace_sha256"]
         or gap_diagnostics["probability_bins"]
@@ -345,13 +385,22 @@ def _audit_generated_pair(
         != protocol.GIBBS_SWEEPS * gap_diagnostics["active_switches_k"]
     ):
         raise RuntimeError("新核逐微步随机重放或 8*K 身份失败")
-    expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+    expected_backend = _expected_gap_backend()
     if expected_backend is not None and (
         gap_diagnostics.get("backend") != expected_backend
         or recorded_gap["kernel_diagnostics"].get("backend")
         != expected_backend
     ):
         raise RuntimeError("结构审计没有使用冻结 CUDA 新核后端")
+    if getattr(protocol, "BATCHED_GAP_EXECUTION", False):
+        batch = gap_diagnostics.get("batch_execution", {})
+        if (
+            batch.get("format") != protocol.PRODUCTION_BATCH_EXECUTION_FORMAT
+            or batch.get("batch_size") != protocol.address_batch_size(mode)
+            or batch.get("batch_index") != proposal_index
+            or batch.get("strict_internal_order_preserved") is not True
+        ):
+            raise RuntimeError("结构审计没有按冻结批次重放")
     return {
         "gap_microsteps": int(gap_diagnostics["gibbs_microsteps"]),
         "gap_clip_hits": int(gap_diagnostics["clip_hit_count"]),
@@ -365,6 +414,62 @@ def _audit_generated_pair(
             factor_diagnostics["conditional_logit_clipped_count"]
         ),
     }
+
+
+def _audit_generated_state_batched(
+    context: common.StateContext,
+    pairs: list[Mapping[str, Any]],
+    reference_scale: float,
+    *,
+    mode: str,
+    factor_compiled: Any,
+    gap_compiled: Any,
+) -> list[dict[str, int]]:
+    expected = protocol.address_batch_size(mode)
+    if len(pairs) != expected:
+        raise RuntimeError("结构审计状态地址数与冻结批大小不一致")
+    prepared = [
+        _prepare_structure_pair(context, pair, mode=mode) for pair in pairs
+    ]
+    gap_results = evolve_step_gap_l1_global_batched(
+        context.current,
+        [item.replay.donors for item in prepared],
+        context.runtime.schema,
+        context.runtime.queries,
+        context.runtime.runtime_target,
+        context.query_counts,
+        participates=[
+            item.replay.common_update["participate"] for item in prepared
+        ],
+        initial_masks=[
+            item.replay.common_update["copy_masks"] for item in prepared
+        ],
+        reference_scale=reference_scale,
+        rngs=[item.gap_rng for item in prepared],
+        n_sweeps=protocol.GIBBS_SWEEPS,
+        eta=protocol.ETA,
+        strength=protocol.GAP_L1_STRENGTH,
+        floor=protocol.GAP_L1_FLOOR,
+        logit_clip=protocol.LOGIT_CLIP,
+        compiled_workload=gap_compiled,
+        verify_full_recount=True,
+        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+    )
+    if len(gap_results) != expected:
+        raise RuntimeError("结构审计生产批量核返回地址数不一致")
+    return [
+        _audit_generated_pair(
+            context,
+            pair,
+            reference_scale,
+            mode=mode,
+            factor_compiled=factor_compiled,
+            gap_compiled=gap_compiled,
+            prepared=item,
+            gap_result=gap_result,
+        )
+        for pair, item, gap_result in zip(pairs, prepared, gap_results)
+    ]
 
 
 def _audit_exact_pair(
@@ -421,6 +526,10 @@ def audit_collection(
     protocol.require_run_confirmation(mode, confirmed_protocol_sha256)
     protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
     output = Path(output_path).resolve()
+    if hasattr(protocol, "assert_stage_output_path"):
+        protocol.assert_stage_output_path(
+            REPOSITORY_ROOT, mode, "structural_audit", output
+        )
     if output.exists():
         raise FileExistsError(f"结构审计输出已存在，不覆盖：{output}")
     git, environment = _validate_execution(
@@ -472,12 +581,37 @@ def audit_collection(
             for group in protocol.STATE_GROUPS:
                 context = common.build_state_context(bundle, runtime, seed, group)
                 state_counts = {key: 0 for key in totals if key != "pair_count"}
-                for proposal_index in range(protocol.proposals_per_state(
-                    dataset, mode=mode
-                )):
-                    pair = pair_index[protocol.pair_id(
+                state_pairs = [
+                    pair_index[protocol.pair_id(
                         dataset, seed, group, proposal_index, mode=mode
                     )]
+                    for proposal_index in range(
+                        protocol.proposals_per_state(dataset, mode=mode)
+                    )
+                ]
+                generated = (
+                    bool(state_pairs)
+                    and state_pairs[0]["address_status"]
+                    != "already_exact_deterministic_no_op"
+                )
+                if generated and getattr(
+                    protocol, "BATCHED_GAP_EXECUTION", False
+                ):
+                    if scale_row["status"] != "calibrated":
+                        raise RuntimeError("生成地址缺少正固定参考尺度")
+                    observed_by_pair = _audit_generated_state_batched(
+                        context,
+                        state_pairs,
+                        float(scale_row["reference_scale"]),
+                        mode=mode,
+                        factor_compiled=factor_compiled,
+                        gap_compiled=gap_compiled,
+                    )
+                else:
+                    observed_by_pair = [None] * len(state_pairs)
+                for pair, batch_observed in zip(
+                    state_pairs, observed_by_pair
+                ):
                     totals["pair_count"] += 1
                     if pair["address_status"] == "already_exact_deterministic_no_op":
                         _audit_exact_pair(context, pair)
@@ -486,13 +620,17 @@ def audit_collection(
                     else:
                         if scale_row["status"] != "calibrated":
                             raise RuntimeError("生成地址缺少正固定参考尺度")
-                        observed = _audit_generated_pair(
-                            context,
-                            pair,
-                            float(scale_row["reference_scale"]),
-                            mode=mode,
-                            factor_compiled=factor_compiled,
-                            gap_compiled=gap_compiled,
+                        observed = (
+                            batch_observed
+                            if batch_observed is not None
+                            else _audit_generated_pair(
+                                context,
+                                pair,
+                                float(scale_row["reference_scale"]),
+                                mode=mode,
+                                factor_compiled=factor_compiled,
+                                gap_compiled=gap_compiled,
+                            )
                         )
                         totals["generated_pair_count"] += 1
                         state_counts["generated_pair_count"] += 1

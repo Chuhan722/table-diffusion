@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ from table_diffevo.factorized_diffusion import (
 from table_diffevo.gap_l1_diffusion import (
     compile_gap_l1_workload,
     evolve_step_gap_l1_global,
+    evolve_step_gap_l1_global_batched,
 )
 
 if __package__:
@@ -174,15 +176,34 @@ def _no_op_arm(context: common.StateContext) -> dict[str, Any]:
     }
 
 
-def _collect_pair(
+@dataclass
+class _PreparedPair:
+    started: float
+    proposal_index: int
+    replay: common.PairReplay
+    mutation_specs: Any
+    independent: dict[str, Any]
+    factor: dict[str, Any]
+    gap_seed: int
+    gap_rng: np.random.Generator
+    gap_initial_rng_sha: str
+
+
+def _expected_gap_backend() -> str | None:
+    return getattr(
+        protocol,
+        "COLLECTION_GAP_BACKEND",
+        getattr(protocol, "NEW_KERNEL_BACKEND", None),
+    )
+
+
+def _prepare_pair(
     context: common.StateContext,
     proposal_index: int,
-    reference_scale: float,
     *,
     mode: str,
     factor_compiled: Any,
-    gap_compiled: Any,
-) -> dict[str, Any]:
+) -> _PreparedPair:
     started = time.perf_counter()
     replay = common.replay_pair(context, proposal_index, mode=mode)
     source = replay.source_pair
@@ -277,32 +298,37 @@ def _collect_pair(
     )
     gap_rng = np.random.default_rng(gap_seed)
     gap_initial_rng_sha = common.rng_state_sha256(gap_rng)
-    gap_table, gap_mask, gap_diagnostics = evolve_step_gap_l1_global(
-        context.current,
-        replay.donors,
-        context.runtime.schema,
-        context.runtime.queries,
-        context.runtime.runtime_target,
-        context.query_counts,
-        participate=common_update["participate"],
-        initial_mask=common_update["copy_masks"],
-        reference_scale=reference_scale,
-        rng=gap_rng,
-        n_sweeps=protocol.GIBBS_SWEEPS,
-        eta=protocol.ETA,
-        strength=protocol.GAP_L1_STRENGTH,
-        floor=protocol.GAP_L1_FLOOR,
-        logit_clip=protocol.LOGIT_CLIP,
-        compiled_workload=gap_compiled,
-        verify_full_recount=True,
-        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+
+    return _PreparedPair(
+        started=started,
+        proposal_index=int(proposal_index),
+        replay=replay,
+        mutation_specs=mutation_specs,
+        independent=independent,
+        factor=factor,
+        gap_seed=int(gap_seed),
+        gap_rng=gap_rng,
+        gap_initial_rng_sha=gap_initial_rng_sha,
     )
+
+
+def _finish_pair(
+    context: common.StateContext,
+    prepared: _PreparedPair,
+    reference_scale: float,
+    gap_result: tuple[pd.DataFrame, np.ndarray, dict[str, Any]],
+) -> dict[str, Any]:
+    gap_table, gap_mask, gap_diagnostics = gap_result
+    replay = prepared.replay
+    source = replay.source_pair
+    common_update = replay.common_update
+    update_seed = int(source["rng"]["update_address_uint64"])
     gap = common.arm_raw_metrics(
         context,
         replay,
         gap_table,
         gap_mask,
-        mutation_specs,
+        prepared.mutation_specs,
         query_device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
         copy_query_counts=(
             np.asarray(
@@ -314,9 +340,9 @@ def _collect_pair(
     )
     gap["kernel_diagnostics"] = gap_diagnostics
     gap["gibbs_rng"] = {
-        "address_uint64": int(gap_seed),
-        "initial_state_sha256": gap_initial_rng_sha,
-        "endpoint_state_sha256": common.rng_state_sha256(gap_rng),
+        "address_uint64": prepared.gap_seed,
+        "initial_state_sha256": prepared.gap_initial_rng_sha,
+        "endpoint_state_sha256": common.rng_state_sha256(prepared.gap_rng),
     }
 
     return state_builder._json_safe({
@@ -324,7 +350,7 @@ def _collect_pair(
         "dataset": context.runtime.dataset,
         "source_seed": int(context.state["seed"]),
         "state_group": context.state["state_group"],
-        "proposal_index": int(proposal_index),
+        "proposal_index": prepared.proposal_index,
         "address_status": "generated_unconditionally",
         "retained_unconditionally": True,
         "shared_replay": {
@@ -344,7 +370,7 @@ def _collect_pair(
                 common_update["copy_masks"]
             ),
             "mutation_specs_sha256": _mutation_specs_sha256(
-                mutation_specs
+                prepared.mutation_specs
             ),
             "main_rng_initial_state_sha256": common_update[
                 "initial_rng_sha256"
@@ -356,18 +382,111 @@ def _collect_pair(
                 "endpoint_rng_sha256"
             ],
             "runtime_device_for_source_replay": context.runtime_device,
-            "new_kernel_device": getattr(
-                protocol, "NEW_KERNEL_BACKEND", "numpy_float64_cpu"
-            ),
+            "new_kernel_device": _expected_gap_backend(),
             "gap_l1_reference_scale": float(reference_scale),
         },
         "arms": {
-            protocol.ARM_INDEPENDENT: independent,
-            protocol.ARM_FACTOR: factor,
+            protocol.ARM_INDEPENDENT: prepared.independent,
+            protocol.ARM_FACTOR: prepared.factor,
             protocol.ARM_GAP_L1: gap,
         },
-        "elapsed_sec_diagnostic_only": time.perf_counter() - started,
+        "elapsed_sec_diagnostic_only": (
+            time.perf_counter() - prepared.started
+        ),
     })
+
+
+def _collect_pair(
+    context: common.StateContext,
+    proposal_index: int,
+    reference_scale: float,
+    *,
+    mode: str,
+    factor_compiled: Any,
+    gap_compiled: Any,
+) -> dict[str, Any]:
+    prepared = _prepare_pair(
+        context,
+        proposal_index,
+        mode=mode,
+        factor_compiled=factor_compiled,
+    )
+    gap_result = evolve_step_gap_l1_global(
+        context.current,
+        prepared.replay.donors,
+        context.runtime.schema,
+        context.runtime.queries,
+        context.runtime.runtime_target,
+        context.query_counts,
+        participate=prepared.replay.common_update["participate"],
+        initial_mask=prepared.replay.common_update["copy_masks"],
+        reference_scale=reference_scale,
+        rng=prepared.gap_rng,
+        n_sweeps=protocol.GIBBS_SWEEPS,
+        eta=protocol.ETA,
+        strength=protocol.GAP_L1_STRENGTH,
+        floor=protocol.GAP_L1_FLOOR,
+        logit_clip=protocol.LOGIT_CLIP,
+        compiled_workload=gap_compiled,
+        verify_full_recount=True,
+        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+    )
+    return _finish_pair(context, prepared, reference_scale, gap_result)
+
+
+def _collect_state_batched(
+    context: common.StateContext,
+    reference_scale: float,
+    *,
+    mode: str,
+    factor_compiled: Any,
+    gap_compiled: Any,
+) -> list[dict[str, Any]]:
+    proposal_count = protocol.proposals_per_state(
+        context.runtime.dataset, mode=mode
+    )
+    expected = protocol.address_batch_size(mode)
+    if proposal_count != expected:
+        raise RuntimeError("冻结状态地址数与批量协议不一致")
+    prepared = [
+        _prepare_pair(
+            context,
+            proposal_index,
+            mode=mode,
+            factor_compiled=factor_compiled,
+        )
+        for proposal_index in range(proposal_count)
+    ]
+    gap_results = evolve_step_gap_l1_global_batched(
+        context.current,
+        [item.replay.donors for item in prepared],
+        context.runtime.schema,
+        context.runtime.queries,
+        context.runtime.runtime_target,
+        context.query_counts,
+        participates=[
+            item.replay.common_update["participate"] for item in prepared
+        ],
+        initial_masks=[
+            item.replay.common_update["copy_masks"] for item in prepared
+        ],
+        reference_scale=reference_scale,
+        rngs=[item.gap_rng for item in prepared],
+        n_sweeps=protocol.GIBBS_SWEEPS,
+        eta=protocol.ETA,
+        strength=protocol.GAP_L1_STRENGTH,
+        floor=protocol.GAP_L1_FLOOR,
+        logit_clip=protocol.LOGIT_CLIP,
+        compiled_workload=gap_compiled,
+        verify_full_recount=True,
+        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+    )
+    if len(gap_results) != proposal_count:
+        raise RuntimeError("生产批量缺口核返回地址数不一致")
+    return [
+        _finish_pair(context, item, reference_scale, gap_result)
+        for item, gap_result in zip(prepared, gap_results)
+    ]
 
 
 def _collect_exact_state(
@@ -464,7 +583,7 @@ def validate_collection(value: Mapping[str, Any], *, mode: str) -> None:
             != protocol.GIBBS_SWEEPS * gap.get("active_switches_k", -1)
         ):
             raise RuntimeError("新核微步数不等于 8*K")
-        expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+        expected_backend = _expected_gap_backend()
         if (
             expected_backend is not None
             and pair["address_status"] == "generated_unconditionally"
@@ -475,6 +594,20 @@ def validate_collection(value: Mapping[str, Any], *, mode: str) -> None:
             )
         ):
             raise RuntimeError("新核采集记录没有绑定冻结 CUDA 后端")
+        if (
+            getattr(protocol, "BATCHED_GAP_EXECUTION", False)
+            and pair["address_status"] == "generated_unconditionally"
+        ):
+            batch = gap.get("batch_execution", {})
+            if (
+                batch.get("format")
+                != protocol.PRODUCTION_BATCH_EXECUTION_FORMAT
+                or batch.get("batch_size")
+                != protocol.address_batch_size(mode)
+                or batch.get("batch_index") != pair["proposal_index"]
+                or batch.get("strict_internal_order_preserved") is not True
+            ):
+                raise RuntimeError("新核采集记录没有绑定冻结批次身份")
 
 
 def collect_screen(
@@ -488,6 +621,10 @@ def collect_screen(
     protocol.require_run_confirmation(mode, confirmed_protocol_sha256)
     protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
     output = Path(output_path).resolve()
+    if hasattr(protocol, "assert_stage_output_path"):
+        protocol.assert_stage_output_path(
+            REPOSITORY_ROOT, mode, "collection", output
+        )
     if output.exists():
         raise FileExistsError(f"采集输出已存在，不覆盖：{output}")
     git, environment = _validate_execution(
@@ -539,19 +676,30 @@ def collect_screen(
                     reference_scale = float(
                         calibration_row["reference_scale"]
                     )
-                    state_pairs = [
-                        _collect_pair(
+                    if getattr(protocol, "BATCHED_GAP_EXECUTION", False):
+                        state_pairs = _collect_state_batched(
                             context,
-                            proposal_index,
                             reference_scale,
                             mode=mode,
                             factor_compiled=factor_compiled,
                             gap_compiled=gap_compiled,
                         )
-                        for proposal_index in range(
-                            protocol.proposals_per_state(dataset, mode=mode)
-                        )
-                    ]
+                    else:
+                        state_pairs = [
+                            _collect_pair(
+                                context,
+                                proposal_index,
+                                reference_scale,
+                                mode=mode,
+                                factor_compiled=factor_compiled,
+                                gap_compiled=gap_compiled,
+                            )
+                            for proposal_index in range(
+                                protocol.proposals_per_state(
+                                    dataset, mode=mode
+                                )
+                            )
+                        ]
                 pairs.extend(state_pairs)
                 state_manifest.append({
                     "state_id": context.state["state_id"],
@@ -567,6 +715,19 @@ def collect_screen(
                     ),
                     "already_exact": exact,
                     "pair_count": len(state_pairs),
+                    "gap_l1_batch_execution": (
+                        {
+                            "logical_batch_size": len(state_pairs),
+                            "production_kernel_called": not exact,
+                            "format": (
+                                protocol.PRODUCTION_BATCH_EXECUTION_FORMAT
+                                if not exact else None
+                            ),
+                            "address_order": "proposal_index_ascending",
+                        }
+                        if getattr(protocol, "BATCHED_GAP_EXECUTION", False)
+                        else None
+                    ),
                     "elapsed_sec_diagnostic_only": (
                         time.perf_counter() - state_started
                     ),
