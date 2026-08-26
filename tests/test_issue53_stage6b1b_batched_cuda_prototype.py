@@ -12,6 +12,9 @@ from scripts.issue53_stage6b1b_batched_cuda_prototype import (
     run_same_workload_batched_prototype,
     run_variable_workloads_batched_prototype,
 )
+from scripts.issue53_stage6b1b_independent_cuda import (
+    replay_gap_l1_batched_cuda,
+)
 from table_diffevo import gap_l1_diffusion as production
 from table_diffevo.gap_l1_diffusion import evolve_step_gap_l1_global
 from table_diffevo.queries import evaluate_table
@@ -127,6 +130,10 @@ def test_prototype_is_not_wired_into_formal_pipeline():
     for relative in production_paths[1:]:
         text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
         assert batch_entry not in text
+    independent_batch_entry = "replay_gap_l1_batched_cuda"
+    for relative in production_paths:
+        text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
+        assert independent_batch_entry not in text
 
 
 def test_prototype_rejects_empty_address_batch_before_cuda_use():
@@ -142,6 +149,27 @@ def test_prototype_rejects_empty_address_batch_before_cuda_use():
             initial_masks=(),
             reference_scale=1.0,
             seeds=(),
+        )
+
+
+def test_independent_batch_auditor_rejects_empty_batch_before_cuda_use():
+    with pytest.raises(ValueError, match="同长度非空序列"):
+        replay_gap_l1_batched_cuda(
+            None,
+            (),
+            None,
+            (),
+            None,
+            None,
+            (),
+            (),
+            reference_scale=1.0,
+            seeds=(),
+            n_sweeps=8,
+            eta=0.5,
+            strength=2.0,
+            floor=8.0,
+            logit_clip=30.0,
         )
 
 
@@ -329,4 +357,121 @@ def test_variable_address_prototype_preserves_each_reference_chain():
         np.testing.assert_array_equal(
             result["final_query_counts"][index],
             reference[2]["final_query_counts"],
+        )
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA（显卡运行时）不可用"
+)
+def test_independent_batch_auditor_matches_production_batch_bit_for_bit():
+    previous = torch.are_deterministic_algorithms_enabled()
+    torch.use_deterministic_algorithms(True)
+    try:
+        (
+            schema,
+            queries,
+            current,
+            _,
+            counts,
+            targets,
+            _,
+            _,
+        ) = _case()
+        donors, participates, initial_masks = _variable_addresses(current)
+        seeds = (20260901, 20260902, 20260903, 20260904)
+        production_result = run_variable_workloads_batched_prototype(
+            current,
+            donors,
+            schema,
+            queries,
+            targets,
+            counts,
+            participates=participates,
+            initial_masks=initial_masks,
+            reference_scale=0.02,
+            seeds=seeds,
+            n_sweeps=8,
+        )
+        independent_result = replay_gap_l1_batched_cuda(
+            current,
+            donors,
+            schema,
+            queries,
+            targets,
+            counts,
+            participates,
+            initial_masks,
+            reference_scale=0.02,
+            seeds=seeds,
+            n_sweeps=8,
+            eta=0.5,
+            strength=2.0,
+            floor=8.0,
+            logit_clip=30.0,
+            capture_trace=True,
+        )
+    finally:
+        torch.use_deterministic_algorithms(previous)
+
+    for key in (
+        "batch_size",
+        "active_switches_k_by_address",
+        "microsteps_by_address",
+        "maximum_padded_microsteps",
+        "padding_microsteps",
+    ):
+        assert independent_result[key] == production_result[key]
+    np.testing.assert_array_equal(
+        independent_result["valid_step_mask"],
+        production_result["valid_step_mask"],
+    )
+    np.testing.assert_array_equal(
+        independent_result["masks"], production_result["masks"]
+    )
+    np.testing.assert_array_equal(
+        independent_result["final_query_counts"],
+        production_result["final_query_counts"],
+    )
+    assert independent_result["trace_sha256"] == (
+        production_result["trace_sha256"]
+    )
+    assert independent_result["no_gate"] is True
+    assert (
+        independent_result[
+            "acceptance_rejection_or_selection_performed"
+        ]
+        is False
+    )
+    assert independent_result["production_kernel_called"] is False
+    assert independent_result["formal_pipeline_enabled"] is False
+    assert 0 in independent_result["active_switches_k_by_address"]
+    assert independent_result["padding_microsteps"] > 0
+    for index in range(independent_result["batch_size"]):
+        pd.testing.assert_frame_equal(
+            independent_result["tables"][index],
+            production_result["tables"][index],
+        )
+        np.testing.assert_array_equal(
+            independent_result["coordinates"][index],
+            production_result["coordinates"][index],
+        )
+        np.testing.assert_array_equal(
+            independent_result["random_rolls"][index],
+            production_result["random_rolls"][index],
+        )
+        np.testing.assert_array_equal(
+            independent_result["float_values"][index],
+            production_result["float_values"][index],
+        )
+        np.testing.assert_array_equal(
+            independent_result["bool_values"][index],
+            production_result["bool_values"][index],
+        )
+        diagnostics = independent_result["diagnostics"][index]
+        assert diagnostics["no_gate"] is True
+        assert diagnostics["trace_sha256"] == (
+            independent_result["trace_sha256"][index]
+        )
+        assert len(independent_result["trace_records"][index]) == (
+            independent_result["microsteps_by_address"][index]
         )

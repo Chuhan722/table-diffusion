@@ -763,6 +763,628 @@ def replay_gap_l1_cuda(
     return table, final_mask, diagnostics
 
 
+def _validate_independent_batch_inputs(
+    donor_tables: Sequence[Any],
+    participates: Sequence[Any],
+    initial_masks: Sequence[Any],
+    seeds: Sequence[int],
+    *,
+    n_sweeps: int,
+    reference_scale: float,
+    eta: float,
+    strength: float,
+    floor: float,
+    logit_clip: float,
+) -> int:
+    lengths = (
+        len(donor_tables),
+        len(participates),
+        len(initial_masks),
+        len(seeds),
+    )
+    if lengths[0] == 0 or any(value != lengths[0] for value in lengths[1:]):
+        raise ValueError("独立批量输入与 seeds 必须是同长度非空序列")
+    if any(
+        not isinstance(seed, (int, np.integer)) or isinstance(seed, bool)
+        for seed in seeds
+    ):
+        raise ValueError("独立批量 seeds 中每一项都必须是整数")
+    if (
+        not isinstance(n_sweeps, int)
+        or isinstance(n_sweeps, bool)
+        or n_sweeps < 0
+    ):
+        raise ValueError("独立批量 n_sweeps 必须是非负整数")
+    if not np.isfinite(eta) or not 0.0 < float(eta) < 1.0:
+        raise ValueError("独立批量 eta 必须是有限的开区间概率")
+    for name, value in (
+        ("reference_scale", reference_scale),
+        ("strength", strength),
+        ("floor", floor),
+        ("logit_clip", logit_clip),
+    ):
+        if not np.isfinite(value) or float(value) <= 0.0:
+            raise ValueError(f"独立批量 {name} 必须是有限正数")
+    return lengths[0]
+
+
+def _independent_padded_query_layout(
+    workload: _Workload,
+    *,
+    torch: Any,
+    device: Any,
+) -> tuple[Any, Any, int]:
+    """独立建立按属性填充的查询索引和互异哨兵。"""
+
+    widths = [len(indices) for indices in workload.query_indices_by_attribute]
+    padded_width = max([1] + widths)
+    n_attributes = len(workload.attributes)
+    n_queries = len(workload.query_condition_indices)
+    indices = np.empty((n_attributes, padded_width), dtype=np.int64)
+    valid = np.zeros((n_attributes, padded_width), dtype=bool)
+    sentinels = np.arange(
+        n_queries, n_queries + padded_width, dtype=np.int64
+    )
+    for attribute, query_indices in enumerate(
+        workload.query_indices_by_attribute
+    ):
+        width = len(query_indices)
+        if width:
+            indices[attribute, :width] = query_indices
+            valid[attribute, :width] = True
+        indices[attribute, width:] = sentinels[: padded_width - width]
+    return (
+        torch.as_tensor(indices, dtype=torch.long, device=device),
+        torch.as_tensor(valid, dtype=torch.bool, device=device),
+        padded_width,
+    )
+
+
+def _advance_independent_batch_step(
+    *,
+    failure_counts: Any,
+    row_indicators: Any,
+    counts: Any,
+    error_terms: Any,
+    error_sum: Any,
+    masks: Any,
+    current_failures: Any,
+    donor_failures: Any,
+    padded_query_indices: Any,
+    padded_query_valid: Any,
+    target: Any,
+    denominators: Any,
+    query_count: int,
+    scale: Any,
+    base_logit: Any,
+    strength: Any,
+    clip: Any,
+    torch: Any,
+    batch_indices: Any,
+    coordinates: Any,
+    local_rows: Any,
+    rolls: Any,
+    step_valid: Any,
+) -> tuple[Any, Any]:
+    """不调用生产微步代码，独立推进每个地址的一个有序微步。"""
+
+    row_indices = coordinates[:, 0]
+    attribute_indices = coordinates[:, 1]
+    query_indices = padded_query_indices.index_select(0, attribute_indices)
+    query_valid = padded_query_valid.index_select(0, attribute_indices)
+    current = current_failures[
+        batch_indices, attribute_indices, local_rows
+    ]
+    donor = donor_failures[
+        batch_indices, attribute_indices, local_rows
+    ]
+    before = masks[batch_indices, row_indices, attribute_indices]
+    previous_attribute_failures = torch.where(
+        before.unsqueeze(1), donor, current
+    )
+
+    full_failure_rows = failure_counts[batch_indices, local_rows]
+    full_indicator_rows = row_indicators[batch_indices, local_rows]
+    failure_rows = full_failure_rows.gather(1, query_indices)
+    indicator_rows = full_indicator_rows.gather(1, query_indices)
+    count_rows = counts.gather(1, query_indices)
+    old_error_rows = error_terms.gather(1, query_indices)
+    base_failures = failure_rows - previous_attribute_failures
+    failures0 = base_failures + current
+    failures1 = base_failures + donor
+    indicators0 = failures0 == 0
+    indicators1 = failures1 == 0
+    counts0 = (
+        count_rows
+        + indicators0.to(torch.int64)
+        - indicator_rows.to(torch.int64)
+    )
+    counts1 = (
+        count_rows
+        + indicators1.to(torch.int64)
+        - indicator_rows.to(torch.int64)
+    )
+    target_rows = target[query_indices]
+    denominator_rows = denominators[query_indices]
+    terms0 = (
+        torch.abs(target_rows - counts0.to(torch.float64))
+        / denominator_rows
+    )
+    terms1 = (
+        torch.abs(target_rows - counts1.to(torch.float64))
+        / denominator_rows
+    )
+
+    old_sum = torch.where(query_valid, old_error_rows, 0.0).sum(
+        dim=1, dtype=torch.float64
+    )
+    sum0 = (
+        error_sum
+        - old_sum
+        + torch.where(query_valid, terms0, 0.0).sum(
+            dim=1, dtype=torch.float64
+        )
+    )
+    sum1 = (
+        error_sum
+        - old_sum
+        + torch.where(query_valid, terms1, 0.0).sum(
+            dim=1, dtype=torch.float64
+        )
+    )
+    e0 = sum0 / query_count
+    e1 = sum1 / query_count
+    score = e0 - e1
+    normalized = score / scale
+    raw_logit = base_logit + strength * normalized
+    effective_logit = raw_logit.clamp(min=-clip, max=clip)
+    probabilities = effective_logit.sigmoid()
+    clipped = raw_logit != effective_logit
+    proposed = rolls < probabilities
+    after = torch.where(step_valid, proposed, before)
+    changed = step_valid & (after != before)
+
+    selected_failures = torch.where(
+        after.unsqueeze(1), failures1, failures0
+    )
+    selected_indicators = torch.where(
+        after.unsqueeze(1), indicators1, indicators0
+    )
+    selected_counts = torch.where(
+        after.unsqueeze(1), counts1, counts0
+    )
+    selected_terms = torch.where(after.unsqueeze(1), terms1, terms0)
+    selected_sum = torch.where(after, sum1, sum0)
+    update = changed.unsqueeze(1) & query_valid
+
+    updated_failure_rows = full_failure_rows.scatter(
+        1,
+        query_indices,
+        torch.where(update, selected_failures, failure_rows),
+    )
+    updated_indicator_rows = full_indicator_rows.scatter(
+        1,
+        query_indices,
+        torch.where(update, selected_indicators, indicator_rows),
+    )
+    failure_counts[batch_indices, local_rows] = updated_failure_rows
+    row_indicators[batch_indices, local_rows] = updated_indicator_rows
+    counts.scatter_(
+        1,
+        query_indices,
+        torch.where(update, selected_counts, count_rows),
+    )
+    error_terms.scatter_(
+        1,
+        query_indices,
+        torch.where(update, selected_terms, old_error_rows),
+    )
+    error_sum.copy_(torch.where(changed, selected_sum, error_sum))
+    masks[batch_indices, row_indices, attribute_indices] = after
+
+    floats = torch.stack((
+        e0,
+        e1,
+        score,
+        normalized,
+        raw_logit,
+        probabilities,
+        rolls,
+    ), dim=1)
+    floats = torch.where(
+        step_valid.unsqueeze(1), floats, torch.zeros_like(floats)
+    )
+    booleans = torch.stack((before, after, clipped), dim=1)
+    booleans &= step_valid.unsqueeze(1)
+    return floats, booleans
+
+
+def replay_gap_l1_batched_cuda(
+    current: pd.DataFrame,
+    donor_tables: Sequence[pd.DataFrame],
+    schema: Any,
+    queries: Sequence[Mapping[str, Any]],
+    target: Sequence[float],
+    current_counts: Sequence[int],
+    participates: Sequence[Sequence[bool]],
+    initial_masks: Sequence[np.ndarray],
+    *,
+    reference_scale: float,
+    seeds: Sequence[int],
+    n_sweeps: int,
+    eta: float,
+    strength: float,
+    floor: float,
+    logit_clip: float,
+    capture_trace: bool = False,
+) -> dict[str, Any]:
+    """独立重放不同地址的批量显卡算术，不调用生产批量核。"""
+
+    batch_size = _validate_independent_batch_inputs(
+        donor_tables,
+        participates,
+        initial_masks,
+        seeds,
+        n_sweeps=n_sweeps,
+        reference_scale=reference_scale,
+        eta=eta,
+        strength=strength,
+        floor=floor,
+        logit_clip=logit_clip,
+    )
+    plans = [
+        _prepare(
+            current,
+            donor_tables[index],
+            schema,
+            queries,
+            target,
+            current_counts,
+            participates[index],
+            initial_masks[index],
+            floor=floor,
+        )
+        for index in range(batch_size)
+    ]
+    first = plans[0]
+    torch = first.torch
+    device = first.device
+    n_attributes = len(first.workload.attributes)
+    n_queries = len(first.workload.query_condition_indices)
+    active_row_counts = [len(plan.active_rows) for plan in plans]
+    maximum_active_rows = max(active_row_counts)
+    active_switches = [len(plan.coordinates) for plan in plans]
+    microsteps_by_address = [
+        n_sweeps * active_count for active_count in active_switches
+    ]
+    maximum_microsteps = max(microsteps_by_address)
+    (
+        padded_query_indices,
+        padded_query_valid,
+        padded_query_width,
+    ) = _independent_padded_query_layout(
+        first.workload, torch=torch, device=device
+    )
+    extended_query_count = n_queries + padded_query_width
+
+    failure_counts = torch.zeros(
+        (batch_size, maximum_active_rows, extended_query_count),
+        dtype=torch.int32,
+        device=device,
+    )
+    row_indicators = torch.ones(
+        (batch_size, maximum_active_rows, extended_query_count),
+        dtype=torch.bool,
+        device=device,
+    )
+    counts = torch.zeros(
+        (batch_size, extended_query_count),
+        dtype=torch.int64,
+        device=device,
+    )
+    error_terms = torch.zeros(
+        (batch_size, extended_query_count),
+        dtype=torch.float64,
+        device=device,
+    )
+    error_sum = torch.stack([plan.error_sum for plan in plans], dim=0)
+    masks = torch.stack([plan.mask for plan in plans], dim=0)
+    current_failures = torch.zeros(
+        (
+            batch_size,
+            n_attributes,
+            maximum_active_rows,
+            padded_query_width,
+        ),
+        dtype=torch.int32,
+        device=device,
+    )
+    donor_failures = torch.zeros_like(current_failures)
+    for batch_index, plan in enumerate(plans):
+        active_rows = active_row_counts[batch_index]
+        if active_rows:
+            failure_counts[
+                batch_index, :active_rows, :n_queries
+            ] = plan.failures
+            row_indicators[
+                batch_index, :active_rows, :n_queries
+            ] = plan.indicators
+        counts[batch_index, :n_queries] = plan.counts
+        error_terms[batch_index, :n_queries] = plan.error_terms
+        for attribute, query_indices in enumerate(
+            plan.workload.query_indices_by_attribute
+        ):
+            width = len(query_indices)
+            if active_rows and width:
+                current_failures[
+                    batch_index,
+                    attribute,
+                    :active_rows,
+                    :width,
+                ] = plan.current_attribute_failures[attribute]
+                donor_failures[
+                    batch_index,
+                    attribute,
+                    :active_rows,
+                    :width,
+                ] = plan.donor_attribute_failures[attribute]
+
+    target_t = torch.zeros(
+        extended_query_count, dtype=torch.float64, device=device
+    )
+    target_t[:n_queries] = first.target
+    denominators_t = torch.ones_like(target_t)
+    denominators_t[:n_queries] = first.denominators
+    scale_t = torch.tensor(
+        float(reference_scale), dtype=torch.float64, device=device
+    )
+    eta_t = torch.tensor(float(eta), dtype=torch.float64, device=device)
+    base_logit_t = torch.log(eta_t) - torch.log1p(-eta_t)
+    strength_t = torch.tensor(
+        float(strength), dtype=torch.float64, device=device
+    )
+    clip_t = torch.tensor(
+        float(logit_clip), dtype=torch.float64, device=device
+    )
+
+    rngs = [np.random.default_rng(int(seed)) for seed in seeds]
+    initial_rng_hashes = tuple(_rng_sha256(rng) for rng in rngs)
+    coordinate_tapes = np.zeros(
+        (batch_size, maximum_microsteps, 2), dtype=np.int64
+    )
+    local_row_tapes = np.zeros(
+        (batch_size, maximum_microsteps), dtype=np.int64
+    )
+    roll_tapes = np.zeros(
+        (batch_size, maximum_microsteps), dtype=np.float64
+    )
+    valid_step_mask = np.zeros(
+        (batch_size, maximum_microsteps), dtype=bool
+    )
+    for batch_index, (plan, rng) in enumerate(zip(plans, rngs)):
+        microsteps = microsteps_by_address[batch_index]
+        active_count = active_switches[batch_index]
+        if microsteps == 0:
+            continue
+        coordinate_indices = np.empty(microsteps, dtype=np.int64)
+        rolls = np.empty(microsteps, dtype=np.float64)
+        for step in range(microsteps):
+            coordinate_indices[step] = rng.integers(0, active_count)
+            rolls[step] = rng.random()
+        coordinates = np.asarray(
+            plan.coordinates[coordinate_indices], dtype=np.int64
+        )
+        coordinate_tapes[batch_index, :microsteps] = coordinates
+        local_row_tapes[batch_index, :microsteps] = (
+            plan.row_lookup[coordinates[:, 0]]
+        )
+        roll_tapes[batch_index, :microsteps] = rolls
+        valid_step_mask[batch_index, :microsteps] = True
+    endpoint_rng_hashes = tuple(_rng_sha256(rng) for rng in rngs)
+
+    coordinate_tapes_t = torch.as_tensor(
+        coordinate_tapes, dtype=torch.long, device=device
+    )
+    local_row_tapes_t = torch.as_tensor(
+        local_row_tapes, dtype=torch.long, device=device
+    )
+    roll_tapes_t = torch.as_tensor(
+        roll_tapes, dtype=torch.float64, device=device
+    )
+    valid_step_mask_t = torch.as_tensor(
+        valid_step_mask, dtype=torch.bool, device=device
+    )
+    float_values_t = torch.zeros(
+        (batch_size, maximum_microsteps, 7),
+        dtype=torch.float64,
+        device=device,
+    )
+    bool_values_t = torch.zeros(
+        (batch_size, maximum_microsteps, 3),
+        dtype=torch.bool,
+        device=device,
+    )
+    batch_indices = torch.arange(
+        batch_size, dtype=torch.long, device=device
+    )
+    for step in range(maximum_microsteps):
+        floats, booleans = _advance_independent_batch_step(
+            failure_counts=failure_counts,
+            row_indicators=row_indicators,
+            counts=counts,
+            error_terms=error_terms,
+            error_sum=error_sum,
+            masks=masks,
+            current_failures=current_failures,
+            donor_failures=donor_failures,
+            padded_query_indices=padded_query_indices,
+            padded_query_valid=padded_query_valid,
+            target=target_t,
+            denominators=denominators_t,
+            query_count=n_queries,
+            scale=scale_t,
+            base_logit=base_logit_t,
+            strength=strength_t,
+            clip=clip_t,
+            torch=torch,
+            batch_indices=batch_indices,
+            coordinates=coordinate_tapes_t[:, step],
+            local_rows=local_row_tapes_t[:, step],
+            rolls=roll_tapes_t[:, step],
+            step_valid=valid_step_mask_t[:, step],
+        )
+        float_values_t[:, step] = floats
+        bool_values_t[:, step] = booleans
+
+    padded_float_values = np.asarray(
+        float_values_t.detach().cpu().numpy(), dtype=np.float64
+    )
+    padded_bool_values = np.asarray(
+        bool_values_t.detach().cpu().numpy(), dtype=bool
+    )
+    final_counts = np.asarray(
+        counts[:, :n_queries].detach().cpu().numpy(), dtype=np.int64
+    )
+    final_masks = np.asarray(masks.detach().cpu().numpy(), dtype=bool)
+    torch.cuda.synchronize(device)
+    valid_float_values = padded_float_values[valid_step_mask]
+    if not np.all(np.isfinite(valid_float_values)):
+        raise RuntimeError("独立批量重放出现非有限条件数值")
+    probabilities = padded_float_values[:, :, 5][valid_step_mask]
+    if np.any((probabilities <= 0.0) | (probabilities >= 1.0)):
+        raise RuntimeError("独立批量重放出现单向条件概率")
+    if not np.array_equal(
+        padded_bool_values[:, :, 1][valid_step_mask],
+        roll_tapes[valid_step_mask] < probabilities,
+    ):
+        raise RuntimeError("独立批量开关与随机带不一致")
+    if np.any(padded_float_values[~valid_step_mask] != 0.0) or np.any(
+        padded_bool_values[~valid_step_mask]
+    ):
+        raise RuntimeError("独立批量填充微步意外产生输出")
+
+    tables = []
+    traces = []
+    trace_records_by_address = []
+    diagnostics_by_address = []
+    coordinates_by_address = []
+    rolls_by_address = []
+    floats_by_address = []
+    booleans_by_address = []
+    for batch_index, (plan, donor_table) in enumerate(
+        zip(plans, donor_tables)
+    ):
+        microsteps = microsteps_by_address[batch_index]
+        coordinates = coordinate_tapes[batch_index, :microsteps].copy()
+        rolls = roll_tapes[batch_index, :microsteps].copy()
+        float_values = padded_float_values[
+            batch_index, :microsteps
+        ].copy()
+        bool_values = padded_bool_values[batch_index, :microsteps].copy()
+        trace = hashlib.sha256()
+        trace_records = []
+        for step in range(microsteps):
+            row, attribute = map(int, coordinates[step])
+            e0, e1, score, normalized, raw_logit, probability, roll = map(
+                float, float_values[step]
+            )
+            before, after, clipped = map(bool, bool_values[step])
+            trace.update(struct.pack(
+                TRACE_STRUCT,
+                step,
+                row,
+                attribute,
+                e0,
+                e1,
+                score,
+                normalized,
+                raw_logit,
+                probability,
+                roll,
+                before,
+                after,
+                clipped,
+            ))
+            if capture_trace:
+                trace_records.append({
+                    "step": step,
+                    "row_index": row,
+                    "attribute_index": attribute,
+                    "e0": e0,
+                    "e1": e1,
+                    "score": score,
+                    "normalized_score": normalized,
+                    "raw_logit": raw_logit,
+                    "probability": probability,
+                    "random_roll": roll,
+                    "before": before,
+                    "after": after,
+                    "clipped": clipped,
+                })
+        table = _materialize(
+            current,
+            donor_table,
+            plan.workload.attributes,
+            final_masks[batch_index],
+        )
+        recounted = _full_recount(table, schema, plan)
+        if not np.array_equal(recounted, final_counts[batch_index]):
+            raise RuntimeError("独立批量增量计数与完整显卡复算不一致")
+        tables.append(table)
+        traces.append(trace.hexdigest())
+        trace_records_by_address.append(trace_records)
+        diagnostics_by_address.append({
+            "initial_rng_sha256": initial_rng_hashes[batch_index],
+            "endpoint_rng_sha256": endpoint_rng_hashes[batch_index],
+            "trace_sha256": trace.hexdigest(),
+            "active_switches_k": int(active_switches[batch_index]),
+            "microsteps": int(microsteps),
+            "clip_hits": int(
+                np.sum(bool_values[:, 2], dtype=np.int64)
+            ),
+            "final_query_counts": recounted,
+            "backend": "independent_torch_cuda_float64_batched",
+            "no_gate": True,
+        })
+        coordinates_by_address.append(coordinates)
+        rolls_by_address.append(rolls)
+        floats_by_address.append(float_values)
+        booleans_by_address.append(bool_values)
+    torch.cuda.synchronize(device)
+
+    result = {
+        "backend": "independent_torch_cuda_float64_batched",
+        "batch_execution_format": (
+            "issue53_gap_l1_independent_batched_audit_v1"
+        ),
+        "batch_size": int(batch_size),
+        "active_switches_k_by_address": tuple(map(int, active_switches)),
+        "microsteps_by_address": tuple(map(int, microsteps_by_address)),
+        "maximum_padded_microsteps": int(maximum_microsteps),
+        "padding_microsteps": int(
+            batch_size * maximum_microsteps - sum(microsteps_by_address)
+        ),
+        "valid_step_mask": valid_step_mask,
+        "reference_scale": float(reference_scale),
+        "tables": tuple(tables),
+        "masks": final_masks,
+        "final_query_counts": final_counts,
+        "trace_sha256": tuple(traces),
+        "coordinates": tuple(coordinates_by_address),
+        "random_rolls": tuple(rolls_by_address),
+        "float_values": tuple(floats_by_address),
+        "bool_values": tuple(booleans_by_address),
+        "diagnostics": tuple(diagnostics_by_address),
+        "no_gate": True,
+        "acceptance_rejection_or_selection_performed": False,
+        "production_kernel_called": False,
+        "formal_pipeline_enabled": False,
+    }
+    if capture_trace:
+        result["trace_records"] = tuple(trace_records_by_address)
+    return result
+
+
 def _exact_zero_spec(
     target_numerators: Sequence[int],
     target_denominator: int,
