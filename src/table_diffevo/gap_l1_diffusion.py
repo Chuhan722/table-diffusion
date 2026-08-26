@@ -38,7 +38,7 @@ DEFAULT_GAP_L1_STRENGTH = 2.0
 DEFAULT_GAP_L1_SWEEPS = 8
 DEFAULT_GAP_L1_LOGIT_CLIP = 30.0
 TRACE_FORMAT = "issue53_gap_l1_microstep_trace_le_v1"
-BATCH_EXECUTION_FORMAT = "issue53_gap_l1_batched_cuda_float64_v2_candidate"
+BATCH_EXECUTION_FORMAT = "issue53_gap_l1_batched_cuda_float64_v2"
 
 
 @dataclass(frozen=True)

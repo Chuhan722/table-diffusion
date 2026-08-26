@@ -18,6 +18,9 @@ import pandas as pd
 
 
 TRACE_STRUCT = "<qqqddddddd???"
+INDEPENDENT_BATCH_AUDIT_FORMAT = (
+    "issue53_gap_l1_independent_batched_audit_v1"
+)
 
 
 @dataclass(frozen=True)
@@ -1354,9 +1357,7 @@ def replay_gap_l1_batched_cuda(
 
     result = {
         "backend": "independent_torch_cuda_float64_batched",
-        "batch_execution_format": (
-            "issue53_gap_l1_independent_batched_audit_v1"
-        ),
+        "batch_execution_format": INDEPENDENT_BATCH_AUDIT_FORMAT,
         "batch_size": int(batch_size),
         "active_switches_k_by_address": tuple(map(int, active_switches)),
         "microsteps_by_address": tuple(map(int, microsteps_by_address)),
