@@ -20,11 +20,13 @@ from table_diffevo.gap_l1_diffusion import (
 if __package__:
     from scripts import build_issue53_stage6a_state_library as state_builder
     from scripts import issue53_stage6b1_common as common
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import build_issue53_stage6a_state_library as state_builder
     import issue53_stage6b1_common as common
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,8 @@ def _validate_execution(
         confirmed_execution_commit,
         require_cuda=mode == "formal",
     )
+    if hasattr(protocol, "validate_runtime_environment"):
+        environment.update(protocol.validate_runtime_environment(mode))
     return git, environment
 
 
@@ -83,7 +87,9 @@ def _calibrate_one(
             context.query_counts
         ),
         "runtime_device_for_donor_replay": context.runtime_device,
-        "new_kernel_device": "numpy_float64_cpu",
+        "new_kernel_device": getattr(
+            protocol, "NEW_KERNEL_BACKEND", "numpy_float64_cpu"
+        ),
         "search_order": "ascending_frozen_proposal_index",
         "current_error_exactly_zero": current_exact,
     }
@@ -121,6 +127,7 @@ def _calibrate_one(
                 runtime.source_target * runtime.runtime_n_records
             ),
             exact_target_denominator=runtime.source_n_records,
+            device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
         )
         scale, distribution = stable_nonzero_rms(isolated["scores"])
         item = {
@@ -196,6 +203,11 @@ def validate_calibration_manifest(
     ):
         raise RuntimeError("第 6B-1 阶段参考尺度清单结构/身份失败")
     for row in rows:
+        expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+        if expected_backend is not None and (
+            row.get("new_kernel_device") != expected_backend
+        ):
+            raise RuntimeError("参考尺度清单没有绑定冻结 CUDA 后端")
         status = row.get("status")
         if status == "calibrated":
             scale = row.get("reference_scale")

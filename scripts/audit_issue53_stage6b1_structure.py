@@ -21,20 +21,21 @@ from table_diffevo.gap_l1_diffusion import (
     compile_gap_l1_workload,
     evolve_step_gap_l1_global,
 )
-from table_diffevo.queries import evaluate_table
 
 if __package__:
     from scripts import build_issue53_stage6a_state_library as state_builder
     from scripts import calibrate_issue53_stage6b1_gap_l1 as calibrator
     from scripts import collect_issue53_stage6b1_screen as collector
     from scripts import issue53_stage6b1_common as common
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import build_issue53_stage6a_state_library as state_builder
     import calibrate_issue53_stage6b1_gap_l1 as calibrator
     import collect_issue53_stage6b1_screen as collector
     import issue53_stage6b1_common as common
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +84,8 @@ def _validate_execution(
         confirmed_execution_commit,
         require_cuda=mode == "formal",
     )
+    if hasattr(protocol, "validate_runtime_environment"):
+        environment.update(protocol.validate_runtime_environment(mode))
     return git, environment
 
 
@@ -114,6 +117,8 @@ def _reconstruct_arm(
     context: common.StateContext,
     replay: common.PairReplay,
     record: Mapping[str, Any],
+    *,
+    query_device: str = "numpy",
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
     copy_table, full_table = common.stage6a_collector.reconstruct_pair_tables(
         context.current,
@@ -134,12 +139,12 @@ def _reconstruct_arm(
         for cell in edit["cells"]:
             if cell["after"] != replay.donors.at[row, cell["attribute"]]:
                 raise RuntimeError("稀疏复制日志不是供体值")
-    copy_counts = evaluate_table(
-        copy_table, context.runtime.queries
-    ).astype(np.int64)
-    full_counts = evaluate_table(
-        full_table, context.runtime.queries
-    ).astype(np.int64)
+    copy_counts = common._query_counts(
+        copy_table, context.runtime, device=query_device
+    )
+    full_counts = common._query_counts(
+        full_table, context.runtime, device=query_device
+    )
     if (
         not np.array_equal(
             copy_counts,
@@ -195,7 +200,16 @@ def _audit_generated_pair(
         raise RuntimeError("共同来源、参与或初始开关身份失败")
     arms = pair["arms"]
     reconstructed = {
-        arm: _reconstruct_arm(context, replay, arms[arm])
+        arm: _reconstruct_arm(
+            context,
+            replay,
+            arms[arm],
+            query_device=(
+                getattr(protocol, "GAP_L1_DEVICE", "numpy")
+                if arm == protocol.ARM_GAP_L1
+                else "numpy"
+            ),
+        )
         for arm in protocol.ARMS
     }
     specs = [
@@ -312,6 +326,7 @@ def _audit_generated_pair(
         logit_clip=protocol.LOGIT_CLIP,
         compiled_workload=gap_compiled,
         verify_full_recount=True,
+        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
     )
     recorded_gap = arms[protocol.ARM_GAP_L1]
     _assert_frame_equal(gap_copy, reconstructed[protocol.ARM_GAP_L1][0])
@@ -330,6 +345,13 @@ def _audit_generated_pair(
         != protocol.GIBBS_SWEEPS * gap_diagnostics["active_switches_k"]
     ):
         raise RuntimeError("新核逐微步随机重放或 8*K 身份失败")
+    expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+    if expected_backend is not None and (
+        gap_diagnostics.get("backend") != expected_backend
+        or recorded_gap["kernel_diagnostics"].get("backend")
+        != expected_backend
+    ):
+        raise RuntimeError("结构审计没有使用冻结 CUDA 新核后端")
     return {
         "gap_microsteps": int(gap_diagnostics["gibbs_microsteps"]),
         "gap_clip_hits": int(gap_diagnostics["clip_hit_count"]),

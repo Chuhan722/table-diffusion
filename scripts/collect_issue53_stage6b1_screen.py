@@ -25,12 +25,14 @@ if __package__:
     from scripts import build_issue53_stage6a_state_library as state_builder
     from scripts import calibrate_issue53_stage6b1_gap_l1 as calibrator
     from scripts import issue53_stage6b1_common as common
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import build_issue53_stage6a_state_library as state_builder
     import calibrate_issue53_stage6b1_gap_l1 as calibrator
     import issue53_stage6b1_common as common
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +84,8 @@ def _validate_execution(
         confirmed_execution_commit,
         require_cuda=mode == "formal",
     )
+    if hasattr(protocol, "validate_runtime_environment"):
+        environment.update(protocol.validate_runtime_environment(mode))
     return git, environment
 
 
@@ -291,6 +295,7 @@ def _collect_pair(
         logit_clip=protocol.LOGIT_CLIP,
         compiled_workload=gap_compiled,
         verify_full_recount=True,
+        device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
     )
     gap = common.arm_raw_metrics(
         context,
@@ -298,6 +303,14 @@ def _collect_pair(
         gap_table,
         gap_mask,
         mutation_specs,
+        query_device=getattr(protocol, "GAP_L1_DEVICE", "numpy"),
+        copy_query_counts=(
+            np.asarray(
+                gap_diagnostics["final_query_counts"], dtype=np.int64
+            )
+            if getattr(protocol, "GAP_L1_DEVICE", "numpy") == "cuda"
+            else None
+        ),
     )
     gap["kernel_diagnostics"] = gap_diagnostics
     gap["gibbs_rng"] = {
@@ -343,7 +356,9 @@ def _collect_pair(
                 "endpoint_rng_sha256"
             ],
             "runtime_device_for_source_replay": context.runtime_device,
-            "new_kernel_device": "numpy_float64_cpu",
+            "new_kernel_device": getattr(
+                protocol, "NEW_KERNEL_BACKEND", "numpy_float64_cpu"
+            ),
             "gap_l1_reference_scale": float(reference_scale),
         },
         "arms": {
@@ -449,6 +464,17 @@ def validate_collection(value: Mapping[str, Any], *, mode: str) -> None:
             != protocol.GIBBS_SWEEPS * gap.get("active_switches_k", -1)
         ):
             raise RuntimeError("新核微步数不等于 8*K")
+        expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+        if (
+            expected_backend is not None
+            and pair["address_status"] == "generated_unconditionally"
+            and (
+                pair.get("shared_replay", {}).get("new_kernel_device")
+                != expected_backend
+                or gap.get("backend") != expected_backend
+            )
+        ):
+            raise RuntimeError("新核采集记录没有绑定冻结 CUDA 后端")
 
 
 def collect_screen(

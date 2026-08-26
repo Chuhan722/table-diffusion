@@ -212,9 +212,9 @@ def mocked_collection(monkeypatch):
         )
 
     def load_queries(path):
-        dataset_name = (
-            "nltcs" if "nltcs" in str(path) else "test_300x10"
-        )
+        dataset_name = Path(path).parent.name
+        if dataset_name not in protocol.DATASET_ORDER:
+            raise AssertionError("测试查询路径没有落在冻结数据集目录")
         return copy.deepcopy(runtime_inputs[dataset_name]["queries"])
 
     def tracked_run(*args, **kwargs):

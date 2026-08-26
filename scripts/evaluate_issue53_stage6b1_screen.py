@@ -19,13 +19,15 @@ if __package__:
     from scripts import build_issue53_stage6a_state_library as state_builder
     from scripts import calibrate_issue53_stage6b1_gap_l1 as calibrator
     from scripts import collect_issue53_stage6b1_screen as collector
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import audit_issue53_stage6b1_structure as structural_auditor
     import build_issue53_stage6a_state_library as state_builder
     import calibrate_issue53_stage6b1_gap_l1 as calibrator
     import collect_issue53_stage6b1_screen as collector
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -152,6 +154,8 @@ def _validate_execution(
         confirmed_execution_commit,
         require_cuda=False,
     )
+    if hasattr(protocol, "validate_runtime_environment"):
+        environment.update(protocol.validate_runtime_environment(mode))
     return git, environment
 
 

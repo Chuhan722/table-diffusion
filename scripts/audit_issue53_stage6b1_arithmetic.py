@@ -35,10 +35,12 @@ from table_diffevo.vectorized_eval import evaluate_vectorized
 
 if __package__:
     from scripts import audit_issue53_stage6a_arithmetic as prior_audit
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import audit_issue53_stage6a_arithmetic as prior_audit
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +80,12 @@ AUDIT_BOUNDARY = {
     "proposal_acceptance_or_rejection": False,
     "reference_or_heldout_table_read": False,
 }
+if getattr(protocol, "GAP_L1_DEVICE", "numpy") == "cuda":
+    AUDIT_BOUNDARY.update({
+        "production_gap_cuda_math_imported": False,
+        "independent_cuda_condition_math_used": True,
+        "independent_cuda_final_recount_used": True,
+    })
 
 
 def _json_safe(value: Any, path: tuple[str, ...] = ()) -> Any:
@@ -235,6 +243,8 @@ def _validate_execution(
             raise RuntimeError("正式独立重放必须显式且只暴露一张 GPU")
     elif mode != "smoke":
         raise ValueError("mode 必须是 formal 或 smoke")
+    if hasattr(protocol, "validate_runtime_environment"):
+        environment.update(protocol.validate_runtime_environment(mode))
     return environment
 
 
@@ -796,6 +806,14 @@ def _materialize_gap(
     return result
 
 
+def _independent_cuda_module():
+    if __package__:
+        from scripts import issue53_stage6b1b_independent_cuda as module
+    else:
+        import issue53_stage6b1b_independent_cuda as module
+    return module
+
+
 def _independent_gap_replay(
     context: _SourceContext,
     donors: pd.DataFrame,
@@ -804,6 +822,24 @@ def _independent_gap_replay(
     scale: float,
     seed: int,
 ) -> tuple[pd.DataFrame, np.ndarray, dict[str, Any]]:
+    if getattr(protocol, "GAP_L1_DEVICE", "numpy") == "cuda":
+        return _independent_cuda_module().replay_gap_l1_cuda(
+            context.current,
+            donors,
+            context.schema,
+            context.queries,
+            context.target,
+            context.q,
+            participate,
+            initial_mask,
+            reference_scale=scale,
+            seed=seed,
+            n_sweeps=protocol.GIBBS_SWEEPS,
+            eta=protocol.ETA,
+            strength=protocol.GAP_L1_STRENGTH,
+            floor=protocol.GAP_L1_FLOOR,
+            logit_clip=protocol.LOGIT_CLIP,
+        )
     plan = _prepare_independent_gap(
         context.current,
         donors,
@@ -872,10 +908,62 @@ def _independent_gap_replay(
     }
 
 
+def _isolated_score_summary(
+    values: np.ndarray,
+) -> tuple[float, dict[str, Any]]:
+    nonzero = values[values != 0.0]
+    if len(nonzero):
+        absolute = np.abs(nonzero)
+        maximum = float(np.max(absolute))
+        rms = float(maximum * np.sqrt(np.mean((nonzero / maximum) ** 2)))
+        return rms, {
+            "total_count": len(values),
+            "nonzero_count": len(nonzero),
+            "zero_count": len(values) - len(nonzero),
+            "absolute_min": float(np.min(absolute)),
+            "absolute_q25": float(np.quantile(absolute, 0.25)),
+            "absolute_median": float(np.quantile(absolute, 0.5)),
+            "absolute_q75": float(np.quantile(absolute, 0.75)),
+            "rms": rms,
+            "absolute_max": maximum,
+            "absolute_max_over_rms": float(maximum / rms),
+        }
+    return 0.0, {
+        "total_count": len(values),
+        "nonzero_count": 0,
+        "zero_count": len(values),
+        "absolute_min": None,
+        "absolute_q25": None,
+        "absolute_median": None,
+        "absolute_q75": None,
+        "rms": 0.0,
+        "absolute_max": None,
+        "absolute_max_over_rms": None,
+    }
+
+
 def _independent_isolated_scores(
     context: _SourceContext,
     donors: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray, float, dict[str, Any]]:
+    if getattr(protocol, "GAP_L1_DEVICE", "numpy") == "cuda":
+        coordinates, values, _ = (
+            _independent_cuda_module().isolated_gap_l1_scores_cuda(
+                context.current,
+                donors,
+                context.schema,
+                context.queries,
+                context.target,
+                context.q,
+                floor=protocol.GAP_L1_FLOOR,
+                exact_target_numerators=(
+                    context.source_target * context.runtime_n
+                ),
+                exact_target_denominator=context.source_n,
+            )
+        )
+        rms, distribution = _isolated_score_summary(values)
+        return coordinates, values, rms, distribution
     plan = _prepare_independent_gap(
         context.current,
         donors,
@@ -944,37 +1032,7 @@ def _independent_isolated_scores(
             score = 0.0
         scores.append(score)
     values = np.asarray(scores, dtype=np.float64)
-    nonzero = values[values != 0.0]
-    if len(nonzero):
-        absolute = np.abs(nonzero)
-        maximum = float(np.max(absolute))
-        rms = float(maximum * np.sqrt(np.mean((nonzero / maximum) ** 2)))
-        distribution = {
-            "total_count": len(values),
-            "nonzero_count": len(nonzero),
-            "zero_count": len(values) - len(nonzero),
-            "absolute_min": float(np.min(absolute)),
-            "absolute_q25": float(np.quantile(absolute, 0.25)),
-            "absolute_median": float(np.quantile(absolute, 0.5)),
-            "absolute_q75": float(np.quantile(absolute, 0.75)),
-            "rms": rms,
-            "absolute_max": maximum,
-            "absolute_max_over_rms": float(maximum / rms),
-        }
-    else:
-        rms = 0.0
-        distribution = {
-            "total_count": len(values),
-            "nonzero_count": 0,
-            "zero_count": len(values),
-            "absolute_min": None,
-            "absolute_q25": None,
-            "absolute_median": None,
-            "absolute_q75": None,
-            "rms": 0.0,
-            "absolute_max": None,
-            "absolute_max_over_rms": None,
-        }
+    rms, distribution = _isolated_score_summary(values)
     return plan.coordinates, values, rms, distribution
 
 
@@ -1111,6 +1169,8 @@ def _audit_arm_record(
     donor_indices: np.ndarray,
     donors: pd.DataFrame,
     arm: Mapping[str, Any],
+    *,
+    query_device: str = "numpy",
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
     columns = context.schema.attribute_names()
     copy_table, full_table, copied_cells = prior_audit._apply_sparse_logs(
@@ -1131,8 +1191,19 @@ def _audit_arm_record(
         for cell in edit["cells"]:
             if donors.at[row, cell["attribute"]] != cell["after"]:
                 raise RuntimeError("独立复制日志不是供体值")
-    copy_q = prior_audit._query_counts(copy_table, context.queries)
-    full_q = prior_audit._query_counts(full_table, context.queries)
+    if query_device == "cuda":
+        cuda = _independent_cuda_module()
+        copy_q = cuda.query_counts_cuda(
+            copy_table, context.schema, context.queries
+        )
+        full_q = cuda.query_counts_cuda(
+            full_table, context.schema, context.queries
+        )
+    elif query_device == "numpy":
+        copy_q = prior_audit._query_counts(copy_table, context.queries)
+        full_q = prior_audit._query_counts(full_table, context.queries)
+    else:
+        raise ValueError("独立查询计数设备只支持 numpy 或 cuda")
     if (
         not np.array_equal(
             copy_q,
@@ -1341,6 +1412,15 @@ def _dataset_label(summary: Mapping[str, bool]) -> str:
 
 
 def _stage1_label(labels: Mapping[str, str]) -> str:
+    if tuple(protocol.DATASET_ORDER) == ("nltcs",):
+        if set(labels) != {"nltcs"}:
+            raise RuntimeError("独立第二阶段标签覆盖失败")
+        label = labels["nltcs"]
+        if label in protocol.EXECUTION_FAILURE_LABELS:
+            return "inconclusive_or_invalid_screen"
+        if label == "gap_kernel_development_supported":
+            return "shared_development_support"
+        return "dataset_dependent_development_support"
     if set(labels) != {"test_300x10"}:
         raise RuntimeError("独立第一阶段标签覆盖失败")
     label = labels["test_300x10"]
@@ -1683,7 +1763,15 @@ def _audit_generated_pair(
     for arm_name in protocol.ARMS:
         record = pair["arms"][arm_name]
         copy_table, full_table, copy_q, full_q = _audit_arm_record(
-            context, donor_indices, donors, record
+            context,
+            donor_indices,
+            donors,
+            record,
+            query_device=(
+                getattr(protocol, "GAP_L1_DEVICE", "numpy")
+                if arm_name == protocol.ARM_GAP_L1
+                else "numpy"
+            ),
         )
         arm_tables[arm_name] = (copy_table, full_table)
         arm_counts[arm_name] = (copy_q, full_q)
@@ -1726,6 +1814,13 @@ def _audit_generated_pair(
         != gap_diag["final_query_counts"].tolist()
     ):
         raise RuntimeError("独立逐微步坐标/E0/E1/概率/随机结果失败")
+    expected_backend = getattr(protocol, "NEW_KERNEL_BACKEND", None)
+    if expected_backend is not None and (
+        shared.get("new_kernel_device") != expected_backend
+        or diagnostics.get("backend") != expected_backend
+        or gap_diag.get("backend") != "independent_torch_cuda_float64"
+    ):
+        raise RuntimeError("独立审计没有绑定生产/独立 CUDA 后端")
     system = _exact_system(context)
     current_units = system.units(context.q)
     copy_units = {

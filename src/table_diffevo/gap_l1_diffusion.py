@@ -9,7 +9,8 @@
 ``E = mean_j(abs(target_j - count_j) / max(target_j, floor))``。
 
 每个条件微步精确维护同一行内多属性的合取作用，以及多行先求总查询计数再
-计算误差的共同作用。实现固定使用 NumPy 双精度浮点数。
+计算误差的共同作用。历史端点使用 NumPy 双精度浮点数；可选 CUDA 后端复用
+同一输入、随机流和输出契约，并固定使用显卡双精度浮点数。
 """
 
 from __future__ import annotations
@@ -19,13 +20,16 @@ import math
 import struct
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
 from table_diffevo.queries import eval_condition, evaluate_table
 from table_diffevo.schema import Schema
+from table_diffevo.vectorized_eval import (
+    evaluate_conditions_vectorized,
+)
 
 
 DEFAULT_GAP_L1_FLOOR = 8.0
@@ -77,6 +81,43 @@ class _GapPlan:
     error_terms: np.ndarray
     error_sum: float
     mask: np.ndarray
+
+
+@dataclass(frozen=True)
+class _GapInputStructure:
+    compiled: CompiledGapL1Workload
+    current: pd.DataFrame
+    donors: pd.DataFrame
+    active_rows: np.ndarray
+    active_coordinates: np.ndarray
+    row_lookup: np.ndarray
+    mask: np.ndarray
+    counts: np.ndarray
+    targets: np.ndarray
+    denominators: np.ndarray
+
+
+@dataclass
+class _CudaGapPlan:
+    torch: Any
+    device: Any
+    compiled: CompiledGapL1Workload
+    active_rows: np.ndarray
+    active_coordinates: np.ndarray
+    row_lookup: np.ndarray
+    query_indices_by_attribute: Tuple[Any, ...]
+    current_row_indicators: Any
+    row_indicators: Any
+    failure_counts: Any
+    current_attribute_failures: Tuple[Any, ...]
+    donor_attribute_failures: Tuple[Any, ...]
+    current_counts: Any
+    plan_counts: Any
+    target: Any
+    denominators: Any
+    error_terms: Any
+    error_sum: Any
+    mask: Any
 
 
 def _require_finite_vector(
@@ -287,7 +328,7 @@ def _evaluate_conditions(
     return truth
 
 
-def _prepare_plan(
+def _prepare_input_structure(
     current: pd.DataFrame,
     donors: pd.DataFrame,
     schema: Schema,
@@ -299,7 +340,9 @@ def _prepare_plan(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
-) -> _GapPlan:
+) -> _GapInputStructure:
+    """验证公共输入并构造与数值后端无关的稀疏活跃结构。"""
+
     if len(current) != len(donors):
         raise ValueError("current 与 donors 行数必须一致")
     compiled = (
@@ -321,14 +364,20 @@ def _prepare_plan(
         raise ValueError(f"current/donors 缺少属性：{missing}")
 
     raw_participate = np.asarray(participate)
-    if raw_participate.shape != (n_rows,) or raw_participate.dtype.kind not in "biuf":
+    if (
+        raw_participate.shape != (n_rows,)
+        or raw_participate.dtype.kind not in "biuf"
+    ):
         raise ValueError("participate 必须是与表等长的 0/1 向量")
     if np.any((raw_participate != 0) & (raw_participate != 1)):
         raise ValueError("participate 必须是与表等长的 0/1 向量")
     participate_bool = raw_participate.astype(bool, copy=False)
 
     raw_mask = np.asarray(initial_mask)
-    if raw_mask.shape != (n_rows, n_attributes) or raw_mask.dtype.kind not in "biuf":
+    if (
+        raw_mask.shape != (n_rows, n_attributes)
+        or raw_mask.dtype.kind not in "biuf"
+    ):
         raise ValueError(
             f"initial_mask 必须是 shape ({n_rows}, {n_attributes}) 的 0/1 数组"
         )
@@ -360,6 +409,56 @@ def _prepare_plan(
     denominators = np.maximum(targets, floor_value)
     if np.any(denominators <= 0.0):
         raise ValueError("max(target, floor) 必须为正")
+    return _GapInputStructure(
+        compiled=compiled,
+        current=current_reset,
+        donors=donor_reset,
+        active_rows=active_rows,
+        active_coordinates=active_coordinates,
+        row_lookup=row_lookup,
+        mask=mask,
+        counts=counts,
+        targets=targets,
+        denominators=denominators,
+    )
+
+
+def _prepare_plan(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    participate: Any,
+    initial_mask: Any,
+    *,
+    floor: float,
+    compiled_workload: Optional[CompiledGapL1Workload],
+) -> _GapPlan:
+    structure = _prepare_input_structure(
+        current,
+        donors,
+        schema,
+        queries,
+        target,
+        current_counts,
+        participate,
+        initial_mask,
+        floor=floor,
+        compiled_workload=compiled_workload,
+    )
+    compiled = structure.compiled
+    current_reset = structure.current
+    donor_reset = structure.donors
+    active_coordinates = structure.active_coordinates
+    active_rows = structure.active_rows
+    row_lookup = structure.row_lookup
+    mask = structure.mask
+    counts = structure.counts
+    targets = structure.targets
+    denominators = structure.denominators
+    n_attributes = len(compiled.attribute_names)
 
     if len(active_rows):
         pair = pd.concat(
@@ -456,6 +555,349 @@ def _prepare_plan(
         error_sum=error_sum,
         mask=mask,
     )
+
+
+def _require_cuda_backend() -> Tuple[Any, Any]:
+    try:
+        import torch
+    except ImportError as error:
+        raise RuntimeError("缺口核 CUDA 后端需要 PyTorch") from error
+    if not torch.cuda.is_available():
+        raise RuntimeError("请求缺口核 CUDA 后端但 CUDA 不可用")
+    if not torch.are_deterministic_algorithms_enabled():
+        raise RuntimeError("缺口核 CUDA 后端要求开启确定性算法")
+    return torch, torch.device("cuda")
+
+
+def _cuda_attribute_failures(
+    truth: Any,
+    condition_groups: Tuple[Tuple[int, ...], ...],
+    *,
+    torch: Any,
+    device: Any,
+) -> Any:
+    n_rows = int(truth.shape[0])
+    n_queries = len(condition_groups)
+    result = torch.zeros(
+        (n_rows, n_queries), dtype=torch.int32, device=device
+    )
+    if n_rows == 0 or n_queries == 0:
+        return result
+    for local_query, indices in enumerate(condition_groups):
+        condition_t = torch.as_tensor(
+            indices, dtype=torch.long, device=device
+        )
+        result[:, local_query] = (~truth[:, condition_t]).sum(
+            dim=1, dtype=torch.int32
+        )
+    return result
+
+
+def _prepare_cuda_plan(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    participate: Any,
+    initial_mask: Any,
+    *,
+    floor: float,
+    compiled_workload: Optional[CompiledGapL1Workload],
+) -> _CudaGapPlan:
+    """在 CUDA 上建立缺口条件状态，不调用 NumPy 条件算术。"""
+
+    torch, device = _require_cuda_backend()
+    structure = _prepare_input_structure(
+        current,
+        donors,
+        schema,
+        queries,
+        target,
+        current_counts,
+        participate,
+        initial_mask,
+        floor=floor,
+        compiled_workload=compiled_workload,
+    )
+    compiled = structure.compiled
+    n_active_rows = len(structure.active_rows)
+    n_queries = compiled.n_queries
+
+    if n_active_rows:
+        pair = pd.concat(
+            [
+                structure.current.iloc[structure.active_rows],
+                structure.donors.iloc[structure.active_rows],
+            ],
+            ignore_index=True,
+        )
+        pair_truth = evaluate_conditions_vectorized(
+            pair,
+            [item.condition for item in compiled.conditions],
+            schema,
+            device="cuda",
+            return_tensor=True,
+            float64=True,
+        )
+        current_truth = pair_truth[:n_active_rows]
+        donor_truth = pair_truth[n_active_rows:]
+    else:
+        current_truth = torch.empty(
+            (0, len(compiled.conditions)), dtype=torch.bool, device=device
+        )
+        donor_truth = current_truth.clone()
+
+    failure_counts = torch.zeros(
+        (n_active_rows, n_queries), dtype=torch.int32, device=device
+    )
+    if n_active_rows and compiled.conditions:
+        for query_index, indices in enumerate(
+            compiled.query_condition_indices
+        ):
+            if not indices:
+                continue
+            condition_t = torch.as_tensor(
+                indices, dtype=torch.long, device=device
+            )
+            failure_counts[:, query_index] = (
+                ~current_truth[:, condition_t]
+            ).sum(dim=1, dtype=torch.int32)
+    current_row_indicators = failure_counts == 0
+
+    query_indices_by_attribute = tuple(
+        torch.tensor(indices, dtype=torch.long, device=device)
+        for indices in compiled.query_indices_by_attribute
+    )
+    current_attribute_failures = tuple(
+        _cuda_attribute_failures(
+            current_truth,
+            compiled.condition_indices_by_attribute_query[attribute_index],
+            torch=torch,
+            device=device,
+        )
+        for attribute_index in range(len(compiled.attribute_names))
+    )
+    donor_attribute_failures = tuple(
+        _cuda_attribute_failures(
+            donor_truth,
+            compiled.condition_indices_by_attribute_query[attribute_index],
+            torch=torch,
+            device=device,
+        )
+        for attribute_index in range(len(compiled.attribute_names))
+    )
+
+    mask = torch.as_tensor(
+        structure.mask, dtype=torch.bool, device=device
+    ).clone()
+    if n_active_rows:
+        active_rows_t = torch.as_tensor(
+            structure.active_rows, dtype=torch.long, device=device
+        )
+        active_mask = mask.index_select(0, active_rows_t)
+        for attribute_index, query_indices in enumerate(
+            query_indices_by_attribute
+        ):
+            if query_indices.numel() == 0:
+                continue
+            selected = active_mask[:, attribute_index].to(torch.int32)
+            delta = (
+                donor_attribute_failures[attribute_index]
+                - current_attribute_failures[attribute_index]
+            )
+            old = failure_counts.index_select(1, query_indices)
+            failure_counts[:, query_indices] = (
+                old + selected.unsqueeze(1) * delta
+            )
+
+    row_indicators = failure_counts == 0
+    if not np.all(structure.counts == np.rint(structure.counts)):
+        raise ValueError("CUDA 缺口核要求 current_counts 为整数计数")
+    current_counts_t = torch.as_tensor(
+        np.rint(structure.counts).astype(np.int64),
+        dtype=torch.int64,
+        device=device,
+    )
+    plan_counts = current_counts_t.clone()
+    if n_active_rows:
+        plan_counts += (
+            row_indicators.to(torch.int64)
+            - current_row_indicators.to(torch.int64)
+        ).sum(dim=0, dtype=torch.int64)
+    target_t = torch.as_tensor(
+        structure.targets, dtype=torch.float64, device=device
+    )
+    denominators_t = torch.as_tensor(
+        structure.denominators, dtype=torch.float64, device=device
+    )
+    error_terms = (
+        torch.abs(target_t - plan_counts.to(torch.float64)) / denominators_t
+    )
+    error_sum = error_terms.sum(dtype=torch.float64)
+    torch.cuda.synchronize(device)
+    return _CudaGapPlan(
+        torch=torch,
+        device=device,
+        compiled=compiled,
+        active_rows=structure.active_rows,
+        active_coordinates=structure.active_coordinates,
+        row_lookup=structure.row_lookup,
+        query_indices_by_attribute=query_indices_by_attribute,
+        current_row_indicators=current_row_indicators,
+        row_indicators=row_indicators,
+        failure_counts=failure_counts,
+        current_attribute_failures=current_attribute_failures,
+        donor_attribute_failures=donor_attribute_failures,
+        current_counts=current_counts_t,
+        plan_counts=plan_counts,
+        target=target_t,
+        denominators=denominators_t,
+        error_terms=error_terms,
+        error_sum=error_sum,
+        mask=mask,
+    )
+
+
+def _condition_pair_cuda(
+    plan: _CudaGapPlan,
+    row_index: Any,
+    attribute_index: int,
+    *,
+    local_row: Optional[int] = None,
+) -> Tuple[Any, Any, Any, Any, Any, Any]:
+    """CUDA 版 E0/E1，只读评价当前完整临时组合。"""
+
+    torch = plan.torch
+    if local_row is None:
+        local_row = int(plan.row_lookup[int(row_index)])
+    if local_row < 0:
+        raise ValueError("待评价坐标不在活跃参与行中")
+    query_indices = plan.query_indices_by_attribute[attribute_index]
+    if query_indices.numel() == 0:
+        empty_failures = torch.empty(
+            0, dtype=torch.int32, device=plan.device
+        )
+        empty_indicators = torch.empty(
+            0, dtype=torch.bool, device=plan.device
+        )
+        value = plan.error_sum / plan.compiled.n_queries
+        return (
+            value,
+            value,
+            empty_failures,
+            empty_failures,
+            empty_indicators,
+            empty_indicators,
+        )
+    current_failures = plan.current_attribute_failures[
+        attribute_index
+    ][local_row]
+    donor_failures = plan.donor_attribute_failures[
+        attribute_index
+    ][local_row]
+    old_failures = torch.where(
+        plan.mask[row_index, attribute_index],
+        donor_failures,
+        current_failures,
+    )
+    base_failures = (
+        plan.failure_counts[local_row, query_indices] - old_failures
+    )
+    failures0 = base_failures + current_failures
+    failures1 = base_failures + donor_failures
+    indicators0 = failures0 == 0
+    indicators1 = failures1 == 0
+    old_indicators = plan.row_indicators[local_row, query_indices]
+    counts0 = (
+        plan.plan_counts[query_indices]
+        + indicators0.to(torch.int64)
+        - old_indicators.to(torch.int64)
+    )
+    counts1 = (
+        plan.plan_counts[query_indices]
+        + indicators1.to(torch.int64)
+        - old_indicators.to(torch.int64)
+    )
+    terms0 = (
+        torch.abs(plan.target[query_indices] - counts0.to(torch.float64))
+        / plan.denominators[query_indices]
+    )
+    terms1 = (
+        torch.abs(plan.target[query_indices] - counts1.to(torch.float64))
+        / plan.denominators[query_indices]
+    )
+    old_terms = plan.error_terms[query_indices]
+    sum0 = plan.error_sum - old_terms.sum(dtype=torch.float64) + terms0.sum(
+        dtype=torch.float64
+    )
+    sum1 = plan.error_sum - old_terms.sum(dtype=torch.float64) + terms1.sum(
+        dtype=torch.float64
+    )
+    return (
+        sum0 / plan.compiled.n_queries,
+        sum1 / plan.compiled.n_queries,
+        failures0,
+        failures1,
+        indicators0,
+        indicators1,
+    )
+
+
+def _set_coordinate_cuda(
+    plan: _CudaGapPlan,
+    row_index: Any,
+    attribute_index: int,
+    selected: Any,
+    failures: Any,
+    indicators: Any,
+    *,
+    local_row: Optional[int] = None,
+) -> None:
+    torch = plan.torch
+    if local_row is None:
+        local_row = int(plan.row_lookup[int(row_index)])
+    query_indices = plan.query_indices_by_attribute[attribute_index]
+    old_selected = plan.mask[row_index, attribute_index]
+    changed = selected != old_selected
+    if query_indices.numel():
+        old_indicators = plan.row_indicators[local_row, query_indices]
+        old_counts = plan.plan_counts[query_indices]
+        candidate_counts = (
+            old_counts
+            + indicators.to(torch.int64)
+            - old_indicators.to(torch.int64)
+        )
+        candidate_terms = (
+            torch.abs(
+                plan.target[query_indices]
+                - candidate_counts.to(torch.float64)
+            )
+            / plan.denominators[query_indices]
+        )
+        candidate_error_sum = (
+            plan.error_sum
+            - plan.error_terms[query_indices].sum(dtype=torch.float64)
+            + candidate_terms.sum(dtype=torch.float64)
+        )
+        plan.plan_counts[query_indices] = torch.where(
+            changed, candidate_counts, old_counts
+        )
+        old_failures = plan.failure_counts[local_row, query_indices]
+        plan.failure_counts[local_row, query_indices] = torch.where(
+            changed, failures, old_failures
+        )
+        plan.row_indicators[local_row, query_indices] = torch.where(
+            changed, indicators, old_indicators
+        )
+        plan.error_terms[query_indices] = torch.where(
+            changed, candidate_terms, plan.error_terms[query_indices]
+        )
+        plan.error_sum = torch.where(
+            changed, candidate_error_sum, plan.error_sum
+        )
+    plan.mask[row_index, attribute_index] = selected
 
 
 def _attribute_failures(
@@ -606,6 +1048,51 @@ def gap_l1_conditional_probability(
     return probability, raw_logit, effective_logit, raw_logit != effective_logit
 
 
+def _cuda_probability_parameters(
+    plan: _CudaGapPlan,
+    reference_scale: float,
+    *,
+    eta: float,
+    strength: float,
+    logit_clip: float,
+) -> Tuple[float, Any, Any, Any, Any]:
+    """验证公共参数，并在显卡上建立双精度条件概率常量。"""
+
+    scale = _require_positive_finite(reference_scale, "reference_scale")
+    baseline = _require_open_probability(eta, "eta")
+    beta = _require_positive_finite(strength, "strength")
+    clip = _require_positive_finite(logit_clip, "logit_clip")
+    torch = plan.torch
+    scale_t = torch.tensor(
+        scale, dtype=torch.float64, device=plan.device
+    )
+    baseline_t = torch.tensor(
+        baseline, dtype=torch.float64, device=plan.device
+    )
+    base_logit_t = torch.log(baseline_t) - torch.log1p(-baseline_t)
+    beta_t = torch.tensor(beta, dtype=torch.float64, device=plan.device)
+    clip_t = torch.tensor(clip, dtype=torch.float64, device=plan.device)
+    return scale, scale_t, base_logit_t, beta_t, clip_t
+
+
+def _conditional_probability_cuda(
+    score: Any,
+    scale: Any,
+    base_logit: Any,
+    strength: Any,
+    logit_clip: Any,
+) -> Tuple[Any, Any, Any, Any]:
+    raw_logit = base_logit + strength * score / scale
+    effective_logit = raw_logit.clamp(min=-logit_clip, max=logit_clip)
+    probability = effective_logit.sigmoid()
+    return (
+        probability,
+        raw_logit,
+        effective_logit,
+        raw_logit != effective_logit,
+    )
+
+
 def _distribution(values: Sequence[float]) -> Dict[str, Optional[float]]:
     if not values:
         return {
@@ -693,6 +1180,342 @@ def _materialize_copy_table(
     return result
 
 
+def _full_query_recount_cuda(
+    frame: pd.DataFrame,
+    schema: Schema,
+    plan: _CudaGapPlan,
+) -> np.ndarray:
+    """用现有 CUDA 条件评价器完整复算全部合取查询。"""
+
+    torch = plan.torch
+    truth = evaluate_conditions_vectorized(
+        frame,
+        [item.condition for item in plan.compiled.conditions],
+        schema,
+        device="cuda",
+        return_tensor=True,
+        float64=True,
+    )
+    counts = torch.empty(
+        plan.compiled.n_queries,
+        dtype=torch.int64,
+        device=plan.device,
+    )
+    for query_index, indices in enumerate(
+        plan.compiled.query_condition_indices
+    ):
+        if indices:
+            condition_t = torch.as_tensor(
+                indices, dtype=torch.long, device=plan.device
+            )
+            matches = truth[:, condition_t].all(dim=1)
+            counts[query_index] = matches.sum(dtype=torch.int64)
+        else:
+            counts[query_index] = len(frame)
+    result = np.asarray(
+        counts.detach().cpu().numpy(), dtype=np.int64
+    )
+    torch.cuda.synchronize(plan.device)
+    return result
+
+
+def _build_scan_diagnostics(
+    *,
+    backend: Optional[str],
+    sweeps: int,
+    k: int,
+    scale: float,
+    trace: Any,
+    final_query_counts: np.ndarray,
+    final_mask: np.ndarray,
+    scores: Sequence[float],
+    normalized_scores: Sequence[float],
+    raw_logits: Sequence[float],
+    probabilities: Sequence[float],
+    entropies: Sequence[float],
+    probability_bins: Mapping[str, int],
+    clip_hits: int,
+    prepared_elapsed: float,
+    scan_elapsed: float,
+    materialize_elapsed: float,
+    recount_elapsed: float,
+    total_elapsed: float,
+) -> Dict[str, Any]:
+    microsteps = sweeps * k
+    minimum_outcome = (
+        min(min(probability, 1.0 - probability) for probability in probabilities)
+        if probabilities
+        else None
+    )
+    digest = trace.hexdigest()
+    if microsteps == 0 and digest != hashlib.sha256(b"").hexdigest():
+        raise RuntimeError("空扫描 trace 身份失败")
+    result = {
+        "kernel": "gap_l1_global_random_scan",
+        "no_gate": True,
+        "n_sweeps": sweeps,
+        "active_switches_k": int(k),
+        "gibbs_microsteps": int(microsteps),
+        "conditional_error_evaluations": int(2 * microsteps),
+        "query_indicator_increment_updates": int(microsteps),
+        "reference_scale": scale,
+        "trace_format": TRACE_FORMAT,
+        "microstep_trace_sha256": digest,
+        "final_query_counts": np.asarray(
+            final_query_counts, dtype=np.int64
+        ).tolist(),
+        "final_on_switches": int(np.sum(final_mask)),
+        "clip_hit_count": int(clip_hits),
+        "nonfinite_condition_count": 0,
+        "exact_zero_or_one_probability_count": 0,
+        "minimum_binary_outcome_probability": (
+            float(minimum_outcome) if minimum_outcome is not None else None
+        ),
+        "probability_bins": dict(probability_bins),
+        "score_distribution": _distribution(scores),
+        "normalized_score_distribution": _distribution(normalized_scores),
+        "raw_logit_distribution": _distribution(raw_logits),
+        "probability_distribution": _distribution(probabilities),
+        "binary_entropy_distribution": _distribution(entropies),
+        "near_deterministic_count": int(sum(
+            probability < 0.01 or probability > 0.99
+            for probability in probabilities
+        )),
+        "prepared_elapsed_sec_diagnostic_only": prepared_elapsed,
+        "scan_elapsed_sec_diagnostic_only": scan_elapsed,
+        "materialize_elapsed_sec_diagnostic_only": materialize_elapsed,
+        "full_recount_elapsed_sec_diagnostic_only": recount_elapsed,
+        "elapsed_sec_diagnostic_only": total_elapsed,
+    }
+    if backend is not None:
+        result["backend"] = backend
+    return result
+
+
+def _build_exact_zero_spec(
+    queries: Sequence[Mapping[str, Any]],
+    floor: float,
+    exact_target_numerators: Optional[Any],
+    exact_target_denominator: Optional[int],
+) -> Optional[Tuple[List[int], int, List[int], List[int]]]:
+    if (exact_target_numerators is None) != (
+        exact_target_denominator is None
+    ):
+        raise ValueError(
+            "exact_target_numerators 与 exact_target_denominator 必须同时提供"
+        )
+    if exact_target_numerators is None:
+        return None
+    if not float(floor).is_integer():
+        raise ValueError("精确目标零分数判定要求整数 floor")
+    raw_numerators = np.asarray(exact_target_numerators)
+    if (
+        raw_numerators.shape != (len(queries),)
+        or raw_numerators.dtype.kind not in "iu"
+        or raw_numerators.dtype.kind == "b"
+        or isinstance(exact_target_denominator, (bool, np.bool_))
+        or not isinstance(exact_target_denominator, (int, np.integer))
+        or exact_target_denominator <= 0
+    ):
+        raise ValueError("精确目标必须是整数向量和正整数共同分母")
+    numerator_values = [int(value) for value in raw_numerators]
+    denominator_value = int(exact_target_denominator)
+    raw_denominators = [
+        max(numerator, int(floor) * denominator_value)
+        for numerator in numerator_values
+    ]
+    divisors = [
+        math.gcd(
+            math.gcd(abs(numerator), denominator_value), denominator
+        )
+        for numerator, denominator in zip(
+            numerator_values, raw_denominators
+        )
+    ]
+    reduced_denominators = [
+        denominator // divisor
+        for denominator, divisor in zip(raw_denominators, divisors)
+    ]
+    common_multiple = math.lcm(*reduced_denominators)
+    return (
+        numerator_values,
+        denominator_value,
+        divisors,
+        [
+            common_multiple // denominator
+            for denominator in reduced_denominators
+        ],
+    )
+
+
+def _exact_score_is_zero(
+    query_indices: Sequence[int],
+    counts0: Sequence[int],
+    counts1: Sequence[int],
+    exact_zero_spec: Tuple[List[int], int, List[int], List[int]],
+) -> bool:
+    numerators, exact_denominator, divisors, weights = exact_zero_spec
+    exact_units = 0
+    for local_index, query_index_raw in enumerate(query_indices):
+        query_index = int(query_index_raw)
+        numerator = numerators[query_index]
+        divisor = divisors[query_index]
+        weight = weights[query_index]
+        residual0 = abs(
+            numerator - int(counts0[local_index]) * exact_denominator
+        )
+        residual1 = abs(
+            numerator - int(counts1[local_index]) * exact_denominator
+        )
+        exact_units += (
+            residual0 // divisor - residual1 // divisor
+        ) * weight
+    return exact_units == 0
+
+
+def _isolated_gap_l1_scores_cuda(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    *,
+    floor: float,
+    compiled_workload: Optional[CompiledGapL1Workload],
+    exact_target_numerators: Optional[Any],
+    exact_target_denominator: Optional[int],
+) -> Dict[str, Any]:
+    """显卡批量计算全零上下文中的全部孤立分数。"""
+
+    attributes = schema.attribute_names()
+    plan = _prepare_cuda_plan(
+        current,
+        donors,
+        schema,
+        queries,
+        target,
+        current_counts,
+        np.ones(len(current), dtype=bool),
+        np.zeros((len(current), len(attributes)), dtype=bool),
+        floor=floor,
+        compiled_workload=compiled_workload,
+    )
+    exact_zero_spec = _build_exact_zero_spec(
+        queries,
+        floor,
+        exact_target_numerators,
+        exact_target_denominator,
+    )
+    torch = plan.torch
+    n_rows = len(current)
+    score_matrix = torch.zeros(
+        (n_rows, len(attributes)), dtype=torch.float64, device=plan.device
+    )
+    exact_payloads = []
+    for attribute_index, query_indices in enumerate(
+        plan.query_indices_by_attribute
+    ):
+        coordinate_mask = (
+            plan.active_coordinates[:, 1] == attribute_index
+        )
+        rows = plan.active_coordinates[coordinate_mask, 0]
+        if len(rows) == 0:
+            continue
+        local_rows = plan.row_lookup[rows]
+        rows_t = torch.as_tensor(rows, dtype=torch.long, device=plan.device)
+        local_rows_t = torch.as_tensor(
+            local_rows, dtype=torch.long, device=plan.device
+        )
+        if query_indices.numel() == 0:
+            continue
+        current_failures = plan.current_attribute_failures[
+            attribute_index
+        ].index_select(0, local_rows_t)
+        donor_failures = plan.donor_attribute_failures[
+            attribute_index
+        ].index_select(0, local_rows_t)
+        row_failures = plan.failure_counts.index_select(
+            0, local_rows_t
+        ).index_select(1, query_indices)
+        failures1 = row_failures - current_failures + donor_failures
+        indicators0 = plan.row_indicators.index_select(
+            0, local_rows_t
+        ).index_select(1, query_indices)
+        indicators1 = failures1 == 0
+        base_counts = plan.plan_counts.index_select(0, query_indices)
+        counts1 = (
+            base_counts.unsqueeze(0)
+            + indicators1.to(torch.int64)
+            - indicators0.to(torch.int64)
+        )
+        old_terms = plan.error_terms.index_select(0, query_indices)
+        terms1 = (
+            torch.abs(
+                plan.target.index_select(0, query_indices).unsqueeze(0)
+                - counts1.to(torch.float64)
+            )
+            / plan.denominators.index_select(0, query_indices).unsqueeze(0)
+        )
+        scores = (
+            old_terms.unsqueeze(0).sum(dim=1, dtype=torch.float64)
+            - terms1.sum(dim=1, dtype=torch.float64)
+        ) / plan.compiled.n_queries
+        score_matrix[rows_t, attribute_index] = scores
+        if exact_zero_spec is not None:
+            exact_payloads.append((
+                rows,
+                attribute_index,
+                np.asarray(
+                    query_indices.detach().cpu().numpy(), dtype=np.int64
+                ),
+                np.asarray(
+                    base_counts.detach().cpu().numpy(), dtype=np.int64
+                ),
+                np.asarray(counts1.detach().cpu().numpy(), dtype=np.int64),
+            ))
+
+    plan.torch.cuda.synchronize(plan.device)
+    coordinates = np.asarray(
+        plan.active_coordinates, dtype=np.intp
+    ).reshape(-1, 2)
+    scores_np = np.asarray(
+        score_matrix[
+            torch.as_tensor(
+                coordinates[:, 0], dtype=torch.long, device=plan.device
+            ),
+            torch.as_tensor(
+                coordinates[:, 1], dtype=torch.long, device=plan.device
+            ),
+        ].detach().cpu().numpy(),
+        dtype=np.float64,
+    )
+    if exact_zero_spec is not None:
+        coordinate_positions = {
+            (int(row), int(attribute)): index
+            for index, (row, attribute) in enumerate(coordinates)
+        }
+        for rows, attribute_index, query_indices, counts0, counts1 in exact_payloads:
+            for local_index, row in enumerate(rows):
+                if _exact_score_is_zero(
+                    query_indices,
+                    counts0,
+                    counts1[local_index],
+                    exact_zero_spec,
+                ):
+                    scores_np[coordinate_positions[
+                        (int(row), int(attribute_index))
+                    ]] = 0.0
+    return {
+        "coordinates": coordinates,
+        "scores": scores_np,
+        "current_error": float(
+            (plan.error_sum / plan.compiled.n_queries).detach().cpu().item()
+        ),
+        "backend": "torch_cuda_float64",
+    }
+
+
 def isolated_gap_l1_scores(
     current: pd.DataFrame,
     donors: pd.DataFrame,
@@ -705,6 +1528,7 @@ def isolated_gap_l1_scores(
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     exact_target_numerators: Optional[Any] = None,
     exact_target_denominator: Optional[int] = None,
+    device: str = "numpy",
 ) -> Dict[str, Any]:
     """计算其他开关全为 0 时所有不同值行—属性的孤立分数。
 
@@ -713,6 +1537,21 @@ def isolated_gap_l1_scores(
     冻结的 NumPy 双精度路径取值。这避免理论抵消被浮点尾差误收进 RMS。
     """
 
+    if device == "cuda":
+        return _isolated_gap_l1_scores_cuda(
+            current,
+            donors,
+            schema,
+            queries,
+            target,
+            current_counts,
+            floor=floor,
+            compiled_workload=compiled_workload,
+            exact_target_numerators=exact_target_numerators,
+            exact_target_denominator=exact_target_denominator,
+        )
+    if device != "numpy":
+        raise ValueError("缺口孤立分数 device 只支持 'numpy' 或 'cuda'")
     attributes = schema.attribute_names()
     plan = _prepare_plan(
         current,
@@ -726,60 +1565,12 @@ def isolated_gap_l1_scores(
         floor=floor,
         compiled_workload=compiled_workload,
     )
-    exact_zero_spec = None
-    if (exact_target_numerators is None) != (
-        exact_target_denominator is None
-    ):
-        raise ValueError(
-            "exact_target_numerators 与 exact_target_denominator 必须同时提供"
-        )
-    if exact_target_numerators is not None:
-        if not float(floor).is_integer():
-            raise ValueError("精确目标零分数判定要求整数 floor")
-        raw_numerators = np.asarray(exact_target_numerators)
-        if (
-            raw_numerators.shape != (len(queries),)
-            or raw_numerators.dtype.kind not in "iu"
-            or raw_numerators.dtype.kind == "b"
-            or isinstance(exact_target_denominator, (bool, np.bool_))
-            or not isinstance(
-                exact_target_denominator, (int, np.integer)
-            )
-            or exact_target_denominator <= 0
-        ):
-            raise ValueError("精确目标必须是整数向量和正整数共同分母")
-        numerator_values = [int(value) for value in raw_numerators]
-        denominator_value = int(exact_target_denominator)
-        raw_denominators = [
-            max(
-                numerator,
-                int(floor) * denominator_value,
-            )
-            for numerator in numerator_values
-        ]
-        divisors = [
-            math.gcd(
-                math.gcd(abs(numerator), denominator_value),
-                denominator,
-            )
-            for numerator, denominator in zip(
-                numerator_values, raw_denominators
-            )
-        ]
-        reduced_denominators = [
-            denominator // divisor
-            for denominator, divisor in zip(raw_denominators, divisors)
-        ]
-        common_multiple = math.lcm(*reduced_denominators)
-        exact_zero_spec = (
-            numerator_values,
-            denominator_value,
-            divisors,
-            [
-                common_multiple // denominator
-                for denominator in reduced_denominators
-            ],
-        )
+    exact_zero_spec = _build_exact_zero_spec(
+        queries,
+        floor,
+        exact_target_numerators,
+        exact_target_denominator,
+    )
 
     coordinates: list[Tuple[int, int]] = []
     scores: list[float] = []
@@ -806,23 +1597,12 @@ def isolated_gap_l1_scores(
                 + indicators1.astype(np.int8)
                 - old_indicators.astype(np.int8)
             ).astype(np.int64)
-            numerators, exact_denominator, divisors, weights = exact_zero_spec
-            exact_units = 0
-            for local_index, query_index_raw in enumerate(query_indices):
-                query_index = int(query_index_raw)
-                numerator = numerators[query_index]
-                divisor = divisors[query_index]
-                weight = weights[query_index]
-                residual0 = abs(
-                    numerator - int(counts0[local_index]) * exact_denominator
-                )
-                residual1 = abs(
-                    numerator - int(counts1[local_index]) * exact_denominator
-                )
-                exact_units += (
-                    residual0 // divisor - residual1 // divisor
-                ) * weight
-            if exact_units == 0:
+            if _exact_score_is_zero(
+                query_indices,
+                counts0,
+                counts1,
+                exact_zero_spec,
+            ):
                 score = 0.0
         coordinates.append((row_index, attribute_index))
         scores.append(score)
@@ -851,8 +1631,12 @@ def evaluate_gap_l1_condition(
     floor: float = DEFAULT_GAP_L1_FLOOR,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
+    device: str = "numpy",
 ) -> Dict[str, Any]:
     """只读评价一个活跃开关的当前完整上下文条件式。"""
+
+    if device not in ("numpy", "cuda"):
+        raise ValueError("缺口条件评价 device 只支持 'numpy' 或 'cuda'")
 
     if (
         isinstance(row_index, (bool, np.bool_))
@@ -867,7 +1651,8 @@ def evaluate_gap_l1_condition(
         or not 0 <= attribute_index < attribute_count
     ):
         raise ValueError("attribute_index 超出属性范围")
-    plan = _prepare_plan(
+    prepare = _prepare_cuda_plan if device == "cuda" else _prepare_plan
+    plan = prepare(
         current,
         donors,
         schema,
@@ -883,6 +1668,59 @@ def evaluate_gap_l1_condition(
     coordinate = (int(row_index), int(attribute_index))
     if coordinate not in coordinates:
         raise ValueError("指定开关不是参与且 current != donor 的活跃开关")
+    if device == "cuda":
+        e0_t, e1_t, *_ = _condition_pair_cuda(plan, *coordinate)
+        score_t = e0_t - e1_t
+        (
+            _,
+            scale_t,
+            base_logit_t,
+            strength_t,
+            clip_t,
+        ) = _cuda_probability_parameters(
+            plan,
+            reference_scale,
+            eta=eta,
+            strength=strength,
+            logit_clip=logit_clip,
+        )
+        probability_t, raw_logit_t, logit_t, clipped_t = (
+            _conditional_probability_cuda(
+                score_t,
+                scale_t,
+                base_logit_t,
+                strength_t,
+                clip_t,
+            )
+        )
+        values = plan.torch.stack((
+            e0_t,
+            e1_t,
+            score_t,
+            score_t / scale_t,
+            raw_logit_t,
+            logit_t,
+            probability_t,
+        )).detach().cpu().numpy()
+        clipped = bool(clipped_t.detach().cpu().item())
+        plan.torch.cuda.synchronize(plan.device)
+        if not np.all(np.isfinite(values)):
+            raise RuntimeError("CUDA 缺口条件评价产生非有限数值")
+        probability = float(values[6])
+        if not 0.0 < probability < 1.0:
+            raise RuntimeError("有限条件概率丢失双向严格正支持")
+        return {
+            "e0": float(values[0]),
+            "e1": float(values[1]),
+            "score": float(values[2]),
+            "normalized_score": float(values[3]),
+            "raw_logit": float(values[4]),
+            "logit": float(values[5]),
+            "probability": probability,
+            "clipped": clipped,
+            "backend": "torch_cuda_float64",
+        }
+
     e0, e1, *_ = _condition_pair(plan, *coordinate)
     score = float(e0 - e1)
     probability, raw_logit, logit, clipped = gap_l1_conditional_probability(
@@ -947,6 +1785,260 @@ def stable_nonzero_rms(values: Any) -> Tuple[float, Dict[str, Any]]:
     }
 
 
+def _evolve_step_gap_l1_global_cuda(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    queries: List[Dict[str, Any]],
+    target: Any,
+    current_counts: Any,
+    *,
+    participate: Any,
+    initial_mask: Any,
+    reference_scale: float,
+    rng: np.random.Generator,
+    n_sweeps: int,
+    eta: float,
+    strength: float,
+    floor: float,
+    logit_clip: float,
+    compiled_workload: Optional[CompiledGapL1Workload],
+    verify_full_recount: bool,
+) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
+    """CUDA 双精度后端；随机带仍由冻结的 NumPy 流形成。"""
+
+    if not isinstance(rng, np.random.Generator):
+        raise ValueError("rng 必须是 np.random.Generator")
+    sweeps = _require_nonnegative_integer(n_sweeps, "n_sweeps")
+    started = time.perf_counter()
+    plan = _prepare_cuda_plan(
+        current,
+        donors,
+        schema,
+        queries,
+        target,
+        current_counts,
+        participate,
+        initial_mask,
+        floor=floor,
+        compiled_workload=compiled_workload,
+    )
+    (
+        scale,
+        scale_t,
+        base_logit_t,
+        strength_t,
+        clip_t,
+    ) = _cuda_probability_parameters(
+        plan,
+        reference_scale,
+        eta=eta,
+        strength=strength,
+        logit_clip=logit_clip,
+    )
+    plan.torch.cuda.synchronize(plan.device)
+    prepared_elapsed = time.perf_counter() - started
+    torch = plan.torch
+    k = len(plan.active_coordinates)
+    microsteps = sweeps * k
+
+    # 必须逐微步交替消费“坐标、均匀随机数”，之后只读移交显卡。
+    coordinate_indices = np.empty(microsteps, dtype=np.int64)
+    random_rolls = np.empty(microsteps, dtype=np.float64)
+    scan_started = time.perf_counter()
+    for step in range(microsteps):
+        coordinate_indices[step] = rng.integers(0, k)
+        random_rolls[step] = rng.random()
+    if microsteps:
+        coordinate_tape = np.asarray(
+            plan.active_coordinates[coordinate_indices], dtype=np.int64
+        )
+        local_row_tape = plan.row_lookup[coordinate_tape[:, 0]]
+    else:
+        coordinate_tape = np.empty((0, 2), dtype=np.int64)
+        local_row_tape = np.empty(0, dtype=np.intp)
+    coordinate_tape_t = torch.as_tensor(
+        coordinate_tape, dtype=torch.long, device=plan.device
+    )
+    random_rolls_t = torch.as_tensor(
+        random_rolls, dtype=torch.float64, device=plan.device
+    )
+
+    e0_values = torch.empty(
+        microsteps, dtype=torch.float64, device=plan.device
+    )
+    e1_values = torch.empty_like(e0_values)
+    score_values = torch.empty_like(e0_values)
+    normalized_values = torch.empty_like(e0_values)
+    raw_logit_values = torch.empty_like(e0_values)
+    probability_values = torch.empty_like(e0_values)
+    before_values = torch.empty(
+        microsteps, dtype=torch.bool, device=plan.device
+    )
+    after_values = torch.empty_like(before_values)
+    clipped_values = torch.empty_like(before_values)
+
+    for step in range(microsteps):
+        row_index = int(coordinate_tape[step, 0])
+        attribute_index = int(coordinate_tape[step, 1])
+        local_row = int(local_row_tape[step])
+        row_index_t = coordinate_tape_t[step, 0]
+        before = plan.mask[row_index_t, attribute_index].clone()
+        (
+            e0,
+            e1,
+            failures0,
+            failures1,
+            indicators0,
+            indicators1,
+        ) = _condition_pair_cuda(
+            plan,
+            row_index_t,
+            attribute_index,
+            local_row=local_row,
+        )
+        score = e0 - e1
+        normalized = score / scale_t
+        probability, raw_logit, _, clipped = (
+            _conditional_probability_cuda(
+                score,
+                scale_t,
+                base_logit_t,
+                strength_t,
+                clip_t,
+            )
+        )
+        after = random_rolls_t[step] < probability
+        selected_failures = torch.where(after, failures1, failures0)
+        selected_indicators = torch.where(after, indicators1, indicators0)
+        _set_coordinate_cuda(
+            plan,
+            row_index_t,
+            attribute_index,
+            after,
+            selected_failures,
+            selected_indicators,
+            local_row=local_row,
+        )
+        e0_values[step] = e0
+        e1_values[step] = e1
+        score_values[step] = score
+        normalized_values[step] = normalized
+        raw_logit_values[step] = raw_logit
+        probability_values[step] = probability
+        before_values[step] = before
+        after_values[step] = after
+        clipped_values[step] = clipped
+
+    one_minus_probability = 1.0 - probability_values
+    entropy_values = -(
+        probability_values * probability_values.log()
+        + one_minus_probability * (-probability_values).log1p()
+    )
+    float_values = torch.stack((
+        e0_values,
+        e1_values,
+        score_values,
+        normalized_values,
+        raw_logit_values,
+        probability_values,
+        random_rolls_t,
+        entropy_values,
+    ), dim=1).detach().cpu().numpy()
+    bool_values = torch.stack((
+        before_values,
+        after_values,
+        clipped_values,
+    ), dim=1).detach().cpu().numpy()
+    final_query_counts = np.asarray(
+        plan.plan_counts.detach().cpu().numpy(), dtype=np.int64
+    )
+    final_mask = np.asarray(
+        plan.mask.detach().cpu().numpy(), dtype=bool
+    )
+    torch.cuda.synchronize(plan.device)
+
+    if not np.all(np.isfinite(float_values)):
+        raise RuntimeError("CUDA 缺口扫描产生非有限条件数值")
+    probabilities = np.asarray(float_values[:, 5], dtype=np.float64)
+    if np.any((probabilities <= 0.0) | (probabilities >= 1.0)):
+        raise RuntimeError("CUDA 缺口扫描产生精确 0/1 条件概率")
+    switches = np.asarray(bool_values[:, 1], dtype=bool)
+    expected_switches = random_rolls < probabilities
+    if not np.array_equal(switches, expected_switches):
+        raise RuntimeError("CUDA 抽样开关与只读随机带不一致")
+
+    trace = hashlib.sha256()
+    probability_bins = {
+        "open_0_0p001": 0,
+        "closed_0p001_open_0p01": 0,
+        "closed_0p01_0p99": 0,
+        "open_0p99_closed_0p999": 0,
+        "open_0p999_1": 0,
+    }
+    for step in range(microsteps):
+        row_index = int(coordinate_tape[step, 0])
+        attribute_index = int(coordinate_tape[step, 1])
+        e0, e1, score, normalized, raw_logit, probability, roll, _ = (
+            map(float, float_values[step])
+        )
+        before, after, clipped = map(bool, bool_values[step])
+        _update_trace(
+            trace,
+            step=step,
+            row_index=row_index,
+            attribute_index=attribute_index,
+            e0=e0,
+            e1=e1,
+            score=score,
+            normalized_score=normalized,
+            raw_logit=raw_logit,
+            probability=probability,
+            random_roll=roll,
+            before=before,
+            after=after,
+            clipped=clipped,
+        )
+        probability_bins[_probability_bin(probability)] += 1
+    scan_elapsed = time.perf_counter() - scan_started
+
+    materialize_started = time.perf_counter()
+    copy_table = _materialize_copy_table(
+        current, donors, plan.compiled.attribute_names, final_mask
+    )
+    materialize_elapsed = time.perf_counter() - materialize_started
+    recount_elapsed = 0.0
+    if verify_full_recount:
+        recount_started = time.perf_counter()
+        recounted = _full_query_recount_cuda(copy_table, schema, plan)
+        recount_elapsed = time.perf_counter() - recount_started
+        if not np.array_equal(recounted, final_query_counts):
+            raise RuntimeError("增量查询计数与 CUDA 最终完整复算不一致")
+
+    diagnostics = _build_scan_diagnostics(
+        backend="torch_cuda_float64",
+        sweeps=sweeps,
+        k=k,
+        scale=scale,
+        trace=trace,
+        final_query_counts=final_query_counts,
+        final_mask=final_mask,
+        scores=float_values[:, 2].tolist(),
+        normalized_scores=float_values[:, 3].tolist(),
+        raw_logits=float_values[:, 4].tolist(),
+        probabilities=probabilities.tolist(),
+        entropies=float_values[:, 7].tolist(),
+        probability_bins=probability_bins,
+        clip_hits=int(np.sum(bool_values[:, 2], dtype=np.int64)),
+        prepared_elapsed=prepared_elapsed,
+        scan_elapsed=scan_elapsed,
+        materialize_elapsed=materialize_elapsed,
+        recount_elapsed=recount_elapsed,
+        total_elapsed=time.perf_counter() - started,
+    )
+    return copy_table, final_mask.copy(), diagnostics
+
+
 def evolve_step_gap_l1_global(
     current: pd.DataFrame,
     donors: pd.DataFrame,
@@ -966,12 +2058,36 @@ def evolve_step_gap_l1_global(
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     verify_full_recount: bool = True,
+    device: str = "numpy",
 ) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
     """执行全局剩余缺口绝对误差的固定随机扫描。
 
     ``n_sweeps * K`` 个微步在全部活跃行—属性开关中有放回抽坐标。函数不
     抽参与行、不生成初始开关，也不执行突变或任何生成后门控。
     """
+
+    if device == "cuda":
+        return _evolve_step_gap_l1_global_cuda(
+            current,
+            donors,
+            schema,
+            queries,
+            target,
+            current_counts,
+            participate=participate,
+            initial_mask=initial_mask,
+            reference_scale=reference_scale,
+            rng=rng,
+            n_sweeps=n_sweeps,
+            eta=eta,
+            strength=strength,
+            floor=floor,
+            logit_clip=logit_clip,
+            compiled_workload=compiled_workload,
+            verify_full_recount=verify_full_recount,
+        )
+    if device != "numpy":
+        raise ValueError("缺口扫描 device 只支持 'numpy' 或 'cuda'")
 
     if not isinstance(rng, np.random.Generator):
         raise ValueError("rng 必须是 np.random.Generator")
@@ -1082,46 +2198,25 @@ def evolve_step_gap_l1_global(
         if not np.array_equal(recounted, plan.plan_counts):
             raise RuntimeError("增量查询计数与最终复制表完整复算不一致")
 
-    minimum_outcome = (
-        min(min(probability, 1.0 - probability) for probability in probabilities)
-        if probabilities
-        else None
+    diagnostics = _build_scan_diagnostics(
+        backend=None,
+        sweeps=sweeps,
+        k=k,
+        scale=scale,
+        trace=trace,
+        final_query_counts=plan.plan_counts,
+        final_mask=plan.mask,
+        scores=scores,
+        normalized_scores=normalized_scores,
+        raw_logits=raw_logits,
+        probabilities=probabilities,
+        entropies=entropies,
+        probability_bins=probability_bins,
+        clip_hits=clip_hits,
+        prepared_elapsed=prepared_elapsed,
+        scan_elapsed=scan_elapsed,
+        materialize_elapsed=materialize_elapsed,
+        recount_elapsed=recount_elapsed,
+        total_elapsed=time.perf_counter() - started,
     )
-    diagnostics = {
-        "kernel": "gap_l1_global_random_scan",
-        "no_gate": True,
-        "n_sweeps": sweeps,
-        "active_switches_k": int(k),
-        "gibbs_microsteps": int(microsteps),
-        "conditional_error_evaluations": int(2 * microsteps),
-        "query_indicator_increment_updates": int(microsteps),
-        "reference_scale": scale,
-        "trace_format": TRACE_FORMAT,
-        "microstep_trace_sha256": trace.hexdigest(),
-        "final_query_counts": plan.plan_counts.astype(np.int64).tolist(),
-        "final_on_switches": int(np.sum(plan.mask)),
-        "clip_hit_count": int(clip_hits),
-        "nonfinite_condition_count": 0,
-        "exact_zero_or_one_probability_count": 0,
-        "minimum_binary_outcome_probability": (
-            float(minimum_outcome) if minimum_outcome is not None else None
-        ),
-        "probability_bins": probability_bins,
-        "score_distribution": _distribution(scores),
-        "normalized_score_distribution": _distribution(normalized_scores),
-        "raw_logit_distribution": _distribution(raw_logits),
-        "probability_distribution": _distribution(probabilities),
-        "binary_entropy_distribution": _distribution(entropies),
-        "near_deterministic_count": int(sum(
-            probability < 0.01 or probability > 0.99
-            for probability in probabilities
-        )),
-        "prepared_elapsed_sec_diagnostic_only": prepared_elapsed,
-        "scan_elapsed_sec_diagnostic_only": scan_elapsed,
-        "materialize_elapsed_sec_diagnostic_only": materialize_elapsed,
-        "full_recount_elapsed_sec_diagnostic_only": recount_elapsed,
-        "elapsed_sec_diagnostic_only": time.perf_counter() - started,
-    }
-    if microsteps == 0 and trace.hexdigest() != hashlib.sha256(b"").hexdigest():
-        raise RuntimeError("空扫描 trace 身份失败")
     return copy_table, plan.mask.copy(), diagnostics

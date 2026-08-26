@@ -26,11 +26,13 @@ from table_diffevo.vectorized_eval import evaluate_vectorized
 if __package__:
     from scripts import build_issue53_stage6a_state_library as state_builder
     from scripts import collect_issue53_stage6a_proposals as stage6a_collector
-    from scripts import issue53_stage6b1_protocol as protocol
+    from scripts.issue53_stage6b1_protocol_loader import load_protocol
 else:
     import build_issue53_stage6a_state_library as state_builder
     import collect_issue53_stage6a_proposals as stage6a_collector
-    import issue53_stage6b1_protocol as protocol
+    from issue53_stage6b1_protocol_loader import load_protocol
+
+protocol = load_protocol()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -676,12 +678,36 @@ def exact_quadratic_diagnostics(
     })
 
 
+def _query_counts(
+    frame: pd.DataFrame,
+    runtime: DatasetRuntime,
+    *,
+    device: str,
+) -> np.ndarray:
+    if device == "numpy":
+        return evaluate_table(frame, runtime.queries).astype(np.int64)
+    if device == "cuda":
+        counts, _, _ = evaluate_vectorized(
+            frame,
+            runtime.queries,
+            runtime.schema,
+            device="cuda",
+            want_fitness=False,
+            verbose=False,
+        )
+        return np.asarray(counts, dtype=np.int64)
+    raise ValueError("query device 只支持 numpy 或 cuda")
+
+
 def arm_raw_metrics(
     context: StateContext,
     replay: PairReplay,
     copy_table: pd.DataFrame,
     final_mask: np.ndarray,
     mutation_events: Sequence[Mapping[str, Any]],
+    *,
+    query_device: str = "numpy",
+    copy_query_counts: np.ndarray | None = None,
 ) -> dict[str, Any]:
     attributes = context.runtime.schema.attribute_names()
     full_table, arm_mutations = apply_common_mutations(
@@ -694,11 +720,16 @@ def arm_raw_metrics(
         replay.donor_indices,
         attributes,
     )
-    copy_counts = evaluate_table(copy_table, context.runtime.queries).astype(
-        np.int64
-    )
-    full_counts = evaluate_table(full_table, context.runtime.queries).astype(
-        np.int64
+    if copy_query_counts is None:
+        copy_counts = _query_counts(
+            copy_table, context.runtime, device=query_device
+        )
+    else:
+        copy_counts = np.asarray(copy_query_counts, dtype=np.int64)
+        if copy_counts.shape != context.query_counts.shape:
+            raise ValueError("预复算 copy_query_counts 形状不一致")
+    full_counts = _query_counts(
+        full_table, context.runtime, device=query_device
     )
     current_error = gap_error_float(context.runtime, context.query_counts)
     copy_error = gap_error_float(context.runtime, copy_counts)
