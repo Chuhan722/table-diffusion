@@ -19,7 +19,7 @@ def test_frozen_identity_and_all_plan_entrypoints_are_read_only():
     root = Path(__file__).resolve().parents[1]
 
     assert protocol.assert_frozen_protocol_identity(root) == (
-        "4c11aa1f2690afafd6202dd13f572769ebc3bff4e7b500346622253a16434b82"
+        protocol.FROZEN_PROTOCOL_SHA256
     )
     collection_plan = runner.build_plan()
     evaluation_plan = evaluator.build_plan()
@@ -32,9 +32,32 @@ def test_frozen_identity_and_all_plan_entrypoints_are_read_only():
         protocol.require_run_confirmation(None)
 
 
+def test_each_dataset_passes_both_frozen_identity_conventions():
+    root = Path(__file__).resolve().parents[1]
+
+    for dataset, spec in protocol.DATASETS.items():
+        queries, targets, observed = runner._query_target_identity_audit(root, dataset)
+        assert len(queries) == spec["query_count"]
+        assert len(targets) == spec["query_count"]
+        assert observed == {
+            "query_identity_sha256": spec["query_identity_sha256"],
+            "target_vector_sha256": spec["target_vector_sha256"],
+            "trace_query_identity_sha256": spec["trace_query_identity_sha256"],
+            "trace_target_vector_sha256": spec["trace_target_vector_sha256"],
+        }
+        assert (
+            observed["query_identity_sha256"] != observed["trace_query_identity_sha256"]
+        )
+        assert (
+            observed["target_vector_sha256"] != observed["trace_target_vector_sha256"]
+        )
+
+
 def test_frozen_matrix_and_no_gate_params_are_complete():
     plan = protocol.task_plan()
 
+    assert protocol.PROTOCOL_VERSION.endswith("-v2")
+    assert protocol.OUTPUT_DIR.name.endswith("_v2")
     assert plan.seeds == (353, 354, 355, 356, 357)
     assert len(plan.tasks) == 30
     assert [task.task_id for task in plan.tasks[:6]] == [
@@ -73,6 +96,10 @@ def test_protocol_requires_both_datasets_and_both_baselines():
         "fixed_checkpoint_curve": [0, 500, 1000, 1500, 2000, 2500],
     }
     assert manifest["target_kind"] == "exact_source_query_counts_not_noisy"
+    assert manifest["dataset_identity_contract"]["all_four_identities_required"]
+    assert not manifest["dataset_identity_contract"][
+        "cross_convention_hash_equality_expected"
+    ]
 
 
 def test_metrics_from_answers_reports_integer_sum_l1_and_gap_e():
@@ -114,11 +141,11 @@ def test_checkpoint_artifact_contains_fixed_and_actual_terminal_l1(monkeypatch):
     )
     target = np.asarray([2.0, 1.0])
     answers = np.asarray([[0.0, 0.0], [1.0, 1.0]])
-    query_identity = protocol.DATASETS["test_300x10"]["query_identity_sha256"]
+    query_identity = protocol.DATASETS["test_300x10"]["trace_query_identity_sha256"]
     target_identity = runner.target_answer_identity_sha256(target)
     monkeypatch.setitem(
         protocol.DATASETS["test_300x10"],
-        "target_vector_sha256",
+        "trace_target_vector_sha256",
         target_identity,
     )
     diagnostics = {
@@ -154,6 +181,12 @@ def test_checkpoint_artifact_contains_fixed_and_actual_terminal_l1(monkeypatch):
     assert artifact["fixed_checkpoints"][0]["normalized_l1"] == 0.005
     assert artifact["terminal"]["round"] == 1
     assert artifact["terminal"]["normalized_l1"] == 1 / 600
+    assert (
+        artifact["query_identity_sha256"]
+        == protocol.DATASETS["test_300x10"]["query_identity_sha256"]
+    )
+    assert artifact["trace_query_identity_sha256"] == query_identity
+    assert artifact["trace_target_vector_sha256"] == target_identity
     assert artifact["historical_best_included"] is False
 
 
@@ -330,12 +363,12 @@ def test_real_artificial_generator_diagnostics_feed_formal_audits(arm, monkeypat
     monkeypatch.setitem(protocol.DATASETS["test_300x10"], "n_records", 20)
     monkeypatch.setitem(
         protocol.DATASETS["test_300x10"],
-        "query_identity_sha256",
+        "trace_query_identity_sha256",
         diagnostics["stationarity_trace"].query_identity_sha256,
     )
     monkeypatch.setitem(
         protocol.DATASETS["test_300x10"],
-        "target_vector_sha256",
+        "trace_target_vector_sha256",
         diagnostics["stationarity_trace"].target_identity_sha256,
     )
 

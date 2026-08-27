@@ -23,6 +23,7 @@ from typing import Any
 
 import numpy as np
 
+from scripts import freeze_issue53_test_query_workload_ab as blind_identity
 from scripts import issue53_stage6c_joint_trajectories as joint
 from scripts import issue53_stage6d_formal_protocol as protocol
 from scripts import run_issue53_stage6c_joint_smoke as gpu_helpers
@@ -99,6 +100,60 @@ def _generation_input_audit(root: Path) -> dict[str, dict[str, str]]:
                 raise RuntimeError(f"{dataset}.{key} SHA-256 漂移")
             observed[dataset][key] = digest
     return observed
+
+
+def _query_target_identity_audit(
+    root: Path,
+    dataset: str,
+) -> tuple[list[dict[str, Any]], np.ndarray, dict[str, str]]:
+    spec = protocol.DATASETS[dataset]
+    payload = _load_json(root / spec["queries"])
+    raw_queries = payload.get("queries")
+    if not isinstance(raw_queries, list):
+        raise TypeError(f"{dataset} 原始查询列表缺失")
+    if len(raw_queries) != spec["query_count"]:
+        raise RuntimeError(f"{dataset} 原始查询数量漂移")
+    query_set_sha = blind_identity.query_set_identity(raw_queries)
+    if query_set_sha != spec["query_identity_sha256"]:
+        raise RuntimeError(f"{dataset} 结果盲查询集合身份漂移")
+    if blind_identity._order_counts(raw_queries) != spec["order_counts"]:
+        raise RuntimeError(f"{dataset} 查询阶数构成漂移")
+    raw_targets = []
+    for index, query in enumerate(raw_queries):
+        value = query.get("result")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= spec["n_records"]
+        ):
+            raise RuntimeError(f"{dataset} 第{index}个目标不是合法整数计数")
+        raw_targets.append(value)
+    target_set_sha = protocol.canonical_sha256(raw_targets)
+    if target_set_sha != spec["target_vector_sha256"]:
+        raise RuntimeError(f"{dataset} 结果盲目标向量身份漂移")
+
+    queries = load_queries(str(root / spec["queries"]))
+    targets = np.asarray([query["result"] for query in queries], dtype=float)
+    if len(queries) != len(raw_queries) or not np.array_equal(
+        targets, np.asarray(raw_targets, dtype=float)
+    ):
+        raise RuntimeError(f"{dataset} 查询加载结果与原始载荷漂移")
+    trace_query_sha = ordered_query_identity_sha256(queries)
+    trace_target_sha = target_answer_identity_sha256(targets)
+    if trace_query_sha != spec["trace_query_identity_sha256"]:
+        raise RuntimeError(f"{dataset} 状态轨迹查询身份漂移")
+    if trace_target_sha != spec["trace_target_vector_sha256"]:
+        raise RuntimeError(f"{dataset} 状态轨迹目标身份漂移")
+    return (
+        queries,
+        targets,
+        {
+            "query_identity_sha256": query_set_sha,
+            "target_vector_sha256": target_set_sha,
+            "trace_query_identity_sha256": trace_query_sha,
+            "trace_target_vector_sha256": trace_target_sha,
+        },
+    )
 
 
 def _gpu_idle_audit() -> dict[str, Any]:
@@ -249,9 +304,9 @@ def _extract_checkpoint_artifact(
     if trace is None:
         raise RuntimeError(f"{task.task_id} 缺少 stationarity trace（状态轨迹）")
     spec = protocol.DATASETS[task.dataset]
-    if trace.query_identity_sha256 != spec["query_identity_sha256"]:
+    if trace.query_identity_sha256 != spec["trace_query_identity_sha256"]:
         raise RuntimeError(f"{task.task_id} 状态轨迹查询身份漂移")
-    if trace.target_identity_sha256 != spec["target_vector_sha256"]:
+    if trace.target_identity_sha256 != spec["trace_target_vector_sha256"]:
         raise RuntimeError(f"{task.task_id} 状态轨迹目标身份漂移")
     answers = np.asarray(trace.measured_query_answers, dtype=float)
     metrics = diagnostics["current_state_metrics_history"]
@@ -301,8 +356,10 @@ def _extract_checkpoint_artifact(
         "seed": task.seed,
         "n_records": protocol.DATASETS[task.dataset]["n_records"],
         "query_count": len(target),
-        "query_identity_sha256": trace.query_identity_sha256,
-        "target_vector_sha256": target_answer_identity_sha256(target),
+        "query_identity_sha256": spec["query_identity_sha256"],
+        "target_vector_sha256": spec["target_vector_sha256"],
+        "trace_query_identity_sha256": trace.query_identity_sha256,
+        "trace_target_vector_sha256": trace.target_identity_sha256,
         "fixed_checkpoint_rounds_requested": list(protocol.CHECKPOINT_ROUNDS),
         "fixed_checkpoints": fixed,
         "terminal": terminal,
@@ -579,10 +636,16 @@ def _write_case_artifacts(
             "output_table_identity": "terminal_current",
             "all_applied_unconditionally": True,
             "proposal_attempt_count": int(diagnostics["candidate_evaluation_count"]),
-            "query_identity_sha256": diagnostics[
+            "query_identity_sha256": protocol.DATASETS[task.dataset][
+                "query_identity_sha256"
+            ],
+            "target_vector_sha256": protocol.DATASETS[task.dataset][
+                "target_vector_sha256"
+            ],
+            "trace_query_identity_sha256": diagnostics[
                 "stationarity_trace"
             ].query_identity_sha256,
-            "target_vector_sha256": diagnostics[
+            "trace_target_vector_sha256": diagnostics[
                 "stationarity_trace"
             ].target_identity_sha256,
             "initial_table_sha256": diagnostics["initial_table_sha256"],
@@ -643,16 +706,8 @@ def _execute_trajectory_task(
     root = Path(repository_root)
     spec = protocol.DATASETS[task.dataset]
     schema = load_schema(str(root / spec["schema"]))
-    queries = load_queries(str(root / spec["queries"]))
+    queries, target, _identity = _query_target_identity_audit(root, task.dataset)
     marginals = load_marginals(str(root / spec["marginals"]))
-    if len(queries) != int(spec["query_count"]):
-        raise RuntimeError(f"{task.dataset} 查询数漂移")
-    query_identity = ordered_query_identity_sha256(queries)
-    if query_identity != spec["query_identity_sha256"]:
-        raise RuntimeError(f"{task.dataset} 查询语义身份漂移")
-    target = np.asarray([query["result"] for query in queries], dtype=float)
-    if target_answer_identity_sha256(target) != spec["target_vector_sha256"]:
-        raise RuntimeError(f"{task.dataset} 目标向量身份漂移")
 
     import torch
 
@@ -762,6 +817,8 @@ def _validate_pairing(rows: Sequence[dict[str, Any]]) -> None:
                 "direction_reference_scale",
                 "query_identity_sha256",
                 "target_vector_sha256",
+                "trace_query_identity_sha256",
+                "trace_target_vector_sha256",
             ):
                 if len({row[key] for row in paired}) != 1:
                     raise RuntimeError(f"{seed}/{dataset} 三方法配对身份不一致：{key}")

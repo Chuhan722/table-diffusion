@@ -10,13 +10,13 @@ from typing import Any
 
 from scripts import issue53_stage6c_joint_trajectories as joint
 
-PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v1"
+PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v2"
 PROTOCOL_DOC = Path("docs/设计/Issue53_Stage6D两数据三方法正式闭环效果结果前协议.md")
-PROTOCOL_DOC_SHA256 = "bf045750b5f315cf106f14e3bb25c2dc11a28fadaf1b653e10d791140fda1c16"
+PROTOCOL_DOC_SHA256 = "e05a813e0551528c9e9e3dbdbb00a1e07a512cefbd483c1ef0857d7d01ef3f7a"
 
 # 清单本身不包含该常量，避免自指。全部源码和文档身份确定后再填入。
 FROZEN_PROTOCOL_SHA256 = (
-    "4c11aa1f2690afafd6202dd13f572769ebc3bff4e7b500346622253a16434b82"
+    "83f21c49b4d3bc322d78890b913a3b9e152473bf0c2ccb2a134bd7f04c33b6a9"
 )
 
 FORMAL_SEEDS = tuple(range(353, 358))
@@ -30,7 +30,7 @@ STABLE_WIN_MINIMUM = 4
 LOWER_RISK_RATIO_MAX = 1.05
 HIGHER_QUALITY_RATIO_MIN = 0.95
 
-OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v1")
+OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v2")
 COLLECTION_REPORT = "collection_report.json"
 EVALUATION_REPORT = "evaluation_report.json"
 L1_RESULTS_CSV = "l1_results.csv"
@@ -64,6 +64,12 @@ DATASETS: dict[str, dict[str, Any]] = {
         "target_vector_sha256": (
             "e04988c93076fd0a8ce820d0635080b33d88030415b97f1b804186e017c02e3d"
         ),
+        "trace_query_identity_sha256": (
+            "ff593d1aab304b867358670a46f3907238fc30c6d10c334091e4b09828ee104a"
+        ),
+        "trace_target_vector_sha256": (
+            "33c796bb984c36773e347249c319fb39d421a022cf06f9adefa54406a544e358"
+        ),
         "input_sha256": {
             "schema": (
                 "58087cbba7eb90e82974bc9ffc2222510705b97599f00ae207765e03b60cf792"
@@ -93,6 +99,12 @@ DATASETS: dict[str, dict[str, Any]] = {
         ),
         "target_vector_sha256": (
             "f1b7f3b67b4e2f791c69e0b4d49693c9e84f18b004a1f2ece1053514fe05174d"
+        ),
+        "trace_query_identity_sha256": (
+            "252ad578c3e0a72477186dff6532007959d4618ef54fa1ab5c86b32ed34f1cf6"
+        ),
+        "trace_target_vector_sha256": (
+            "810c79bc0c259fbb643fa3e4a5a24dc16647630576657206a364c5e5b4d175fd"
         ),
         "input_sha256": {
             "schema": (
@@ -187,21 +199,25 @@ IMPLEMENTATION_SOURCES = {
         "path": Path("src/table_diffevo/stationarity.py"),
         "sha256": "a280c18e630beb8f5342fa17a743b3847426e821cf66b2ca7a4f69a8cb0b2152",
     },
+    "result_blind_query_identity": {
+        "path": Path("scripts/freeze_issue53_test_query_workload_ab.py"),
+        "sha256": "cfaf56569999438798d2673eee3d282814b714b08b7d192c046a443bdfd56410",
+    },
     "offline_evaluation_helpers": {
         "path": Path("scripts/evaluate_issue53_fixed_alpha_calibration.py"),
         "sha256": "df41d09ec23e9272af762ae43c4379dda1190f1d5fae2a0ca3700569309afc3e",
     },
     "collector": {
         "path": Path("scripts/run_issue53_stage6d_formal.py"),
-        "sha256": "2bea7593099ee925d12baacb8aa0df8501f366be4e144ee2312a04b4986a023e",
+        "sha256": "4a2a13a36d8dfcc4c8c6730f6ea30f82a3edc076e95b3e8cf73f0c5fabefd289",
     },
     "evaluator": {
         "path": Path("scripts/evaluate_issue53_stage6d_formal.py"),
-        "sha256": "094994be460aab7581864f7ca80969d1ce268c4e6d3c774e63740c985a0b421d",
+        "sha256": "afae925e00c06470ddabd0bfcbdbbe125e148be69a1bca222019df626854f037",
     },
     "independent_auditor": {
         "path": Path("scripts/audit_issue53_stage6d_formal.py"),
-        "sha256": "4be87e224c386a38a941f247c04fc019a806322467182ae82a31694fc704b82c",
+        "sha256": "6fc02d5d4631b943d5423a001d9e5dbf39a1bf19eb26b9545b648f98c0094121",
     },
 }
 
@@ -358,9 +374,25 @@ def frozen_protocol_manifest() -> dict[str, Any]:
                 "max_factor_order": spec["max_factor_order"],
                 "query_identity_sha256": spec["query_identity_sha256"],
                 "target_vector_sha256": spec["target_vector_sha256"],
+                "trace_query_identity_sha256": spec["trace_query_identity_sha256"],
+                "trace_target_vector_sha256": spec["trace_target_vector_sha256"],
                 "input_sha256": dict(spec["input_sha256"]),
             }
             for name, spec in DATASETS.items()
+        },
+        "dataset_identity_contract": {
+            "result_blind_query_set": (
+                "sorted_condition_query_fingerprints_in_vector_order"
+            ),
+            "result_blind_integer_target": "canonical_json_integer_vector",
+            "stationarity_ordered_query": (
+                "table_diffevo.stationarity.ordered_query_identity_sha256"
+            ),
+            "stationarity_float_target": (
+                "table_diffevo.stationarity.target_answer_identity_sha256"
+            ),
+            "all_four_identities_required": True,
+            "cross_convention_hash_equality_expected": False,
         },
         "generator_common": _jsonable(common_generator_params()),
         "arm_kernel_params": {

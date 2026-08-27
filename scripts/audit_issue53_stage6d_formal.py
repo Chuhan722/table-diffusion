@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 
 from scripts import evaluate_issue53_fixed_alpha_calibration as offline_primitives
+from scripts import freeze_issue53_test_query_workload_ab as blind_identity
 from scripts import issue53_stage6c_joint_trajectories as joint
 from scripts import issue53_stage6d_formal_protocol as protocol
 from scripts import run_issue53_stage6d_formal as collection
@@ -24,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v1"
+AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v2"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 CSV_FIELDS = (
     "dataset",
@@ -201,6 +202,10 @@ def _audit_collection_independently(
         if (
             row.get("query_identity_sha256") != spec["query_identity_sha256"]
             or row.get("target_vector_sha256") != spec["target_vector_sha256"]
+            or row.get("trace_query_identity_sha256")
+            != spec["trace_query_identity_sha256"]
+            or row.get("trace_target_vector_sha256")
+            != spec["trace_target_vector_sha256"]
         ):
             raise RuntimeError(f"collection（采集）查询身份漂移：{task.task_id}")
         for path_key, hash_key in (
@@ -259,19 +264,35 @@ def _load_inputs_and_references(
         schema = runtime.load_schema(str(root / spec["schema"]))
         queries = runtime.load_queries(str(root / spec["queries"]))
         payload = _load_json(root / spec["queries"])
-        targets = np.asarray(
-            [query["result"] for query in payload["queries"]], dtype=float
-        )
-        if len(queries) != spec["query_count"] or len(targets) != len(queries):
+        raw_queries = payload.get("queries")
+        if not isinstance(raw_queries, list):
+            raise TypeError(f"独立复核 {dataset} 原始查询列表缺失")
+        query_set_sha = blind_identity.query_set_identity(raw_queries)
+        raw_targets = [query.get("result") for query in raw_queries]
+        targets = np.asarray(raw_targets, dtype=float)
+        if len(raw_queries) != spec["query_count"] or len(queries) != len(raw_queries):
             raise RuntimeError(f"独立复核 {dataset} 查询数量漂移")
-        if ordered_query_identity_sha256(queries) != spec["query_identity_sha256"]:
-            raise RuntimeError(f"独立复核 {dataset} 查询语义身份漂移")
-        if target_answer_identity_sha256(targets) != spec["target_vector_sha256"]:
-            raise RuntimeError(f"独立复核 {dataset} 目标向量身份漂移")
+        loaded_targets = np.asarray([query["result"] for query in queries], dtype=float)
+        if not np.array_equal(loaded_targets, targets):
+            raise RuntimeError(f"独立复核 {dataset} 查询加载结果漂移")
+        if query_set_sha != spec["query_identity_sha256"]:
+            raise RuntimeError(f"独立复核 {dataset} 结果盲查询身份漂移")
+        if protocol.canonical_sha256(raw_targets) != spec["target_vector_sha256"]:
+            raise RuntimeError(f"独立复核 {dataset} 结果盲目标身份漂移")
+        if (
+            ordered_query_identity_sha256(queries)
+            != spec["trace_query_identity_sha256"]
+        ):
+            raise RuntimeError(f"独立复核 {dataset} 状态轨迹查询身份漂移")
+        if (
+            target_answer_identity_sha256(loaded_targets)
+            != spec["trace_target_vector_sha256"]
+        ):
+            raise RuntimeError(f"独立复核 {dataset} 状态轨迹目标身份漂移")
         inputs[dataset] = {
             "schema": schema,
             "queries": queries,
-            "targets": targets,
+            "targets": loaded_targets,
         }
     references, reference_sha = offline_primitives._load_references(root, runtime)
     expected_reference = {
@@ -369,6 +390,10 @@ def _checkpoint_independent(
         != protocol.DATASETS[source["dataset"]]["query_identity_sha256"]
         or artifact.get("target_vector_sha256")
         != protocol.DATASETS[source["dataset"]]["target_vector_sha256"]
+        or artifact.get("trace_query_identity_sha256")
+        != protocol.DATASETS[source["dataset"]]["trace_query_identity_sha256"]
+        or artifact.get("trace_target_vector_sha256")
+        != protocol.DATASETS[source["dataset"]]["trace_target_vector_sha256"]
         or artifact.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
         or artifact.get("fixed_checkpoint_rounds_requested")
         != list(protocol.CHECKPOINT_ROUNDS)
@@ -906,7 +931,7 @@ def _audit_evaluation(
         raise ValueError("evaluation（评价）报告 SHA-256 不一致")
     report = _load_json(path)
     if (
-        report.get("contract_version") != "issue53-stage6d-joint-formal-evaluation-v1"
+        report.get("contract_version") != "issue53-stage6d-joint-formal-evaluation-v2"
         or report.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
         or report.get("collection_report_sha256") != collection_sha
         or report.get("collection_execution_commit")
