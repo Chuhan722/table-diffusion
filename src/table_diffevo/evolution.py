@@ -34,6 +34,7 @@
 import hashlib
 import json
 import time
+from dataclasses import asdict
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import pandas as pd
@@ -70,6 +71,10 @@ from table_diffevo.stationarity import (
     build_stationarity_observation,
     ordered_query_identity_sha256,
     target_answer_identity_sha256,
+)
+from table_diffevo.inner_early_stopping import (
+    EarlyStoppingConfig,
+    InnerEarlyStopper,
 )
 
 
@@ -213,9 +218,10 @@ def run_evolution(
     record_stationarity_trace: bool = False,
     stop_on_exact_residual: bool = True,
     horizon_invariant: bool = False,
+    inner_early_stopping_patience_ticks: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    运行扩散演化主循环，返回历史最优合成表和诊断信息。
+    运行扩散演化主循环，返回合成表和诊断信息。
 
     Parameters
     ----------
@@ -422,11 +428,19 @@ def run_evolution(
         默认 True 保持 legacy 行为。
     horizon_invariant : bool, default False
         启用 Issue #53 fail-closed 门禁，拒绝与总预算耦合或持续变化的配置。
+    inner_early_stopping_patience_ticks : int or None, default None
+        None 保持 legacy 路径与历史 best 主返回。传入正整数 P 时启用当前 A/B/C
+        状态机：A 为 current loss=0，B 为连续 P 个自然 work tick 无严格 best
+        刷新，C 为 n_rounds 或 candidate_budget 外部资源边界；优先级 A>B>C。
+        启用后主返回与 ``final_table`` 都是触发时 terminal current，不返回 best。
+        该模式要求 ``tol=+inf``、``max_retries=0``，以保证 proposal 无门控地成为
+        current。当前 development 候选使用 P=6；该数值可配置且不是收敛结论。
 
     Returns
     -------
-    best_S : pd.DataFrame, shape (n_records, n_attributes)
-        演化过程中见过的 loss 最小的合成表
+    output_S : pd.DataFrame, shape (n_records, n_attributes)
+        legacy 路径返回演化中 loss 最小的合成表；启用 inner early stopping
+        时返回 A/B/C 触发时的 terminal current 表。
     diagnostics : dict
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
@@ -470,11 +484,13 @@ def run_evolution(
 
     Notes
     -----
-    **终止条件：** 残差全 0（达标）、达到 n_rounds、达到 candidate_budget
-    （若指定）、或残差比达到 self_cooling_stop_ratio（若指定）。
+    **终止条件：** legacy 路径保留原有条件。启用 inner early stopping 时，
+    统一使用 A（current loss=0）、B（P 个自然 tick 无 best 刷新）和
+    C（n_rounds/candidate_budget 外部资源边界），优先级 A>B>C。
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
-    重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
+    重试。legacy 路径仍由 best_S 保底；inner early stopping 路径始终返回
+    terminal current，不用 best_S 替换输出。
 
     **GPU 加速：** device='cuda' 时，距离计算在 GPU 上进行（20-50x 加速），
     所有随机操作仍在 CPU（NumPy），确保相同种子下完全可复现。
@@ -633,6 +649,50 @@ def run_evolution(
                 f"得到 {self_cooling_stop_ratio!r}"
             )
         self_cooling_stop_ratio = float(self_cooling_stop_ratio)
+    inner_early_stopping_enabled = (
+        inner_early_stopping_patience_ticks is not None
+    )
+    if inner_early_stopping_enabled:
+        if (
+            isinstance(inner_early_stopping_patience_ticks, bool)
+            or not isinstance(
+                inner_early_stopping_patience_ticks,
+                (int, np.integer),
+            )
+            or inner_early_stopping_patience_ticks <= 0
+        ):
+            raise ValueError(
+                "inner_early_stopping_patience_ticks 必须是正整数或 None"
+            )
+        inner_early_stopping_patience_ticks = int(
+            inner_early_stopping_patience_ticks
+        )
+        if not stop_on_exact_residual:
+            raise ValueError(
+                "启用 inner early stopping 时 A 必须开启；"
+                "stop_on_exact_residual 不能为 False"
+            )
+        if self_cooling_stop_ratio is not None:
+            raise ValueError(
+                "inner A/B/C stopping 不与 self_cooling_stop_ratio 混用"
+            )
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(
+                tol,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isposinf(tol)
+        ):
+            raise ValueError(
+                "启用 inner A/B/C stopping 时必须设置 tol=+inf，"
+                "保证 proposal 无门控地成为 current"
+            )
+        if max_retries != 0:
+            raise ValueError(
+                "启用 inner A/B/C stopping 时 max_retries 必须为 0，"
+                "无门控路径不执行拒绝后的缩步重试"
+            )
     if rho_anneal_end is not None:
         if (
             isinstance(rho_anneal_end, (bool, np.bool_))
@@ -883,6 +943,16 @@ def run_evolution(
                 "horizon_invariant 配置不合格：" + "；".join(violations)
             )
 
+    inner_early_stopper = (
+        InnerEarlyStopper(
+            EarlyStoppingConfig(
+                n_records=n_records,
+                patience_ticks=inner_early_stopping_patience_ticks,
+            )
+        )
+        if inner_early_stopping_enabled else None
+    )
+
     rng = np.random.default_rng(seed)
     factorized_gibbs_rng = (
         np.random.default_rng(_factorized_gibbs_seed(seed))
@@ -995,6 +1065,7 @@ def run_evolution(
         List[Dict[str, Any]]
     ] = []
     termination_reason: Optional[str] = None
+    inner_early_stopping_decision = None
     stopped_early = False
     candidate_budget_exhausted = False
     rounds_run = 0
@@ -1065,6 +1136,16 @@ def run_evolution(
             phase="initial",
         )
     ]
+    if inner_early_stopper is not None:
+        inner_early_stopping_decision = inner_early_stopper.observe_initial(
+            initial_loss,
+            resource_cap_reached=n_rounds == 0,
+        )
+        if inner_early_stopping_decision.should_stop:
+            termination_reason = (
+                inner_early_stopping_decision.termination_reason
+            )
+            stopped_early = termination_reason == "fit_target_reached"
     if record_stationarity_trace:
         stationarity_query_answers.append(
             np.asarray(initial_q, dtype=float).copy()
@@ -1102,6 +1183,8 @@ def run_evolution(
         )
 
     for t in range(n_rounds):
+        if termination_reason is not None:
+            break
         rounds_run = t + 1
 
         # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed
@@ -1169,7 +1252,11 @@ def run_evolution(
         )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
-        if stop_on_exact_residual and np.all(residual == 0):
+        if (
+            inner_early_stopper is None
+            and stop_on_exact_residual
+            and np.all(residual == 0)
+        ):
             if do_log:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
@@ -1437,6 +1524,7 @@ def run_evolution(
         accepted = False
         accepted_attempt = 0
         accepted_rho = None
+        accepted_participating_rows = 0
         proposal_attempts = 0
         current_loss = loss
         attempt_gains: List[float] = []
@@ -1525,7 +1613,11 @@ def run_evolution(
                     independent_transition_kwargs["direction_logit_clip"] = (
                         diffusion_direction_logit_clip
                     )
-                if record_transition_clocks or record_stationarity_trace:
+                if (
+                    record_transition_clocks
+                    or record_stationarity_trace
+                    or inner_early_stopper is not None
+                ):
                     independent_transition_kwargs["return_diagnostics"] = True
                 independent_result = evolve_step(
                     S,
@@ -1537,7 +1629,11 @@ def run_evolution(
                     rng=rng,
                     **independent_transition_kwargs,
                 )
-                if record_transition_clocks or record_stationarity_trace:
+                if (
+                    record_transition_clocks
+                    or record_stationarity_trace
+                    or inner_early_stopper is not None
+                ):
                     proposal, independent_diagnostics = independent_result
                 else:
                     proposal = independent_result
@@ -1553,6 +1649,16 @@ def run_evolution(
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
+            proposal_participating_rows = 0
+            if inner_early_stopper is not None:
+                proposal_kernel_diagnostics = (
+                    factorized_diagnostics
+                    if factorized_gibbs_sweeps > 0
+                    else independent_diagnostics
+                )
+                proposal_participating_rows = int(
+                    proposal_kernel_diagnostics["participating_rows"]
+                )
             if record_transition_clocks or record_stationarity_trace:
                 changed = (
                     proposal.reset_index(drop=True)
@@ -1601,6 +1707,7 @@ def run_evolution(
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
+                accepted_participating_rows = proposal_participating_rows
                 current_loss = proposal_loss
                 S = proposal
 
@@ -1755,6 +1862,31 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
+        if inner_early_stopper is not None:
+            inner_early_stopping_decision = (
+                inner_early_stopper.observe_post_round(
+                    current_loss=current_loss,
+                    participating_rows=accepted_participating_rows,
+                    resource_cap_reached=(
+                        candidate_budget_exhausted or t + 1 >= n_rounds
+                    ),
+                )
+            )
+            if inner_early_stopping_decision.should_stop:
+                termination_reason = (
+                    inner_early_stopping_decision.termination_reason
+                )
+                stopped_early = termination_reason in {
+                    "fit_target_reached",
+                    "early_stopped",
+                }
+                if do_log or log_every > 0:
+                    print(
+                        f"轮次 {t+1}/{n_rounds} | "
+                        f"inner stopping: {termination_reason}"
+                    )
+                break
+
         # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
         if candidate_budget_exhausted:
             termination_reason = "candidate_budget"
@@ -1776,7 +1908,16 @@ def run_evolution(
     # 分母是记录数 |D|（而非逐查询除以自身的 target），因此不会被小 target 查询
     # 的极端相对误差拉高，可跨数据规模比较。
     best_q = evaluate_table(best_S, queries)
-    abs_errors = np.abs(target - best_q)
+    best_abs_errors = np.abs(target - best_q)
+    best_normalized_l1_error = float(
+        np.mean(best_abs_errors) / n_records
+    )
+    output_S = S if inner_early_stopper is not None else best_S
+    output_q = (
+        evaluate_table(output_S, queries)
+        if inner_early_stopper is not None else best_q
+    )
+    abs_errors = np.abs(target - output_q)
     normalized_l1_error = float(np.mean(abs_errors) / n_records)
     # 分布统计：逐查询归一化误差 |target−pred|/N 的中位/P90/最大。
     # 均值易被少数难查询拉高，分布能看清"典型查询"和"最差查询"的差距。
@@ -1785,13 +1926,31 @@ def run_evolution(
     normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
     normalized_l1_max = float(np.max(per_query_nl1))
     final_current_metrics = current_state_metrics_history[-1]
+    inner_resource_cap_source = None
+    if (
+        inner_early_stopping_decision is not None
+        and inner_early_stopping_decision.external_resource_cap_reached
+    ):
+        inner_resource_cap_source = (
+            "candidate_budget"
+            if candidate_budget_exhausted else "max_rounds"
+        )
 
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
         "best_loss_diagnostic_only": best_loss,
         "normalized_l1_at_best_squared_loss_diagnostic_only": (
-            normalized_l1_error
+            best_normalized_l1_error
+        ),
+        "output_table_identity": (
+            "terminal_current"
+            if inner_early_stopper is not None
+            else "historical_best_legacy"
+        ),
+        "output_squared_loss": (
+            final_current_metrics["current_squared_loss"]
+            if inner_early_stopper is not None else best_loss
         ),
         "current_state_metrics_history": current_state_metrics_history,
         "current_state_transition_count": (
@@ -1808,6 +1967,25 @@ def run_evolution(
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "termination_reason": termination_reason,
+        "fit_target_reached": (
+            inner_early_stopping_decision.fit_target_reached
+            if inner_early_stopping_decision is not None else None
+        ),
+        "inner_complete": (
+            inner_early_stopping_decision.inner_complete
+            if inner_early_stopping_decision is not None else None
+        ),
+        "inner_early_stopping": {
+            "enabled": inner_early_stopper is not None,
+            "patience_ticks": inner_early_stopping_patience_ticks,
+            "last_decision": (
+                asdict(inner_early_stopping_decision)
+                if inner_early_stopping_decision is not None else None
+            ),
+            "resource_cap_source_diagnostic_only": (
+                inner_resource_cap_source
+            ),
+        },
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
@@ -2018,6 +2196,9 @@ def run_evolution(
             "record_transition_clocks": record_transition_clocks,
             "record_stationarity_trace": record_stationarity_trace,
             "stop_on_exact_residual": stop_on_exact_residual,
+            "inner_early_stopping_patience_ticks": (
+                inner_early_stopping_patience_ticks
+            ),
             "horizon_invariant": horizon_invariant,
         },
     }
@@ -2035,4 +2216,4 @@ def run_evolution(
     if return_final_table:
         diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
-    return best_S.reset_index(drop=True), diagnostics
+    return output_S.reset_index(drop=True), diagnostics
