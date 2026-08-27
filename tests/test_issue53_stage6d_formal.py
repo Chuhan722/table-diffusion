@@ -57,10 +57,10 @@ def test_each_dataset_passes_both_frozen_identity_conventions():
 def test_frozen_matrix_and_no_gate_params_are_complete():
     plan = protocol.task_plan()
 
-    assert protocol.PROTOCOL_VERSION.endswith("-v4")
-    assert evaluator.EVALUATION_VERSION.endswith("-v4")
-    assert auditor.AUDIT_VERSION.endswith("-v4")
-    assert protocol.OUTPUT_DIR.name.endswith("_v4")
+    assert protocol.PROTOCOL_VERSION.endswith("-v5")
+    assert evaluator.EVALUATION_VERSION.endswith("-v5")
+    assert auditor.AUDIT_VERSION.endswith("-v5")
+    assert protocol.OUTPUT_DIR.name.endswith("_v5")
     assert plan.seeds == (353, 354, 355, 356, 357)
     assert len(plan.tasks) == 30
     assert [task.task_id for task in plan.tasks[:6]] == [
@@ -117,6 +117,33 @@ def test_frozen_21_9_shards_preserve_all_ten_method_triplets():
     assert len(protocol.shard_assignment_sha256()) == 64
 
 
+@pytest.mark.parametrize(
+    ("physical_index", "expected_argument"),
+    [(0, "--id=0"), (1, "--id=1")],
+)
+def test_gpu_sampler_uses_each_shards_frozen_physical_index(
+    physical_index, expected_argument, monkeypatch
+):
+    calls = []
+
+    def fake_nvidia_smi(*arguments):
+        calls.append(arguments)
+        return "7, 11, 46068\n"
+
+    monkeypatch.setattr(runner.gpu_helpers, "_nvidia_smi", fake_nvidia_smi)
+
+    sample = runner._sample_gpu(physical_index)
+
+    assert calls[0][0] == expected_argument
+    assert sample == {
+        "elapsed_sec": 0.0,
+        "physical_index": physical_index,
+        "utilization_percent": 7,
+        "memory_used_mib": 11,
+        "memory_total_mib": 46068,
+    }
+
+
 def test_all_generator_param_manifests_preflight_before_gpu():
     tasks = protocol.task_plan().tasks
 
@@ -150,7 +177,7 @@ def test_generator_param_manifest_rejects_other_nonfinite_fields(bad, monkeypatc
 
 
 def test_staging_preserves_post_generation_temporary_case(tmp_path, monkeypatch):
-    monkeypatch.setattr(protocol, "SHARD_OUTPUT_ROOT", Path("outputs/formal_v4_shards"))
+    monkeypatch.setattr(protocol, "SHARD_OUTPUT_ROOT", Path("outputs/formal_v5_shards"))
     staging, resumed = runner._find_or_create_staging(
         tmp_path,
         "c" * 40,
@@ -209,11 +236,11 @@ def test_run_manifest_preflight_failure_never_touches_gpu(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
     monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
-    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v5"))
     monkeypatch.setattr(
         protocol,
         "SHARD_OUTPUT_ROOT",
-        Path("outputs/formal_v4_shards"),
+        Path("outputs/formal_v5_shards"),
     )
 
     def fail_preflight(_tasks):
@@ -243,11 +270,11 @@ def test_completed_shard_is_verified_and_never_touches_gpu(tmp_path, monkeypatch
     )
     monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
     monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
-    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v5"))
     monkeypatch.setattr(
         protocol,
         "SHARD_OUTPUT_ROOT",
-        Path("outputs/formal_v4_shards"),
+        Path("outputs/formal_v5_shards"),
     )
     shard_root = tmp_path / protocol.SHARD_OUTPUT_ROOT / protocol.LOCAL_SHARD
     shard_root.mkdir(parents=True)
@@ -282,11 +309,11 @@ def test_merge_requires_both_complete_shards_before_copy(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
     monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
-    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v5"))
     monkeypatch.setattr(
         protocol,
         "SHARD_OUTPUT_ROOT",
-        Path("outputs/formal_v4_shards"),
+        Path("outputs/formal_v5_shards"),
     )
     calls = []
 

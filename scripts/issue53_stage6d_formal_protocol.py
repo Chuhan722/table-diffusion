@@ -10,13 +10,13 @@ from typing import Any
 
 from scripts import issue53_stage6c_joint_trajectories as joint
 
-PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v4"
+PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v5"
 PROTOCOL_DOC = Path("docs/设计/Issue53_Stage6D两数据三方法正式闭环效果结果前协议.md")
-PROTOCOL_DOC_SHA256 = "a459dcd474fad6bdee554de00f3941f9dc6165e11fd75319cd6fe0b77a388a21"
+PROTOCOL_DOC_SHA256 = "842a251ed9c607250da9c17c70c422336ef055601b24dc1e443f24447f324344"
 
 # 清单本身不包含该常量，避免自指。全部源码和文档身份确定后再填入。
 FROZEN_PROTOCOL_SHA256 = (
-    "b64fbdff214396c6c83ea0e34e1462161a1fb7b7c50da878df9168edf157ebc8"
+    "835a2165beebe754707a942ae473bb0432b13ec7c914a1caac7b32a6a1a5a523"
 )
 
 FORMAL_SEEDS = tuple(range(353, 358))
@@ -30,8 +30,8 @@ STABLE_WIN_MINIMUM = 4
 LOWER_RISK_RATIO_MAX = 1.05
 HIGHER_QUALITY_RATIO_MIN = 0.95
 
-OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v4")
-SHARD_OUTPUT_ROOT = Path("outputs/issue53_stage6d_joint_formal_effect_v4_shards")
+OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v5")
+SHARD_OUTPUT_ROOT = Path("outputs/issue53_stage6d_joint_formal_effect_v5_shards")
 COLLECTION_REPORT = "collection_report.json"
 SHARD_REPORT = "shard_report.json"
 EVALUATION_REPORT = "evaluation_report.json"
@@ -266,15 +266,15 @@ IMPLEMENTATION_SOURCES = {
     },
     "collector": {
         "path": Path("scripts/run_issue53_stage6d_formal.py"),
-        "sha256": "d9deb7457d9b01cbabeef48c0797d9d3a4ce686b3fc8ca44a33629af314b3946",
+        "sha256": "d020648c2ee9c3808e370ddab7fca74a26ddd412ea28c4643e3f9b280071f88b",
     },
     "evaluator": {
         "path": Path("scripts/evaluate_issue53_stage6d_formal.py"),
-        "sha256": "f35c5b059bc56119c3edd4dd5ed16baf96709f6d7c2fe8d0cfe67920132ffd89",
+        "sha256": "4a18e49bc931446a978e1a1e7c3ae4c89684698a9d1782a4885b56e725ebc51b",
     },
     "independent_auditor": {
         "path": Path("scripts/audit_issue53_stage6d_formal.py"),
-        "sha256": "5bcab290266080298e28a731d4c7754bf20c3f8c80d5f4f8fdda32f69967fbb3",
+        "sha256": "901059965dc081e4dc707852411cfb018f475d5fb601e2ae3ffda5e415498205",
     },
 }
 
@@ -670,6 +670,7 @@ def frozen_protocol_manifest() -> dict[str, Any]:
             "adaptive_concurrency": False,
             "automatic_cpu_fallback": False,
             "each_dataset_seed_triplet_runs_on_one_gpu": True,
+            "gpu_monitor_physical_index_from_frozen_shard": True,
             "shard_assignment_result_dependent": False,
             "merge_requires_both_complete_shards": True,
             "partial_shard_comparison_allowed": False,

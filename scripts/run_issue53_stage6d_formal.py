@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
@@ -247,6 +248,84 @@ def _gpu_idle_audit(shard_id: str) -> dict[str, Any]:
     snapshot["preflight_memory_used_mib"] = memory_used
     snapshot["preflight_compute_processes"] = []
     return snapshot
+
+
+def _sample_gpu(physical_index: int) -> dict[str, Any]:
+    row = gpu_helpers._parse_csv_row(
+        gpu_helpers._nvidia_smi(
+            f"--id={physical_index}",
+            "--query-gpu=utilization.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ),
+        3,
+    )
+    return {
+        "elapsed_sec": 0.0,
+        "physical_index": int(physical_index),
+        "utilization_percent": int(row[0]),
+        "memory_used_mib": int(row[1]),
+        "memory_total_mib": int(row[2]),
+    }
+
+
+class _GpuMonitor:
+    """只采样当前分片冻结的物理显卡，不复用写死物理1号的旧监控器。"""
+
+    def __init__(self, physical_index: int, interval_sec: float | None = None):
+        self.physical_index = int(physical_index)
+        self.interval_sec = float(
+            gpu_helpers.GPU_SAMPLE_INTERVAL_SEC
+            if interval_sec is None
+            else interval_sec
+        )
+        self.samples: list[dict[str, Any]] = []
+        self.error: str | None = None
+        self._started = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _record(self) -> None:
+        try:
+            sample = _sample_gpu(self.physical_index)
+            sample["elapsed_sec"] = float(time.perf_counter() - self._started)
+            self.samples.append(sample)
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
+            self.error = f"{type(exc).__name__}: {exc}"
+            self._stop.set()
+
+    def _loop(self) -> None:
+        self._record()
+        while not self._stop.wait(self.interval_sec):
+            self._record()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("显卡监控不得重复启动")
+        self._started = time.perf_counter()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="issue53-stage6d-gpu-monitor",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def finish(self) -> list[dict[str, Any]]:
+        if self._thread is None:
+            raise RuntimeError("显卡监控尚未启动")
+        self._stop.set()
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise RuntimeError("显卡监控线程无法停止")
+        if self.error is not None:
+            raise RuntimeError(f"显卡利用率监控失败：{self.error}")
+        if not self.samples:
+            raise RuntimeError("显卡利用率监控没有采到样本")
+        if any(
+            sample.get("physical_index") != self.physical_index
+            for sample in self.samples
+        ):
+            raise RuntimeError("显卡利用率样本物理编号漂移")
+        return list(self.samples)
 
 
 def _json_safe(value: Any) -> Any:
@@ -1098,6 +1177,7 @@ def _shard_report(
             "all_artifact_sha256_verified": True,
             "all_generator_params_preflighted_before_gpu": True,
             "completed_cases_resumed_without_rerun": True,
+            "all_gpu_samples_match_shard_physical_index": True,
         },
         "formal_shard_complete": True,
         "raw_reference_data_accessed": False,
@@ -1137,6 +1217,7 @@ def _validate_shard_report(
         "all_artifact_sha256_verified": True,
         "all_generator_params_preflighted_before_gpu": True,
         "completed_cases_resumed_without_rerun": True,
+        "all_gpu_samples_match_shard_physical_index": True,
     }
     if (
         report.get("contract_version") != protocol.PROTOCOL_VERSION
@@ -1175,6 +1256,16 @@ def _validate_shard_report(
     for key, expected in protocol.EXPECTED_SOFTWARE.items():
         if gpu.get(key) != expected:
             raise RuntimeError(f"{shard_id} 软件环境漂移：{key}")
+    gpu_samples = report.get("gpu_samples")
+    if (
+        not isinstance(gpu_samples, list)
+        or not gpu_samples
+        or any(
+            sample.get("physical_index") != expected_gpu["physical_index"]
+            for sample in gpu_samples
+        )
+    ):
+        raise RuntimeError(f"{shard_id} 显卡监控样本物理编号漂移")
 
     rows = report.get("raw_results")
     if not isinstance(rows, list) or len(rows) != len(tasks):
@@ -1265,6 +1356,7 @@ def _collection_report(
             "all_artifact_sha256_verified": True,
             "all_generator_params_preflighted_before_gpu": True,
             "completed_cases_resumed_without_rerun": True,
+            "all_gpu_samples_match_shard_physical_index": True,
         },
         "formal_result_valid": True,
         "raw_reference_data_accessed": False,
@@ -1350,7 +1442,9 @@ def run_shard(confirmed_protocol_sha256: str, shard_id: str) -> Path:
     started_at = datetime.now().astimezone().isoformat()
     started = time.perf_counter()
     if pending:
-        monitor = gpu_helpers._GpuMonitor()
+        monitor = _GpuMonitor(
+            protocol.EXECUTION_SHARDS[shard_id]["expected_gpu"]["physical_index"]
+        )
         monitor.start()
         try:
             worker = partial(

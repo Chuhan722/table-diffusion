@@ -25,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v4"
+EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v5"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 L1_CSV_FIELDS = (
     "dataset",
@@ -147,6 +147,7 @@ def _audit_collection(
         "all_artifact_sha256_verified": True,
         "all_generator_params_preflighted_before_gpu": True,
         "completed_cases_resumed_without_rerun": True,
+        "all_gpu_samples_match_shard_physical_index": True,
     }
     if report.get("collection_audit") != expected_audit:
         raise RuntimeError("collection（采集）结构审计未完整通过")
@@ -226,6 +227,17 @@ def _audit_collection(
             or shard_report.get("partial_shard_comparison_emitted") is not False
         ):
             raise RuntimeError(f"collection（采集）分片报告内容漂移：{shard_id}")
+        gpu_samples = shard_report.get("gpu_samples")
+        if (
+            not isinstance(gpu_samples, list)
+            or not gpu_samples
+            or any(
+                sample.get("physical_index")
+                != protocol.EXECUTION_SHARDS[shard_id]["expected_gpu"]["physical_index"]
+                for sample in gpu_samples
+            )
+        ):
+            raise RuntimeError(f"collection（采集）分片监控编号漂移：{shard_id}")
         shard_payloads[shard_id] = shard_report
 
     rows = report.get("raw_results")

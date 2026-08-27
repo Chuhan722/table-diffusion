@@ -25,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v4"
+AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v5"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 CSV_FIELDS = (
     "dataset",
@@ -174,6 +174,7 @@ def _audit_collection_independently(
         "all_artifact_sha256_verified": True,
         "all_generator_params_preflighted_before_gpu": True,
         "completed_cases_resumed_without_rerun": True,
+        "all_gpu_samples_match_shard_physical_index": True,
     }
     if report.get("collection_audit") != expected_collection_audit:
         raise RuntimeError("collection（采集）结构审计漂移")
@@ -220,6 +221,17 @@ def _audit_collection_independently(
             or shard_payload.get("partial_shard_comparison_emitted") is not False
         ):
             raise RuntimeError(f"collection（采集）分片报告内容漂移：{shard_id}")
+        gpu_samples = shard_payload.get("gpu_samples")
+        if (
+            not isinstance(gpu_samples, list)
+            or not gpu_samples
+            or any(
+                sample.get("physical_index")
+                != protocol.EXECUTION_SHARDS[shard_id]["expected_gpu"]["physical_index"]
+                for sample in gpu_samples
+            )
+        ):
+            raise RuntimeError(f"collection（采集）分片监控编号漂移：{shard_id}")
         shard_payloads[shard_id] = shard_payload
 
     task_by_id = {task.task_id: task for task in protocol.task_plan().tasks}
