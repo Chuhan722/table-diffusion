@@ -10,13 +10,13 @@ from typing import Any
 
 from scripts import issue53_stage6c_joint_trajectories as joint
 
-PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v3"
+PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v4"
 PROTOCOL_DOC = Path("docs/设计/Issue53_Stage6D两数据三方法正式闭环效果结果前协议.md")
-PROTOCOL_DOC_SHA256 = "3596018fc4303961c126078b2b9671e9ee45d1d1282e12939266dd10dbfebfab"
+PROTOCOL_DOC_SHA256 = "a459dcd474fad6bdee554de00f3941f9dc6165e11fd75319cd6fe0b77a388a21"
 
 # 清单本身不包含该常量，避免自指。全部源码和文档身份确定后再填入。
 FROZEN_PROTOCOL_SHA256 = (
-    "3e64828939e7dc74e7762c96e3cd34bcee28ef875c998c38c5acd63b70525d3d"
+    "b64fbdff214396c6c83ea0e34e1462161a1fb7b7c50da878df9168edf157ebc8"
 )
 
 FORMAL_SEEDS = tuple(range(353, 358))
@@ -30,8 +30,10 @@ STABLE_WIN_MINIMUM = 4
 LOWER_RISK_RATIO_MAX = 1.05
 HIGHER_QUALITY_RATIO_MIN = 0.95
 
-OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v3")
+OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v4")
+SHARD_OUTPUT_ROOT = Path("outputs/issue53_stage6d_joint_formal_effect_v4_shards")
 COLLECTION_REPORT = "collection_report.json"
+SHARD_REPORT = "shard_report.json"
 EVALUATION_REPORT = "evaluation_report.json"
 L1_RESULTS_CSV = "l1_results.csv"
 AUDIT_REPORT = "independent_audit.json"
@@ -40,13 +42,67 @@ POSITIVE_INFINITY_MANIFEST_SENTINEL = "positive_infinity"
 ARM_GAP = "gap_l1_global_s8"
 BASELINE_ARMS = ("factor_b_s8", "independent_b_s0")
 
-EXPECTED_GPU = {
-    "physical_index": 1,
-    "cuda_visible_devices": "1",
-    "uuid": "GPU-a3ed64b7-5f7a-0f95-9913-74fdb2340a02",
-    "name": "NVIDIA GeForce RTX 4090",
-    "process_device": "cuda:0",
-    "visible_device_count": 1,
+EXPECTED_SOFTWARE = {
+    "python_major_minor": "3.11",
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "torch": "2.13.0+cu130",
+    "cuda_runtime": "13.0",
+}
+
+LOCAL_SHARD = "local_rtx4090"
+A6000_SHARD = "remote_a6000"
+SHARD_ORDER = (LOCAL_SHARD, A6000_SHARD)
+
+# 用户在结果前最终确定 21/9。每项是不可拆分的（seed, dataset）三方法配对块。
+SHARD_BLOCKS = {
+    LOCAL_SHARD: (
+        (354, "test_300x10"),
+        (355, "test_300x10"),
+        (355, "nltcs"),
+        (356, "test_300x10"),
+        (356, "nltcs"),
+        (357, "test_300x10"),
+        (357, "nltcs"),
+    ),
+    A6000_SHARD: (
+        (353, "test_300x10"),
+        (353, "nltcs"),
+        (354, "nltcs"),
+    ),
+}
+
+EXECUTION_SHARDS = {
+    LOCAL_SHARD: {
+        "hostname": "linyao-system",
+        "task_count": 21,
+        "paired_block_count": 7,
+        "max_workers": 2,
+        "expected_gpu": {
+            "physical_index": 1,
+            "cuda_visible_devices": "1",
+            "uuid": "GPU-a3ed64b7-5f7a-0f95-9913-74fdb2340a02",
+            "name": "NVIDIA GeForce RTX 4090",
+            "memory_total_mib": 24564,
+            "process_device": "cuda:0",
+            "visible_device_count": 1,
+        },
+    },
+    A6000_SHARD: {
+        "hostname": "Cardiff_VM_6",
+        "task_count": 9,
+        "paired_block_count": 3,
+        "max_workers": 2,
+        "expected_gpu": {
+            "physical_index": 0,
+            "cuda_visible_devices": "0",
+            "uuid": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed",
+            "name": "NVIDIA RTX A6000",
+            "memory_total_mib": 46068,
+            "process_device": "cuda:0",
+            "visible_device_count": 1,
+        },
+    },
 }
 
 DATASETS: dict[str, dict[str, Any]] = {
@@ -210,15 +266,15 @@ IMPLEMENTATION_SOURCES = {
     },
     "collector": {
         "path": Path("scripts/run_issue53_stage6d_formal.py"),
-        "sha256": "9bd0fb178c28fe86f4bed64e61025e2dec416fde7680ebbdf1e69ff0e006ae0b",
+        "sha256": "d9deb7457d9b01cbabeef48c0797d9d3a4ce686b3fc8ca44a33629af314b3946",
     },
     "evaluator": {
         "path": Path("scripts/evaluate_issue53_stage6d_formal.py"),
-        "sha256": "b5311e409e1c178513903ad5f973b0bf72519d8d4184590b65df1d99476ef3eb",
+        "sha256": "f35c5b059bc56119c3edd4dd5ed16baf96709f6d7c2fe8d0cfe67920132ffd89",
     },
     "independent_auditor": {
         "path": Path("scripts/audit_issue53_stage6d_formal.py"),
-        "sha256": "29d89f5a34602e584bfde430d900414bda7ed9e8b9204279365c576150bc70a5",
+        "sha256": "5bcab290266080298e28a731d4c7754bf20c3f8c80d5f4f8fdda32f69967fbb3",
     },
 }
 
@@ -253,11 +309,7 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, float) and math.isinf(value):
-        return (
-            POSITIVE_INFINITY_MANIFEST_SENTINEL
-            if value > 0
-            else "negative_infinity"
-        )
+        return POSITIVE_INFINITY_MANIFEST_SENTINEL if value > 0 else "negative_infinity"
     return value
 
 
@@ -392,6 +444,75 @@ def task_plan() -> joint.JointTrajectoryPlan:
     )
 
 
+def tasks_for_shard(shard_id: str) -> tuple[joint.JointTrajectoryTask, ...]:
+    """按全局冻结顺序返回某个执行分片的完整三方法配对任务。"""
+
+    if shard_id not in SHARD_ORDER:
+        raise ValueError(f"未知第 6D 执行分片：{shard_id!r}")
+    blocks = set(SHARD_BLOCKS[shard_id])
+    tasks = tuple(
+        task for task in task_plan().tasks if (task.seed, task.dataset) in blocks
+    )
+    expected = EXECUTION_SHARDS[shard_id]
+    if len(tasks) != expected["task_count"]:
+        raise RuntimeError(f"{shard_id} 冻结任务数量漂移")
+    for seed, dataset in SHARD_BLOCKS[shard_id]:
+        paired = [
+            task for task in tasks if task.seed == seed and task.dataset == dataset
+        ]
+        if {task.arm for task in paired} != set(joint.ARM_ORDER):
+            raise RuntimeError(f"{shard_id}/{seed}/{dataset} 三方法配对不完整")
+    return tasks
+
+
+def task_shard_id(task: joint.JointTrajectoryTask) -> str:
+    matched = [
+        shard_id
+        for shard_id in SHARD_ORDER
+        if (task.seed, task.dataset) in SHARD_BLOCKS[shard_id]
+    ]
+    if len(matched) != 1:
+        raise RuntimeError(f"正式任务没有唯一执行分片：{task.task_id}")
+    return matched[0]
+
+
+def shard_assignment_manifest() -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    all_ids: list[str] = []
+    all_blocks: list[tuple[int, str]] = []
+    for shard_id in SHARD_ORDER:
+        tasks = tasks_for_shard(shard_id)
+        task_ids = [task.task_id for task in tasks]
+        blocks = [
+            {"seed": seed, "dataset": dataset}
+            for seed, dataset in SHARD_BLOCKS[shard_id]
+        ]
+        result[shard_id] = {
+            "hostname": EXECUTION_SHARDS[shard_id]["hostname"],
+            "task_count": len(task_ids),
+            "paired_block_count": len(blocks),
+            "max_workers": EXECUTION_SHARDS[shard_id]["max_workers"],
+            "expected_gpu": dict(EXECUTION_SHARDS[shard_id]["expected_gpu"]),
+            "paired_blocks": blocks,
+            "task_ids_in_global_order": task_ids,
+        }
+        all_ids.extend(task_ids)
+        all_blocks.extend(SHARD_BLOCKS[shard_id])
+    expected_ids = [task.task_id for task in task_plan().tasks]
+    if len(all_ids) != len(set(all_ids)) or set(all_ids) != set(expected_ids):
+        raise RuntimeError("21/9 分片没有恰好覆盖30条正式任务")
+    expected_blocks = {
+        (seed, dataset) for seed in FORMAL_SEEDS for dataset in joint.DATASET_ORDER
+    }
+    if len(all_blocks) != len(set(all_blocks)) or set(all_blocks) != expected_blocks:
+        raise RuntimeError("21/9 分片没有恰好覆盖10个三方法配对块")
+    return result
+
+
+def shard_assignment_sha256() -> str:
+    return canonical_sha256(shard_assignment_manifest())
+
+
 def frozen_protocol_manifest() -> dict[str, Any]:
     plan = task_plan()
     return {
@@ -422,6 +543,10 @@ def frozen_protocol_manifest() -> dict[str, Any]:
             "all_tasks_declared_before_any_result": True,
             "partial_dataset_or_arm_plan_allowed": False,
             "result_dependent_task_removal_allowed": False,
+            "execution_shard_order": list(SHARD_ORDER),
+            "execution_shard_assignment": shard_assignment_manifest(),
+            "execution_shard_assignment_sha256": shard_assignment_sha256(),
+            "all_dataset_seed_triplets_single_shard": True,
         },
         "datasets": {
             name: {
@@ -530,18 +655,24 @@ def frozen_protocol_manifest() -> dict[str, Any]:
         },
         "execution": {
             "output_dir": str(OUTPUT_DIR),
-            "max_workers": MAX_WORKERS,
+            "shard_output_root": str(SHARD_OUTPUT_ROOT),
+            "shard_report": SHARD_REPORT,
+            "shard_count": len(SHARD_ORDER),
+            "local_task_count": EXECUTION_SHARDS[LOCAL_SHARD]["task_count"],
+            "a6000_task_count": EXECUTION_SHARDS[A6000_SHARD]["task_count"],
+            "expected_software": dict(EXPECTED_SOFTWARE),
             "multiprocessing_start_method": "spawn",
-            "generator_params_manifest_sha256": (
-                generator_params_manifest_sha256()
-            ),
+            "generator_params_manifest_sha256": (generator_params_manifest_sha256()),
             "all_generator_manifests_preflighted_before_gpu": True,
             "completed_case_directories_resumed_without_rerun": True,
             "stale_temporary_case_directories_auto_deleted": False,
             "task_reordering": False,
             "adaptive_concurrency": False,
             "automatic_cpu_fallback": False,
-            "expected_gpu": dict(EXPECTED_GPU),
+            "each_dataset_seed_triplet_runs_on_one_gpu": True,
+            "shard_assignment_result_dependent": False,
+            "merge_requires_both_complete_shards": True,
+            "partial_shard_comparison_allowed": False,
             "exclusive_idle_gpu_required": True,
             "formal_output_overwrite_allowed": False,
         },
@@ -590,6 +721,9 @@ def build_plan(repository_root: str | Path) -> dict[str, Any]:
         "checkpoint_rounds": list(CHECKPOINT_ROUNDS),
         "max_workers": MAX_WORKERS,
         "output_dir": str(OUTPUT_DIR),
+        "shard_output_root": str(SHARD_OUTPUT_ROOT),
+        "shard_assignment_sha256": shard_assignment_sha256(),
+        "shards": shard_assignment_manifest(),
         "l1_results_file": L1_RESULTS_CSV,
         "generation_started": False,
         "formal_collection_authorized": False,

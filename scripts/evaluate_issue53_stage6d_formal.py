@@ -25,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v3"
+EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v4"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 L1_CSV_FIELDS = (
     "dataset",
@@ -123,6 +123,7 @@ def _audit_collection(
         != protocol.IMPLEMENTATION_SOURCES["collector"]["sha256"]
         or report.get("generator_params_manifest_sha256")
         != protocol.generator_params_manifest_sha256()
+        or report.get("shard_assignment_sha256") != protocol.shard_assignment_sha256()
         or report.get("case_count") != 30
         or report.get("paired_dataset_seed_count") != 10
         or report.get("formal_result_valid") is not True
@@ -136,6 +137,9 @@ def _audit_collection(
     expected_audit = {
         "all_30_cases_present": True,
         "all_10_dataset_seed_triplets_paired": True,
+        "exact_21_9_shard_assignment": True,
+        "all_triplets_single_shard": True,
+        "both_shard_reports_verified_before_merge": True,
         "all_terminal_current": True,
         "all_applied_unconditionally": True,
         "all_gap_8k_identity": True,
@@ -154,11 +158,28 @@ def _audit_collection(
     }
     if report.get("generation_input_sha256") != expected_generation_inputs:
         raise RuntimeError("collection（采集）生成输入身份漂移")
-    gpu = report.get("environment", {}).get("gpu")
-    if not isinstance(gpu, dict) or any(
-        gpu.get(key) != expected for key, expected in protocol.EXPECTED_GPU.items()
+    shard_environments = report.get("environment", {}).get("shards")
+    if not isinstance(shard_environments, dict) or set(shard_environments) != set(
+        protocol.SHARD_ORDER
     ):
-        raise RuntimeError("collection（采集）物理1号显卡身份漂移")
+        raise RuntimeError("collection（采集）双服务器环境缺失")
+    for shard_id in protocol.SHARD_ORDER:
+        gpu = shard_environments[shard_id].get("gpu")
+        expected_shard = protocol.EXECUTION_SHARDS[shard_id]
+        if (
+            not isinstance(gpu, dict)
+            or gpu.get("shard_id") != shard_id
+            or gpu.get("hostname") != expected_shard["hostname"]
+            or any(
+                gpu.get(key) != expected
+                for key, expected in expected_shard["expected_gpu"].items()
+            )
+            or any(
+                gpu.get(key) != expected
+                for key, expected in protocol.EXPECTED_SOFTWARE.items()
+            )
+        ):
+            raise RuntimeError(f"collection（采集）执行环境漂移：{shard_id}")
 
     execution_commit = report.get("execution_commit")
     if (
@@ -173,6 +194,39 @@ def _audit_collection(
         != execution_commit
     ):
         raise RuntimeError("collection（采集）提交不是评价提交的祖先")
+
+    shard_artifacts = report.get("shard_report_artifacts")
+    expected_shard_hashes = report.get("shard_report_sha256")
+    if not isinstance(shard_artifacts, dict) or not isinstance(
+        expected_shard_hashes, dict
+    ):
+        raise TypeError("collection（采集）分片报告证据缺失")
+    shard_payloads: dict[str, dict[str, Any]] = {}
+    for shard_id in protocol.SHARD_ORDER:
+        expected_path = str(Path("shards") / shard_id / protocol.SHARD_REPORT)
+        artifact = shard_artifacts.get(shard_id)
+        if (
+            not isinstance(artifact, dict)
+            or artifact.get("path") != expected_path
+            or artifact.get("sha256") != expected_shard_hashes.get(shard_id)
+        ):
+            raise RuntimeError(f"collection（采集）分片报告身份漂移：{shard_id}")
+        shard_report_path = _artifact_path(root, expected_path)
+        if protocol.file_sha256(shard_report_path) != artifact["sha256"]:
+            raise RuntimeError(f"collection（采集）分片报告哈希漂移：{shard_id}")
+        shard_report = _load_json(shard_report_path)
+        if (
+            shard_report.get("contract_version") != protocol.PROTOCOL_VERSION
+            or shard_report.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
+            or shard_report.get("shard_id") != shard_id
+            or shard_report.get("execution_commit") != execution_commit
+            or shard_report.get("task_ids")
+            != [task.task_id for task in protocol.tasks_for_shard(shard_id)]
+            or shard_report.get("formal_shard_complete") is not True
+            or shard_report.get("partial_shard_comparison_emitted") is not False
+        ):
+            raise RuntimeError(f"collection（采集）分片报告内容漂移：{shard_id}")
+        shard_payloads[shard_id] = shard_report
 
     rows = report.get("raw_results")
     if not isinstance(rows, list) or len(rows) != 30:
@@ -219,6 +273,13 @@ def _audit_collection(
     }
     if set(indexed) != expected:
         raise RuntimeError("collection（采集）30条任务身份不完整")
+    for shard_id in protocol.SHARD_ORDER:
+        expected_rows = [
+            indexed[(task.seed, task.dataset, task.arm)]
+            for task in protocol.tasks_for_shard(shard_id)
+        ]
+        if shard_payloads[shard_id].get("raw_results") != expected_rows:
+            raise RuntimeError(f"collection（采集）分片与合并行不一致：{shard_id}")
     return report, indexed
 
 

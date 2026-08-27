@@ -9,6 +9,7 @@ import json
 import math
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -155,23 +156,39 @@ def _query_target_identity_audit(
     )
 
 
-def _gpu_idle_audit() -> dict[str, Any]:
+def _gpu_idle_audit(shard_id: str) -> dict[str, Any]:
+    if shard_id not in protocol.SHARD_ORDER:
+        raise ValueError(f"未知第 6D 执行分片：{shard_id!r}")
+    shard = protocol.EXECUTION_SHARDS[shard_id]
+    expected_gpu = shard["expected_gpu"]
+    hostname = platform.node()
+    if hostname != shard["hostname"]:
+        raise RuntimeError(
+            f"{shard_id} 主机身份不一致：{hostname!r}，expected={shard['hostname']!r}"
+        )
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if visible != protocol.EXPECTED_GPU["cuda_visible_devices"]:
-        raise RuntimeError("CUDA_VISIBLE_DEVICES 必须精确等于 1")
+    if visible != expected_gpu["cuda_visible_devices"]:
+        raise RuntimeError(
+            f"{shard_id} 的 CUDA_VISIBLE_DEVICES 必须精确等于 "
+            f"{expected_gpu['cuda_visible_devices']}"
+        )
+    physical_index = int(expected_gpu["physical_index"])
     identity = gpu_helpers._parse_csv_row(
         gpu_helpers._nvidia_smi(
-            "--id=1",
+            f"--id={physical_index}",
             "--query-gpu=index,uuid,name,memory.total",
             "--format=csv,noheader,nounits",
         ),
         4,
     )
 
+    import pandas as pd
     import torch
 
     torch.use_deterministic_algorithms(True)
     snapshot = {
+        "shard_id": shard_id,
+        "hostname": hostname,
         "physical_index": int(identity[0]),
         "cuda_visible_devices": visible,
         "uuid": identity[1],
@@ -183,11 +200,20 @@ def _gpu_idle_audit() -> dict[str, Any]:
         "deterministic_algorithms": bool(torch.are_deterministic_algorithms_enabled()),
         "torch": torch.__version__,
         "cuda_runtime": torch.version.cuda,
+        "python_major_minor": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
     }
-    for key, expected in protocol.EXPECTED_GPU.items():
+    for key, expected in expected_gpu.items():
         if snapshot.get(key) != expected:
             raise RuntimeError(
-                f"物理1号显卡身份不一致：{key}="
+                f"{shard_id} 显卡身份不一致：{key}="
+                f"{snapshot.get(key)!r}，expected={expected!r}"
+            )
+    for key, expected in protocol.EXPECTED_SOFTWARE.items():
+        if snapshot.get(key) != expected:
+            raise RuntimeError(
+                f"{shard_id} 软件环境不一致：{key}="
                 f"{snapshot.get(key)!r}，expected={expected!r}"
             )
     if snapshot["cuda_available"] is not True:
@@ -197,7 +223,7 @@ def _gpu_idle_audit() -> dict[str, Any]:
 
     row = gpu_helpers._parse_csv_row(
         gpu_helpers._nvidia_smi(
-            "--id=1",
+            f"--id={physical_index}",
             "--query-gpu=utilization.gpu,memory.used,memory.total",
             "--format=csv,noheader,nounits",
         ),
@@ -206,15 +232,16 @@ def _gpu_idle_audit() -> dict[str, Any]:
     utilization = int(row[0])
     memory_used = int(row[1])
     processes = gpu_helpers._nvidia_smi(
-        "--id=1",
+        f"--id={physical_index}",
         "--query-compute-apps=pid,process_name,used_gpu_memory",
         "--format=csv,noheader,nounits",
     ).strip()
     if utilization != 0 or processes:
-        raise RuntimeError("物理1号显卡当前不空闲，禁止启动或恢复正式采集")
+        raise RuntimeError(f"{shard_id} 冻结显卡当前不空闲，禁止启动或恢复正式采集")
     if memory_used > 256:
         raise RuntimeError(
-            f"物理1号显卡虽无计算进程但基础显存为 {memory_used} MiB，超过256 MiB护栏"
+            f"{shard_id} 显卡虽无计算进程但基础显存为 "
+            f"{memory_used} MiB，超过256 MiB护栏"
         )
     snapshot["preflight_utilization_percent"] = utilization
     snapshot["preflight_memory_used_mib"] = memory_used
@@ -593,8 +620,11 @@ def _write_case_artifacts(
     peak_allocated_bytes: int,
     peak_reserved_bytes: int,
     execution_commit: str,
+    execution_shard_id: str,
     generator_params_manifest: dict[str, Any],
 ) -> dict[str, Any]:
+    if protocol.task_shard_id(task) != execution_shard_id:
+        raise RuntimeError(f"{task.task_id} 被提交到错误执行分片")
     final_dir = staging_root / "cases" / task.task_id
     if final_dir.exists():
         raise FileExistsError(f"正式 case 已存在，不覆盖：{final_dir}")
@@ -655,6 +685,7 @@ def _write_case_artifacts(
         relative_base = Path("cases") / task.task_id
         collection_row = {
             "task_id": task.task_id,
+            "execution_shard_id": execution_shard_id,
             "dataset": task.dataset,
             "arm": task.arm,
             "seed": int(task.seed),
@@ -710,6 +741,7 @@ def _write_case_artifacts(
             "contract_version": protocol.PROTOCOL_VERSION,
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
+            "execution_shard_id": execution_shard_id,
             "generator_params": generator_params_manifest,
             "collection_row": collection_row,
             "raw_reference_data_accessed": False,
@@ -731,6 +763,7 @@ def _execute_trajectory_task(
     repository_root: str,
     staging_root: str,
     execution_commit: str,
+    execution_shard_id: str,
     generator_params_by_task: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     root = Path(repository_root)
@@ -782,6 +815,7 @@ def _execute_trajectory_task(
         peak_allocated_bytes=int(torch.cuda.max_memory_allocated(0)),
         peak_reserved_bytes=int(torch.cuda.max_memory_reserved(0)),
         execution_commit=execution_commit,
+        execution_shard_id=execution_shard_id,
         generator_params_manifest=generator_params_manifest,
     )
 
@@ -791,6 +825,7 @@ def _validate_case_row(task: joint.JointTrajectoryTask, row: dict[str, Any]) -> 
     termination_reason = row.get("termination_reason")
     if (
         row.get("task_id") != task.task_id
+        or row.get("execution_shard_id") != protocol.task_shard_id(task)
         or row.get("dataset") != task.dataset
         or row.get("arm") != task.arm
         or row.get("seed") != task.seed
@@ -824,6 +859,7 @@ def _load_completed_case(
         manifest.get("contract_version") != protocol.PROTOCOL_VERSION
         or manifest.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
         or manifest.get("execution_commit") != execution_commit
+        or manifest.get("execution_shard_id") != protocol.task_shard_id(task)
         or manifest.get("generator_params")
         != protocol.generator_params_manifest(task.dataset, task.arm, task.seed)
         or manifest.get("raw_reference_data_accessed") is not False
@@ -865,36 +901,56 @@ def _partition_completed_cases(
     return completed, pending
 
 
-def _validate_pairing(rows: Sequence[dict[str, Any]]) -> None:
+def _validate_pairing_for_tasks(
+    rows: Sequence[dict[str, Any]],
+    tasks: Sequence[joint.JointTrajectoryTask],
+) -> None:
     indexed = {(row["seed"], row["dataset"], row["arm"]): row for row in rows}
-    if len(indexed) != len(protocol.task_plan().tasks):
-        raise RuntimeError("正式30条 case 地址不完整或重复")
-    for seed in protocol.FORMAL_SEEDS:
-        for dataset in joint.DATASET_ORDER:
+    if len(indexed) != len(tasks):
+        raise RuntimeError("正式分片 case 地址不完整或重复")
+    blocks = {(task.seed, task.dataset) for task in tasks}
+    for seed, dataset in sorted(blocks):
+        expected_arms = {
+            task.arm for task in tasks if task.seed == seed and task.dataset == dataset
+        }
+        if expected_arms != set(joint.ARM_ORDER):
+            raise RuntimeError(f"{seed}/{dataset} 冻结任务不是完整三方法配对")
+        try:
             paired = [indexed[(seed, dataset, arm)] for arm in joint.ARM_ORDER]
-            for key in (
-                "initial_table_sha256",
-                "primary_rng_post_initialization_sha256",
-                "direction_reference_scale",
-                "query_identity_sha256",
-                "target_vector_sha256",
-                "trace_query_identity_sha256",
-                "trace_target_vector_sha256",
-            ):
-                if len({row[key] for row in paired}) != 1:
-                    raise RuntimeError(f"{seed}/{dataset} 三方法配对身份不一致：{key}")
+        except KeyError as exc:
+            raise RuntimeError(f"{seed}/{dataset} 三方法结果不完整") from exc
+        for key in (
+            "initial_table_sha256",
+            "primary_rng_post_initialization_sha256",
+            "direction_reference_scale",
+            "query_identity_sha256",
+            "target_vector_sha256",
+            "trace_query_identity_sha256",
+            "trace_target_vector_sha256",
+        ):
+            if len({row[key] for row in paired}) != 1:
+                raise RuntimeError(f"{seed}/{dataset} 三方法配对身份不一致：{key}")
+
+
+def _validate_pairing(rows: Sequence[dict[str, Any]]) -> None:
+    tasks = protocol.task_plan().tasks
+    _validate_pairing_for_tasks(rows, tasks)
+    if len(rows) != len(tasks):
+        raise RuntimeError("正式30条 case 地址不完整或重复")
 
 
 def run_frozen_task_matrix(
     worker: Callable[[joint.JointTrajectoryTask], dict[str, Any]],
     tasks: Sequence[joint.JointTrajectoryTask],
+    *,
+    max_workers: int,
 ) -> list[dict[str, Any]]:
     if not tasks:
         return []
     results = run_ordered_process_tasks(
         worker,
         list(tasks),
-        max_workers=protocol.MAX_WORKERS,
+        max_workers=max_workers,
     )
     if len(results) != len(tasks):
         raise RuntimeError("正式任务返回数量不完整")
@@ -908,8 +964,10 @@ def _find_or_create_staging(
     execution_commit: str,
     runner_sha256: str,
     generator_params_manifest_sha256: str,
+    shard_id: str,
 ) -> tuple[Path, bool]:
-    destination = root / protocol.OUTPUT_DIR
+    tasks = protocol.tasks_for_shard(shard_id)
+    destination = root / protocol.SHARD_OUTPUT_ROOT / shard_id
     destination.parent.mkdir(parents=True, exist_ok=True)
     candidates = sorted(
         path
@@ -926,10 +984,10 @@ def _find_or_create_staging(
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
             "runner_sha256": runner_sha256,
-            "generator_params_manifest_sha256": (
-                generator_params_manifest_sha256
-            ),
-            "task_ids": [task.task_id for task in protocol.task_plan().tasks],
+            "shard_id": shard_id,
+            "shard_assignment_sha256": protocol.shard_assignment_sha256(),
+            "generator_params_manifest_sha256": (generator_params_manifest_sha256),
+            "task_ids": [task.task_id for task in tasks],
             "partial_quality_inspection_allowed": False,
         }:
             raise RuntimeError("第 6D staging（暂存）身份漂移，禁止恢复")
@@ -954,34 +1012,17 @@ def _find_or_create_staging(
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
             "runner_sha256": runner_sha256,
-            "generator_params_manifest_sha256": (
-                generator_params_manifest_sha256
-            ),
-            "task_ids": [task.task_id for task in protocol.task_plan().tasks],
+            "shard_id": shard_id,
+            "shard_assignment_sha256": protocol.shard_assignment_sha256(),
+            "generator_params_manifest_sha256": (generator_params_manifest_sha256),
+            "task_ids": [task.task_id for task in tasks],
             "partial_quality_inspection_allowed": False,
         },
     )
     return staging, False
 
 
-def _collection_report(
-    *,
-    execution_commit: str,
-    runner_sha256: str,
-    generator_params_manifest_sha256: str,
-    input_sha256: dict[str, dict[str, str]],
-    gpu: dict[str, Any] | None,
-    gpu_samples: Sequence[dict[str, Any]],
-    rows: Sequence[dict[str, Any]],
-    resumed_case_count: int,
-    started_at: str,
-    finished_at: str,
-    elapsed_sec: float,
-) -> dict[str, Any]:
-    task_ids = [task.task_id for task in protocol.task_plan().tasks]
-    if [row["task_id"] for row in rows] != task_ids:
-        raise RuntimeError("正式 collection 行顺序与冻结任务顺序不一致")
-    _validate_pairing(rows)
+def _validate_numeric_rows(rows: Sequence[dict[str, Any]]) -> None:
     if any(
         row["gap_8k_identity"] is not True
         or row["gap_clip_hit_count"] != 0
@@ -991,10 +1032,34 @@ def _collection_report(
         for row in rows
     ):
         raise RuntimeError("正式 collection 数值/微步护栏失败")
+
+
+def _shard_report(
+    *,
+    shard_id: str,
+    execution_commit: str,
+    runner_sha256: str,
+    generator_params_manifest_sha256: str,
+    input_sha256: dict[str, dict[str, str]],
+    gpu: dict[str, Any],
+    gpu_samples: Sequence[dict[str, Any]],
+    rows: Sequence[dict[str, Any]],
+    resumed_case_count: int,
+    started_at: str,
+    finished_at: str,
+    elapsed_sec: float,
+) -> dict[str, Any]:
+    tasks = protocol.tasks_for_shard(shard_id)
+    task_ids = [task.task_id for task in tasks]
+    if [row["task_id"] for row in rows] != task_ids:
+        raise RuntimeError(f"{shard_id} 行顺序与冻结分片任务顺序不一致")
+    _validate_pairing_for_tasks(rows, tasks)
+    _validate_numeric_rows(rows)
     return {
         "contract_version": protocol.PROTOCOL_VERSION,
         "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
-        "protocol": protocol.frozen_protocol_manifest(),
+        "shard_id": shard_id,
+        "shard_assignment_sha256": protocol.shard_assignment_sha256(),
         "execution_commit": execution_commit,
         "runner_sha256": runner_sha256,
         "generator_params_manifest_sha256": generator_params_manifest_sha256,
@@ -1011,7 +1076,7 @@ def _collection_report(
             "elapsed_sec_this_invocation": float(elapsed_sec),
             "resumed_case_count": int(resumed_case_count),
             "new_case_count": len(rows) - int(resumed_case_count),
-            "max_workers": protocol.MAX_WORKERS,
+            "max_workers": protocol.EXECUTION_SHARDS[shard_id]["max_workers"],
             "multiprocessing_start_method": "spawn",
             "task_order": "seed_then_arm_then_dataset",
         },
@@ -1020,11 +1085,179 @@ def _collection_report(
             gpu_helpers._summarize_gpu_samples(gpu_samples) if gpu_samples else None
         ),
         "case_count": len(rows),
+        "paired_dataset_seed_count": len(protocol.SHARD_BLOCKS[shard_id]),
+        "task_ids": task_ids,
+        "raw_results": list(rows),
+        "shard_audit": {
+            "all_assigned_cases_present": len(rows) == len(tasks),
+            "all_assigned_dataset_seed_triplets_paired": True,
+            "all_terminal_current": True,
+            "all_applied_unconditionally": True,
+            "all_gap_8k_identity": True,
+            "all_zero_clip_and_finite": True,
+            "all_artifact_sha256_verified": True,
+            "all_generator_params_preflighted_before_gpu": True,
+            "completed_cases_resumed_without_rerun": True,
+        },
+        "formal_shard_complete": True,
+        "raw_reference_data_accessed": False,
+        "partial_shard_comparison_emitted": False,
+        "method_ranking_emitted": False,
+        "l1_results_published_by_shard": False,
+        "checkpoint_vectors_persisted_for_later_evaluation": True,
+        "parameter_retuning_performed": False,
+        "privacy_budget_consumed": False,
+    }
+
+
+def _validate_shard_report(
+    root: Path,
+    shard_id: str,
+    *,
+    execution_commit: str,
+    runner_sha256: str,
+    generator_params_manifest_sha256: str,
+    input_sha256: dict[str, dict[str, str]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+    shard_root = root / protocol.SHARD_OUTPUT_ROOT / shard_id
+    report_path = shard_root / protocol.SHARD_REPORT
+    report_sha256 = protocol.file_sha256(report_path)
+    report = _load_json(report_path)
+    tasks = protocol.tasks_for_shard(shard_id)
+    expected_task_ids = [task.task_id for task in tasks]
+    expected_gpu = protocol.EXECUTION_SHARDS[shard_id]["expected_gpu"]
+    gpu = report.get("environment", {}).get("gpu")
+    expected_shard_audit = {
+        "all_assigned_cases_present": True,
+        "all_assigned_dataset_seed_triplets_paired": True,
+        "all_terminal_current": True,
+        "all_applied_unconditionally": True,
+        "all_gap_8k_identity": True,
+        "all_zero_clip_and_finite": True,
+        "all_artifact_sha256_verified": True,
+        "all_generator_params_preflighted_before_gpu": True,
+        "completed_cases_resumed_without_rerun": True,
+    }
+    if (
+        report.get("contract_version") != protocol.PROTOCOL_VERSION
+        or report.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
+        or report.get("shard_id") != shard_id
+        or report.get("shard_assignment_sha256") != protocol.shard_assignment_sha256()
+        or report.get("execution_commit") != execution_commit
+        or report.get("runner_sha256") != runner_sha256
+        or report.get("generator_params_manifest_sha256")
+        != generator_params_manifest_sha256
+        or report.get("generation_input_sha256") != input_sha256
+        or report.get("task_ids") != expected_task_ids
+        or report.get("case_count") != len(tasks)
+        or report.get("paired_dataset_seed_count")
+        != len(protocol.SHARD_BLOCKS[shard_id])
+        or report.get("shard_audit") != expected_shard_audit
+        or report.get("formal_shard_complete") is not True
+        or report.get("raw_reference_data_accessed") is not False
+        or report.get("partial_shard_comparison_emitted") is not False
+        or report.get("method_ranking_emitted") is not False
+        or report.get("l1_results_published_by_shard") is not False
+        or report.get("parameter_retuning_performed") is not False
+        or report.get("privacy_budget_consumed") is not False
+    ):
+        raise RuntimeError(f"{shard_id} 正式分片报告身份或边界漂移")
+    if not isinstance(gpu, dict):
+        raise TypeError(f"{shard_id} 缺少显卡环境")
+    if (
+        gpu.get("shard_id") != shard_id
+        or gpu.get("hostname") != protocol.EXECUTION_SHARDS[shard_id]["hostname"]
+    ):
+        raise RuntimeError(f"{shard_id} 主机环境漂移")
+    for key, expected in expected_gpu.items():
+        if gpu.get(key) != expected:
+            raise RuntimeError(f"{shard_id} 显卡环境漂移：{key}")
+    for key, expected in protocol.EXPECTED_SOFTWARE.items():
+        if gpu.get(key) != expected:
+            raise RuntimeError(f"{shard_id} 软件环境漂移：{key}")
+
+    rows = report.get("raw_results")
+    if not isinstance(rows, list) or len(rows) != len(tasks):
+        raise RuntimeError(f"{shard_id} 正式分片结果数量漂移")
+    loaded_rows = []
+    for task, row in zip(tasks, rows):
+        loaded = _load_completed_case(shard_root, task, execution_commit)
+        if loaded is None or loaded != row:
+            raise RuntimeError(f"{shard_id}/{task.task_id} 完整案例与分片报告不一致")
+        loaded_rows.append(loaded)
+    _validate_pairing_for_tasks(loaded_rows, tasks)
+    _validate_numeric_rows(loaded_rows)
+    return report, loaded_rows, report_sha256
+
+
+def _collection_report(
+    *,
+    execution_commit: str,
+    runner_sha256: str,
+    generator_params_manifest_sha256: str,
+    input_sha256: dict[str, dict[str, str]],
+    shard_reports: dict[str, dict[str, Any]],
+    shard_report_sha256: dict[str, str],
+    rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    task_ids = [task.task_id for task in protocol.task_plan().tasks]
+    if [row["task_id"] for row in rows] != task_ids:
+        raise RuntimeError("正式 collection 行顺序与冻结任务顺序不一致")
+    _validate_pairing(rows)
+    _validate_numeric_rows(rows)
+    return {
+        "contract_version": protocol.PROTOCOL_VERSION,
+        "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
+        "protocol": protocol.frozen_protocol_manifest(),
+        "execution_commit": execution_commit,
+        "runner_sha256": runner_sha256,
+        "generator_params_manifest_sha256": generator_params_manifest_sha256,
+        "shard_assignment_sha256": protocol.shard_assignment_sha256(),
+        "shard_report_sha256": dict(shard_report_sha256),
+        "shard_report_artifacts": {
+            shard_id: {
+                "path": str(Path("shards") / shard_id / protocol.SHARD_REPORT),
+                "sha256": shard_report_sha256[shard_id],
+            }
+            for shard_id in protocol.SHARD_ORDER
+        },
+        "environment": {
+            "shards": {
+                shard_id: shard_reports[shard_id]["environment"]
+                for shard_id in protocol.SHARD_ORDER
+            }
+        },
+        "generation_input_sha256": input_sha256,
+        "execution": {
+            "shard_order": list(protocol.SHARD_ORDER),
+            "task_counts": {
+                shard_id: len(protocol.tasks_for_shard(shard_id))
+                for shard_id in protocol.SHARD_ORDER
+            },
+            "paired_block_counts": {
+                shard_id: len(protocol.SHARD_BLOCKS[shard_id])
+                for shard_id in protocol.SHARD_ORDER
+            },
+            "max_workers_by_shard": {
+                shard_id: protocol.EXECUTION_SHARDS[shard_id]["max_workers"]
+                for shard_id in protocol.SHARD_ORDER
+            },
+            "multiprocessing_start_method": "spawn",
+            "task_order": "seed_then_arm_then_dataset",
+            "shard_execution": {
+                shard_id: shard_reports[shard_id]["execution"]
+                for shard_id in protocol.SHARD_ORDER
+            },
+        },
+        "case_count": len(rows),
         "paired_dataset_seed_count": len(protocol.FORMAL_SEEDS) * 2,
         "raw_results": list(rows),
         "collection_audit": {
             "all_30_cases_present": len(rows) == 30,
             "all_10_dataset_seed_triplets_paired": True,
+            "exact_21_9_shard_assignment": True,
+            "all_triplets_single_shard": True,
+            "both_shard_reports_verified_before_merge": True,
             "all_terminal_current": True,
             "all_applied_unconditionally": True,
             "all_gap_8k_identity": True,
@@ -1058,13 +1291,22 @@ def build_plan() -> dict[str, Any]:
             "generator_params_manifest_sha256": generator_params_sha256,
             "all_generator_params_preflighted_without_gpu": True,
             "completed_case_directories_resumed_without_rerun": True,
+            "run_mode": "two_explicit_shards_then_verified_merge",
+            "shard_assignment_sha256": protocol.shard_assignment_sha256(),
+            "shard_task_counts": {
+                shard_id: len(protocol.tasks_for_shard(shard_id))
+                for shard_id in protocol.SHARD_ORDER
+            },
+            "merge_requires_both_complete_shards": True,
         }
     )
     return plan
 
 
-def run(confirmed_protocol_sha256: str) -> Path:
+def run_shard(confirmed_protocol_sha256: str, shard_id: str) -> Path:
     protocol.require_run_confirmation(confirmed_protocol_sha256)
+    if shard_id not in protocol.SHARD_ORDER:
+        raise ValueError(f"未知第 6D 执行分片：{shard_id!r}")
     root = _repo_root()
     protocol.assert_frozen_protocol_identity(root)
     execution_commit = _assert_clean_worktree(root)
@@ -1077,20 +1319,33 @@ def run(confirmed_protocol_sha256: str) -> Path:
     generator_params_by_task, generator_params_sha256 = (
         _preflight_generator_param_manifests(frozen_tasks)
     )
+    shard_destination = root / protocol.SHARD_OUTPUT_ROOT / shard_id
+    if shard_destination.exists():
+        _report, _rows, _sha = _validate_shard_report(
+            root,
+            shard_id,
+            execution_commit=execution_commit,
+            runner_sha256=runner_sha256,
+            generator_params_manifest_sha256=generator_params_sha256,
+            input_sha256=input_sha256,
+        )
+        return shard_destination / protocol.SHARD_REPORT
+    shard_tasks = protocol.tasks_for_shard(shard_id)
     staging, _resumed = _find_or_create_staging(
         root,
         execution_commit,
         runner_sha256,
         generator_params_sha256,
+        shard_id,
     )
 
     completed, pending = _partition_completed_cases(
         staging,
-        frozen_tasks,
+        shard_tasks,
         execution_commit,
     )
 
-    gpu = _gpu_idle_audit()
+    gpu = _gpu_idle_audit(shard_id)
     gpu_samples: list[dict[str, Any]] = []
     started_at = datetime.now().astimezone().isoformat()
     started = time.perf_counter()
@@ -1103,20 +1358,27 @@ def run(confirmed_protocol_sha256: str) -> Path:
                 repository_root=str(root),
                 staging_root=str(staging),
                 execution_commit=execution_commit,
+                execution_shard_id=shard_id,
                 generator_params_by_task=generator_params_by_task,
             )
-            new_rows = run_frozen_task_matrix(worker, pending)
+            new_rows = run_frozen_task_matrix(
+                worker,
+                pending,
+                max_workers=protocol.EXECUTION_SHARDS[shard_id]["max_workers"],
+            )
         except Exception as exc:
             raise RuntimeError(
-                f"第 6D 正式采集中断；未发布部分结论，可在同提交原命令恢复：{staging}"
+                f"第 6D/{shard_id} 正式采集中断；未发布部分结论，"
+                f"可在同提交原命令恢复：{staging}"
             ) from exc
         finally:
             gpu_samples = monitor.finish()
         completed.update({row["task_id"]: row for row in new_rows})
     elapsed = time.perf_counter() - started
     finished_at = datetime.now().astimezone().isoformat()
-    rows = [completed[task.task_id] for task in frozen_tasks]
-    report = _collection_report(
+    rows = [completed[task.task_id] for task in shard_tasks]
+    report = _shard_report(
+        shard_id=shard_id,
         execution_commit=execution_commit,
         runner_sha256=runner_sha256,
         generator_params_manifest_sha256=generator_params_sha256,
@@ -1129,8 +1391,88 @@ def run(confirmed_protocol_sha256: str) -> Path:
         finished_at=finished_at,
         elapsed_sec=elapsed,
     )
-    _write_json(staging / protocol.COLLECTION_REPORT, report)
-    os.replace(staging, destination)
+    _write_json(staging / protocol.SHARD_REPORT, report)
+    os.replace(staging, shard_destination)
+    return shard_destination / protocol.SHARD_REPORT
+
+
+def merge_shards(confirmed_protocol_sha256: str) -> Path:
+    protocol.require_run_confirmation(confirmed_protocol_sha256)
+    root = _repo_root()
+    protocol.assert_frozen_protocol_identity(root)
+    execution_commit = _assert_clean_worktree(root)
+    destination = root / protocol.OUTPUT_DIR
+    if destination.exists():
+        raise FileExistsError(f"第 6D 正式输出已存在，不覆盖：{destination}")
+    input_sha256 = _generation_input_audit(root)
+    runner_sha256 = protocol.file_sha256(Path(__file__))
+    generator_params_by_task, generator_params_sha256 = (
+        _preflight_generator_param_manifests(protocol.task_plan().tasks)
+    )
+    if generator_params_by_task != protocol.generator_params_manifest_matrix():
+        raise RuntimeError("合并前30条生成参数清单漂移")
+
+    shard_reports: dict[str, dict[str, Any]] = {}
+    shard_rows: dict[str, dict[str, dict[str, Any]]] = {}
+    shard_report_sha256: dict[str, str] = {}
+    for shard_id in protocol.SHARD_ORDER:
+        report, rows, report_sha = _validate_shard_report(
+            root,
+            shard_id,
+            execution_commit=execution_commit,
+            runner_sha256=runner_sha256,
+            generator_params_manifest_sha256=generator_params_sha256,
+            input_sha256=input_sha256,
+        )
+        shard_reports[shard_id] = report
+        shard_rows[shard_id] = {row["task_id"]: row for row in rows}
+        shard_report_sha256[shard_id] = report_sha
+
+    rows = [
+        shard_rows[protocol.task_shard_id(task)][task.task_id]
+        for task in protocol.task_plan().tasks
+    ]
+    report = _collection_report(
+        execution_commit=execution_commit,
+        runner_sha256=runner_sha256,
+        generator_params_manifest_sha256=generator_params_sha256,
+        input_sha256=input_sha256,
+        shard_reports=shard_reports,
+        shard_report_sha256=shard_report_sha256,
+        rows=rows,
+    )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.merge-", dir=destination.parent)
+    )
+    try:
+        for task in protocol.task_plan().tasks:
+            shard_id = protocol.task_shard_id(task)
+            source = (
+                root / protocol.SHARD_OUTPUT_ROOT / shard_id / "cases" / task.task_id
+            )
+            target = staging / "cases" / task.task_id
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, target)
+            loaded = _load_completed_case(staging, task, execution_commit)
+            if loaded != shard_rows[shard_id][task.task_id]:
+                raise RuntimeError(f"合并复制后案例身份漂移：{task.task_id}")
+        for shard_id in protocol.SHARD_ORDER:
+            source_report = (
+                root / protocol.SHARD_OUTPUT_ROOT / shard_id / protocol.SHARD_REPORT
+            )
+            target_report = staging / "shards" / shard_id / protocol.SHARD_REPORT
+            target_report.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_report, target_report)
+            if protocol.file_sha256(target_report) != shard_report_sha256[shard_id]:
+                raise RuntimeError(f"合并复制后分片报告漂移：{shard_id}")
+        _write_json(staging / protocol.COLLECTION_REPORT, report)
+        os.replace(staging, destination)
+    except Exception as exc:
+        raise RuntimeError(
+            f"第 6D 双分片合并失败；源分片未改动，合并暂存已保留：{staging}"
+        ) from exc
     return destination / protocol.COLLECTION_REPORT
 
 
@@ -1138,8 +1480,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("plan")
-    run_parser = subparsers.add_parser("run")
+    run_parser = subparsers.add_parser("run-shard")
     run_parser.add_argument("--confirm-protocol-sha", required=True)
+    run_parser.add_argument("--shard", choices=protocol.SHARD_ORDER, required=True)
+    merge_parser = subparsers.add_parser("merge")
+    merge_parser.add_argument("--confirm-protocol-sha", required=True)
     return parser
 
 
@@ -1148,7 +1493,12 @@ def main() -> None:
     if args.command == "plan":
         print(_strict_json_text(build_plan()), end="")
         return
-    path = run(args.confirm_protocol_sha)
+    if args.command == "run-shard":
+        path = run_shard(args.confirm_protocol_sha, args.shard)
+        print(f"第 6D 正式 shard（分片） -> {path}")
+        print(f"shard SHA-256 -> {protocol.file_sha256(path)}")
+        return
+    path = merge_shards(args.confirm_protocol_sha)
     print(f"第 6D 正式 collection（采集） -> {path}")
     print(f"collection SHA-256 -> {protocol.file_sha256(path)}")
 

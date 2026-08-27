@@ -57,10 +57,10 @@ def test_each_dataset_passes_both_frozen_identity_conventions():
 def test_frozen_matrix_and_no_gate_params_are_complete():
     plan = protocol.task_plan()
 
-    assert protocol.PROTOCOL_VERSION.endswith("-v3")
-    assert evaluator.EVALUATION_VERSION.endswith("-v3")
-    assert auditor.AUDIT_VERSION.endswith("-v3")
-    assert protocol.OUTPUT_DIR.name.endswith("_v3")
+    assert protocol.PROTOCOL_VERSION.endswith("-v4")
+    assert evaluator.EVALUATION_VERSION.endswith("-v4")
+    assert auditor.AUDIT_VERSION.endswith("-v4")
+    assert protocol.OUTPUT_DIR.name.endswith("_v4")
     assert plan.seeds == (353, 354, 355, 356, 357)
     assert len(plan.tasks) == 30
     assert [task.task_id for task in plan.tasks[:6]] == [
@@ -84,6 +84,39 @@ def test_frozen_matrix_and_no_gate_params_are_complete():
         assert params["gap_l1_sweeps"] == (8 if task.arm == protocol.ARM_GAP else 0)
 
 
+def test_frozen_21_9_shards_preserve_all_ten_method_triplets():
+    local = protocol.tasks_for_shard(protocol.LOCAL_SHARD)
+    remote = protocol.tasks_for_shard(protocol.A6000_SHARD)
+
+    assert len(local) == 21
+    assert len(remote) == 9
+    local_ids = {task.task_id for task in local}
+    remote_ids = {task.task_id for task in remote}
+    assert local_ids.isdisjoint(remote_ids)
+    assert local_ids | remote_ids == {
+        task.task_id for task in protocol.task_plan().tasks
+    }
+    assert protocol.SHARD_BLOCKS[protocol.A6000_SHARD] == (
+        (353, "test_300x10"),
+        (353, "nltcs"),
+        (354, "nltcs"),
+    )
+    for shard_id in protocol.SHARD_ORDER:
+        tasks = protocol.tasks_for_shard(shard_id)
+        blocks = {(task.seed, task.dataset) for task in tasks}
+        assert len(tasks) == 3 * len(blocks)
+        for seed, dataset in blocks:
+            assert {
+                task.arm
+                for task in tasks
+                if task.seed == seed and task.dataset == dataset
+            } == set(joint.ARM_ORDER)
+    manifest = protocol.shard_assignment_manifest()
+    assert manifest[protocol.LOCAL_SHARD]["task_count"] == 21
+    assert manifest[protocol.A6000_SHARD]["task_count"] == 9
+    assert len(protocol.shard_assignment_sha256()) == 64
+
+
 def test_all_generator_param_manifests_preflight_before_gpu():
     tasks = protocol.task_plan().tasks
 
@@ -103,9 +136,7 @@ def test_all_generator_param_manifests_preflight_before_gpu():
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
-def test_generator_param_manifest_rejects_other_nonfinite_fields(
-    bad, monkeypatch
-):
+def test_generator_param_manifest_rejects_other_nonfinite_fields(bad, monkeypatch):
     original = protocol.task_generator_params
 
     def invalid_params(dataset, arm, seed):
@@ -119,12 +150,13 @@ def test_generator_param_manifest_rejects_other_nonfinite_fields(
 
 
 def test_staging_preserves_post_generation_temporary_case(tmp_path, monkeypatch):
-    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v3"))
+    monkeypatch.setattr(protocol, "SHARD_OUTPUT_ROOT", Path("outputs/formal_v4_shards"))
     staging, resumed = runner._find_or_create_staging(
         tmp_path,
         "c" * 40,
         "r" * 64,
         "p" * 64,
+        protocol.A6000_SHARD,
     )
     assert resumed is False
     temporary = staging / "cases" / ".seed_353__factor_b_s8__test_300x10.tmp-proof"
@@ -138,6 +170,7 @@ def test_staging_preserves_post_generation_temporary_case(tmp_path, monkeypatch)
             "c" * 40,
             "r" * 64,
             "p" * 64,
+            protocol.A6000_SHARD,
         )
 
     assert marker.read_text(encoding="utf-8") == "a\n1\n"
@@ -176,12 +209,17 @@ def test_run_manifest_preflight_failure_never_touches_gpu(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
     monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
-    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v3"))
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(
+        protocol,
+        "SHARD_OUTPUT_ROOT",
+        Path("outputs/formal_v4_shards"),
+    )
 
     def fail_preflight(_tasks):
         raise RuntimeError("参数清单预检失败")
 
-    def touch_gpu():
+    def touch_gpu(_shard_id):
         nonlocal gpu_called
         gpu_called = True
         return {}
@@ -190,9 +228,86 @@ def test_run_manifest_preflight_failure_never_touches_gpu(tmp_path, monkeypatch)
     monkeypatch.setattr(runner, "_gpu_idle_audit", touch_gpu)
 
     with pytest.raises(RuntimeError, match="参数清单预检失败"):
-        runner.run(protocol.FROZEN_PROTOCOL_SHA256)
+        runner.run_shard(protocol.FROZEN_PROTOCOL_SHA256, protocol.LOCAL_SHARD)
 
     assert gpu_called is False
+
+
+def test_completed_shard_is_verified_and_never_touches_gpu(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(protocol, "require_run_confirmation", lambda _sha: None)
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
+    )
+    monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
+    monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(
+        protocol,
+        "SHARD_OUTPUT_ROOT",
+        Path("outputs/formal_v4_shards"),
+    )
+    shard_root = tmp_path / protocol.SHARD_OUTPUT_ROOT / protocol.LOCAL_SHARD
+    shard_root.mkdir(parents=True)
+    report_path = shard_root / protocol.SHARD_REPORT
+    report_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runner,
+        "_validate_shard_report",
+        lambda *_args, **_kwargs: ({}, [], "s" * 64),
+    )
+
+    def forbid_gpu(_shard_id):
+        raise AssertionError("完整分片不得再次检查或占用显卡")
+
+    monkeypatch.setattr(runner, "_gpu_idle_audit", forbid_gpu)
+
+    observed = runner.run_shard(
+        protocol.FROZEN_PROTOCOL_SHA256,
+        protocol.LOCAL_SHARD,
+    )
+
+    assert observed == report_path
+
+
+def test_merge_requires_both_complete_shards_before_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(protocol, "require_run_confirmation", lambda _sha: None)
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
+    )
+    monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
+    monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v4"))
+    monkeypatch.setattr(
+        protocol,
+        "SHARD_OUTPUT_ROOT",
+        Path("outputs/formal_v4_shards"),
+    )
+    calls = []
+
+    def validate(_root, shard_id, **_kwargs):
+        calls.append(shard_id)
+        if shard_id == protocol.A6000_SHARD:
+            raise RuntimeError("A6000分片尚未完整")
+        return ({}, [], "s" * 64)
+
+    monkeypatch.setattr(runner, "_validate_shard_report", validate)
+    monkeypatch.setattr(
+        runner.shutil,
+        "copytree",
+        lambda *_args, **_kwargs: pytest.fail("双分片完整前不得复制或合并"),
+    )
+
+    with pytest.raises(RuntimeError, match="A6000分片尚未完整"):
+        runner.merge_shards(protocol.FROZEN_PROTOCOL_SHA256)
+
+    assert calls == list(protocol.SHARD_ORDER)
+    assert not (tmp_path / protocol.OUTPUT_DIR).exists()
 
 
 def test_protocol_requires_both_datasets_and_both_baselines():
@@ -394,6 +509,7 @@ def test_case_row_requires_one_candidate_for_every_applied_round():
     )
     row = {
         "task_id": task.task_id,
+        "execution_shard_id": protocol.task_shard_id(task),
         "dataset": task.dataset,
         "arm": task.arm,
         "seed": task.seed,
@@ -409,6 +525,10 @@ def test_case_row_requires_one_candidate_for_every_applied_round():
     }
 
     runner._validate_case_row(task, row)
+    row["execution_shard_id"] = protocol.LOCAL_SHARD
+    with pytest.raises(RuntimeError, match="身份漂移"):
+        runner._validate_case_row(task, row)
+    row["execution_shard_id"] = protocol.task_shard_id(task)
     row["candidate_evaluation_count"] = 2501
     with pytest.raises(RuntimeError, match="身份漂移"):
         runner._validate_case_row(task, row)
