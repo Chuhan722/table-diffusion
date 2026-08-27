@@ -503,66 +503,138 @@ def test_audit_rejects_unknown_legacy_artifact(formal_module, tmp_path):
 
 
 def test_audit_rejects_empty_datasets_formal(formal_module, tmp_path):
-    """协议 SHA 正确但 datasets 为空的 formal 产物 → FATAL（空壳拒绝）"""
-    payload = {
-        "provenance": {
-            "protocol_sha256": formal_module.protocol_sha256(),
-            "protocol_match": True, "formal": True,
-        },
-        "protocol": {"seeds": []},
-        "datasets": {},
-    }
+    """身份字段全部正确但 datasets 为空的 formal 产物 → FATAL（空壳拒绝）"""
+    payload = _formal_base(formal_module)
+    payload["datasets"] = {}
     result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
     assert result.returncode == 1
-    assert "数据集不完整" in result.stdout
+    # 空 datasets 先在 reference_sha256 对拍处失败（同为 fail-closed）
+    assert "reference_sha256" in result.stdout or "数据集不完整" in result.stdout
 
 
 def test_audit_rejects_missing_combo_and_nonfinite(formal_module, tmp_path):
     """缺 seed×arm 组合或指标非有限的 formal 产物 → FATAL"""
-    def _mk_runs(drop_one=False, bad_value=None):
-        runs = []
-        for seed in formal_module.FORMAL_SEEDS:
-            for arm in formal_module.ARMS:
-                if drop_one and (seed, arm) == (
-                    formal_module.FORMAL_SEEDS[0], "absolute"
-                ):
-                    continue
-                value = 0.001 if bad_value is None else bad_value
-                runs.append({
-                    "seed": seed, "arm": arm,
-                    "final_table_measured_l1": (
-                        value if (seed, arm) == (
-                            formal_module.FORMAL_SEEDS[0], "absolute"
-                        ) or bad_value is None else 0.001
-                    ),
-                    "offline": {"train": {
-                        "unmeasured_3way_l1": 0.1,
-                        "unmeasured_4way_l1": 0.1,
-                        "binned_joint_tvd": 0.1,
-                    }},
-                })
-        return runs
-
-    base = {
-        "provenance": {
-            "protocol_sha256": formal_module.protocol_sha256(),
-            "protocol_match": True, "formal": True,
-        },
-        "protocol": {"seeds": list(formal_module.FORMAL_SEEDS)},
-    }
     # 缺一个组合
-    payload = dict(base, datasets={
-        name: {"runs": _mk_runs(drop_one=(name == "nltcs"))}
-        for name in formal_module.DATASETS
-    })
+    payload = _formal_base(formal_module)
+    payload["datasets"]["nltcs"]["runs"] = [
+        run for run in payload["datasets"]["nltcs"]["runs"]
+        if (run["seed"], run["arm"]) != (
+            formal_module.FORMAL_SEEDS[0], "absolute"
+        )
+    ]
     result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
     assert result.returncode == 1
     assert "组合不完整" in result.stdout
     # NaN 主指标
-    payload2 = dict(base, datasets={
-        name: {"runs": _mk_runs(bad_value=float("nan"))}
-        for name in formal_module.DATASETS
-    })
+    payload2 = _formal_base(formal_module)
+    payload2["datasets"]["nltcs"]["runs"][0][
+        "final_table_measured_l1"
+    ] = float("nan")
     result2 = _run_audit(tmp_path, payload2, "probe_residual_geometry_formal")
     assert result2.returncode == 1
     assert "缺失或非有限" in result2.stdout
+
+
+# ---- PR #62 三轮审查：审计器身份对拍/恰好一次/类型检查 ----
+
+def _formal_base(formal_module):
+    """构造通过全部身份校验的 formal 产物骨架。"""
+    def _runs():
+        return [
+            {
+                "seed": seed, "arm": arm,
+                "final_table_measured_l1": 0.001,
+                "offline": {"train": {
+                    "unmeasured_3way_l1": 0.1,
+                    "unmeasured_4way_l1": 0.1,
+                    "binned_joint_tvd": 0.1,
+                }},
+            }
+            for seed in formal_module.FORMAL_SEEDS
+            for arm in formal_module.ARMS
+        ]
+
+    return {
+        "provenance": {
+            "protocol_sha256": formal_module.protocol_sha256(),
+            "protocol_match": True, "formal": True,
+            "input_sha256": {
+                name: dict(expected)
+                for name, expected in
+                formal_module.EXPECTED_INPUT_SHA256.items()
+            },
+        },
+        "protocol": {
+            "seeds": list(formal_module.FORMAL_SEEDS),
+            "rounds": formal_module.FORMAL_ROUNDS,
+        },
+        "datasets": {
+            name: {
+                "runs": _runs(),
+                "reference_sha256": dict(
+                    formal_module.EXPECTED_REFERENCE_SHA256[name]
+                ),
+            }
+            for name in formal_module.DATASETS
+        },
+    }
+
+
+def test_audit_rejects_missing_input_hashes(formal_module, tmp_path):
+    """删除全部 input_sha256 的 formal 产物 → FATAL（三轮意见 1）"""
+    payload = _formal_base(formal_module)
+    payload["provenance"].pop("input_sha256")
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "input_sha256" in result.stdout
+
+
+def test_audit_rejects_missing_reference_hashes(formal_module, tmp_path):
+    """删除数据集 reference_sha256 的 formal 产物 → FATAL（三轮意见 1）"""
+    payload = _formal_base(formal_module)
+    payload["datasets"]["nltcs"].pop("reference_sha256")
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "reference_sha256" in result.stdout
+
+
+def test_audit_rejects_forged_seeds(formal_module, tmp_path):
+    """伪造 protocol.seeds 的 formal 产物 → FATAL（三轮意见 1，
+    初态重建同时改为固定使用 FORMAL_SEEDS）"""
+    payload = _formal_base(formal_module)
+    payload["protocol"]["seeds"] = []
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "FORMAL_SEEDS" in result.stdout
+
+
+def test_audit_rejects_duplicate_runs(formal_module, tmp_path):
+    """追加重复 seed×arm run → FATAL（三轮意见 2：Counter 恰好一次）"""
+    payload = _formal_base(formal_module)
+    runs = payload["datasets"]["nltcs"]["runs"]
+    runs.append(dict(runs[0]))
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "重复" in result.stdout
+
+
+def test_audit_rejects_boolean_metrics(formal_module, tmp_path):
+    """offline 指标为 true 的 formal 产物 → FATAL（三轮意见 3：
+    np.isfinite(True) 为真，需显式拒绝 bool）"""
+    payload = _formal_base(formal_module)
+    for run in payload["datasets"]["nltcs"]["runs"]:
+        run["offline"]["train"]["unmeasured_3way_l1"] = True
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "非有限数值" in result.stdout
+
+
+def test_audit_rejects_string_metrics(formal_module, tmp_path):
+    """主指标为字符串 → FATAL（类型检查与生成端一致）"""
+    payload = _formal_base(formal_module)
+    payload["datasets"]["nltcs"]["runs"][0][
+        "final_table_measured_l1"
+    ] = "0.001"
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "非有限数值" in result.stdout

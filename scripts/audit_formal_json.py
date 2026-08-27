@@ -151,13 +151,71 @@ def main():
                 "git_commit + input_sha256 锚定）"
             )
 
-    # 0b. 结果完整性复核（PR #62 二轮审查）：formal=true 的产物必须
-    # 覆盖协议预注册的全部数据集与 seed×arm 组合，且每个 run 的主
-    # 指标与离线指标存在且有限——空壳/缺组合/坏值不得通过审计。
+    # 0b. 结果完整性复核（PR #62 二轮/三轮审查）：formal=true 的产物
+    # 必须覆盖协议预注册的全部数据集与 seed×arm 组合（恰好一次），
+    # 每个 run 的主指标与离线指标为真正的有限数值（bool/字符串拒绝），
+    # 且产物记录的协议参数与输入/参考身份逐项等于协议模块冻结常量。
+    def _is_finite_number(value):
+        return (
+            isinstance(value, (int, float, np.integer, np.floating))
+            and not isinstance(value, bool)
+            and np.isfinite(value)
+        )
+
     if provenance.get("formal") and all(
         hasattr(protocol, attr)
         for attr in ("DATASETS", "FORMAL_SEEDS", "ARMS")
     ):
+        # 0b-1（三轮意见 1）：产物声明的协议参数必须与冻结常量一致。
+        declared = payload.get("protocol", {})
+        if list(declared.get("seeds", [])) != list(protocol.FORMAL_SEEDS):
+            print(
+                "FATAL: formal 产物 protocol.seeds "
+                f"{declared.get('seeds')!r} != 冻结 FORMAL_SEEDS "
+                f"{list(protocol.FORMAL_SEEDS)!r}"
+            )
+            sys.exit(1)
+        if hasattr(protocol, "FORMAL_ROUNDS") and (
+            declared.get("rounds") != protocol.FORMAL_ROUNDS
+        ):
+            print(
+                "FATAL: formal 产物 protocol.rounds "
+                f"{declared.get('rounds')!r} != 冻结 FORMAL_ROUNDS "
+                f"{protocol.FORMAL_ROUNDS!r}"
+            )
+            sys.exit(1)
+        # 0b-2（三轮意见 1）：输入与参考身份逐项对拍冻结常量；formal
+        # 产物缺失这些字段本身即 FATAL。
+        if hasattr(protocol, "EXPECTED_INPUT_SHA256"):
+            recorded_inputs = provenance.get("input_sha256") or {}
+            for ds_name, expected in protocol.EXPECTED_INPUT_SHA256.items():
+                got = recorded_inputs.get(ds_name) or {}
+                for kind, digest in expected.items():
+                    if got.get(kind) != digest:
+                        print(
+                            f"FATAL: formal 产物 input_sha256[{ds_name}]"
+                            f"[{kind}]={got.get(kind)!r} != 冻结 "
+                            f"{digest[:12]}…"
+                        )
+                        sys.exit(1)
+        if hasattr(protocol, "EXPECTED_REFERENCE_SHA256"):
+            for ds_name, expected in (
+                protocol.EXPECTED_REFERENCE_SHA256.items()
+            ):
+                got = (
+                    payload.get("datasets", {})
+                    .get(ds_name, {})
+                    .get("reference_sha256")
+                    or {}
+                )
+                for ref_name, digest in expected.items():
+                    if got.get(ref_name) != digest:
+                        print(
+                            "FATAL: formal 产物 reference_sha256"
+                            f"[{ds_name}][{ref_name}]={got.get(ref_name)!r}"
+                            f" != 冻结 {digest[:12]}…"
+                        )
+                        sys.exit(1)
         expected_datasets = set(protocol.DATASETS)
         got_datasets = set(payload.get("datasets", {}))
         if got_datasets != expected_datasets:
@@ -171,39 +229,55 @@ def main():
             "unmeasured_3way_l1", "unmeasured_4way_l1", "binned_joint_tvd",
         )
         for ds_name, ds in payload["datasets"].items():
-            got_combos = {
+            # 0b-3（三轮意见 2）：seed×arm 恰好一次——Counter 而非集合，
+            # 重复 run 不被吞。
+            from collections import Counter
+
+            combo_counts = Counter(
                 (run.get("seed"), run.get("arm"))
                 for run in ds.get("runs", [])
-            }
+            )
             expected_combos = {
                 (seed, arm)
                 for seed in protocol.FORMAL_SEEDS
                 for arm in protocol.ARMS
             }
-            if got_combos != expected_combos:
+            if set(combo_counts) != expected_combos:
                 print(
                     f"FATAL: {ds_name} 的 seed×arm 组合不完整——缺失 "
-                    f"{sorted(expected_combos - got_combos)[:5]}"
+                    f"{sorted(expected_combos - set(combo_counts))[:5]}"
+                )
+                sys.exit(1)
+            duplicated = {
+                combo: count for combo, count in combo_counts.items()
+                if count != 1
+            }
+            if duplicated:
+                print(
+                    f"FATAL: {ds_name} 存在重复 seed×arm run："
+                    f"{sorted(duplicated.items())[:5]}"
                 )
                 sys.exit(1)
             for run in ds["runs"]:
+                # 0b-4（三轮意见 3）：与生成端一致的数值类型检查，
+                # bool/字符串/NaN/inf 一律拒绝。
                 for key in required_metrics:
                     value = run.get(key)
-                    if value is None or not np.isfinite(value):
+                    if not _is_finite_number(value):
                         print(
                             f"FATAL: {ds_name} seed={run.get('seed')} "
                             f"arm={run.get('arm')} 指标 {key}={value!r} "
-                            "缺失或非有限"
+                            "缺失或非有限数值"
                         )
                         sys.exit(1)
                 for ref_name, metrics in (run.get("offline") or {}).items():
                     for key in offline_metrics:
                         value = metrics.get(key)
-                        if value is None or not np.isfinite(value):
+                        if not _is_finite_number(value):
                             print(
                                 f"FATAL: {ds_name} seed={run.get('seed')} "
                                 f"arm={run.get('arm')} {ref_name}/{key}"
-                                f"={value!r} 缺失或非有限"
+                                f"={value!r} 缺失或非有限数值"
                             )
                             sys.exit(1)
                 if not run.get("offline"):
@@ -238,8 +312,14 @@ def main():
         if renamed:
             changed.append(f"{ds_name}: tail_mean_loss 改名 ×{renamed}")
 
-        # 3. initial_state 重建/验证
-        seeds = payload["protocol"]["seeds"]
+        # 3. initial_state 重建/验证。formal 产物固定使用协议模块的
+        # FORMAL_SEEDS 重建（PR #62 三轮审查意见 1：不信任产物自报的
+        # seeds，伪造 protocol.seeds + initial_state 不能通过）；非
+        # formal 或旧协议无该常量时退回产物声明值。
+        if provenance.get("formal") and hasattr(protocol, "FORMAL_SEEDS"):
+            seeds = list(protocol.FORMAL_SEEDS)
+        else:
+            seeds = payload["protocol"]["seeds"]
         if ds_name in protocol.DATASETS:
             rebuilt = _rebuild_initial_state(protocol, ds_name, seeds)
             existing = ds.get("initial_state")
