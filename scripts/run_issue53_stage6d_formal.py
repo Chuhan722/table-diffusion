@@ -9,7 +9,6 @@ import json
 import math
 import os
 import platform
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -239,6 +238,35 @@ def _json_safe(value: Any) -> Any:
             raise ValueError("正式 artifact 不允许非有限浮点数")
         return float(value)
     return value
+
+
+def _preflight_generator_param_manifests(
+    tasks: Sequence[joint.JointTrajectoryTask],
+) -> tuple[dict[str, dict[str, Any]], str]:
+    """在占用显卡前验证全部正式任务的参数清单都能严格写入 JSON。"""
+
+    manifests: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        if task.task_id in manifests:
+            raise RuntimeError(f"正式任务地址重复：{task.task_id}")
+        manifest = protocol.generator_params_manifest(
+            task.dataset,
+            task.arm,
+            task.seed,
+        )
+        if _json_safe(manifest) != manifest:
+            raise RuntimeError(f"正式生成参数清单不可严格序列化：{task.task_id}")
+        manifests[task.task_id] = manifest
+    if len(manifests) != len(tasks):
+        raise RuntimeError("正式生成参数清单预检数量不完整")
+    digest = protocol.canonical_sha256(manifests)
+    formal_task_ids = tuple(task.task_id for task in protocol.task_plan().tasks)
+    if tuple(task.task_id for task in tasks) == formal_task_ids and (
+        manifests != protocol.generator_params_manifest_matrix()
+        or digest != protocol.generator_params_manifest_sha256()
+    ):
+        raise RuntimeError("正式30条生成参数清单统一身份漂移")
+    return manifests, digest
 
 
 def _frame_sha256(frame: Any) -> str:
@@ -565,6 +593,7 @@ def _write_case_artifacts(
     peak_allocated_bytes: int,
     peak_reserved_bytes: int,
     execution_commit: str,
+    generator_params_manifest: dict[str, Any],
 ) -> dict[str, Any]:
     final_dir = staging_root / "cases" / task.task_id
     if final_dir.exists():
@@ -681,9 +710,7 @@ def _write_case_artifacts(
             "contract_version": protocol.PROTOCOL_VERSION,
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
-            "generator_params": _json_safe(
-                protocol.task_generator_params(task.dataset, task.arm, task.seed)
-            ),
+            "generator_params": generator_params_manifest,
             "collection_row": collection_row,
             "raw_reference_data_accessed": False,
             "method_comparison_emitted": False,
@@ -691,9 +718,11 @@ def _write_case_artifacts(
         _write_json(temporary / CASE_MANIFEST, manifest)
         os.replace(temporary, final_dir)
         return collection_row
-    except Exception:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+    except Exception as exc:
+        raise RuntimeError(
+            f"{task.task_id} 生成后产物收口失败；临时目录已保留且不得自动重跑："
+            f"{temporary}"
+        ) from exc
 
 
 def _execute_trajectory_task(
@@ -702,9 +731,20 @@ def _execute_trajectory_task(
     repository_root: str,
     staging_root: str,
     execution_commit: str,
+    generator_params_by_task: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     root = Path(repository_root)
     spec = protocol.DATASETS[task.dataset]
+    try:
+        generator_params_manifest = generator_params_by_task[task.task_id]
+    except KeyError as exc:
+        raise RuntimeError(f"正式任务缺少预检参数清单：{task.task_id}") from exc
+    if generator_params_manifest != protocol.generator_params_manifest(
+        task.dataset,
+        task.arm,
+        task.seed,
+    ):
+        raise RuntimeError(f"正式任务预检参数清单漂移：{task.task_id}")
     schema = load_schema(str(root / spec["schema"]))
     queries, target, _identity = _query_target_identity_audit(root, task.dataset)
     marginals = load_marginals(str(root / spec["marginals"]))
@@ -742,6 +782,7 @@ def _execute_trajectory_task(
         peak_allocated_bytes=int(torch.cuda.max_memory_allocated(0)),
         peak_reserved_bytes=int(torch.cuda.max_memory_reserved(0)),
         execution_commit=execution_commit,
+        generator_params_manifest=generator_params_manifest,
     )
 
 
@@ -784,7 +825,7 @@ def _load_completed_case(
         or manifest.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
         or manifest.get("execution_commit") != execution_commit
         or manifest.get("generator_params")
-        != _json_safe(protocol.task_generator_params(task.dataset, task.arm, task.seed))
+        != protocol.generator_params_manifest(task.dataset, task.arm, task.seed)
         or manifest.get("raw_reference_data_accessed") is not False
         or manifest.get("method_comparison_emitted") is not False
     ):
@@ -802,6 +843,26 @@ def _load_completed_case(
         if protocol.file_sha256(artifact) != row[sha_key]:
             raise RuntimeError(f"恢复 case artifact 漂移：{task.task_id}/{path_key}")
     return row
+
+
+def _partition_completed_cases(
+    staging: Path,
+    tasks: Sequence[joint.JointTrajectoryTask],
+    execution_commit: str,
+) -> tuple[dict[str, dict[str, Any]], list[joint.JointTrajectoryTask]]:
+    """严格复核已完成案例，只返回尚未完成、允许执行的任务。"""
+
+    completed: dict[str, dict[str, Any]] = {}
+    pending: list[joint.JointTrajectoryTask] = []
+    for task in tasks:
+        row = _load_completed_case(staging, task, execution_commit)
+        if row is None:
+            pending.append(task)
+        else:
+            completed[task.task_id] = row
+    if len(completed) + len(pending) != len(tasks):
+        raise RuntimeError("正式恢复任务划分不完整")
+    return completed, pending
 
 
 def _validate_pairing(rows: Sequence[dict[str, Any]]) -> None:
@@ -846,6 +907,7 @@ def _find_or_create_staging(
     root: Path,
     execution_commit: str,
     runner_sha256: str,
+    generator_params_manifest_sha256: str,
 ) -> tuple[Path, bool]:
     destination = root / protocol.OUTPUT_DIR
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -864,15 +926,23 @@ def _find_or_create_staging(
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
             "runner_sha256": runner_sha256,
+            "generator_params_manifest_sha256": (
+                generator_params_manifest_sha256
+            ),
             "task_ids": [task.task_id for task in protocol.task_plan().tasks],
             "partial_quality_inspection_allowed": False,
         }:
             raise RuntimeError("第 6D staging（暂存）身份漂移，禁止恢复")
         cases_root = staging / "cases"
         if cases_root.exists():
-            for stale in cases_root.glob(".*.tmp-*"):
-                if stale.is_dir():
-                    shutil.rmtree(stale)
+            stale = sorted(
+                path for path in cases_root.glob(".*.tmp-*") if path.is_dir()
+            )
+            if stale:
+                raise RuntimeError(
+                    "发现生成后未完成收口的临时 case；已保留且禁止自动删除或重跑："
+                    + ", ".join(str(path) for path in stale)
+                )
         return staging, True
     staging = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
@@ -884,6 +954,9 @@ def _find_or_create_staging(
             "protocol_sha256": protocol.FROZEN_PROTOCOL_SHA256,
             "execution_commit": execution_commit,
             "runner_sha256": runner_sha256,
+            "generator_params_manifest_sha256": (
+                generator_params_manifest_sha256
+            ),
             "task_ids": [task.task_id for task in protocol.task_plan().tasks],
             "partial_quality_inspection_allowed": False,
         },
@@ -895,6 +968,7 @@ def _collection_report(
     *,
     execution_commit: str,
     runner_sha256: str,
+    generator_params_manifest_sha256: str,
     input_sha256: dict[str, dict[str, str]],
     gpu: dict[str, Any] | None,
     gpu_samples: Sequence[dict[str, Any]],
@@ -923,6 +997,7 @@ def _collection_report(
         "protocol": protocol.frozen_protocol_manifest(),
         "execution_commit": execution_commit,
         "runner_sha256": runner_sha256,
+        "generator_params_manifest_sha256": generator_params_manifest_sha256,
         "environment": {
             "python": sys.version,
             "platform": platform.platform(),
@@ -955,6 +1030,8 @@ def _collection_report(
             "all_gap_8k_identity": True,
             "all_zero_clip_and_finite": True,
             "all_artifact_sha256_verified": True,
+            "all_generator_params_preflighted_before_gpu": True,
+            "completed_cases_resumed_without_rerun": True,
         },
         "formal_result_valid": True,
         "raw_reference_data_accessed": False,
@@ -969,12 +1046,18 @@ def _collection_report(
 
 def build_plan() -> dict[str, Any]:
     plan = protocol.build_plan(_repo_root())
+    _manifests, generator_params_sha256 = _preflight_generator_param_manifests(
+        protocol.task_plan().tasks
+    )
     plan.update(
         {
             "collector_wired": True,
             "collector_sha256": protocol.file_sha256(Path(__file__)),
             "formal_collection_authorized": False,
             "resume_only_from_same_protocol_commit_and_artifacts": True,
+            "generator_params_manifest_sha256": generator_params_sha256,
+            "all_generator_params_preflighted_without_gpu": True,
+            "completed_case_directories_resumed_without_rerun": True,
         }
     )
     return plan
@@ -990,15 +1073,22 @@ def run(confirmed_protocol_sha256: str) -> Path:
         raise FileExistsError(f"第 6D 正式输出已存在，不覆盖：{destination}")
     input_sha256 = _generation_input_audit(root)
     runner_sha256 = protocol.file_sha256(Path(__file__))
-    staging, _resumed = _find_or_create_staging(root, execution_commit, runner_sha256)
-
     frozen_tasks = protocol.task_plan().tasks
-    completed: dict[str, dict[str, Any]] = {}
-    for task in frozen_tasks:
-        row = _load_completed_case(staging, task, execution_commit)
-        if row is not None:
-            completed[task.task_id] = row
-    pending = [task for task in frozen_tasks if task.task_id not in completed]
+    generator_params_by_task, generator_params_sha256 = (
+        _preflight_generator_param_manifests(frozen_tasks)
+    )
+    staging, _resumed = _find_or_create_staging(
+        root,
+        execution_commit,
+        runner_sha256,
+        generator_params_sha256,
+    )
+
+    completed, pending = _partition_completed_cases(
+        staging,
+        frozen_tasks,
+        execution_commit,
+    )
 
     gpu = _gpu_idle_audit()
     gpu_samples: list[dict[str, Any]] = []
@@ -1013,6 +1103,7 @@ def run(confirmed_protocol_sha256: str) -> Path:
                 repository_root=str(root),
                 staging_root=str(staging),
                 execution_commit=execution_commit,
+                generator_params_by_task=generator_params_by_task,
             )
             new_rows = run_frozen_task_matrix(worker, pending)
         except Exception as exc:
@@ -1028,6 +1119,7 @@ def run(confirmed_protocol_sha256: str) -> Path:
     report = _collection_report(
         execution_commit=execution_commit,
         runner_sha256=runner_sha256,
+        generator_params_manifest_sha256=generator_params_sha256,
         input_sha256=input_sha256,
         gpu=gpu,
         gpu_samples=gpu_samples,

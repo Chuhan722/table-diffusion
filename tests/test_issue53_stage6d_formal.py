@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,8 +57,10 @@ def test_each_dataset_passes_both_frozen_identity_conventions():
 def test_frozen_matrix_and_no_gate_params_are_complete():
     plan = protocol.task_plan()
 
-    assert protocol.PROTOCOL_VERSION.endswith("-v2")
-    assert protocol.OUTPUT_DIR.name.endswith("_v2")
+    assert protocol.PROTOCOL_VERSION.endswith("-v3")
+    assert evaluator.EVALUATION_VERSION.endswith("-v3")
+    assert auditor.AUDIT_VERSION.endswith("-v3")
+    assert protocol.OUTPUT_DIR.name.endswith("_v3")
     assert plan.seeds == (353, 354, 355, 356, 357)
     assert len(plan.tasks) == 30
     assert [task.task_id for task in plan.tasks[:6]] == [
@@ -79,6 +82,117 @@ def test_frozen_matrix_and_no_gate_params_are_complete():
         assert params["record_stationarity_trace"] is True
         assert params["record_transition_clocks"] is True
         assert params["gap_l1_sweeps"] == (8 if task.arm == protocol.ARM_GAP else 0)
+
+
+def test_all_generator_param_manifests_preflight_before_gpu():
+    tasks = protocol.task_plan().tasks
+
+    manifests, digest = runner._preflight_generator_param_manifests(tasks)
+
+    assert len(manifests) == 30
+    assert len(digest) == 64
+    assert digest == protocol.canonical_sha256(manifests)
+    for task in tasks:
+        runtime = protocol.task_generator_params(task.dataset, task.arm, task.seed)
+        manifest = manifests[task.task_id]
+        assert runtime["tol"] == float("inf")
+        assert manifest["tol"] == protocol.POSITIVE_INFINITY_MANIFEST_SENTINEL
+        json.dumps(manifest, allow_nan=False)
+    with pytest.raises(ValueError, match="不允许非有限浮点数"):
+        runner._json_safe({"scientific_metric": float("inf")})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_generator_param_manifest_rejects_other_nonfinite_fields(
+    bad, monkeypatch
+):
+    original = protocol.task_generator_params
+
+    def invalid_params(dataset, arm, seed):
+        params = original(dataset, arm, seed)
+        params["rho"] = bad
+        return params
+
+    monkeypatch.setattr(protocol, "task_generator_params", invalid_params)
+    with pytest.raises(RuntimeError, match="只允许 tol=\\+inf"):
+        protocol.generator_params_manifest("test_300x10", "factor_b_s8", 353)
+
+
+def test_staging_preserves_post_generation_temporary_case(tmp_path, monkeypatch):
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v3"))
+    staging, resumed = runner._find_or_create_staging(
+        tmp_path,
+        "c" * 40,
+        "r" * 64,
+        "p" * 64,
+    )
+    assert resumed is False
+    temporary = staging / "cases" / ".seed_353__factor_b_s8__test_300x10.tmp-proof"
+    temporary.mkdir(parents=True)
+    marker = temporary / "terminal_current.csv"
+    marker.write_text("a\n1\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="禁止自动删除或重跑"):
+        runner._find_or_create_staging(
+            tmp_path,
+            "c" * 40,
+            "r" * 64,
+            "p" * 64,
+        )
+
+    assert marker.read_text(encoding="utf-8") == "a\n1\n"
+
+
+def test_resume_partition_never_resubmits_completed_case(tmp_path, monkeypatch):
+    tasks = protocol.task_plan().tasks[:3]
+    completed_id = tasks[0].task_id
+
+    def load_completed(_staging, task, _execution_commit):
+        return {"task_id": task.task_id} if task.task_id == completed_id else None
+
+    monkeypatch.setattr(runner, "_load_completed_case", load_completed)
+    completed, pending = runner._partition_completed_cases(
+        tmp_path,
+        tasks,
+        "c" * 40,
+    )
+
+    assert list(completed) == [completed_id]
+    assert [task.task_id for task in pending] == [
+        tasks[1].task_id,
+        tasks[2].task_id,
+    ]
+
+
+def test_run_manifest_preflight_failure_never_touches_gpu(tmp_path, monkeypatch):
+    gpu_called = False
+
+    monkeypatch.setattr(runner, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(protocol, "require_run_confirmation", lambda _sha: None)
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
+    )
+    monkeypatch.setattr(runner, "_assert_clean_worktree", lambda _root: "c" * 40)
+    monkeypatch.setattr(runner, "_generation_input_audit", lambda _root: {})
+    monkeypatch.setattr(protocol, "OUTPUT_DIR", Path("outputs/formal_v3"))
+
+    def fail_preflight(_tasks):
+        raise RuntimeError("参数清单预检失败")
+
+    def touch_gpu():
+        nonlocal gpu_called
+        gpu_called = True
+        return {}
+
+    monkeypatch.setattr(runner, "_preflight_generator_param_manifests", fail_preflight)
+    monkeypatch.setattr(runner, "_gpu_idle_audit", touch_gpu)
+
+    with pytest.raises(RuntimeError, match="参数清单预检失败"):
+        runner.run(protocol.FROZEN_PROTOCOL_SHA256)
+
+    assert gpu_called is False
 
 
 def test_protocol_requires_both_datasets_and_both_baselines():

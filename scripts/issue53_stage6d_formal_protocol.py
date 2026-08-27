@@ -10,13 +10,13 @@ from typing import Any
 
 from scripts import issue53_stage6c_joint_trajectories as joint
 
-PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v2"
+PROTOCOL_VERSION = "issue53-stage6d-joint-formal-effect-v3"
 PROTOCOL_DOC = Path("docs/设计/Issue53_Stage6D两数据三方法正式闭环效果结果前协议.md")
-PROTOCOL_DOC_SHA256 = "e05a813e0551528c9e9e3dbdbb00a1e07a512cefbd483c1ef0857d7d01ef3f7a"
+PROTOCOL_DOC_SHA256 = "3596018fc4303961c126078b2b9671e9ee45d1d1282e12939266dd10dbfebfab"
 
 # 清单本身不包含该常量，避免自指。全部源码和文档身份确定后再填入。
 FROZEN_PROTOCOL_SHA256 = (
-    "83f21c49b4d3bc322d78890b913a3b9e152473bf0c2ccb2a134bd7f04c33b6a9"
+    "3e64828939e7dc74e7762c96e3cd34bcee28ef875c998c38c5acd63b70525d3d"
 )
 
 FORMAL_SEEDS = tuple(range(353, 358))
@@ -30,11 +30,12 @@ STABLE_WIN_MINIMUM = 4
 LOWER_RISK_RATIO_MAX = 1.05
 HIGHER_QUALITY_RATIO_MIN = 0.95
 
-OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v2")
+OUTPUT_DIR = Path("outputs/issue53_stage6d_joint_formal_effect_v3")
 COLLECTION_REPORT = "collection_report.json"
 EVALUATION_REPORT = "evaluation_report.json"
 L1_RESULTS_CSV = "l1_results.csv"
 AUDIT_REPORT = "independent_audit.json"
+POSITIVE_INFINITY_MANIFEST_SENTINEL = "positive_infinity"
 
 ARM_GAP = "gap_l1_global_s8"
 BASELINE_ARMS = ("factor_b_s8", "independent_b_s0")
@@ -209,15 +210,15 @@ IMPLEMENTATION_SOURCES = {
     },
     "collector": {
         "path": Path("scripts/run_issue53_stage6d_formal.py"),
-        "sha256": "4a2a13a36d8dfcc4c8c6730f6ea30f82a3edc076e95b3e8cf73f0c5fabefd289",
+        "sha256": "9bd0fb178c28fe86f4bed64e61025e2dec416fde7680ebbdf1e69ff0e006ae0b",
     },
     "evaluator": {
         "path": Path("scripts/evaluate_issue53_stage6d_formal.py"),
-        "sha256": "afae925e00c06470ddabd0bfcbdbbe125e148be69a1bca222019df626854f037",
+        "sha256": "b5311e409e1c178513903ad5f973b0bf72519d8d4184590b65df1d99476ef3eb",
     },
     "independent_auditor": {
         "path": Path("scripts/audit_issue53_stage6d_formal.py"),
-        "sha256": "6fc02d5d4631b943d5423a001d9e5dbf39a1bf19eb26b9545b648f98c0094121",
+        "sha256": "29d89f5a34602e584bfde430d900414bda7ed9e8b9204279365c576150bc70a5",
     },
 }
 
@@ -252,7 +253,11 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, float) and math.isinf(value):
-        return "positive_infinity" if value > 0 else "negative_infinity"
+        return (
+            POSITIVE_INFINITY_MANIFEST_SENTINEL
+            if value > 0
+            else "negative_infinity"
+        )
     return value
 
 
@@ -322,6 +327,62 @@ def task_generator_params(dataset: str, arm: str, seed: int) -> dict[str, Any]:
         }
     )
     return params
+
+
+def _nonfinite_float_items(
+    value: Any,
+    path: tuple[str, ...] = (),
+) -> list[tuple[tuple[str, ...], float]]:
+    found: list[tuple[tuple[str, ...], float]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found.extend(_nonfinite_float_items(item, (*path, str(key))))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found.extend(_nonfinite_float_items(item, (*path, str(index))))
+    elif isinstance(value, float) and not math.isfinite(value):
+        found.append((path, value))
+    return found
+
+
+def generator_params_manifest(dataset: str, arm: str, seed: int) -> dict[str, Any]:
+    """返回单个正式案例可严格写入 JSON（结构化文本）的运行参数清单。
+
+    运行时 ``tol=+inf`` 是冻结的无门控设置。只有该字段允许使用非有限运行值，
+    并在清单中固定表示为 ``positive_infinity（正无穷）``；其他非有限参数必须在
+    启动显卡轨迹前失败关闭。
+    """
+
+    params = task_generator_params(dataset, arm, seed)
+    nonfinite = _nonfinite_float_items(params)
+    if (
+        len(nonfinite) != 1
+        or nonfinite[0][0] != ("tol",)
+        or not math.isinf(nonfinite[0][1])
+        or nonfinite[0][1] <= 0
+    ):
+        raise RuntimeError(
+            "正式生成参数只允许 tol=+inf，"
+            f"得到 {[(path, str(item)) for path, item in nonfinite]}"
+        )
+    manifest = _jsonable(params)
+    if manifest.get("tol") != POSITIVE_INFINITY_MANIFEST_SENTINEL:
+        raise RuntimeError("正式无门控 tol 清单编码漂移")
+    _strict_json_bytes(manifest)
+    return manifest
+
+
+def generator_params_manifest_matrix() -> dict[str, dict[str, Any]]:
+    """返回30条正式任务在运行前必须统一绑定的参数清单。"""
+
+    return {
+        task.task_id: generator_params_manifest(task.dataset, task.arm, task.seed)
+        for task in task_plan().tasks
+    }
+
+
+def generator_params_manifest_sha256() -> str:
+    return canonical_sha256(generator_params_manifest_matrix())
 
 
 def task_plan() -> joint.JointTrajectoryPlan:
@@ -400,6 +461,8 @@ def frozen_protocol_manifest() -> dict[str, Any]:
         },
         "no_gate_contract": {
             "tol_positive_infinity": True,
+            "tol_manifest_representation": POSITIVE_INFINITY_MANIFEST_SENTINEL,
+            "only_tol_may_be_nonfinite_in_runtime_params": True,
             "max_retries": 0,
             "one_candidate_per_round": True,
             "accept_or_reject": False,
@@ -469,6 +532,12 @@ def frozen_protocol_manifest() -> dict[str, Any]:
             "output_dir": str(OUTPUT_DIR),
             "max_workers": MAX_WORKERS,
             "multiprocessing_start_method": "spawn",
+            "generator_params_manifest_sha256": (
+                generator_params_manifest_sha256()
+            ),
+            "all_generator_manifests_preflighted_before_gpu": True,
+            "completed_case_directories_resumed_without_rerun": True,
+            "stale_temporary_case_directories_auto_deleted": False,
             "task_reordering": False,
             "adaptive_concurrency": False,
             "automatic_cpu_fallback": False,

@@ -25,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v2"
+AUDIT_VERSION = "issue53-stage6d-joint-formal-independent-audit-v3"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 CSV_FIELDS = (
     "dataset",
@@ -124,6 +124,11 @@ def _audit_collection_independently(
         != protocol.IMPLEMENTATION_SOURCES["collector"]["sha256"]
     ):
         raise RuntimeError("collection（采集）执行器身份漂移")
+    if (
+        report.get("generator_params_manifest_sha256")
+        != protocol.generator_params_manifest_sha256()
+    ):
+        raise RuntimeError("collection（采集）生成参数清单身份漂移")
     expected_generation_inputs = {
         dataset: {
             key: spec["input_sha256"][key] for key in ("schema", "queries", "marginals")
@@ -145,6 +150,8 @@ def _audit_collection_independently(
         "all_gap_8k_identity": True,
         "all_zero_clip_and_finite": True,
         "all_artifact_sha256_verified": True,
+        "all_generator_params_preflighted_before_gpu": True,
+        "completed_cases_resumed_without_rerun": True,
     }
     if report.get("collection_audit") != expected_collection_audit:
         raise RuntimeError("collection（采集）结构审计漂移")
@@ -208,6 +215,29 @@ def _audit_collection_independently(
             != spec["trace_target_vector_sha256"]
         ):
             raise RuntimeError(f"collection（采集）查询身份漂移：{task.task_id}")
+        terminal_relative = row.get("terminal_table_path")
+        if not isinstance(terminal_relative, str):
+            raise TypeError(f"collection（采集）终表路径无效：{task.task_id}")
+        case_manifest_path = (
+            Path(terminal_relative).parent / collection.CASE_MANIFEST
+        )
+        case_manifest = _load_json(_safe_artifact(root, str(case_manifest_path)))
+        if (
+            case_manifest.get("contract_version") != protocol.PROTOCOL_VERSION
+            or case_manifest.get("protocol_sha256")
+            != protocol.FROZEN_PROTOCOL_SHA256
+            or case_manifest.get("execution_commit") != execution_commit
+            or case_manifest.get("generator_params")
+            != protocol.generator_params_manifest(
+                task.dataset,
+                task.arm,
+                task.seed,
+            )
+            or case_manifest.get("collection_row") != row
+            or case_manifest.get("raw_reference_data_accessed") is not False
+            or case_manifest.get("method_comparison_emitted") is not False
+        ):
+            raise RuntimeError(f"collection（采集）case 清单漂移：{task.task_id}")
         for path_key, hash_key in (
             ("terminal_table_path", "terminal_table_sha256"),
             ("checkpoint_artifact_path", "checkpoint_artifact_sha256"),

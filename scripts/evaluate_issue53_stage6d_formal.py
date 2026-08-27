@@ -25,7 +25,7 @@ from table_diffevo.stationarity import (
     target_answer_identity_sha256,
 )
 
-EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v2"
+EVALUATION_VERSION = "issue53-stage6d-joint-formal-evaluation-v3"
 T_CRITICAL_DF4_95 = 2.7764451051977987
 L1_CSV_FIELDS = (
     "dataset",
@@ -121,6 +121,8 @@ def _audit_collection(
         or report.get("protocol") != protocol.frozen_protocol_manifest()
         or report.get("runner_sha256")
         != protocol.IMPLEMENTATION_SOURCES["collector"]["sha256"]
+        or report.get("generator_params_manifest_sha256")
+        != protocol.generator_params_manifest_sha256()
         or report.get("case_count") != 30
         or report.get("paired_dataset_seed_count") != 10
         or report.get("formal_result_valid") is not True
@@ -139,6 +141,8 @@ def _audit_collection(
         "all_gap_8k_identity": True,
         "all_zero_clip_and_finite": True,
         "all_artifact_sha256_verified": True,
+        "all_generator_params_preflighted_before_gpu": True,
+        "completed_cases_resumed_without_rerun": True,
     }
     if report.get("collection_audit") != expected_audit:
         raise RuntimeError("collection（采集）结构审计未完整通过")
