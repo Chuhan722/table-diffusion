@@ -76,6 +76,12 @@ from table_diffevo.inner_early_stopping import (
     EarlyStoppingConfig,
     InnerEarlyStopper,
 )
+from table_diffevo.stall_escape_alpha import (
+    REQUIRED_EARLY_STOPPING_PATIENCE_TICKS,
+    STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
+    StallEscapeAlphaConfig,
+    StallEscapeAlphaController,
+)
 
 
 def _self_cooling_factor(
@@ -408,7 +414,9 @@ def run_evolution(
         默认 False 保持诊断字典可序列化，行为与历史一致。
     alpha_schedule_mode : str, default 'legacy_linear_horizon'
         legacy 模式保持按总轮数插值的旧语义；'fixed' 要求 fixed_alpha，且每轮
-        alpha 完全相同。
+        alpha 完全相同；'stall_escape_16_12' 使用 Issue #53 冻结的两档状态机：
+        连续两个自然工作刻度无新最好后，下一轮起用 alpha=12 两个自然工作
+        刻度，再恢复 alpha=16。该模式不读取 n_rounds。
     fixed_alpha : float or None, default None
         fixed alpha 模式的显式有限非负值。
     diffusion_direction_reference_scale : float or None, default None
@@ -445,6 +453,9 @@ def run_evolution(
     diagnostics : dict
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
+        - alpha_history: List[float]，每轮实际使用的 alpha
+        - adaptive_alpha: 两档状态机配置、逐轮观察、触发次数与终止状态；
+          非两档模式下 enabled=False
         - best_loss: float，最优 loss
         - current_state_metrics_history: List[dict]，初始 current state 与
           每个实际轮后 current state 的 normalized L1/平方 loss。每项
@@ -557,11 +568,14 @@ def run_evolution(
         )
 
     if alpha_schedule_mode not in (
-        "legacy_linear_horizon", "fixed"
+        "legacy_linear_horizon",
+        "fixed",
+        STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
     ):
         raise ValueError(
-            "alpha_schedule_mode 必须是 'legacy_linear_horizon' 或 "
-            f"'fixed'，得到 {alpha_schedule_mode!r}"
+            "alpha_schedule_mode 必须是 'legacy_linear_horizon'、"
+            f"'fixed' 或 {STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r}，"
+            f"得到 {alpha_schedule_mode!r}"
         )
     if alpha_schedule_mode == "fixed":
         if (
@@ -577,6 +591,14 @@ def run_evolution(
     elif fixed_alpha is not None:
         raise ValueError(
             "fixed_alpha 只允许与 alpha_schedule_mode='fixed' 一起使用"
+        )
+    if (
+        alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+        and distance_mode != "geometric"
+    ):
+        raise ValueError(
+            f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 只支持 "
+            "distance_mode='geometric'"
         )
 
     if isinstance(max_retries, bool) or not isinstance(max_retries, (int, np.integer)):
@@ -693,6 +715,20 @@ def run_evolution(
             raise ValueError(
                 "启用 inner A/B/C stopping 时 max_retries 必须为 0，"
                 "无门控路径不执行拒绝后的缩步重试"
+            )
+    if alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE:
+        if not inner_early_stopping_enabled:
+            raise ValueError(
+                f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 要求启用 "
+                "inner A/B/C stopping"
+            )
+        if (
+            inner_early_stopping_patience_ticks
+            != REQUIRED_EARLY_STOPPING_PATIENCE_TICKS
+        ):
+            raise ValueError(
+                f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 冻结要求 "
+                "inner_early_stopping_patience_ticks=6"
             )
     if rho_anneal_end is not None:
         if (
@@ -919,8 +955,11 @@ def run_evolution(
                 violations.append(f"{name} 必须是 [0, 1] 内的固定标量")
         if distance_mode != "geometric":
             violations.append("distance_mode 必须是 geometric")
-        if alpha_schedule_mode != "fixed":
-            violations.append("alpha 必须使用 fixed 模式")
+        if alpha_schedule_mode not in {
+            "fixed",
+            STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
+        }:
+            violations.append("alpha 必须使用 fixed 或 stall-escape 模式")
         if residual_directed_diffusion and (
             diffusion_direction_normalization != "fixed"
         ):
@@ -952,6 +991,11 @@ def run_evolution(
             )
         )
         if inner_early_stopping_enabled else None
+    )
+    stall_escape_alpha_controller = (
+        StallEscapeAlphaController(StallEscapeAlphaConfig())
+        if alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+        else None
     )
 
     rng = np.random.default_rng(seed)
@@ -1032,6 +1076,8 @@ def run_evolution(
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
     donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
+    adaptive_alpha_observation_history: List[Dict[str, Any]] = []
+    adaptive_alpha_last_observation = None
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
@@ -1142,6 +1188,10 @@ def run_evolution(
             initial_loss,
             resource_cap_reached=n_rounds == 0,
         )
+        if stall_escape_alpha_controller is not None:
+            stall_escape_alpha_controller.observe_initial(
+                inner_early_stopping_decision
+            )
         if inner_early_stopping_decision.should_stop:
             termination_reason = (
                 inner_early_stopping_decision.termination_reason
@@ -1188,10 +1238,14 @@ def run_evolution(
             break
         rounds_run = t + 1
 
-        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed
-        # 模式完全不读取 n_rounds，供 Issue #53 前缀不变参考过程使用。
+        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed 与
+        # stall-escape 模式完全不读取 n_rounds。两档控制器只使用上一轮已经
+        # 完成的早停观察，因此触发边界轮仍用 alpha=16。
         if alpha_schedule_mode == "fixed":
             alpha_t = fixed_alpha
+        elif alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE:
+            assert stall_escape_alpha_controller is not None
+            alpha_t = stall_escape_alpha_controller.alpha_for_next_round
         else:
             if n_rounds > 1:
                 progress = t / (n_rounds - 1)
@@ -1873,6 +1927,15 @@ def run_evolution(
                     ),
                 )
             )
+            if stall_escape_alpha_controller is not None:
+                adaptive_alpha_last_observation = (
+                    stall_escape_alpha_controller.observe_post_round(
+                        inner_early_stopping_decision
+                    )
+                )
+                adaptive_alpha_observation_history.append(
+                    asdict(adaptive_alpha_last_observation)
+                )
             if inner_early_stopping_decision.should_stop:
                 termination_reason = (
                     inner_early_stopping_decision.termination_reason
@@ -1992,6 +2055,30 @@ def run_evolution(
         "donor_distance_history": donor_distance_history,
         "donor_self_rate_history": donor_self_rate_history,
         "alpha_history": alpha_history,
+        "adaptive_alpha": {
+            "enabled": stall_escape_alpha_controller is not None,
+            "schedule_mode": (
+                STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+                if stall_escape_alpha_controller is not None else None
+            ),
+            "config": (
+                asdict(stall_escape_alpha_controller.config)
+                if stall_escape_alpha_controller is not None else None
+            ),
+            "observation_history": adaptive_alpha_observation_history,
+            "last_observation": (
+                asdict(adaptive_alpha_last_observation)
+                if adaptive_alpha_last_observation is not None else None
+            ),
+            "escape_count": (
+                stall_escape_alpha_controller.escape_count
+                if stall_escape_alpha_controller is not None else 0
+            ),
+            "terminated": (
+                stall_escape_alpha_controller.terminated
+                if stall_escape_alpha_controller is not None else None
+            ),
+        },
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
@@ -2133,6 +2220,10 @@ def run_evolution(
                 fixed_alpha
                 if distance_mode == "geometric"
                 and alpha_schedule_mode == "fixed" else None
+            ),
+            "adaptive_alpha_config": (
+                asdict(stall_escape_alpha_controller.config)
+                if stall_escape_alpha_controller is not None else None
             ),
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
