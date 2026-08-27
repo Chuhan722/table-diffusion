@@ -539,16 +539,17 @@ def test_audit_rejects_missing_combo_and_nonfinite(formal_module, tmp_path):
 
 def _formal_base(formal_module):
     """构造通过全部身份校验的 formal 产物骨架。"""
-    def _runs():
+    def _runs(ds_name):
+        refs = list(formal_module.DATASETS[ds_name]["references"])
         return [
             {
                 "seed": seed, "arm": arm,
                 "final_table_measured_l1": 0.001,
-                "offline": {"train": {
+                "offline": {ref: {
                     "unmeasured_3way_l1": 0.1,
                     "unmeasured_4way_l1": 0.1,
                     "binned_joint_tvd": 0.1,
-                }},
+                } for ref in refs},
             }
             for seed in formal_module.FORMAL_SEEDS
             for arm in formal_module.ARMS
@@ -567,13 +568,28 @@ def _formal_base(formal_module):
         "protocol": {
             "seeds": list(formal_module.FORMAL_SEEDS),
             "rounds": formal_module.FORMAL_ROUNDS,
+            "datasets": list(formal_module.DATASETS),
+            "arms": {
+                arm: {
+                    key: (str(value) if value == float("inf") else value)
+                    for key, value in extra.items()
+                }
+                for arm, extra in formal_module.ARMS.items()
+            },
+            "shared_params": {
+                key: (str(value) if value == float("inf") else value)
+                for key, value in formal_module.SHARED_PARAMS.items()
+            },
+            "frozen_si_alpha": formal_module.FROZEN_SI_ALPHA,
+            "frozen_min_spread": formal_module.FROZEN_MIN_SPREAD,
         },
         "datasets": {
             name: {
-                "runs": _runs(),
+                "runs": _runs(name),
                 "reference_sha256": dict(
                     formal_module.EXPECTED_REFERENCE_SHA256[name]
                 ),
+                "judgment": None,  # 占位：完整性测试会先于判定重算失败
             }
             for name in formal_module.DATASETS
         },
@@ -638,3 +654,90 @@ def test_audit_rejects_string_metrics(formal_module, tmp_path):
     result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
     assert result.returncode == 1
     assert "非有限数值" in result.stdout
+
+
+# ---- PR #62 四轮审查：完整协议对拍/judgment 强制/参考名/幂等 ----
+
+def test_audit_rejects_forged_arms_and_shared_params(
+    formal_module, tmp_path
+):
+    """伪造 protocol.arms 或 shared_params（保留正确协议哈希）→ FATAL
+    （四轮意见 1）"""
+    payload = _formal_base(formal_module)
+    payload["protocol"]["arms"] = {"absolute": {"residual_geometry": "chi2"}}
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "protocol.arms" in result.stdout
+    payload2 = _formal_base(formal_module)
+    payload2["protocol"]["shared_params"]["rho"] = 0.99
+    result2 = _run_audit(tmp_path, payload2, "probe_residual_geometry_formal")
+    assert result2.returncode == 1
+    assert "protocol.shared_params" in result2.stdout
+
+
+def test_audit_rejects_missing_judgment_formal(formal_module, tmp_path):
+    """formal 产物删除全部判定字段 → FATAL（四轮意见 2）"""
+    payload = _formal_base(formal_module)
+    for ds in payload["datasets"].values():
+        ds.pop("judgment", None)
+        ds.pop("judgement", None)
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "缺失判定字段" in result.stdout
+
+
+def test_audit_rejects_dual_judgment_spellings(formal_module, tmp_path):
+    """judgment 与 judgement 同时存在 → FATAL（拼写歧义）"""
+    payload = _formal_base(formal_module)
+    ds = payload["datasets"]["nltcs"]
+    ds["judgement"] = ds["judgment"]
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "同时存在" in result.stdout
+
+
+def test_audit_rejects_wrong_offline_reference_names(
+    formal_module, tmp_path
+):
+    """offline 参考名改为任意错误名称 → FATAL（四轮意见 3）"""
+    payload = _formal_base(formal_module)
+    for run in payload["datasets"]["test_300x10"]["runs"]:
+        run["offline"] = {"bogus": run["offline"].popitem()[1]}
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert "离线参考名" in result.stdout
+
+
+def test_audit_is_idempotent_on_legacy_artifact(formal_module, tmp_path):
+    """连续两次审计同一 legacy 归档产物均成功且原文件字节不变
+    （四轮意见 4：审计输出写 .audited.json，原产物永不改写）"""
+    import hashlib as _hashlib
+    import shutil as _shutil
+    import subprocess as _sp
+
+    archived = (
+        Path(__file__).resolve().parents[1]
+        / "docs/实验结果/formal_residual_geometry_5seed_2000round.json"
+    )
+    json_path = tmp_path / "legacy.json"
+    _shutil.copy(archived, json_path)
+    before = _hashlib.sha256(json_path.read_bytes()).hexdigest()
+
+    def _audit_once():
+        return _sp.run(
+            [sys.executable, "scripts/audit_formal_json.py",
+             "--protocol", "probe_residual_geometry_formal",
+             "--json", str(json_path)],
+            capture_output=True, text=True,
+            env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
+        )
+
+    first = _audit_once()
+    assert first.returncode == 0, first.stdout
+    assert "已知 legacy 产物" in first.stdout
+    after_first = _hashlib.sha256(json_path.read_bytes()).hexdigest()
+    assert after_first == before, "审计不得改写原产物文件"
+    assert (tmp_path / "legacy.json.audited.json").exists()
+    second = _audit_once()
+    assert second.returncode == 0, second.stdout
+    assert "已知 legacy 产物" in second.stdout

@@ -94,10 +94,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--protocol", required=True)
     parser.add_argument("--json", required=True)
+    parser.add_argument(
+        "--output", default=None,
+        help="审计（含迁移）结果输出路径；默认 <json>.audited.json。"
+        "原产物文件永不改写（PR #62 四轮意见 4：legacy 白名单基于原文件"
+        "字节，改写会破坏幂等重验）",
+    )
     args = parser.parse_args()
 
     protocol = importlib.import_module(args.protocol)
     json_path = Path(args.json)
+    output_path = (
+        Path(args.output) if args.output
+        else json_path.with_suffix(json_path.suffix + ".audited.json")
+    )
     payload = json.loads(json_path.read_text())
     changed = []
 
@@ -166,7 +176,10 @@ def main():
         hasattr(protocol, attr)
         for attr in ("DATASETS", "FORMAL_SEEDS", "ARMS")
     ):
-        # 0b-1（三轮意见 1）：产物声明的协议参数必须与冻结常量一致。
+        # 0b-1（三轮意见 1 + 四轮意见 1）：产物声明的完整协议身份必须
+        # 与冻结常量一致——种子/轮数之外，实验臂、共享参数、数据集
+        # 列表与冻结定标常量全部 canonical 对拍（伪造 arms/
+        # shared_params 但保留正确协议哈希的产物不能再通过）。
         declared = payload.get("protocol", {})
         if list(declared.get("seeds", [])) != list(protocol.FORMAL_SEEDS):
             print(
@@ -184,6 +197,57 @@ def main():
                 f"{protocol.FORMAL_ROUNDS!r}"
             )
             sys.exit(1)
+
+        def _declared_form(mapping):
+            """与生成端相同的序列化转换（inf → 字符串）。"""
+            return {
+                key: (str(value) if value == float("inf") else value)
+                for key, value in mapping.items()
+            }
+
+        def _canon_json(value):
+            return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+        full_identity_checks = []
+        if hasattr(protocol, "ARMS"):
+            full_identity_checks.append((
+                "arms",
+                {
+                    arm: _declared_form(extra)
+                    for arm, extra in protocol.ARMS.items()
+                },
+            ))
+        if hasattr(protocol, "SHARED_PARAMS"):
+            full_identity_checks.append((
+                "shared_params", _declared_form(protocol.SHARED_PARAMS),
+            ))
+        if hasattr(protocol, "DATASETS"):
+            full_identity_checks.append(
+                ("datasets", sorted(protocol.DATASETS))
+            )
+        for field, expected_value in full_identity_checks:
+            recorded_value = declared.get(field)
+            if field == "datasets" and recorded_value is not None:
+                recorded_value = sorted(recorded_value)
+            if _canon_json(recorded_value) != _canon_json(expected_value):
+                print(
+                    f"FATAL: formal 产物 protocol.{field} 与协议模块"
+                    f"冻结定义不一致（canonical 对拍失败）"
+                )
+                sys.exit(1)
+        for attr, field in (
+            ("FROZEN_SI_ALPHA", "frozen_si_alpha"),
+            ("FROZEN_MIN_SPREAD", "frozen_min_spread"),
+        ):
+            if hasattr(protocol, attr) and (
+                declared.get(field) != getattr(protocol, attr)
+            ):
+                print(
+                    f"FATAL: formal 产物 protocol.{field} "
+                    f"{declared.get(field)!r} != 冻结 "
+                    f"{getattr(protocol, attr)!r}"
+                )
+                sys.exit(1)
         # 0b-2（三轮意见 1）：输入与参考身份逐项对拍冻结常量；formal
         # 产物缺失这些字段本身即 FATAL。
         if hasattr(protocol, "EXPECTED_INPUT_SHA256"):
@@ -280,6 +344,19 @@ def main():
                                 f"={value!r} 缺失或非有限数值"
                             )
                             sys.exit(1)
+                # 0b-5（四轮意见 3）：离线参考名称集合必须与该数据集
+                # 冻结的参考名精确一致（任意错误名称不再被静默接受）。
+                expected_refs = set(
+                    protocol.DATASETS[ds_name].get("references", {})
+                )
+                got_refs = set(run.get("offline") or {})
+                if expected_refs and got_refs != expected_refs:
+                    print(
+                        f"FATAL: {ds_name} seed={run.get('seed')} "
+                        f"arm={run.get('arm')} 离线参考名 "
+                        f"{sorted(got_refs)} != 冻结 {sorted(expected_refs)}"
+                    )
+                    sys.exit(1)
                 if not run.get("offline"):
                     print(
                         f"FATAL: {ds_name} seed={run.get('seed')} "
@@ -287,7 +364,7 @@ def main():
                     )
                     sys.exit(1)
         changed.append(
-            "formal 完整性: 数据集/seed×arm/指标有限性全部通过"
+            "formal 完整性: 数据集/seed×arm/指标有限性/参考名全部通过"
         )
 
     for ds_name, ds in payload["datasets"].items():
@@ -339,8 +416,20 @@ def main():
                 changed.append(f"{ds_name}: initial_state 逐种子复验通过")
 
         # 4. 判定重算断言（兼容早期产物的 judgement 旧拼写）
-        judgment_key = "judgment" if "judgment" in ds else (
-            "judgement" if "judgement" in ds else None
+        # 4. 判定重算断言（四轮意见 2：formal 产物必须恰好存在一个
+        # 判定字段——两个拼写都缺失或同时存在均 FATAL；judgement 为
+        # 早期产物的兼容旧拼写）。非 formal 产物保持"存在才校验"。
+        has_new = "judgment" in ds
+        has_old = "judgement" in ds
+        if provenance.get("formal"):
+            if has_new and has_old:
+                print(f"FATAL: {ds_name} 同时存在 judgment 与 judgement")
+                sys.exit(1)
+            if not has_new and not has_old:
+                print(f"FATAL: {ds_name} formal 产物缺失判定字段")
+                sys.exit(1)
+        judgment_key = "judgment" if has_new else (
+            "judgement" if has_old else None
         )
         old_judgment = ds.get(judgment_key) if judgment_key else None
         if old_judgment is not None:
@@ -353,11 +442,11 @@ def main():
                 sys.exit(1)
             changed.append(f"{ds_name}: 判定重算一致")
 
-    json_path.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
+    output_path.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
     for line in changed:
         print("·", line)
-    print("output=" + str(json_path))
-    print("sha256=" + _sha256_file(json_path))
+    print("output=" + str(output_path))
+    print("sha256=" + _sha256_file(output_path))
 
 
 if __name__ == "__main__":
