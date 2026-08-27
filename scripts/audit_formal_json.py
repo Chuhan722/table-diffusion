@@ -23,6 +23,8 @@
 
 import argparse
 import hashlib
+import os
+import tempfile
 import importlib
 import json
 import sys
@@ -97,8 +99,8 @@ def main():
     parser.add_argument(
         "--output", default=None,
         help="审计（含迁移）结果输出路径；默认 <json>.audited.json。"
-        "原产物文件永不改写（PR #62 四轮意见 4：legacy 白名单基于原文件"
-        "字节，改写会破坏幂等重验）",
+        "原产物文件是强制只读不变量（PR #62 五轮不变量 4）：输出与"
+        "输入指向同一物理文件（含路径别名/符号链接/硬链接）一律拒绝",
     )
     args = parser.parse_args()
 
@@ -108,6 +110,20 @@ def main():
         Path(args.output) if args.output
         else json_path.with_suffix(json_path.suffix + ".audited.json")
     )
+    # 不变量 4（五轮意见 3）：原产物不可写。resolve() 消解相对路径与
+    # 符号链接；samefile 捕获硬链接与其它别名。输出已存在且与输入同
+    # 物理文件 → 拒绝；输出不存在时比较解析后的最终路径。
+    resolved_input = json_path.resolve(strict=True)
+    if output_path.exists():
+        if os.path.samefile(json_path, output_path):
+            raise SystemExit(
+                "FATAL: --output 与输入指向同一物理文件（含别名/链接），"
+                "原产物是只读不变量，拒绝审计"
+            )
+    elif output_path.resolve() == resolved_input:
+        raise SystemExit(
+            "FATAL: --output 解析后与输入路径相同，拒绝审计"
+        )
     payload = json.loads(json_path.read_text())
     changed = []
 
@@ -155,6 +171,28 @@ def main():
             changed.append(
                 f"provenance: 已知 legacy 产物（{file_sha[:12]}…）"
             )
+            # 五轮不变量 5：白名单验证原始身份后只迁移内存副本——注入
+            # 结构版本、用冻结代码重建 canonical 协议清单、判定字段
+            # 改名，随后对迁移结果执行与新产物完全相同的统一验证。
+            # 原文件保持逐字节不变。
+            if hasattr(protocol, "ARTIFACT_SCHEMA_VERSION"):
+                payload["artifact_schema_version"] = (
+                    protocol.ARTIFACT_SCHEMA_VERSION
+                )
+            if hasattr(protocol, "canonical_protocol_manifest"):
+                legacy_declared = payload.get("protocol", {})
+                payload["run_config"] = {
+                    "seeds": legacy_declared.get("seeds"),
+                    "rounds": legacy_declared.get("rounds"),
+                    "datasets": legacy_declared.get("datasets"),
+                }
+                payload["protocol"] = (
+                    protocol.canonical_protocol_manifest()
+                )
+            for ds in payload.get("datasets", {}).values():
+                if "judgement" in ds and "judgment" not in ds:
+                    ds["judgment"] = ds.pop("judgement")
+            changed.append("legacy 迁移: 内存副本升级到当前产物结构版本")
         else:
             changed.append(
                 "provenance: 无 protocol_sha256 字段（legacy 产物，身份由 "
@@ -176,78 +214,51 @@ def main():
         hasattr(protocol, attr)
         for attr in ("DATASETS", "FORMAL_SEEDS", "ARMS")
     ):
-        # 0b-1（三轮意见 1 + 四轮意见 1）：产物声明的完整协议身份必须
-        # 与冻结常量一致——种子/轮数之外，实验臂、共享参数、数据集
-        # 列表与冻结定标常量全部 canonical 对拍（伪造 arms/
-        # shared_params 但保留正确协议哈希的产物不能再通过）。
-        declared = payload.get("protocol", {})
-        if list(declared.get("seeds", [])) != list(protocol.FORMAL_SEEDS):
-            print(
-                "FATAL: formal 产物 protocol.seeds "
-                f"{declared.get('seeds')!r} != 冻结 FORMAL_SEEDS "
-                f"{list(protocol.FORMAL_SEEDS)!r}"
-            )
-            sys.exit(1)
-        if hasattr(protocol, "FORMAL_ROUNDS") and (
-            declared.get("rounds") != protocol.FORMAL_ROUNDS
-        ):
-            print(
-                "FATAL: formal 产物 protocol.rounds "
-                f"{declared.get('rounds')!r} != 冻结 FORMAL_ROUNDS "
-                f"{protocol.FORMAL_ROUNDS!r}"
-            )
-            sys.exit(1)
-
-        def _declared_form(mapping):
-            """与生成端相同的序列化转换（inf → 字符串）。"""
-            return {
-                key: (str(value) if value == float("inf") else value)
-                for key, value in mapping.items()
-            }
-
-        def _canon_json(value):
-            return json.dumps(value, sort_keys=True, ensure_ascii=False)
-
-        full_identity_checks = []
-        if hasattr(protocol, "ARMS"):
-            full_identity_checks.append((
-                "arms",
-                {
-                    arm: _declared_form(extra)
-                    for arm, extra in protocol.ARMS.items()
-                },
-            ))
-        if hasattr(protocol, "SHARED_PARAMS"):
-            full_identity_checks.append((
-                "shared_params", _declared_form(protocol.SHARED_PARAMS),
-            ))
-        if hasattr(protocol, "DATASETS"):
-            full_identity_checks.append(
-                ("datasets", sorted(protocol.DATASETS))
-            )
-        for field, expected_value in full_identity_checks:
-            recorded_value = declared.get(field)
-            if field == "datasets" and recorded_value is not None:
-                recorded_value = sorted(recorded_value)
-            if _canon_json(recorded_value) != _canon_json(expected_value):
+        # 0b-1（五轮不变量 1+2）：统一结构验证——产物结构版本必须
+        # 匹配，protocol 字段与冻结代码重建的唯一 canonical 清单整份
+        # 精确比较（缺字段、多字段或任一字段不同都拒绝，不再逐字段）。
+        if hasattr(protocol, "ARTIFACT_SCHEMA_VERSION"):
+            recorded_version = payload.get("artifact_schema_version")
+            if recorded_version != protocol.ARTIFACT_SCHEMA_VERSION:
                 print(
-                    f"FATAL: formal 产物 protocol.{field} 与协议模块"
-                    f"冻结定义不一致（canonical 对拍失败）"
+                    "FATAL: 产物结构版本 "
+                    f"{recorded_version!r} != 当前 "
+                    f"{protocol.ARTIFACT_SCHEMA_VERSION!r}"
                 )
                 sys.exit(1)
-        for attr, field in (
-            ("FROZEN_SI_ALPHA", "frozen_si_alpha"),
-            ("FROZEN_MIN_SPREAD", "frozen_min_spread"),
-        ):
-            if hasattr(protocol, attr) and (
-                declared.get(field) != getattr(protocol, attr)
-            ):
+        declared = payload.get("protocol")
+        if hasattr(protocol, "canonical_protocol_manifest"):
+            expected_manifest = protocol.canonical_protocol_manifest()
+            if not isinstance(declared, dict):
+                print("FATAL: formal 产物缺失 protocol 清单或类型错误")
+                sys.exit(1)
+            recorded_canon = json.dumps(
+                declared, sort_keys=True, ensure_ascii=False,
+            )
+            expected_canon = json.dumps(
+                expected_manifest, sort_keys=True, ensure_ascii=False,
+            )
+            if recorded_canon != expected_canon:
+                recorded_keys = set(declared)
+                expected_keys = set(expected_manifest)
+                detail = []
+                if recorded_keys != expected_keys:
+                    detail.append(
+                        f"缺失 {sorted(expected_keys - recorded_keys)} "
+                        f"多余 {sorted(recorded_keys - expected_keys)}"
+                    )
+                else:
+                    detail.append(str(sorted(
+                        key for key in expected_keys
+                        if json.dumps(declared[key], sort_keys=True)
+                        != json.dumps(expected_manifest[key], sort_keys=True)
+                    )))
                 print(
-                    f"FATAL: formal 产物 protocol.{field} "
-                    f"{declared.get(field)!r} != 冻结 "
-                    f"{getattr(protocol, attr)!r}"
+                    "FATAL: formal 产物 protocol 清单与冻结代码重建值"
+                    f"整份对拍失败（差异字段：{'；'.join(detail)}）"
                 )
                 sys.exit(1)
+            changed.append("protocol: canonical 清单整份对拍一致")
         # 0b-2（三轮意见 1）：输入与参考身份逐项对拍冻结常量；formal
         # 产物缺失这些字段本身即 FATAL。
         if hasattr(protocol, "EXPECTED_INPUT_SHA256"):
@@ -415,10 +426,9 @@ def main():
                 existing["note"] = rebuilt["note"]
                 changed.append(f"{ds_name}: initial_state 逐种子复验通过")
 
-        # 4. 判定重算断言（兼容早期产物的 judgement 旧拼写）
-        # 4. 判定重算断言（四轮意见 2：formal 产物必须恰好存在一个
-        # 判定字段——两个拼写都缺失或同时存在均 FATAL；judgement 为
-        # 早期产物的兼容旧拼写）。非 formal 产物保持"存在才校验"。
+        # 4. 判定重算（五轮不变量 3）：formal 产物必须恰好存在一种
+        # 拼写（legacy 已在迁移中改名为 judgment）、值必须是非空映射，
+        # 随后无条件重算并精确比较；非 formal 产物保持存在才校验。
         has_new = "judgment" in ds
         has_old = "judgement" in ds
         if provenance.get("formal"):
@@ -428,21 +438,51 @@ def main():
             if not has_new and not has_old:
                 print(f"FATAL: {ds_name} formal 产物缺失判定字段")
                 sys.exit(1)
-        judgment_key = "judgment" if has_new else (
-            "judgement" if has_old else None
-        )
-        old_judgment = ds.get(judgment_key) if judgment_key else None
-        if old_judgment is not None:
-            new_judgment = protocol._judge(ds["runs"])
-            old_str = json.dumps(old_judgment, sort_keys=True)
-            new_str = json.dumps(new_judgment, sort_keys=True)
-            if old_str != new_str:
-                # 允许的差异只有本工具改名的字段不参与判定——逐键比较
+            judgment_key = "judgment" if has_new else "judgement"
+            recorded_judgment = ds.get(judgment_key)
+            if not isinstance(recorded_judgment, dict) or (
+                not recorded_judgment
+            ):
+                print(
+                    f"FATAL: {ds_name} 判定字段必须是非空映射，得到 "
+                    f"{type(recorded_judgment).__name__}"
+                )
+                sys.exit(1)
+            recomputed = protocol._judge(ds["runs"])
+            if json.dumps(recorded_judgment, sort_keys=True) != (
+                json.dumps(recomputed, sort_keys=True)
+            ):
                 print(f"FATAL: {ds_name} 判定重算与记录不一致")
                 sys.exit(1)
-            changed.append(f"{ds_name}: 判定重算一致")
+            changed.append(f"{ds_name}: 判定无条件重算一致")
+        else:
+            judgment_key = "judgment" if has_new else (
+                "judgement" if has_old else None
+            )
+            old_judgment = ds.get(judgment_key) if judgment_key else None
+            if old_judgment is not None:
+                new_judgment = protocol._judge(ds["runs"])
+                if json.dumps(old_judgment, sort_keys=True) != (
+                    json.dumps(new_judgment, sort_keys=True)
+                ):
+                    print(f"FATAL: {ds_name} 判定重算与记录不一致")
+                    sys.exit(1)
+                changed.append(f"{ds_name}: 判定重算一致")
 
-    output_path.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
+    # 五轮不变量 4：结果先写同目录临时文件再原子替换独立输出文件。
+    fd, temp_name = tempfile.mkstemp(
+        dir=str(output_path.parent), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=1, ensure_ascii=False))
+        os.replace(temp_name, output_path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
     for line in changed:
         print("·", line)
     print("output=" + str(output_path))

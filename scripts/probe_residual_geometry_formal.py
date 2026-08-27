@@ -160,6 +160,7 @@ def _protocol_identity():
 
     return {
         "issue": 57,
+        "primary_dataset": "nltcs",
         "seeds": FORMAL_SEEDS,
         "rounds": FORMAL_ROUNDS,
         "frozen_si_alpha": FROZEN_SI_ALPHA,
@@ -186,6 +187,19 @@ def _protocol_identity():
     }
 
 
+def canonical_protocol_manifest():
+    """唯一的规范协议清单（PR #62 五轮审查不变量 2）。
+
+    生成端把这份清单原样写入正式产物的 ``protocol`` 字段；审计端从
+    冻结代码重建同一清单后做整份 canonical 精确比较（缺字段、多字段
+    或任一字段不同都拒绝），不再依靠分散的逐字段检查。JSON 序列化
+    往返以保证与产物读回值可直接比较。
+    """
+    return json.loads(json.dumps(
+        _protocol_identity(), ensure_ascii=False, sort_keys=True,
+    ))
+
+
 def protocol_sha256():
     """从入库代码独立复算的冻结协议常量 SHA-256。
 
@@ -203,8 +217,11 @@ def protocol_sha256():
 # 冻结协议身份（运行时 fail-closed 对拍；协议修改必须同步更新 = 显式
 # 重新预注册）。数值在实现后由 protocol_sha256() 一次性生成。
 FROZEN_PROTOCOL_SHA256 = (
-    "620c76d3d9b3e868b4119b6884ceffbd7bbdeae99f2715d71c0296b2ed77a850"
+    "71f6cac87d1f99c7eb8afc6b72f4b36c19a246fef98a816052dbfaee622ce73a"
 )
+
+# 产物结构版本（PR #62 五轮不变量 1）。
+ARTIFACT_SCHEMA_VERSION = "residual-geometry-formal-artifact-v2"
 
 # 已知 legacy 正式产物白名单（PR #62 二轮审查）：protocol_sha256 机制
 # 引入前生成的正式 JSON，按整体文件字节 SHA-256 登记；审计器只接受
@@ -724,25 +741,16 @@ def main():
         formal = False
 
     result = {
-        "protocol": {
-            "issue": 57,
+        # 产物结构版本（PR #62 五轮不变量 1）：审计端按版本执行统一
+        # 结构验证。formal 产物的 protocol 字段即 canonical 清单本身；
+        # 探索性运行（偏离预注册 seeds/rounds/datasets）在 run_config
+        # 中记录实际参数，protocol 清单仍为冻结值供对拍。
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "protocol": canonical_protocol_manifest(),
+        "run_config": {
             "seeds": list(args.seeds),
             "rounds": args.rounds,
             "datasets": list(args.datasets),
-            "arms": {
-                arm: {
-                    key: (str(value) if value == float("inf") else value)
-                    for key, value in extra.items()
-                }
-                for arm, extra in ARMS.items()
-            },
-            "shared_params": {
-                key: (str(value) if value == float("inf") else value)
-                for key, value in SHARED_PARAMS.items()
-            },
-            "primary_dataset": "nltcs",
-            "frozen_si_alpha": FROZEN_SI_ALPHA,
-            "frozen_min_spread": FROZEN_MIN_SPREAD,
         },
         "provenance": {
             "git_commit": _git("rev-parse", "HEAD"),
