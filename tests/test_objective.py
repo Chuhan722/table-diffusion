@@ -264,6 +264,41 @@ def test_geometry_relative_amplifies_rare_queries():
     assert abs(r[1]) > abs(r[0]) * 50  # 5000/50 = 100 倍分母差
 
 
+def test_geometry_sqrt_relative_has_fixed_middle_strength():
+    """目标相差100倍时，sqrt_relative放大10倍而非relative的100倍。"""
+    target = np.array([900.0, 9.0])
+    current = np.array([897.0, 6.0])  # 都少3个计数，且均高于floor=8
+    absolute = compute_residual(
+        target, current, n_records=1000, geometry="absolute"
+    )
+    sqrt_relative = compute_residual(
+        target, current, n_records=1000, geometry="sqrt_relative"
+    )
+    relative = compute_residual(
+        target, current, n_records=1000, geometry="relative"
+    )
+
+    np.testing.assert_allclose(sqrt_relative, [0.1 / 1000, 1.0 / 1000])
+    np.testing.assert_allclose(
+        abs(sqrt_relative[1] / sqrt_relative[0]), 10.0
+    )
+    np.testing.assert_allclose(abs(absolute[1] / absolute[0]), 1.0)
+    np.testing.assert_allclose(abs(relative[1] / relative[0]), 100.0)
+
+
+def test_geometry_sqrt_relative_floor_protects_small_targets():
+    """sqrt_relative 对 target=0 使用 sqrt(floor)，保持有限且不改零点。"""
+    target = np.array([0.0, 2.0])
+    current = np.array([5.0, 2.0])
+    r = compute_residual(
+        target, current, n_records=100,
+        geometry="sqrt_relative", geometry_floor=8.0,
+    )
+    assert np.all(np.isfinite(r))
+    np.testing.assert_allclose(r[0], -5.0 / np.sqrt(8.0) / 100)
+    assert r[1] == 0.0
+
+
 def test_geometry_relative_floor_protects_small_targets():
     """target < floor 时分母用 floor，target=0 不产生除零"""
     target = np.array([0.0, 2.0])

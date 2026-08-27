@@ -2,6 +2,745 @@
 
 ## 当前阶段
 
+### 最新暂停点：PR #65 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
+
+> 用户在检查本地结果后明确授权“直接把本地改的推送上去”。本步只发布上一节已经完成并验证的
+> #65 同步提交；没有修改 PR 正文、发布评论、请求 review、催促审阅者、Approve/merge PR，
+> 也没有操作 #66/#67。
+
+```text
+published merge head  c1871ba892c2575c115288c49bdbd1240376d48a
+remote branch         research/issue53-query-workload-ab
+PR                     #65 / OPEN / non-Draft
+base                   research/issue-53-stage2-v2-evidence（PR #63）
+GitHub status          MERGEABLE / CLEAN
+checks                 none reported
+```
+
+远端从 `a2bc496` fast-forward 到 `c1871ba`，本地与 upstream 在发布后为 `0 behind / 0 ahead`。
+推送内容为：同步 #63 最新头 `6cc7825`、完整保留状态文档双方历史，以及 #65 自身 11 处
+Python 3.9 strict-zip 兼容修复。验证结果沿用上一节本次提交前的干净结果：Python 3.9/3.11 全仓均
+`1712 passed`；没有重跑正式实验或改写 artifacts。
+
+本节作为发布后的仓库内状态记录随同一 #65 分支推送。下一步仍需用户单独决定；未经再次明确授权，
+不 push 后续分支。#63 自然等待外部反馈，不催促；#66 尚未同步或修改。
+
+### 最新暂停点：PR #65 已在本地同步最新 #63，并补齐自身 Python 3.9 兼容（2026-08-22）
+
+> 用户要求先处理 PR 栈，并再次明确“未说推就不 push、不要催审阅者”。本步只在 #65 本地
+> worktree 合入 #63 最新远端头、解决冲突、补齐 #65 自身兼容遗漏并测试；没有 push、PR 评论、
+> review request、Approve、merge 远端 PR，也没有开始 #66/#67 或 Stage 5。
+
+同步身份：
+
+```text
+#65 pre-sync head     a2bc496da223ef49a5a1e8a8e5ac6f60252ab62b
+#63 synced head       6cc7825c68ad8b4247737e010cbd5d184fbfb53a
+common ancestor       24478dde3f639ee8f55100d3e7741506631bbc12
+divergence            #63 侧 7 commits / #65 侧 24 commits
+merge conflict        PROJECT_STATUS.md only
+resolution            双方进度历史完整保留；科学代码无内容冲突
+remote #65            保持 a2bc496，GitHub 冲突状态不会因本地工作自动改变
+```
+
+#63 的 Python 3.9 兼容修复、stationarity trace 补强、V2b 路径便携修复以及其同步的 PR #61
+plants 数据/workload 均自动合入。首次合并后验证：Python 3.11 全仓 `1712 passed, 2 warnings`；
+Python 3.9 已不再发生 #63 的收集错误，但暴露 #65 自身 11 处 `zip(strict=True)` 遗漏，其中当次
+全仓实际触发 `4 failed + 4 errors`，其余 `1704 passed`。
+
+兼容修复覆盖 #65 的 5 个脚本与 1 个测试文件：全部 11 处 strict zip 改为 Python 3.9 支持的普通
+`zip`，并逐处保留既有等长检查或补充显式长度漂移拒绝。合法等长输入的查询、答案、fingerprint、
+分组和误差计算顺序及数值不变；不把静默截断当作兼容方案。全范围扫描确认 #65 新增 Python 文件不再
+包含 `zip(strict=True)`、`datetime.UTC` 或 `from datetime import UTC`。
+
+最终验证（物理 GPU 1，单进程串行）：
+
+```text
+Python 3.9 / CUDA 相关专项     38 passed
+Python 3.9 / CUDA 全仓         1712 passed, 15 warnings
+Python 3.11 / CUDA 全仓        1712 passed, 2 warnings
+git diff --check               clean
+outputs tracked diff           empty
+```
+
+Python 3.9 的 15 条 warning 为临时 Matplotlib/PyParsing 依赖弃用提示 13 条，加既有空切片 NumPy
+warning 2 条；Python 3.11 只有后两条。兼容改写没有改变冻结协议、正式输入、ignored artifacts、
+已归档结果或公共默认，因此没有重跑任何正式实验。
+
+本节随本地 merge commit 保存。当前暂停在本地完成、远端未更新的 #65；下一步必须由用户明确决定，
+且只有用户明确说“推”才可 push。#66 尚未同步或修改，#63 继续自然等待外部反馈，不催促。
+
+### 最新暂停点：residual geometry 收口已提交 stacked PR #65（2026-08-18）
+
+> 用户明确授权 push 后，当前分支已推送并创建新的 stacked PR；没有自行 review、approve
+> 或 merge，也没有操作依赖 PR #63。PR #65 替代此前按用户要求关闭的 #64，包含原 residual
+> geometry 证据链以及后续 query-workload A/B 正式实验与结果后解释修正。
+
+```text
+PR       #65
+title    研究：Issue #53 残差几何与高阶查询 workload 确认
+state    OPEN, non-Draft
+url      https://github.com/Chuhan722/table-diffusion/pull/65
+base     research/issue-53-stage2-v2-evidence（PR #63）
+head     research/issue53-query-workload-ab
+```
+
+PR 正文明确保留正式 `mixed_no_workload_replacement` 作为历史辅助分类，但不再以 A/B
+总体高低选择 residual geometry；当前主结论读取 B 内比较。后续 development baseline 为
+“1-way marginal 初始化 + 高阶 measured workload + relative/floor=8”，公共 API 默认值仍
+保持 `absolute`。当前停在等待外部审查，不自行处理 #63/#65 的 review 或 merge；下一科学
+板块 donor/alpha 另行讨论和冻结，不顺带加入本 PR。
+
+### 历史暂停点：test query-workload A/B 结果后解释修正，residual 板块收口（2026-08-18）
+
+> 本步不修改正式 evaluator、原始 artifacts、查询、seed、门禁或 SHA，只修正结果解释：
+> A/B 的持续监督不同，`B - A` 不能作为正常查询设计或 residual geometry 的选择门槛；
+> 当前主结论应读取 workload B 内部比较。没有重新生成表、调整规则、增加 seed、修改
+> 公共 API 默认值、形成全局 canonical 结论，也没有 push 或操作 Issue/PR。
+
+正式评价身份：
+
+```text
+collection SHA       67f3ebbcf06100b0ba508b465dd4aea7b6ee69825a46b5eec5a768245b69e44a
+evaluation commit    4c275b7789f6b08efafa3959ccf278c4c5dbba39
+evaluation report    outputs/issue53_test_query_workload_ab_v1/evaluation_report.json
+evaluation SHA       a389504c92e87461d84c4eb8322b659afea0dabb58a256bedcd6c19f78c06651
+query-seed CSV       outputs/issue53_test_query_workload_ab_v1/query_seed_errors.csv
+query-seed CSV SHA   2bbcfba869187cfdd1b7198f9d2e675437f38d8a6e4081c73f9b03289b6c467c
+data rows             47,100（文件 47,101 行，含 header）
+```
+
+查询身份在 reference load 前冻结，四组数量仍为 `25 / 521 / 512 / 512`，身份 SHA
+与结果前协议完全一致；fixed held-out 3/4-way answers 与既有 archive 精确一致。
+30/30 terminal table SHA 再审计通过。评价阶段记录
+`new_generation_performed=false`、`cross_group_aggregate_present=false`、
+`canonical_selection_performed=false`、`privacy_budget_consumed=false`。独立从 CSV
+重算 24 个 group/workload/geometry cell 的 mean，全部与正式报告逐项精确一致。
+
+统一测试的 mean absolute count error：
+
+| 查询组 | A abs | B abs | A sqrt | B sqrt | A relative | B relative |
+|---|---:|---:|---:|---:|---:|---:|
+| 1-way safety | 0.8560 | 16.1840 | 0.8560 | 15.2400 | 0.9280 | 13.0080 |
+| common unseen 2-way | 7.4779 | 10.8088 | 7.1328 | 10.4791 | 7.6891 | 9.1708 |
+| fixed held-out 3-way | 4.2859 | 5.1699 | 4.1855 | 5.1148 | 4.5813 | 4.5902 |
+| fixed held-out 4-way | 1.7578 | 1.9848 | 1.7715 | 1.9516 | 1.8809 | 1.8949 |
+
+完整结果后解释归档于：
+
+```text
+docs/实验结果/Issue53_test查询workload_AB正式结果.md
+```
+
+### 冻结问题 1：workload B 能否替代 A（保留为历史辅助判定）
+
+`B - A` mean delta 均为正数时表示 B 更差：
+
+| geometry | 1-way | unseen 2-way | held-out 3-way | held-out 4-way | 冻结结论 |
+|---|---:|---:|---:|---:|---|
+| absolute | +15.3280 | +3.3309 | +0.8840 | +0.2270 | mixed/no replacement |
+| sqrt-relative | +14.3840 | +3.3463 | +0.9293 | +0.1801 | mixed/no replacement |
+| relative | +12.0800 | +1.4818 | +0.0090 | +0.0141 | mixed/no replacement |
+
+三种 geometry 的 unseen Pareto 和 1-way safety 均失败，正式分类全部为
+`mixed_no_workload_replacement`；因此结论方向在 geometry 间一致。尤其三个 geometry
+的 common unseen 2-way 都是 5/5 paired seeds 下 B 更差。relative 已把 3/4-way
+差距压到接近零，但仍没有让 B 通过替代门禁，而且 1-way 与 2-way 仍明显退化。
+
+上述正式数值与分类保持有效，但它回答的是：移除 A 的持续 1-way measured supervision、
+同时换入更多高阶查询后，B 能否在 A 直接或间接监督的公共统计上不劣于 A。答案是否定的。
+它不回答正常高阶 workload 应使用哪种 residual geometry，也不能证明 B 的查询设置失败。
+
+A 的 `25×1-way + 20×2-way + 5×3-way` 中，25 条 1-way target 与 marginal 初始化
+25/25 精确一致，初态残差为零，并继续占固定 objective 的一半；B 使用相同 marginal
+初始化，后续只拟合 `30×2-way + 15×3-way + 5×4-way`。两者持续监督不同，不能以
+A/B 总体高低选择方法。B 还同时换入新 2/3/4-way，因此也不能声称 1-way 单一因素解释
+全部 A/B 数值；可以确认的是旧 geometry 排序依赖 workload，零残差 1-way 是 A 偏向
+absolute 的明确机制。
+
+### 冻结问题 2：workload B 内哪种 geometry 更好
+
+候选相对 B/absolute 的 mean delta：
+
+| candidate | 1-way | unseen 2-way | held-out 3-way | held-out 4-way | paired 稳定改善 | 冻结结论 |
+|---|---:|---:|---:|---:|---|---|
+| sqrt-relative | -0.9440 | -0.3298 | -0.0551 | -0.0332 | 无（3/5、3/5、2/5） | mixed |
+| relative | -3.1760 | -1.6380 | -0.5797 | -0.0898 | 2-way 4/5；3-way 4/5 | supported |
+
+relative 的三个 primary mean 和 1-way mean 全部不劣，2-way、3-way 都达到 4/5
+paired-seed 稳定改善，正式分类为 `supports_geometry_under_workload_B`。4-way mean
+也改善，但只有 3/5 seeds，不单独宣称稳定。sqrt-relative 虽然四组 mean 都略有改善，
+没有任何 primary group 达到预先要求的 4/5，正式分类为
+`mixed_no_unified_geometry_candidate`。
+
+### 结果后研究解释与当前决定
+
+当前项目要研究的内层语义是“1-way marginal 初始化 + 尚未满足的高阶 measured
+workload”。因此 workload A 只保留为解释旧 test 反转的机制对照；选择 residual geometry
+时，以 B 内部比较为当前主问题，不要求 B 先通过相对 A 的 replacement gate。
+
+正式 B 内结果支持 `relative`：四组 mean 全部优于 B/absolute，unseen 2-way 与 held-out
+3-way 都有 4/5 paired seeds 改善；1-way safety mean 也从 16.184 降至 13.008，因此
+没有证据要求为挽救 relative 再加入持续 1-way anchor。sqrt-relative 的 primary 稳定性
+不足，仍是 mixed。
+
+结合既有 nltcs 无 measured 1-way workload 下 relative 的 3/3 paired-seed 优势，当前
+development baseline 冻结为：
+
+```text
+1-way marginal initialization
++ higher-order measured workload
++ relative residual geometry (floor=8)
+```
+
+这不修改 `run_evolution` 为兼容性保留的 `absolute` 默认值，也不外推到所有数据、带噪
+阶段或公共 API。residual 板块到此停止增加公式、seed 和 A/B 变体；下一科学板块进入
+donor/alpha，并须另写结果前协议。当前先完成本地文档收口与验证；按用户要求停在 push
+之前，不创建、更新、审查或合并远端 PR。
+
+本次收口验证：A/B freeze/runner/evaluator、fresh-seed evaluator 与 ordered-heldout
+相关定向回归 `37 passed`；`git diff --check` 通过。没有运行 generator 或读取新的实验
+结果。新增结果文档及两份历史结果顶部的后续说明均使用仓库内有效相对链接。
+
+### 历史暂停点：test query-workload A/B 正式公共评价完成（2026-08-18）
+
+> 以下保留正式评价执行、不可变身份与原始冻结分类；上方结果后解释只改变这些证据
+> 在当前研究问题中的角色，不覆盖历史结果。
+
+### 历史暂停点：test query-workload A/B 正式 30-case 采集与聚合完成（2026-08-18）
+
+> 本步按用户确认的新服务器绑定在 `linyao-system` 正式运行全部 30 条轨迹，并只聚合
+> generation collection；没有打开 raw reference，没有运行四组公共查询评价，没有
+> 结果后调参或增加 seed，也没有 push 或操作 PR。
+
+正式身份：
+
+```text
+execution commit    4f80b962d290ba896bc93cb5e3129380ed1d7e7c
+protocol SHA        5b27cc3ddd5b39829a584f1cdc06b961ef50204840d957481444297023a18f0f
+collection report   outputs/issue53_test_query_workload_ab_v1/collection_report.json
+collection SHA      67f3ebbcf06100b0ba508b465dd4aea7b6ee69825a46b5eec5a768245b69e44a
+```
+
+5 个 seed shard 并行，shard 内按冻结顺序串行六臂；实际环境均为
+`hostname=linyao-system`、clean worktree、NumPy 2.4.6、pandas 3.0.5、
+`CUDA_VISIBLE_DEVICES=""`、generator device NumPy。五份 manifest 的 protocol、
+execution commit 和六个输入 SHA 完全一致。
+
+完整性与停止审计：
+
+```text
+case identities                    30/30 unique
+termination                        30 early_stopped
+normal completion                  30/30
+resource_cap_reached               0
+paired initial state seed shards   5/5
+terminal table SHA                 30/30
+result JSON                        30/30
+B cases with five full 4-way       15/15
+factorized Gibbs active            0/30
+raw reference accessed             false
+privacy budget consumed            false
+parameter retuning performed       false
+```
+
+generation workload 内部拟合与成本均值如下；A/B 的 measured 查询不同，因此这些 L1
+只描述各自拟合，不能直接用来判断新查询设计优劣：
+
+| workload | geometry | terminal measured L1 | rounds | normalized work |
+|---|---|---:|---:|---:|
+| A | absolute | 0.0029333333 | 1977.8 | 19.8053 |
+| A | sqrt-relative | 0.0029333333 | 1362.2 | 13.6013 |
+| A | relative | 0.0029733333 | 1498.2 | 15.0020 |
+| B | absolute | 0.0024266667 | 1660.0 | 16.6040 |
+| B | sqrt-relative | 0.0024133333 | 1382.8 | 13.8047 |
+| B | relative | 0.0023600000 | 984.0 | 9.8053 |
+
+该 collection 已满足公共评价的执行资格，但目前还不能回答 workload B 或哪种 geometry
+更好。下一个独立小步骤：以完整 collection SHA
+`67f3ebbc...b69e44a` 显式确认 evaluator；它将先重新审计 30 张表和四组查询身份，
+然后才读取固定 reference，生成 47,100 条 query-seed error 和冻结门禁结论。
+
+### 历史暂停点：test query-workload A/B 正式执行服务器重新冻结完成（2026-08-18）
+
+> 用户已确认后续改在当前有空闲资源的服务器执行。本步只在看到正式结果前重新绑定
+> execution server、重算 protocol SHA 并增加运行时硬校验；没有启动正式 30 cases，
+> 没有读取 collection 结果或 raw reference，没有 push 或操作 PR。
+
+正式 collector protocol 从：
+
+```text
+old server    root@10.8.176.53:6006
+old SHA       e40317be5a21c0c7a59928865c31cb56071b78e1206dba00bcb574b3cd3b198a
+```
+
+结果前重新冻结为：
+
+```text
+new server    linyao-system
+new SHA       5b27cc3ddd5b39829a584f1cdc06b961ef50204840d957481444297023a18f0f
+```
+
+规范化 manifest 差异审计证明唯一变化是
+`execution_concurrency.server`：把新 manifest 的该字段临时还原为旧 SSH target 后，
+SHA 精确重建为旧 `e40317...b198a`。workload A/B 身份、target vector、30-case
+矩阵、seeds 318–322、全部 generator 参数、公共评价身份和冻结门禁均未改变。
+
+正式 runner 现在除要求 clean worktree、`CUDA_VISIBLE_DEVICES` 为空外，还会要求
+`platform.node() == "linyao-system"`，并把 hostname 写入 shard environment；因此
+新 protocol 不能被误拿到其他服务器执行。结果前协议文档、身份 artifact 和附答案
+workload 仍保留原 SHA：
+
+```text
+protocol doc       291c591ba5408e046005b24122bfe602bf8a97f7c175ee45e59f81daf96b44b6
+identity artifact  a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+answered workload  708afe2863b797fae714c39699457dd91ac97a9dbcd35b900d46fcf6c01e9e14
+```
+
+这样避免因只改运行位置而重写已经结果盲冻结、随后附答案的科学输入；服务器变更由新
+collector manifest 和 Git 历史单独审计。collector/evaluator plan 均显示新 SHA、
+`server=linyao-system`、`generation_started=false`。Ruff 通过；使用当前完整运行环境
+的相关测试为 `32 passed`，包含错误 hostname 拒绝和正确 hostname 记录测试。正式
+output namespace 仍不存在。
+
+下一个独立小步骤：在 `linyao-system` 做正式运行前只读资源/环境预检，然后按冻结
+SHA `5b27cc...a18f0f` 启动 5 个 seed shard；每个 shard 内六臂串行，全部 30 cases
+完成后再聚合。正式运行期间不修改协议、不增加 seed、不读取离线评价结果。
+
+### 历史暂停点：test query-workload A/B 真实核心与一轮闭环验证通过（2026-08-18）
+
+> 本步在用户确认当前服务器已有空闲资源后，只做非正式轻量验证；没有启动
+> 6000-round 的正式 30-case 采集，没有保留任何生成表或评价结果，没有 push 或
+> 操作 PR。
+
+验证环境为当前 `linyao-system`（2×RTX 4090）；冻结 generator 仍按 NumPy/CPU
+执行，没有改走 GPU。完整依赖环境默认指向另一个 worktree，因此验证时显式设置
+`PYTHONPATH=src:.`，确认加载的是当前提交 `ec14608a9073a5cf756af25d12fec98611431c86`
+下的 `src/table_diffevo`。
+
+真实核心算法的一轮 4-way 定向测试实际通过：workload B 的答案和 target shape 均为
+50，阶数构成为 `30×2-way + 15×3-way + 5×4-way`，5 条 4-way 进入完整
+objective；`factorized_gibbs_factor_count=0`，证明关闭 Gibbs 时
+`factorized_gibbs_max_order=3` 没有截断 measured 4-way。使用完整运行环境重跑相关
+身份、物化、collector、evaluator 测试，结果为 `30 passed`，无 skip。
+
+随后在仓库 `outputs/` 下的忽略临时目录运行 `30 cases × 1 round` 非正式结构冒烟：
+
+```text
+cases                         30/30
+rounds per case               1
+termination                   30 resource_cap_reached（预期）
+paired seed shards            5/5
+B cases with full 4-way path  15/15
+terminal table SHA audit      30/30
+query-seed error rows         47,100
+evaluation groups             25 / 521 / 512 / 512
+scientific gates              全部 inconclusive_resource_cap（预期）
+temporary artifacts           已自动清理
+```
+
+该冒烟只证明真实 generation、六臂配对、terminal table 读取、公共查询附答案、分阶
+汇总和资源上限门禁可以贯通，不是科学实验结果。评价仍严格先冻结查询身份，再读取固定
+reference；没有消耗隐私预算。正式 output namespace
+`outputs/issue53_test_query_workload_ab_v1` 仍不存在。
+
+注意：当前冻结 protocol 的执行服务器字段仍是此前指定的 A6000
+`root@10.8.176.53:6006`，而本次轻量验证按用户最新指示在 `linyao-system` 完成。
+下一个独立小步骤若要在当前服务器正式跑，应先在看到正式结果前把 execution server
+元数据改为 `linyao-system`、重算并冻结 protocol SHA；若保持现有 protocol，则正式
+30 cases 应回到原 A6000 执行。
+
+### 历史暂停点：test query-workload A/B 采集器与评估器实现完成（2026-08-18）
+
+> 本步只实现已冻结 30-case 实验的 collector、evaluator 和回归测试，并执行
+> plan/本地测试；没有启动 seeds 318–322 的正式生成，没有产生正式结果，没有
+> push 或操作 PR。
+
+新增入口：
+
+```text
+collector  scripts/run_issue53_test_query_workload_ab.py
+evaluator  scripts/evaluate_issue53_test_query_workload_ab.py
+output     outputs/issue53_test_query_workload_ab_v1
+protocol   e40317be5a21c0c7a59928865c31cb56071b78e1206dba00bcb574b3cd3b198a
+```
+
+collector 固定执行 `A/B × absolute/sqrt_relative/relative × seeds 318–322 =
+30 cases`；每个 seed 的六个 case 串行且强制使用相同初始表和 RNG 状态。A/B
+分别审计为 `25×1-way + 20×2-way + 5×3-way` 和
+`30×2-way + 15×3-way + 5×4-way`。B 的完整 50 条 query/target 不截断传入
+objective 和 residual direction，运行后还会用全部 50 条查询独立重算 terminal
+loss/L1 并与 early-stop 末次指标对齐。`factorized_gibbs_sweeps=0` 且 compiled
+workload 关闭，因此 `factorized_gibbs_max_order=3` 只属于未启用的 Gibbs 路径，
+不会排除 B 的 5 条 4-way；正式结果还会记录并断言该路径事实。
+
+evaluator 先冻结并审计四组公共查询身份，再读取固定 reference 附答案；它会逐项
+校验 30 个 terminal table 的身份和 SHA，输出 47,100 条 query-seed error。报告先在
+每种 geometry 内比较 workload `B-A`，再只在 B 内比较
+`sqrt_relative/relative - absolute`；521 条 common unseen 2-way、512 条 fixed
+held-out 3-way、512 条 fixed held-out 4-way 分开判定，25 条 1-way 只作 safety
+门禁，不做跨组 aggregate。资源上限或未完成 case 只会使相关比较无效，不会被误判
+为科学结论。
+
+collector/evaluator 的 plan 均已验证为只展示冻结协议：前者不读取输入、结果或 raw
+reference，后者不读取 collection 或 raw reference，且二者都明确
+`generation_started=false`。冻结输入与公共评价身份重新审计一致。Ruff 通过；相关
+身份、物化、collector、evaluator 测试合计 `29 passed, 1 skipped`。唯一跳过项是真实
+核心算法的一轮 4-way 冒烟测试，因为当前本机轻量测试环境缺少完整运行依赖；fake
+runtime 测试已证明 50 条 target 和 5 条 4-way 不被截断。
+
+下一个独立小步骤：到用户指定的 A6000 服务器做轻量验证，先让真实核心算法的一轮
+4-way 冒烟测试实际通过，并验证一个非正式短 shard 的采集/聚合/评价闭环；确认路径、
+依赖和输出审计都正确后，再单独决定是否启动 30 个正式 case。
+
+### 历史暂停点：test 30/15/5 workload B 答案附加与身份审计完成（2026-08-18）
+
+> 本步在上一步的查询身份和实验协议已冻结后，读取固定 SHA 的
+> `test_300x10.csv`，仅为 workload B 的 50 条查询附加精确计数答案。没有根据
+> 答案替换、重排或删除查询，没有实现 runner 或运行生成实验，也没有
+> push 或操作 PR。
+
+附答案入口与产物：
+
+```text
+materializer       scripts/materialize_issue53_test_query_workload_b.py
+identity input     configs/test_300x10/issue53_query_workload_ab_v1.json
+identity input SHA a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+raw reference      data/test_300x10/test_300x10.csv
+reference SHA      c211133455c4fdd19f01f34eca511cf089667452d038265897eec15b5b84baeb
+answered workload  configs/test_300x10/measured_50query_30_15_5.json
+workload file SHA  708afe2863b797fae714c39699457dd91ac97a9dbcd35b900d46fcf6c01e9e14
+target vector SHA  e04988c93076fd0a8ce820d0635080b33d88030415b97f1b804186e017c02e3d
+```
+
+信息流审计先在禁止打开 CSV 的条件下逐字段重建 identity artifact，确认 B 为
+`30×2-way + 15×3-way + 5×4-way`、50 条无重复且无 1-way，然后才加载 raw
+reference。附答案前后 query identity 均为：
+
+```text
+602d8b7fcbe3f56a3abf62ffe4e2b6b3638578f47ea9fe346a18583923969af1
+```
+
+为防止新评价器的类型对齐或边界语义有误，先用它重算旧 workload A 的 50 条已知
+答案，`50/50` 逐条精确一致；再用正式 `table_diffevo.queries.evaluate_table` 独立
+重算 B，也是 `50/50` 精确一致。这证明物化的 target vector 与后续 generator
+实际使用的查询语义一致。
+
+结果盲选取的 25 条新查询中，10 条 2-way 计数均大于 0；10 条 3-way 中
+N3_01 计数为 0；5 条 4-way 中 N4_01、N4_05 计数为 0。这 3 条保留，因为按
+答案过滤零计数会破坏结果前冻结；relative/sqrt-relative 仍使用已冻结 floor=8
+处理这些 target。
+
+新增附答案回归与上一步身份回归合计 `13 passed`；Ruff 通过，formal
+workload 可用固定 reference 逐字段确定性重建，`git diff --check` 通过。正式文件
+正确记录 `raw_reference_data_accessed=true`、`selection_used_reference_answers=false`、
+`privacy_budget_consumed=false`。
+
+下一个独立小步骤：基于已冻结 A/B 输入和 30-case 协议实现 collector、公共分阶
+evaluator 及其测试；只做 plan/smoke 级本地验证，不启动 seeds 318–322 正式实验。
+
+### 历史暂停点：test 30/15/5 workload A/B 结果前身份与协议冻结完成（2026-08-18）
+
+> 本步在新 namespace 下用 SHA-256 排序结果盲选定 10 条新 2-way、10 条新
+> 3-way 和 5 条新 4-way，并冻结 A/B 公共评价身份与 30-case 协议。没有读取
+> 原始 reference CSV，没有为 B 附加 query answers，没有实现 runner 或运行实验，
+> 也没有 push 或操作 PR。
+
+冻结入口与产物：
+
+```text
+protocol doc       docs/设计/Issue53_test查询workload_AB结果前冻结协议.md
+protocol doc SHA   291c591ba5408e046005b24122bfe602bf8a97f7c175ee45e59f81daf96b44b6
+freezer            scripts/freeze_issue53_test_query_workload_ab.py
+identity artifact  configs/test_300x10/issue53_query_workload_ab_v1.json
+artifact SHA       a20e33923a399844275eaa53e3b008be251c81e484bbc6eacd2a3ca8a51bec36
+```
+
+冻结的 workload 身份：
+
+```text
+A = 25×1-way + 20×2-way + 5×3-way
+    cbb501f5c2f8c230b6d68d85baf40be7b17be713d41c5b97f54ac30457e90fc8
+B = 30×2-way + 15×3-way + 5×4-way
+    602d8b7fcbe3f56a3abf62ffe4e2b6b3638578f47ea9fe346a18583923969af1
+```
+
+B 保留 D01–D20/T01–T05，新增 N2_01–N2_10、N3_01–N3_10、N4_01–N4_05。
+新查询仅使用公开属性 `type/values/bins` 及查询语义选取；选择器不访问
+marginal counts、query results、raw reference、terminal errors 或稀有度。3/4-way 候选排除
+原 `issue53-heldout-v1` 各 512 条身份，且使用旧 A 结果盲重建原 held-out，没有
+用 B 改抽评价集。
+
+四个公共评价身份：
+
+| 查询组 | 数量 | query identity SHA-256 |
+|---|---:|---|
+| one-way safety | 25 | `b144694657b98b27ac92173b10d641981ce5f16e5c8ab00191b26ef5c143250c` |
+| common unseen 2-way | 521 | `fabbdc8de6aa9ebbc9d6c5bc209e3c47ee9a678c98f41bc71c168e470d9f1fc2` |
+| fixed held-out 3-way | 512 | `d70e87c3bceb1203a6df8d0d6f7279764ca5b9801467e73ed839e84589dae78a` |
+| fixed held-out 4-way | 512 | `2e0788fa13347f867d7cb9bfc5b3c63d7d5e7c9397cd44079bc071e9b04ec171` |
+
+协议冻结 `workloads=[A,B] × geometries=[absolute,sqrt_relative,relative] ×
+seeds=[318,319,320,321,322] = 30 cases`，其余参数完全复用 P=6 fresh-seed 实验。
+判定先在每个 geometry 内比 B 相对 A，然后才在 B 内比 geometry；三个 common
+unseen 组分开报告并要求 Pareto 不劣，1-way 只作安全门禁，不作跨组 aggregate。
+
+审计与验证：正式身份文件可逐字段确定性重建，SHA 一致；递归 `result`
+key 审计为 0；更改旧 query results 和 marginal counts 不改变选取身份；新 B 阶数构成、
+无 1-way、A/B 并集与公共评价集不相交、固定 held-out 与既有存档身份等价均有
+定向测试。结果为 `7 passed`，Ruff 通过，`git diff --check` 通过。
+
+下一个独立小步骤：在不改变任何冻结身份的前提下，读取固定 raw reference 仅为
+B 的 50 条查询附加答案，物化新 measured workload 输入，再审计附答案前后的
+query identity 仍为 `602d8b...9af1`。本步完成后再进入 collector/evaluator 实现。
+
+### 历史暂停点：test 30/15/5 generation workload A/B 候选空间审计完成（2026-08-18）
+
+> 用户已确认把新 generation workload 固定为 50 条：30 条 2-way、15 条
+> 3-way、5 条 4-way；不在 measured generation workload 中放 1-way。本步只建立
+> 本地分支并审计公开候选空间，没有生成新查询、没有读取原始 reference CSV、
+> 没有运行实验，也没有 push 或操作 PR。
+
+当前本地分支：
+
+```text
+branch   research/issue53-query-workload-ab
+base     88853c29a9cc1f571a06a2537e57cddcca665628
+remote   未创建，未 push
+```
+
+对照组 A 保留旧 `measured_50query.json`：25 条 1-way + 20 条 2-way + 5 条
+3-way。新组 B 保留旧 D01–D20 和 T01–T05，再用 10 条新 2-way、10 条新
+3-way、5 条新 4-way 替换 S01–S25，因而恰好是 `30 + 15 + 5 = 50`。A/B 仍使用
+同一份 1-way `init_marginals.json` 初始化；改变的只是后续 measured generation workload。
+
+结果盲审计结论：
+
+| 阶数 | 公开标准 cell 总数 | 已保留旧查询精确重叠 | 固定 held-out 排除 | B 可选新查询 |
+|---|---:|---:|---:|---:|
+| 2-way | 548 | 17 | 0 | 531 |
+| 3-way | 5,056 | 5 | 512 | 4,539 |
+| 4-way | 30,450 | 0 | 512 | 29,938 |
+
+旧 20 条 2-way 中 D04、D05、D07 使用合并/单边年龄区间条件，不是公开边际网格中
+的单个标准 cell；它们仍保留在 B，但去重必须使用语义指纹，不能只看 `type`
+或 ID。新 2/3/4-way 只能从公开 `init_marginals` 定义的 cell 中用新 namespace
+的 SHA-256 排序确定性选取；不许用 target count、稀有度、旧 terminal error 或实验结果
+挑查询。3/4-way 还必须排除已存档的各 512 条 held-out 身份；不能用 B 重建
+held-out，否则评价集会跟着训练集变化。
+
+选完 10 条新 2-way 后，A/B 公共未见 2-way 评价集将固定为 521 条；另外分开
+报告 25 条 1-way safety、既有 512 条 held-out 3-way 和 512 条 held-out 4-way，不做
+跨组 aggregate。
+
+GitHub 状态更正：PR #64 已按用户要求关闭，未合并；PR #63 仍保持原状态并
+等待他人审查。下方原“PR #64 等待审查”板块仅保留为历史实验记录，其 OPEN
+描述已被本板块取代。
+
+下一个独立小步骤：先写并测试结果前查询身份冻结器/协议，只产生不含
+`result` 的 30/15/5 身份和 A/B 公共评价身份；审计通过后才可以读取 reference
+附答案，再进入 runner 实现。
+
+### 历史暂停点：test 残差几何 fresh-seed 确认完成，stacked PR #64 后已关闭（2026-08-18）
+
+> 本步按结果前协议在用户指定的 A6000 服务器完成 seed 313–317、三种 residual geometry 的 15 条
+> fresh 轨迹，再按 measured 1-way、全部未测量 2-way、冻结 held-out 3/4-way 分阶评价。没有按结果
+> 增加 seed、修改门禁、扫描 floor/gamma/rho 或触碰等待外部审查的 PR #63 分支。
+
+冻结与产物身份：
+
+```text
+protocol commit       abf676e93b07837ced96ac4a311a5b401364770d
+collection commit     9f1873c1ebf7466e781687b7a17ea028f310b9cb
+collection protocol   9708f994c6c479b8e08c75cc662d0f79ec3ab5ec39cd9322e2ba5e8b7b30373b
+collection report     98e1b09bea3691d2c1d10b1ff6fc8830f4f5782b6f7d3b6ef49060dc82e98da8
+evaluation commit     f7775dde2c6fdef67e0a9ed7fbb4ac21f279b8d3
+evaluation report     54f586462c13e23a285d91d238d25246c8e7afd86016b8ee82ff6704bc5fe60f
+query-seed CSV        1f158acd491add3164fb93ab0219d1323761cd7c12ec2f5c09b72d047a77466b
+```
+
+15/15 cases 全部 `early_stopped`，无资源上限结束。正式采集使用 NumPy、5 个 seed shard 并行、
+shard 内三臂串行；`CUDA_VISIBLE_DEVICES` 为空，未触碰 GPU 3 的既有约 34 GiB 任务。远端 36 个
+collection 文件回收到本地后逐项 SHA-256 一致。评价先审计查询身份，再读取固定 reference；没有生成
+新表或消耗隐私预算，也没有跨组 aggregate/canonical selection。
+
+五 seed 平均绝对计数误差：
+
+| 查询组 | 数量 | absolute | sqrt | relative | 最低 |
+|---|---:|---:|---:|---:|---|
+| measured 1-way | 25 | **0.8000** | 0.9200 | 1.0080 | absolute |
+| measured 2-way | 20 | **0.8600** | 0.8700 | 1.0200 | absolute |
+| measured 3-way | 5 | 1.0000 | 1.1200 | **0.8000** | relative，仅描述 |
+| all unmeasured 2-way | 531 | **6.7910** | 7.0177 | 7.4614 | absolute |
+| frozen held-out 3-way | 512 | **3.9477** | 4.1637 | 4.4484 | absolute |
+| frozen held-out 4-way | 512 | **1.6930** | 1.7441 | 1.8082 | absolute |
+
+sqrt 相对 absolute 的 primary delta 为 `+0.2267/+0.2160/+0.0512`，paired-seed 更好数为
+`1/5、0/5、1/5`；measured 1-way delta `+0.1200`，0/5 更好、1/5 平局。relative 对应 primary
+delta 为 `+0.6704/+0.5008/+0.1152`，更好数 `1/5、1/5、2/5`；1-way delta `+0.2080`。
+两候选的 unseen/safety 门禁都失败，总分类为 `no_unified_test_candidate_under_frozen_rule`。
+
+这说明平方根方法确实比 relative 更接近 absolute，但不是 test 的统一赢家；seed 310–312 上 sqrt
+在未测量 2-way/4-way 的微小改善没有 fresh 复现。原 25 条 measured 1-way 会放大差异，却不是失败
+唯一原因，因为三个 primary 未测量组也全部偏 absolute。按冻结规则保留 absolute 作为 test 参考，
+停止调 residual 新公式；nltcs 既有 Pareto 结论保持不变。
+
+评价归档时发现首次报告错误继承 plan-only mode。提交 `f7775dd` 仅修元数据并允许 collection/evaluation
+commit 分开审计；同一 collection 重放后 CSV SHA 不变，删除 mode/evaluation commit 后新旧 JSON
+逐位一致，科学结果没有变化。完整说明见
+`docs/实验结果/Issue53_test残差几何fresh-seed确认结果.md`。
+
+当前验证：相关回归 `42 passed`；confirmation 定向 12 tests 在本机/A6000 均通过；研究新增脚本与
+测试 Ruff 0.16.3 通过；24,075 行 CSV 独立重聚合与报告一致。
+
+已创建依赖 PR #63 的 stacked PR：
+
+```text
+PR       #64
+title    研究：Issue #53 残差几何分阶诊断与 fresh-seed 确认
+base     research/issue-53-stage2-v2-evidence （PR #63 head）
+head     research/issue53-sqrt-residual-earlystop
+url      https://github.com/Chuhan722/table-diffusion/pull/64
+state    OPEN，非 Draft
+merge    CLEAN（创建后回读时无 CI check 回报）
+```
+
+PR 正文明确了依赖/review 顺序、审计 SHA、元数据勘误和“不改默认 residual、不作跨数据 canonical、
+不自行 review/merge”的边界。当前停在等待他人审查，不对 #63/#64 做合并动作。研究上的下一步是在
+新板块中先冻结跨 workload 的分阶质量—计算门禁，再进入 donor/alpha；不得把它顺带塞进本 PR。
+
+### 最新暂停点：test 分阶 held-out 诊断完成，排除简单 order-aware 接续（2026-08-18）
+
+> 用户确认先核对 AIM/Private-GSD 的 1-way 语义，再要求检查当前 test 查询设计。为避免用同一批结果
+> 事后挑口径，本步先提交分阶诊断协议，再实现并在干净提交上只读评价既有 9 张
+> `test_300x10/terminal_current.csv`；没有重新生成、修改早停/残差参数或消耗隐私预算。
+
+冻结入口：
+
+```text
+protocol doc     docs/设计/Issue53_test分阶heldout只读诊断协议.md
+protocol commit  d427db68b927375a58e87ea8b172476e1ed5dcbd
+analysis script  scripts/analyze_issue53_test_ordered_heldout.py
+analysis commit  219bf74ea753823058c0b2842d7c90a543d47079
+source report    241618e80cce3549e2626fc668467e4c9029be968858e09a2dffb029716de143
+result report    cb88a5bbbd6de494fd97f60ca3984dfe53fe714379978137ae69436773feff24
+```
+
+查询身份在读取 raw reference 前冻结：公开标准 2-way cell 共 548 条，与 measured 精确重叠 17 条；
+其余 531 条全部纳入，不按 target/终态误差抽样。既有 result-blind 3/4-way held-out 身份确定性重建
+一致，各 512 条、与 measured 重叠为 0。六组始终分开报告，没有总体加权分。该离线诊断随后读取
+原表为 531 条查询附答案，因此报告正确标记 `raw_reference_data_accessed=true`。
+
+三 seed 平均绝对计数误差：
+
+| 查询组 | 数量 | absolute | sqrt | relative | 最低 |
+|---|---:|---:|---:|---:|---|
+| measured 1-way | 25 | **0.6933** | 0.7333 | 1.3733 | absolute |
+| measured 2-way | 20 | **0.8500** | 1.0833 | 0.9000 | absolute |
+| measured 3-way | 5 | 0.9333 | 0.9333 | **0.8000** | relative |
+| all unmeasured 2-way | 531 | 7.0929 | **6.8763** | 7.1620 | sqrt |
+| frozen held-out 3-way | 512 | **4.1296** | 4.2637 | 4.2435 | absolute |
+| frozen held-out 4-way | 512 | 1.7760 | **1.7650** | 1.8737 | sqrt |
+
+关键判断：原 50-query aggregate 确实因 25 条 marginal 1-way 放大 relative 劣势；但 relative 相对
+absolute 在全部未测量 2-way、held-out 3-way、held-out 4-way 的均值仍分别差 0.0691、0.1139、
+0.0977 count/query，三个组都是 1/3 paired seed 更好、2/3 更差。因此问题不只是 test 查询设计，
+但差值很小、seed 方向仅 2:1，不能声称稳定显著劣化。
+
+sqrt 相对 absolute 在未测量 2-way 改善 0.2166、4-way 改善 0.0111 count/query，在 held-out 3-way
+变差 0.1341；measured 1-way 只差 0.04，但 measured 2-way 差 0.2333。它是 mixed 中间点，不是统一
+赢家。完整结果见 `docs/实验结果/Issue53_test分阶heldout只读诊断结果.md`；实现及既有相关回归
+`30 passed`，Ruff 通过，CSV 独立重聚合与报告一致。
+
+下一步不实现 `order_aware_relative`，因为其 order>=2 路径正是当前三个未测量组都未胜出的 relative；
+也不扫 gamma/floor 或按 310–312 调权重。若继续 residual 板块，先结果前冻结 fresh-seed 的 test 专用
+复核，仍将未测量 2/3/4-way 分开，检查这些很小的 2:1 方向能否复现；若仍 mixed，则停止寻找单一
+跨数据 residual，先冻结 workload 级质量—成本选择门禁，再进入 donor/alpha。
+
+### 最新暂停点：残差几何查询级诊断完成，下一候选转为一阶边缘保护（2026-08-18）
+
+> 本工作在独立 worktree/分支 `research/issue53-sqrt-residual-earlystop` 上进行，不修改等待外部审查的
+> PR #63 分支。用户授权直接比较 absolute、平方根中间方法和 relative 在 test/nltcs 的 P=6 早停
+> terminal-current 结果；18 组矩阵已在 A6000 上全部完成并聚合。
+
+新增残差几何：
+
+```text
+sqrt_relative
+  = sign(raw) * magnitude / sqrt(max(target, 8)) / n_records
+```
+
+它固定在 absolute（不按 target 标准化）与 relative（完整除以 target）之间；不暴露指数、不扫描
+gamma。噪声容忍仍先于标准化，三种几何零点相同，absolute/relative 旧路径不改默认语义。
+
+冻结 development 矩阵：
+
+```text
+datasets = [test_300x10, nltcs]
+arms     = [absolute, sqrt_relative, relative]
+seeds    = [310, 311, 312]
+cases    = 18
+P        = 6 natural-work ticks
+C        = 6000 rounds / 6000 candidates
+protocol SHA = 7e7b5e08f9d934031257cbd98b6a857f7ba1dcb4cf1f97077d48f781a4e2585f
+```
+
+除 seed/geometry 外完全复用 PR #63 两数据 smoke 参数：rho=0.01、scale-invariant donor、fixed
+alpha=16、direction initial_rms、eta=0.5、mu=0.01、Gibbs sweeps=0、tol=inf、无重试、
+terminal-current。每个数据只描述三 seed 平均 terminal measured L1、配对胜数、loss、rounds/work 和
+A/B/C；不读取原始 reference table，不形成 canonical/held-out/收敛结论，不按结果调参。
+
+固定入口和协议：
+
+```text
+scripts/compare_issue53_residual_geometry_earlystop.py
+tests/test_compare_issue53_residual_geometry_earlystop.py
+docs/设计/Issue53_平方根残差P6早停两数据三臂对比协议.md
+```
+
+结果前验证：新增/相关定向 `47 passed`；本机轻量环境可收集的全仓回归 `1577 passed, 7 skipped`，
+仅有 2 个既有 warning。本机环境缺少 matplotlib 的 6 个旧 Stage2 分析测试在 A6000 完整环境中补跑；
+冻结提交 `fe8fb797a718bf0e9a89668d46fbd5726c1c3082` 的远端全仓结果为 `1636 passed, 2 warnings`。
+
+正式运行使用 `root@10.8.176.53:6006` 的 RTX A6000 GPU 0，只暴露一张 GPU、一个 worker，三个 seed
+shard 串行；GPU 3 的既有任务未触碰。18/18 cases 均为 `early_stopped`，没有资源上限结束：
+
+| 数据 | 残差 | mean terminal L1 | 配对胜数 | mean work | mean rounds |
+|---|---|---:|---:|---:|---:|
+| `test_300x10` | `absolute` | 0.0026000 | 3/3 | 13.3356 | 1319.7 |
+| `test_300x10` | `sqrt_relative` | 0.0029778 | 0/3 | 14.0044 | 1396.0 |
+| `test_300x10` | `relative` | 0.0037556 | 0/3 | 15.6689 | 1550.0 |
+| `nltcs` | `absolute` | 0.0011321723 | 0/3 | 17.6697 | 1768.7 |
+| `nltcs` | `sqrt_relative` | 0.0004930488 | 0/3 | 15.3349 | 1534.3 |
+| `nltcs` | `relative` | 0.0003474679 | 3/3 | 23.0065 | 2301.3 |
+
+`test_300x10` 上 absolute 同时以 L1 和 work 支配另外两臂：sqrt 的平均 L1/work 分别高 14.53%/
+5.02%。`nltcs` 上 sqrt 同时以 L1 和 work 支配 absolute（分别低 56.45%/13.21%）；relative 比
+sqrt 的 L1 再低 29.53%，但 work 高 50.03%，二者构成 Pareto 取舍。三 seed 的胜者在两个数据上
+都是 3/3 一致，但方向相反，因此平方根方法只是 nltcs 上有价值的中间点，不是跨数据 canonical 答案。
+
+完整结果见 `docs/实验结果/Issue53_平方根残差P6早停两数据三臂结果.md`。报告 SHA-256 为
+`241618e80cce3549e2626fc668467e4c9029be968858e09a2dffb029716de143`；本地与远端 40 个文件逐项
+SHA-256 完全一致。运行结束后远端树 clean、GPU 0 已释放，GPU 3 未触碰。
+
+已完成不需 GPU 的 query-level 只读诊断：固定读取原 18 张 terminal-current 表，形成 9459 条
+query/seed/arm error 和 1051 条 query summary；逐臂复算 overall L1 与 source report 一致。入口提交
+`deb659f3346f3dac92763a4479418b619027b061`，报告 SHA-256 为
+`876b7cc2f75ddf315800dd36853ca617fbbbbbf6258bc908709bec49c251e48b`。本分析明确为已见结果后的
+development diagnostic，没有生成新表、读取 raw reference 或消耗隐私预算。
+
+机制结论：频率不是唯一或最强分流。`test_300x10` 没有 rare query，但 25/50 条为 1-way，且 25/25
+target 与初始化 marginal count 精确一致；relative terminal 上 1-way mean abs count 从 absolute 的
+0.693 升到 1.373、exact rate 从 45.33% 降到 17.33%，该阶占 relative 总误差 60.95%。`nltcs`
+没有 1-way；relative 在 rare/medium/common × 2/3-way 六格中全部最低，并在 3003 个 query×seed
+配对中相对 absolute 为 2197 better / 145 tie / 661 worse。结构 overlap low/middle/high 不改变各数据
+方向。完整结果见 `docs/实验结果/Issue53_残差几何查询级诊断结果.md`。
+
+下一步不做频率 selector、不扫 gamma/floor、不调 rho。先结果前设计 `order_aware_relative`：1-way
+使用 absolute 恢复力、order>=2 使用 relative-f8。设计必须先解决两块原始尺度不同的问题，禁止根据
+310–312 调混合系数；无 1-way workload 必须与 relative 数值等价。设计和单测审查后，才使用 fresh
+seeds 在 test 上比较 absolute/relative/candidate；nltcs 先证明路径等价，再决定是否冗余重跑。
+
 ### 最新暂停点：PR #63 三项补强及 Python 3.9/CUDA 验证全绿，已推送并回复 reviewer（2026-08-22）
 
 > 用户授权修复上一轮只读复核发现的全部问题，并要求同步刚合并的 PR；完成检查后又明确授权提交、

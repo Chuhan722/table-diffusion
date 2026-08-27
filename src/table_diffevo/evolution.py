@@ -393,13 +393,14 @@ def run_evolution(
     residual_geometry : str, default "absolute"
         残差信号几何（Issue #57），统一作用于 fitness 与残差定向扩散的
         方向场（两者共享同一 residual 向量）。"absolute"：现状口径
-        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"relative"：
+        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"sqrt_relative"：
+        ε=(y−q)/sqrt(max(y,floor))/N（固定中间强度）；"relative"：
         ε=(y−q)/max(y,floor)/N（近似 KL 梯度，稀有查询推动力按相对误差
         放大）。只用公开 target 计数做归一化，不引入新信息流；监控
         loss（compute_loss）与接受门口径不受影响。
     residual_geometry_floor : float, default 8.0
-        relative 几何的分母下限（计数单位），防止 target 极小或为 0 时
-        分母爆炸。仅 residual_geometry="relative" 时使用，必须 > 0。
+        sqrt_relative/relative 几何的分母下限（计数单位），防止 target
+        极小或为 0 时分母爆炸。仅这两种几何使用，必须 > 0。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -534,7 +535,7 @@ def run_evolution(
             f"residual_geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
             f"得到 {residual_geometry!r}"
         )
-    if residual_geometry == "relative":
+    if residual_geometry in {"sqrt_relative", "relative"}:
         if (
             isinstance(residual_geometry_floor, bool)
             or not isinstance(
@@ -2191,7 +2192,7 @@ def run_evolution(
             "residual_geometry": residual_geometry,
             "residual_geometry_floor": (
                 float(residual_geometry_floor)
-                if residual_geometry == "relative" else None
+                if residual_geometry in {"sqrt_relative", "relative"} else None
             ),
             "record_transition_clocks": record_transition_clocks,
             "record_stationarity_trace": record_stationarity_trace,
