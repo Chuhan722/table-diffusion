@@ -1,0 +1,1288 @@
+{
+  "contract_version": "issue53-test-query-workload-ab-v1",
+  "dataset": "test_300x10",
+  "description": "Issue #53 result-blind test query-workload A/B identity freeze; contains no query answers",
+  "evaluation_groups": {
+    "common_unseen_2way": {
+      "policy": "all_548_public_cells_excluding_semantic_union_of_A_and_B",
+      "query_count": 521,
+      "query_identity_sha256": "fabbdc8de6aa9ebbc9d6c5bc209e3c47ee9a678c98f41bc71c168e470d9f1fc2"
+    },
+    "cross_group_aggregate_allowed": false,
+    "fixed_heldout_3way": {
+      "policy": "rebuild_existing_issue53_heldout_v1_without_answers",
+      "query_count": 512,
+      "query_identity_sha256": "d70e87c3bceb1203a6df8d0d6f7279764ca5b9801467e73ed839e84589dae78a"
+    },
+    "fixed_heldout_4way": {
+      "policy": "rebuild_existing_issue53_heldout_v1_without_answers",
+      "query_count": 512,
+      "query_identity_sha256": "2e0788fa13347f867d7cb9bfc5b3c63d7d5e7c9397cd44079bc071e9b04ec171"
+    },
+    "one_way_safety": {
+      "policy": "existing_25_one_way_queries_safety_only",
+      "query_count": 25,
+      "query_identity_sha256": "b144694657b98b27ac92173b10d641981ce5f16e5c8ab00191b26ef5c143250c"
+    }
+  },
+  "input_sha256": {
+    "marginals": "1e0fb0413c5ed53907a760d491fda84aec8162642a39cf8eadc577d7d1ec9ee4",
+    "workload_a": "7cccd58400a8e7bf74aed6efe01069f3142dde166b37a39cd3d18408b8cecb88"
+  },
+  "privacy_boundary": {
+    "identity_frozen_before_raw_reference_load": true,
+    "privacy_budget_consumed": false,
+    "query_answers_present": false,
+    "raw_reference_data_accessed": false
+  },
+  "protocol_doc": "docs/设计/Issue53_test查询workload_AB结果前冻结协议.md",
+  "protocol_doc_sha256": "291c591ba5408e046005b24122bfe602bf8a97f7c175ee45e59f81daf96b44b6",
+  "record_count": 300,
+  "selection": {
+    "fixed_heldout_counts": {
+      "3": 512,
+      "4": 512
+    },
+    "fixed_heldout_namespace": "issue53-heldout-v1",
+    "namespace": "issue53-test-query-workload-ab-v1",
+    "new_candidate_counts": {
+      "2": 531,
+      "3": 4539,
+      "4": 29938
+    },
+    "new_selected_counts": {
+      "2": 10,
+      "3": 10,
+      "4": 5
+    },
+    "old_public_overlap_counts": {
+      "2": 17,
+      "3": 5,
+      "4": 0
+    },
+    "public_cell_counts": {
+      "2": 548,
+      "3": 5056,
+      "4": 30450
+    },
+    "uses_domain_types_values_bins_only": true,
+    "uses_marginal_counts": false,
+    "uses_query_results": false,
+    "uses_raw_reference": false,
+    "uses_terminal_errors": false
+  },
+  "workload_a": {
+    "order_counts": {
+      "1": 25,
+      "2": 20,
+      "3": 5
+    },
+    "query_count": 50,
+    "query_identity_sha256": "cbb501f5c2f8c230b6d68d85baf40be7b17be713d41c5b97f54ac30457e90fc8",
+    "source": "configs/test_300x10/measured_50query.json"
+  },
+  "workload_b": {
+    "answer_state": "identities_only_no_result_fields",
+    "order_counts": {
+      "2": 30,
+      "3": 15,
+      "4": 5
+    },
+    "queries": [
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 25,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          }
+        ],
+        "expression": "25 <= age <= 34 AND employment == employed",
+        "fingerprint_sha256": "4290a7f8e82e735c1748777a2334425ce8feef628ff8c8b0a708f3ecdf12c104",
+        "id": "D01",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 35,
+            "operator": "between",
+            "upper": 49
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          }
+        ],
+        "expression": "35 <= age <= 49 AND employment == employed",
+        "fingerprint_sha256": "8bb2c2186253c499ccb24c8355063b646c1ab557f58198c7f7a7eca1e89d8dd1",
+        "id": "D02",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 50,
+            "operator": "between",
+            "upper": 64
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          }
+        ],
+        "expression": "50 <= age <= 64 AND employment == employed",
+        "fingerprint_sha256": "86ce150356099aeec10b86b1b0a3c6d7717e8097a451b7dbdf781450d5415513",
+        "id": "D03",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "operator": ">=",
+            "value": 65
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "retired"
+          }
+        ],
+        "expression": "age >= 65 AND employment == retired",
+        "fingerprint_sha256": "abeb861b4a7b80ddc85d887628e3c31bcf53b4946e81260a16edc891ef5cc96b",
+        "id": "D04",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 18,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "good"
+          }
+        ],
+        "expression": "18 <= age <= 34 AND health == good",
+        "fingerprint_sha256": "cf2715bff1ce4c7143e621b6ec8770aa316a33dcef5917b1b3eab4dba9875f3b",
+        "id": "D05",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 50,
+            "operator": "between",
+            "upper": 64
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "fair"
+          }
+        ],
+        "expression": "50 <= age <= 64 AND health == fair",
+        "fingerprint_sha256": "af8b511d34aacf612eb013fc0b395e6cf270348725e80f038d019b369921709f",
+        "id": "D06",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "operator": ">=",
+            "value": 65
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "poor"
+          }
+        ],
+        "expression": "age >= 65 AND health == poor",
+        "fingerprint_sha256": "cbada213a20bac9a6513809cd81ad99ce5276cd6cd963cf9176274d547a20e15",
+        "id": "D07",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "high_school"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          }
+        ],
+        "expression": "education == high_school AND income == low",
+        "fingerprint_sha256": "42031f89cdcc6afb396135134861006309ddd484442ca709b17cfb00b7f0bf3a",
+        "id": "D08",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "vocational"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "middle"
+          }
+        ],
+        "expression": "education == vocational AND income == middle",
+        "fingerprint_sha256": "ba2bb008ea5b899092515b9ab9a08f3b8ffc6856d03dfb9bd7e19940339afd81",
+        "id": "D09",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "bachelor"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          }
+        ],
+        "expression": "education == bachelor AND income == high",
+        "fingerprint_sha256": "a32e27a2dc7d062b8850fe66ce9bb4044e5b8545822433f610eb1a59c4306dd3",
+        "id": "D10",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "unemployed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          }
+        ],
+        "expression": "employment == unemployed AND income == low",
+        "fingerprint_sha256": "62d15ea220203e2943211597fa17322320ea9b18e4a5d7a960655ecf36cf9a35",
+        "id": "D11",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          }
+        ],
+        "expression": "employment == employed AND income == high",
+        "fingerprint_sha256": "90c2603caa51824627e16ecaefb17a513f4796d5a30255ab9464be3fdebbe190",
+        "id": "D12",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "retired"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "middle"
+          }
+        ],
+        "expression": "employment == retired AND income == middle",
+        "fingerprint_sha256": "30fb8e712251ff396b6d183c61ec497ab2d89a63278c7bfbd5fca51d6a8a9608",
+        "id": "D13",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "single"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "0"
+          }
+        ],
+        "expression": "marital == single AND children == 0",
+        "fingerprint_sha256": "7d9b4839151ed220409a0edca81005d19b6d6ef59031a7cb36be9d5a67dc4ae6",
+        "id": "D14",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "married"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "2_plus"
+          }
+        ],
+        "expression": "marital == married AND children == 2_plus",
+        "fingerprint_sha256": "3899cb80e640a0755b0cbebf7e58c83e7a017acccb492c13f2d8046b3ed2d226",
+        "id": "D15",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "rent"
+          }
+        ],
+        "expression": "income == low AND housing == rent",
+        "fingerprint_sha256": "812f9d9065b59cc0059dee07a29133989f332a77032770cfb658acf422b85d4a",
+        "id": "D16",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "owned"
+          }
+        ],
+        "expression": "income == high AND housing == owned",
+        "fingerprint_sha256": "cc7b43140cc36737e385e087de4e99085dae3c7d16c576531e43f4af3d48aaeb",
+        "id": "D17",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "0"
+          }
+        ],
+        "expression": "income == low AND vehicle == 0",
+        "fingerprint_sha256": "f7353e28b04a0b3c59b469560ac2488b8d627a18258a30d2c53a04f2b9bd5cdf",
+        "id": "D18",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "urban"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "rent"
+          }
+        ],
+        "expression": "region == urban AND housing == rent",
+        "fingerprint_sha256": "c1d4539b6d1fc13e40ba2c04dd7e2f3245079809d7b3a6ad8b1b144bfba87ab4",
+        "id": "D19",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "rural"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "2_plus"
+          }
+        ],
+        "expression": "region == rural AND vehicle == 2_plus",
+        "fingerprint_sha256": "0c94a6c10d074e150f58afaf6e3518ad48ef64908cf38e6d91dea94c28d2f596",
+        "id": "D20",
+        "order": 2,
+        "source": "retained_from_workload_A",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "good"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "rural"
+          }
+        ],
+        "expression": "health == good AND region == rural",
+        "fingerprint_sha256": "51c4b6cf9460cd430a6cbc3c980733b660cd8ac2d79917865e3393db5a3cf251",
+        "id": "N2_01",
+        "order": 2,
+        "selection_rank": 1,
+        "selection_sha256": "00340feba54d9b20ca88fdb61f2e33133eee1485e5829df27b6e17ac2a2fa8a1",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 25,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "bachelor"
+          }
+        ],
+        "expression": "25 <= age <= 34 AND education == bachelor",
+        "fingerprint_sha256": "74b5d8d1d30362db39510e7ea3996583c1fbcdc8e7bf6bbf86ae0822fa3f72fd",
+        "id": "N2_02",
+        "order": 2,
+        "selection_rank": 2,
+        "selection_sha256": "007ea947c3d09d4aa2a74f325ba70ec653e1d0985130368bc8ec5bb269e99dfd",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 65,
+            "operator": "between",
+            "upper": 100
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          }
+        ],
+        "expression": "65 <= age <= 100 AND income == low",
+        "fingerprint_sha256": "2caabd01bdcc15fb4d7537ca56e078a5fdcaafaef2943d78fd211b873324fe25",
+        "id": "N2_03",
+        "order": 2,
+        "selection_rank": 3,
+        "selection_sha256": "0107f267785821efa9ba836f78a07906504e75e410b2a54d2a18a5b511904068",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "fair"
+          }
+        ],
+        "expression": "employment == employed AND health == fair",
+        "fingerprint_sha256": "629a6528844970a1e0369e5f5f917e699d7ed2a0260d2c74e5ff1eb37b4ab18f",
+        "id": "N2_04",
+        "order": 2,
+        "selection_rank": 4,
+        "selection_sha256": "01a21dc9838c45c6f346ef2d5ba0828db4caea0f3b1b2af4a332b02970cf8983",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "married"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "mortgage"
+          }
+        ],
+        "expression": "marital == married AND housing == mortgage",
+        "fingerprint_sha256": "8694a5dbed415146d9927071793fa9504895c0022528f31dae40efbd1ba2dc04",
+        "id": "N2_05",
+        "order": 2,
+        "selection_rank": 5,
+        "selection_sha256": "021497ece94048d64bb8f233450f1e7ec9ca10c047f025c747dbd84748fc0e91",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "mortgage"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "0"
+          }
+        ],
+        "expression": "housing == mortgage AND vehicle == 0",
+        "fingerprint_sha256": "bfbed25c9344c194319c6d9a6cd20bf5b420eb3a7a204db41e1a9d5ac225482e",
+        "id": "N2_06",
+        "order": 2,
+        "selection_rank": 6,
+        "selection_sha256": "0279da711382a69fd883b382d86f5dede6eaccb2602da179904b8bcbf2d88095",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "vocational"
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "unemployed"
+          }
+        ],
+        "expression": "education == vocational AND employment == unemployed",
+        "fingerprint_sha256": "9e8a9eed1fea4ee7f5b0a8d4c9402812b74daf610c989e9c7a9a2fbbe6c7a970",
+        "id": "N2_07",
+        "order": 2,
+        "selection_rank": 7,
+        "selection_sha256": "036543d2c05478e21014435a7ab6f3a301690779390adab11a699e931689c622",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "unemployed"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "suburban"
+          }
+        ],
+        "expression": "employment == unemployed AND region == suburban",
+        "fingerprint_sha256": "eb77805fdf0483bdfcb4ab96e7f58d0430060ba09381f5264e7887eaaaef339d",
+        "id": "N2_08",
+        "order": 2,
+        "selection_rank": 8,
+        "selection_sha256": "04d55a18ea75ab83398ad4648d2bdacbf8d45f48119d973ea5b8881fbadcd396",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "self_employed"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "rural"
+          }
+        ],
+        "expression": "employment == self_employed AND region == rural",
+        "fingerprint_sha256": "1f5dcf869022cef274510b1bedbc0893f309cdbbde77b81da675e976560a23b4",
+        "id": "N2_09",
+        "order": 2,
+        "selection_rank": 9,
+        "selection_sha256": "0566dbcb9a272781d8423102b48ecd5bf1d0bf8977349b95946fa20ff4de37a6",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 35,
+            "operator": "between",
+            "upper": 49
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "good"
+          }
+        ],
+        "expression": "35 <= age <= 49 AND health == good",
+        "fingerprint_sha256": "3b090e3e372bc1e664d57755fe401a913797160afbdaba14b7a193cc58ee4829",
+        "id": "N2_10",
+        "order": 2,
+        "selection_rank": 10,
+        "selection_sha256": "0670bd07055f888d4914ced30c88123d8c8ec09f88643b261b5b1c6fc416f1a4",
+        "source": "result_blind_public_cell",
+        "type": "double"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 25,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "middle"
+          }
+        ],
+        "expression": "25 <= age <= 34 AND employment == employed AND income == middle",
+        "fingerprint_sha256": "1f8e9ccd4e47393c81c4f25490223e8fbfe52cd46251428ac5e3c460629632d1",
+        "id": "T01",
+        "order": 3,
+        "source": "retained_from_workload_A",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "bachelor"
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          }
+        ],
+        "expression": "education == bachelor AND employment == employed AND income == high",
+        "fingerprint_sha256": "f8ef23265bf2f00e14aff14d31c734611cb90f69423697d01bb3090ac18ba4d7",
+        "id": "T02",
+        "order": 3,
+        "source": "retained_from_workload_A",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "married"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "2_plus"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "mortgage"
+          }
+        ],
+        "expression": "marital == married AND children == 2_plus AND housing == mortgage",
+        "fingerprint_sha256": "9b9a25f6a2a57e371d264e448e8fa8775676fd3adca1a17c86eb97ba672a6c4b",
+        "id": "T03",
+        "order": 3,
+        "source": "retained_from_workload_A",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "urban"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "rent"
+          }
+        ],
+        "expression": "region == urban AND income == low AND housing == rent",
+        "fingerprint_sha256": "304a2fd8b72f6bbeee0ccf2539a13fd777cc0a522e523974171f593d7027aa31",
+        "id": "T04",
+        "order": 3,
+        "source": "retained_from_workload_A",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 50,
+            "operator": "between",
+            "upper": 64
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "fair"
+          }
+        ],
+        "expression": "50 <= age <= 64 AND employment == employed AND health == fair",
+        "fingerprint_sha256": "b0062420c1f34ef64c28c4be3e360eb0c72014f2900976ec934bedcb5ce9486e",
+        "id": "T05",
+        "order": 3,
+        "source": "retained_from_workload_A",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 18,
+            "operator": "between",
+            "upper": 24
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "retired"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "good"
+          }
+        ],
+        "expression": "18 <= age <= 24 AND employment == retired AND health == good",
+        "fingerprint_sha256": "c0bd86d4bd1720a7ee4c5cb943774aa2b6e5ef0ce60a413f5a83111ee9eb21e4",
+        "id": "N3_01",
+        "order": 3,
+        "selection_rank": 1,
+        "selection_sha256": "0012f62c0f5365f6b43a7a236d715c8ddb913445e1d083083e0a7cf5b0186402",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "2_plus"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "mortgage"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "1"
+          }
+        ],
+        "expression": "children == 2_plus AND housing == mortgage AND vehicle == 1",
+        "fingerprint_sha256": "d383dca2d1fa7b654b29dd818c0526a137044b763cc8dce052d7b463e75f2982",
+        "id": "N3_02",
+        "order": 3,
+        "selection_rank": 2,
+        "selection_sha256": "001654d3e2c6dddb728158aa0ee942b4d672615ebfc470ad288021e25a32eca2",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "postgraduate"
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "self_employed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "low"
+          }
+        ],
+        "expression": "education == postgraduate AND employment == self_employed AND income == low",
+        "fingerprint_sha256": "7e1cb4c8465ed6c2e5aa7a2971d2b9a6a8aa43c4fe04ee9f44d719c3617e8083",
+        "id": "N3_03",
+        "order": 3,
+        "selection_rank": 3,
+        "selection_sha256": "002ace4ce2a2c8ccdccef08afa205008c521ae05a7e8f838c5578142a5d5dc77",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 25,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "mortgage"
+          }
+        ],
+        "expression": "25 <= age <= 34 AND employment == employed AND housing == mortgage",
+        "fingerprint_sha256": "f7c2b93dcfbcd14c299f50f4b26a96bbdb14e5dc6eb8130f9f7a8f0917efe4f9",
+        "id": "N3_04",
+        "order": 3,
+        "selection_rank": 4,
+        "selection_sha256": "003b01f0ef43f8d74fe3741ce3701a6e00c437125b03ed66ce9d66317fd6958a",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 18,
+            "operator": "between",
+            "upper": 24
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "rent"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "0"
+          }
+        ],
+        "expression": "18 <= age <= 24 AND housing == rent AND vehicle == 0",
+        "fingerprint_sha256": "bf8f78831273a9c8fdc679abfd562a1d194c10f39d869cf7c3cb1d769a2ad397",
+        "id": "N3_05",
+        "order": 3,
+        "selection_rank": 5,
+        "selection_sha256": "004bbbeb84637a7f0373f48ad8af06aef55f657d54c1138e3ab17586a748a9fb",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "married"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "2_plus"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "fair"
+          }
+        ],
+        "expression": "marital == married AND vehicle == 2_plus AND health == fair",
+        "fingerprint_sha256": "246793a8c77356f8e15a4688b6c92710b96a3f853612de07d24797ce2467c939",
+        "id": "N3_06",
+        "order": 3,
+        "selection_rank": 6,
+        "selection_sha256": "00507f316e2c016686339e4154f9ec10f4a7dcd289cb4701e58ac6b6b3fba0ea",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 50,
+            "operator": "between",
+            "upper": 64
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "retired"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "fair"
+          }
+        ],
+        "expression": "50 <= age <= 64 AND employment == retired AND health == fair",
+        "fingerprint_sha256": "985df5b95b00904a1d114cc2fe379d4246c4e6451142a7ed32db678f26903595",
+        "id": "N3_07",
+        "order": 3,
+        "selection_rank": 7,
+        "selection_sha256": "0066006e74028e1670a4ff6042cfac3e8d793a14099c291f309a914ba12ab9b3",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "vocational"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "2_plus"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "poor"
+          }
+        ],
+        "expression": "education == vocational AND children == 2_plus AND health == poor",
+        "fingerprint_sha256": "a85ee6b656f7efb97e4b1a6ceba1bd6192d760853dd01c4ddc1ca303aa366612",
+        "id": "N3_08",
+        "order": 3,
+        "selection_rank": 8,
+        "selection_sha256": "006a1bd0209c64bd108eb5b2999d61dfdc819b5abe9185088acdf94777e17798",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 25,
+            "operator": "between",
+            "upper": 34
+          },
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "postgraduate"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "suburban"
+          }
+        ],
+        "expression": "25 <= age <= 34 AND education == postgraduate AND region == suburban",
+        "fingerprint_sha256": "a99978dd302b12e412a76b44a089fd0809e45ef837629baa0746994e0e6cfb1a",
+        "id": "N3_09",
+        "order": 3,
+        "selection_rank": 9,
+        "selection_sha256": "0071e8c1cc77a146741dfa68c25a6e8708a0218816847f69bdbcc2a4ba45d146",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          },
+          {
+            "attribute": "marital",
+            "operator": "==",
+            "value": "separated"
+          }
+        ],
+        "expression": "employment == employed AND income == high AND marital == separated",
+        "fingerprint_sha256": "b443d0f937255c842213718355b9d875a4885dfc4eb9a09c19a288f0c90b2ba4",
+        "id": "N3_10",
+        "order": 3,
+        "selection_rank": 10,
+        "selection_sha256": "0075790f7606fd75a9c2efc6dad283a880a72a12e3c681beb8d1d1dc212bba36",
+        "source": "result_blind_public_cell",
+        "type": "triple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 18,
+            "operator": "between",
+            "upper": 24
+          },
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "bachelor"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "middle"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "1"
+          }
+        ],
+        "expression": "18 <= age <= 24 AND education == bachelor AND income == middle AND children == 1",
+        "fingerprint_sha256": "a5c2c929b2305a6b759b814ce47f5cd02a4a5b20950cde0cc6294824117afa58",
+        "id": "N4_01",
+        "order": 4,
+        "selection_rank": 1,
+        "selection_sha256": "0000632afccbd7fc3aef4c4bd2e264d369b0da0bea2b45286f7f5e509775e71a",
+        "source": "result_blind_public_cell",
+        "type": "quadruple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "age",
+            "lower": 35,
+            "operator": "between",
+            "upper": 49
+          },
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "high_school"
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "self_employed"
+          },
+          {
+            "attribute": "children",
+            "operator": "==",
+            "value": "2_plus"
+          }
+        ],
+        "expression": "35 <= age <= 49 AND education == high_school AND employment == self_employed AND children == 2_plus",
+        "fingerprint_sha256": "b3d3bfcfcc46c3d8758b083c4f81c525d0252e02879e8ea082d0681e9bea8d8c",
+        "id": "N4_02",
+        "order": 4,
+        "selection_rank": 2,
+        "selection_sha256": "0001bac768e2fec82d3ba3ae2b267dcfd5ebcd7623db7fc1a5fcecae09c14356",
+        "source": "result_blind_public_cell",
+        "type": "quadruple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "vocational"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "owned"
+          },
+          {
+            "attribute": "health",
+            "operator": "==",
+            "value": "good"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "rural"
+          }
+        ],
+        "expression": "education == vocational AND housing == owned AND health == good AND region == rural",
+        "fingerprint_sha256": "9f9d2137c9c43ed8ef6b4bc85f89e18a5c4ec055e682c7c54b09ca34ad9842ec",
+        "id": "N4_03",
+        "order": 4,
+        "selection_rank": 3,
+        "selection_sha256": "000673352e1824e78a63b041bfee1f59e38dd9ddd7d7b2c1e426bc7c8791173f",
+        "source": "result_blind_public_cell",
+        "type": "quadruple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "education",
+            "operator": "==",
+            "value": "bachelor"
+          },
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "employed"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "rent"
+          },
+          {
+            "attribute": "vehicle",
+            "operator": "==",
+            "value": "0"
+          }
+        ],
+        "expression": "education == bachelor AND employment == employed AND housing == rent AND vehicle == 0",
+        "fingerprint_sha256": "4f757581e7ac4c408508b5b15849868851cf54711dc7a51d51c5c5b731587b84",
+        "id": "N4_04",
+        "order": 4,
+        "selection_rank": 4,
+        "selection_sha256": "0007144646fb971a9c425bd5ca7a4978368d502e6b72ce6507e5202f360b450e",
+        "source": "result_blind_public_cell",
+        "type": "quadruple"
+      },
+      {
+        "conditions": [
+          {
+            "attribute": "employment",
+            "operator": "==",
+            "value": "retired"
+          },
+          {
+            "attribute": "income",
+            "operator": "==",
+            "value": "high"
+          },
+          {
+            "attribute": "housing",
+            "operator": "==",
+            "value": "owned"
+          },
+          {
+            "attribute": "region",
+            "operator": "==",
+            "value": "rural"
+          }
+        ],
+        "expression": "employment == retired AND income == high AND housing == owned AND region == rural",
+        "fingerprint_sha256": "b165a93d6884f2834c4b7913cc8461800dd013b137f16ca82da5f69a1441ee3b",
+        "id": "N4_05",
+        "order": 4,
+        "selection_rank": 5,
+        "selection_sha256": "00086a3bf903f44021cb97fdacb2540e691ea8e2e285f69fa4a5f044938be5b9",
+        "source": "result_blind_public_cell",
+        "type": "quadruple"
+      }
+    ],
+    "query_count": 50,
+    "query_identity_sha256": "602d8b7fcbe3f56a3abf62ffe4e2b6b3638578f47ea9fe346a18583923969af1"
+  }
+}

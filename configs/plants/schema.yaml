@@ -1,0 +1,415 @@
+attributes:
+- name: attr_1
+  type: categorical
+  description: attr_1
+  values:
+  - 0
+  - 1
+- name: attr_2
+  type: categorical
+  description: attr_2
+  values:
+  - 0
+  - 1
+- name: attr_3
+  type: categorical
+  description: attr_3
+  values:
+  - 0
+  - 1
+- name: attr_4
+  type: categorical
+  description: attr_4
+  values:
+  - 0
+  - 1
+- name: attr_5
+  type: categorical
+  description: attr_5
+  values:
+  - 0
+  - 1
+- name: attr_6
+  type: categorical
+  description: attr_6
+  values:
+  - 0
+  - 1
+- name: attr_7
+  type: categorical
+  description: attr_7
+  values:
+  - 0
+  - 1
+- name: attr_8
+  type: categorical
+  description: attr_8
+  values:
+  - 0
+  - 1
+- name: attr_9
+  type: categorical
+  description: attr_9
+  values:
+  - 0
+  - 1
+- name: attr_10
+  type: categorical
+  description: attr_10
+  values:
+  - 0
+  - 1
+- name: attr_11
+  type: categorical
+  description: attr_11
+  values:
+  - 0
+  - 1
+- name: attr_12
+  type: categorical
+  description: attr_12
+  values:
+  - 0
+  - 1
+- name: attr_13
+  type: categorical
+  description: attr_13
+  values:
+  - 0
+  - 1
+- name: attr_14
+  type: categorical
+  description: attr_14
+  values:
+  - 0
+  - 1
+- name: attr_15
+  type: categorical
+  description: attr_15
+  values:
+  - 0
+  - 1
+- name: attr_16
+  type: categorical
+  description: attr_16
+  values:
+  - 0
+  - 1
+- name: attr_17
+  type: categorical
+  description: attr_17
+  values:
+  - 0
+  - 1
+- name: attr_18
+  type: categorical
+  description: attr_18
+  values:
+  - 0
+  - 1
+- name: attr_19
+  type: categorical
+  description: attr_19
+  values:
+  - 0
+  - 1
+- name: attr_20
+  type: categorical
+  description: attr_20
+  values:
+  - 0
+  - 1
+- name: attr_21
+  type: categorical
+  description: attr_21
+  values:
+  - 0
+  - 1
+- name: attr_22
+  type: categorical
+  description: attr_22
+  values:
+  - 0
+  - 1
+- name: attr_23
+  type: categorical
+  description: attr_23
+  values:
+  - 0
+  - 1
+- name: attr_24
+  type: categorical
+  description: attr_24
+  values:
+  - 0
+  - 1
+- name: attr_25
+  type: categorical
+  description: attr_25
+  values:
+  - 0
+  - 1
+- name: attr_26
+  type: categorical
+  description: attr_26
+  values:
+  - 0
+  - 1
+- name: attr_27
+  type: categorical
+  description: attr_27
+  values:
+  - 0
+  - 1
+- name: attr_28
+  type: categorical
+  description: attr_28
+  values:
+  - 0
+  - 1
+- name: attr_29
+  type: categorical
+  description: attr_29
+  values:
+  - 0
+  - 1
+- name: attr_30
+  type: categorical
+  description: attr_30
+  values:
+  - 0
+  - 1
+- name: attr_31
+  type: categorical
+  description: attr_31
+  values:
+  - 0
+  - 1
+- name: attr_32
+  type: categorical
+  description: attr_32
+  values:
+  - 0
+  - 1
+- name: attr_33
+  type: categorical
+  description: attr_33
+  values:
+  - 0
+  - 1
+- name: attr_34
+  type: categorical
+  description: attr_34
+  values:
+  - 0
+  - 1
+- name: attr_35
+  type: categorical
+  description: attr_35
+  values:
+  - 0
+  - 1
+- name: attr_36
+  type: categorical
+  description: attr_36
+  values:
+  - 0
+  - 1
+- name: attr_37
+  type: categorical
+  description: attr_37
+  values:
+  - 0
+  - 1
+- name: attr_38
+  type: categorical
+  description: attr_38
+  values:
+  - 0
+  - 1
+- name: attr_39
+  type: categorical
+  description: attr_39
+  values:
+  - 0
+  - 1
+- name: attr_40
+  type: categorical
+  description: attr_40
+  values:
+  - 0
+  - 1
+- name: attr_41
+  type: categorical
+  description: attr_41
+  values:
+  - 0
+  - 1
+- name: attr_42
+  type: categorical
+  description: attr_42
+  values:
+  - 0
+  - 1
+- name: attr_43
+  type: categorical
+  description: attr_43
+  values:
+  - 0
+  - 1
+- name: attr_44
+  type: categorical
+  description: attr_44
+  values:
+  - 0
+  - 1
+- name: attr_45
+  type: categorical
+  description: attr_45
+  values:
+  - 0
+  - 1
+- name: attr_46
+  type: categorical
+  description: attr_46
+  values:
+  - 0
+  - 1
+- name: attr_47
+  type: categorical
+  description: attr_47
+  values:
+  - 0
+  - 1
+- name: attr_48
+  type: categorical
+  description: attr_48
+  values:
+  - 0
+  - 1
+- name: attr_49
+  type: categorical
+  description: attr_49
+  values:
+  - 0
+  - 1
+- name: attr_50
+  type: categorical
+  description: attr_50
+  values:
+  - 0
+  - 1
+- name: attr_51
+  type: categorical
+  description: attr_51
+  values:
+  - 0
+  - 1
+- name: attr_52
+  type: categorical
+  description: attr_52
+  values:
+  - 0
+  - 1
+- name: attr_53
+  type: categorical
+  description: attr_53
+  values:
+  - 0
+  - 1
+- name: attr_54
+  type: categorical
+  description: attr_54
+  values:
+  - 0
+  - 1
+- name: attr_55
+  type: categorical
+  description: attr_55
+  values:
+  - 0
+  - 1
+- name: attr_56
+  type: categorical
+  description: attr_56
+  values:
+  - 0
+  - 1
+- name: attr_57
+  type: categorical
+  description: attr_57
+  values:
+  - 0
+  - 1
+- name: attr_58
+  type: categorical
+  description: attr_58
+  values:
+  - 0
+  - 1
+- name: attr_59
+  type: categorical
+  description: attr_59
+  values:
+  - 0
+  - 1
+- name: attr_60
+  type: categorical
+  description: attr_60
+  values:
+  - 0
+  - 1
+- name: attr_61
+  type: categorical
+  description: attr_61
+  values:
+  - 0
+  - 1
+- name: attr_62
+  type: categorical
+  description: attr_62
+  values:
+  - 0
+  - 1
+- name: attr_63
+  type: categorical
+  description: attr_63
+  values:
+  - 0
+  - 1
+- name: attr_64
+  type: categorical
+  description: attr_64
+  values:
+  - 0
+  - 1
+- name: attr_65
+  type: categorical
+  description: attr_65
+  values:
+  - 0
+  - 1
+- name: attr_66
+  type: categorical
+  description: attr_66
+  values:
+  - 0
+  - 1
+- name: attr_67
+  type: categorical
+  description: attr_67
+  values:
+  - 0
+  - 1
+- name: attr_68
+  type: categorical
+  description: attr_68
+  values:
+  - 0
+  - 1
+- name: attr_69
+  type: categorical
+  description: attr_69
+  values:
+  - 0
+  - 1

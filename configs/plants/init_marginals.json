@@ -1,0 +1,766 @@
+{
+  "dataset": "plants",
+  "n_records": 17412,
+  "queries_source": "configs/plants/measured_1000query.json",
+  "attributes": {
+    "attr_1": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        17412,
+        0
+      ]
+    },
+    "attr_2": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14866,
+        2546
+      ]
+    },
+    "attr_3": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15377,
+        2035
+      ]
+    },
+    "attr_4": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13142,
+        4270
+      ]
+    },
+    "attr_5": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13958,
+        3454
+      ]
+    },
+    "attr_6": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12708,
+        4704
+      ]
+    },
+    "attr_7": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13794,
+        3618
+      ]
+    },
+    "attr_8": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        11236,
+        6176
+      ]
+    },
+    "attr_9": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13418,
+        3994
+      ]
+    },
+    "attr_10": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14137,
+        3275
+      ]
+    },
+    "attr_11": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15113,
+        2299
+      ]
+    },
+    "attr_12": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14700,
+        2712
+      ]
+    },
+    "attr_13": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        17037,
+        375
+      ]
+    },
+    "attr_14": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12891,
+        4521
+      ]
+    },
+    "attr_15": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        16506,
+        906
+      ]
+    },
+    "attr_16": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12968,
+        4444
+      ]
+    },
+    "attr_17": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15972,
+        1440
+      ]
+    },
+    "attr_18": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14691,
+        2721
+      ]
+    },
+    "attr_19": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13594,
+        3818
+      ]
+    },
+    "attr_20": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13560,
+        3852
+      ]
+    },
+    "attr_21": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14104,
+        3308
+      ]
+    },
+    "attr_22": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14536,
+        2876
+      ]
+    },
+    "attr_23": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14018,
+        3394
+      ]
+    },
+    "attr_24": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13552,
+        3860
+      ]
+    },
+    "attr_25": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        16347,
+        1065
+      ]
+    },
+    "attr_26": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13745,
+        3667
+      ]
+    },
+    "attr_27": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15159,
+        2253
+      ]
+    },
+    "attr_28": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13645,
+        3767
+      ]
+    },
+    "attr_29": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14447,
+        2965
+      ]
+    },
+    "attr_30": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13913,
+        3499
+      ]
+    },
+    "attr_31": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14476,
+        2936
+      ]
+    },
+    "attr_32": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13966,
+        3446
+      ]
+    },
+    "attr_33": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13759,
+        3653
+      ]
+    },
+    "attr_34": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13828,
+        3584
+      ]
+    },
+    "attr_35": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15264,
+        2148
+      ]
+    },
+    "attr_36": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12994,
+        4418
+      ]
+    },
+    "attr_37": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15408,
+        2004
+      ]
+    },
+    "attr_38": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14976,
+        2436
+      ]
+    },
+    "attr_39": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15785,
+        1627
+      ]
+    },
+    "attr_40": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14702,
+        2710
+      ]
+    },
+    "attr_41": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13821,
+        3591
+      ]
+    },
+    "attr_42": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12712,
+        4700
+      ]
+    },
+    "attr_43": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15290,
+        2122
+      ]
+    },
+    "attr_44": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15895,
+        1517
+      ]
+    },
+    "attr_45": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        16687,
+        725
+      ]
+    },
+    "attr_46": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13259,
+        4153
+      ]
+    },
+    "attr_47": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13128,
+        4284
+      ]
+    },
+    "attr_48": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13845,
+        3567
+      ]
+    },
+    "attr_49": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13931,
+        3481
+      ]
+    },
+    "attr_50": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13648,
+        3764
+      ]
+    },
+    "attr_51": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        12275,
+        5137
+      ]
+    },
+    "attr_52": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13352,
+        4060
+      ]
+    },
+    "attr_53": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15029,
+        2383
+      ]
+    },
+    "attr_54": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14249,
+        3163
+      ]
+    },
+    "attr_55": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14951,
+        2461
+      ]
+    },
+    "attr_56": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13318,
+        4094
+      ]
+    },
+    "attr_57": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15052,
+        2360
+      ]
+    },
+    "attr_58": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15292,
+        2120
+      ]
+    },
+    "attr_59": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13769,
+        3643
+      ]
+    },
+    "attr_60": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        11868,
+        5544
+      ]
+    },
+    "attr_61": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13087,
+        4325
+      ]
+    },
+    "attr_62": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13216,
+        4196
+      ]
+    },
+    "attr_63": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15800,
+        1612
+      ]
+    },
+    "attr_64": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14625,
+        2787
+      ]
+    },
+    "attr_65": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13272,
+        4140
+      ]
+    },
+    "attr_66": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14198,
+        3214
+      ]
+    },
+    "attr_67": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        14372,
+        3040
+      ]
+    },
+    "attr_68": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        13924,
+        3488
+      ]
+    },
+    "attr_69": {
+      "type": "categorical",
+      "values": [
+        0,
+        1
+      ],
+      "counts": [
+        15848,
+        1564
+      ]
+    }
+  }
+}

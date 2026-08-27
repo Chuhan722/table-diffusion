@@ -1,0 +1,191 @@
+{
+  "contract_version": "issue53-v2b-adaptive-effective-evidence-artificial-v1",
+  "created_at_utc": "2026-08-16T11:25:49.115083+00:00",
+  "environment": {
+    "machine": "x86_64",
+    "numpy_version": "2.4.6",
+    "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+    "processor": "x86_64",
+    "python_version": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]"
+  },
+  "git_commit": "1ad9340b6bd93ce7e998d5bc73d28d48f82231d6",
+  "git_worktree_clean_including_untracked": true,
+  "protocol": {
+    "adaptive_rule": {
+      "first_ready_only_for_primary_metrics": true,
+      "formal_inflation_floor": 1.0,
+      "long_batch": "2*floor(sqrt(n))",
+      "official_inflation": "max(short_inflation,long_inflation)",
+      "resource_cap_is_automatic_pass": false,
+      "resource_failure_reason": "resource_cap_without_multiscale_evidence",
+      "scale_ratio_inclusive_maximum": 1.25,
+      "short_batch": "floor(sqrt(n))"
+    },
+    "contract_version": "issue53-v2b-adaptive-effective-evidence-artificial-v1",
+    "cost_acceptance": {
+      "iid_resource_median_inclusive_maximum": 512.0,
+      "main_equal_weight_pooled_resource_mean_inclusive_maximum": 1536.0,
+      "minimum_pooled_saving_fraction": 0.25,
+      "not_ready_resource_round_count": 2048,
+      "phi_0p5_resource_median_inclusive_maximum": 1024.0
+    },
+    "evidence_contract_version": "issue53-v2b-adaptive-effective-round-evidence-research-v1",
+    "families": [
+      {
+        "code": 0,
+        "name": "iid",
+        "phi": 0.0,
+        "role": "main",
+        "theoretical_long_run_variance": 1.0,
+        "theoretical_raw_ess_ratio": 1.0
+      },
+      {
+        "code": 1,
+        "name": "ar1_phi_0p5",
+        "phi": 0.5,
+        "role": "main",
+        "theoretical_long_run_variance": 3.0,
+        "theoretical_raw_ess_ratio": 0.3333333333333333
+      },
+      {
+        "code": 2,
+        "name": "ar1_phi_0p8",
+        "phi": 0.8,
+        "role": "main",
+        "theoretical_long_run_variance": 9.000000000000002,
+        "theoretical_raw_ess_ratio": 0.11111111111111109
+      },
+      {
+        "code": 3,
+        "name": "ar1_phi_m0p5",
+        "phi": -0.5,
+        "role": "negative_control",
+        "theoretical_long_run_variance": 0.3333333333333333,
+        "theoretical_raw_ess_ratio": 3.0
+      },
+      {
+        "code": 4,
+        "name": "ar1_phi_0p95",
+        "phi": 0.95,
+        "role": "slow_pressure",
+        "theoretical_long_run_variance": 38.999999999999964,
+        "theoretical_raw_ess_ratio": 0.025641025641025664
+      }
+    ],
+    "global_acceptance": {
+      "contract_violation_count_must_equal": 0,
+      "core_failure_count_must_equal": 0,
+      "fixed_boundary_checks_must_pass": true,
+      "formal_ess_cap_violation_count_must_equal": 0,
+      "mcse_floor_violation_count_must_equal": 0,
+      "nonfinite_output_count_must_equal": 0,
+      "trajectory_identity_violation_count_must_equal": 0
+    },
+    "interval": {
+      "form": "sample_mean_plus_or_minus_multiplier_times_mcse",
+      "mcse_is_maximum_scale_conservative_value": true,
+      "multiplier": 1.96,
+      "true_mean": 0.0
+    },
+    "main_acceptance": {
+      "coverage_inclusive_lower": 0.925,
+      "coverage_inclusive_upper": 0.975,
+      "families": [
+        "iid",
+        "ar1_phi_0p5",
+        "ar1_phi_0p8"
+      ],
+      "first_ready_count_minimum_per_family": 1850,
+      "median_official_ess_ratio_strict_order": [
+        "iid",
+        "ar1_phi_0p5",
+        "ar1_phi_0p8"
+      ],
+      "median_official_lrv_ratio_inclusive_lower": 0.8,
+      "median_official_lrv_ratio_inclusive_upper": 1.25
+    },
+    "negative_control_acceptance": {
+      "every_checkpoint_long_raw_ess_ratio_median_above": 1.0,
+      "every_checkpoint_short_raw_ess_ratio_median_above": 1.0,
+      "every_formal_ess_ratio_at_most": 1.0,
+      "family": "ar1_phi_m0p5",
+      "formal_mcse_not_below_iid_standard_error": true
+    },
+    "post_result_retuning_allowed": false,
+    "randomness": {
+      "bit_generator": "PCG64",
+      "library": "numpy.random.Generator",
+      "repeat_count_per_family": 2000,
+      "repeat_index_end_inclusive": 1999,
+      "repeat_index_start": 0,
+      "seed_sequence_prefix": [
+        53,
+        2,
+        2
+      ],
+      "seed_sequence_suffix": [
+        "family_code",
+        "repeat_index"
+      ]
+    },
+    "scope": {
+      "consumes_privacy_budget": false,
+      "convergence_decision_present": false,
+      "reads_project_dataset": false,
+      "reads_saved_real_trajectory": false,
+      "runs_generator": false,
+      "scalar_trajectory_only": true,
+      "stationarity_decision_present": false,
+      "stopping_decision_present": false,
+      "uses_gpu": false
+    },
+    "slow_pressure_acceptance": {
+      "complete_rejection_count": 0,
+      "family": "ar1_phi_0p95",
+      "intermediate_release_action": "candidate_failed",
+      "safe_release_count_minimum": 1000,
+      "safe_release_coverage_inclusive_lower": 0.925,
+      "safe_release_coverage_inclusive_upper": 0.975,
+      "safe_release_median_lrv_ratio_inclusive_lower": 0.8,
+      "safe_release_median_lrv_ratio_inclusive_upper": 1.25
+    },
+    "trajectory": {
+      "burn_in": 0,
+      "checkpoints": [
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152,
+        1280,
+        1408,
+        1536,
+        1664,
+        1792,
+        1920,
+        2048
+      ],
+      "initial_draw": "standard_normal_stationary_marginal",
+      "innovation_draw": "independent_standard_normal",
+      "marginal_mean": 0.0,
+      "marginal_variance": 1.0,
+      "maximum_length": 2048,
+      "recurrence": "x[t]=phi*x[t-1]+sqrt(1-phi^2)*epsilon[t]"
+    }
+  },
+  "protocol_sha256": "a7dde6b7867e215c9147131f085eaa47b47e04495b5d1bed37355f95a69dd33f",
+  "source_sha256": {
+    "docs/设计/Issue53_V2b自适应有效证据人工验收协议.md": "1cb9f9133a886bd08a91bae1941ccb55e29127c06d9bf419c95d044ea87b27fc",
+    "docs/设计/Issue53_V2b自适应有效证据设计稿.md": "0fed7758c91443e1b950d8b74228fc4d9080e483b65f441f51dda04d76699d73",
+    "scripts/audit_issue53_v2b_adaptive_effective_evidence.py": "7dc56d27df3a3514eada6ccf8b2f4c3040396106de2be56de8aa24e7a2e9a7aa",
+    "scripts/validate_issue53_v2b_adaptive_effective_evidence.py": "ca5267b96b5e56be1ab821990ddd2d6085bd025760902c68ba343f61ce474cd0",
+    "src/table_diffevo/adaptive_effective_evidence.py": "1d54cb90af88b706791fe1b91d374483ef28ca9235e5981670562c869a4ef0bc",
+    "src/table_diffevo/effective_evidence.py": "bbc9aaed5dbed8a5a61cf0742ee6c9c6775b78490a97473025942c165fed5211",
+    "tests/test_adaptive_effective_evidence.py": "5664ef06c09f30b65e2605637e5639a4e207abfbc1f639ab78d18df8d8ad9cfc",
+    "tests/test_effective_evidence.py": "4c417370efc237a4623c35351196ddcbacc027c0271877fa26bf27f81db82fa9",
+    "tests/test_issue53_v2b_adaptive_effective_evidence_artificial.py": "40dfa109fa8a778ef6f6109f7b9f0c8b5f9deeeee6639ac6770dd4fd929bfbea"
+  }
+}

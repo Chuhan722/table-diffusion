@@ -37,10 +37,12 @@
 
 绝对几何（默认）把每单位计数残差视为等价，是 L2 计数损失的梯度口径；
 它会把优化力气集中在大计数查询上，而评价指标（每查询平均归一化 L1）
-对所有查询等权。相对几何把残差除以目标计数（带下限保护），近似
-KL/最大熵拟合的梯度口径，稀有查询的推动力按其相对误差放大：
+对所有查询等权。平方根相对几何按目标计数平方根做中间强度标准化；
+相对几何则把残差完整除以目标计数（两者都有下限保护）：
 
     absolute:  ε_j = sign(raw_j) · magnitude_j / N
+    sqrt_relative:
+               ε_j = sign(raw_j) · magnitude_j / sqrt(max(y_j, floor)) / N
     relative:  ε_j = sign(raw_j) · magnitude_j / max(y_j, floor) / N
 
 其中 magnitude 是噪声容忍后的残差幅度（容忍先于相对化，σ/κ 语义不变）。
@@ -56,7 +58,7 @@ from typing import Optional
 import numpy as np
 
 
-RESIDUAL_GEOMETRIES = ("absolute", "relative")
+RESIDUAL_GEOMETRIES = ("absolute", "sqrt_relative", "relative")
 
 
 def compute_residual(
@@ -85,19 +87,19 @@ def compute_residual(
         噪声容忍系数。|残差| < κσ 时视为已达标，残差归零
     geometry : str, default "absolute"
         残差几何。"absolute"：现状口径 ε = sign·magnitude/N（L2 计数损失
-        梯度）；"relative"：ε = sign·magnitude/max(y,floor)/N（近似 KL
-        梯度，稀有查询推动力按相对误差放大）。相对化只使用公开 target
-        计数做归一化，不引入新信息流。
+        梯度）；"sqrt_relative"：ε = sign·magnitude/sqrt(max(y,floor))/N，
+        是 absolute 与 relative 之间的固定中间强度；"relative"：
+        ε = sign·magnitude/max(y,floor)/N（近似 KL 梯度，稀有查询推动力按
+        相对误差放大）。标准化只使用公开 target 计数，不引入新信息流。
     geometry_floor : float, default 8.0
-        relative 几何的分母下限（计数单位），防止 y 极小或为 0 时分母
-        爆炸。仅 geometry="relative" 时使用，必须 > 0。
+        sqrt_relative/relative 几何的分母下限（计数单位），防止 y 极小或
+        为 0 时分母爆炸。仅这两种几何使用，必须 > 0。
 
     Returns
     -------
     np.ndarray, shape (m,)
-        比例残差向量 ε。absolute 几何落在 [-1, 1]；relative 几何幅度
-        上界为 1/floor（分子 magnitude ≤ N、分母 ≥ floor·N），整体
-        常数尺度由下游选择核/方向场归一化吸收
+        比例残差向量 ε。absolute 几何落在 [-1, 1]；sqrt_relative 与
+        relative 的整体常数尺度由下游选择核/方向场归一化吸收。
 
     Raises
     ------
@@ -124,7 +126,7 @@ def compute_residual(
             f"geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
             f"得到 {geometry!r}"
         )
-    if geometry == "relative":
+    if geometry in {"sqrt_relative", "relative"}:
         if (
             isinstance(geometry_floor, bool)
             or not isinstance(
@@ -158,9 +160,11 @@ def compute_residual(
             )
         magnitude = np.maximum(np.abs(raw) - kappa * sigma, 0.0)
 
-    # 恢复方向并归一化为比例；relative 几何先按目标计数相对化
+    # 恢复方向并归一化为比例；两种相对几何先按目标计数标准化
     # （容忍先于相对化：magnitude 已是容忍后的幅度，σ/κ 语义不变）
-    if geometry == "relative":
+    if geometry == "sqrt_relative":
+        magnitude = magnitude / np.sqrt(np.maximum(target, geometry_floor))
+    elif geometry == "relative":
         magnitude = magnitude / np.maximum(target, geometry_floor)
     epsilon = np.sign(raw) * magnitude / n_records
 

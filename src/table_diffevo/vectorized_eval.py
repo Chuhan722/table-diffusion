@@ -365,10 +365,12 @@ def evaluate_vectorized(
     verbose : bool, default True
         回退组非空时是否打印提醒。
     residual_geometry : str, default "absolute"
-        残差几何，透传给 objective.compute_residual（"absolute" 现状
-        口径 / "relative" 相对残差口径），影响返回的 residual 与 fitness。
+        残差几何，透传给 objective.compute_residual（"absolute" 现状口径 /
+        "sqrt_relative" 平方根标准化 / "relative" 相对残差口径），影响
+        返回的 residual 与 fitness。
     residual_geometry_floor : float, default 8.0
-        relative 几何的分母下限，透传给 objective.compute_residual。
+        sqrt_relative/relative 几何的分母下限，透传给
+        objective.compute_residual。
 
     Returns
     -------
@@ -606,7 +608,12 @@ def _directional_potential_torch(
     batch_size,
     device,
 ):
-    """在 torch 设备上累加固定残差方向势能，只回传长度 N 的结果。"""
+    """在 torch 设备上累加固定残差方向势能，只回传长度 N 的结果。
+
+    掩码比较在 float32 上进行（0/1 语义精确），但残差加权累加必须用
+    float64：势能是全部查询项的和，float32 累加会在大残差场下产生
+    ~1e-9 量级的绝对误差，破坏与 float64 参考路径的方向恒等。
+    """
     try:
         import torch
     except ImportError:
@@ -624,7 +631,7 @@ def _directional_potential_torch(
     lo_t = torch.as_tensor(fast_lo, dtype=torch.float32, device=dev)
     hi_t = torch.as_tensor(fast_hi, dtype=torch.float32, device=dev)
     valid_t = torch.as_tensor(fast_valid, dtype=torch.bool, device=dev)
-    potential_t = torch.zeros(X_t.shape[0], dtype=torch.float32, device=dev)
+    potential_t = torch.zeros(X_t.shape[0], dtype=torch.float64, device=dev)
 
     for start in range(0, len(fast_orig), batch_size):
         end = min(start + batch_size, len(fast_orig))
@@ -639,9 +646,9 @@ def _directional_potential_torch(
         )
         orig = fast_orig[start:end]
         wr_t = torch.as_tensor(
-            weighted_residual[orig], dtype=torch.float32, device=dev
+            weighted_residual[orig], dtype=torch.float64, device=dev
         )
-        potential_t += mask.float() @ wr_t
+        potential_t += mask.to(torch.float64) @ wr_t
 
     return potential_t.cpu().numpy().astype(float)
 

@@ -34,6 +34,7 @@
 import hashlib
 import json
 import time
+from dataclasses import asdict
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import pandas as pd
@@ -70,6 +71,16 @@ from table_diffevo.stationarity import (
     build_stationarity_observation,
     ordered_query_identity_sha256,
     target_answer_identity_sha256,
+)
+from table_diffevo.inner_early_stopping import (
+    EarlyStoppingConfig,
+    InnerEarlyStopper,
+)
+from table_diffevo.stall_escape_alpha import (
+    REQUIRED_EARLY_STOPPING_PATIENCE_TICKS,
+    STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
+    StallEscapeAlphaConfig,
+    StallEscapeAlphaController,
 )
 
 
@@ -211,11 +222,13 @@ def run_evolution(
     ),
     record_transition_clocks: bool = False,
     record_stationarity_trace: bool = False,
+    record_natural_work_snapshots: bool = False,
     stop_on_exact_residual: bool = True,
     horizon_invariant: bool = False,
+    inner_early_stopping_patience_ticks: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    运行扩散演化主循环，返回历史最优合成表和诊断信息。
+    运行扩散演化主循环，返回合成表和诊断信息。
 
     Parameters
     ----------
@@ -387,13 +400,14 @@ def run_evolution(
     residual_geometry : str, default "absolute"
         残差信号几何（Issue #57），统一作用于 fitness 与残差定向扩散的
         方向场（两者共享同一 residual 向量）。"absolute"：现状口径
-        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"relative"：
+        ε=(y−q)/N（L2 计数损失梯度，逐位向后兼容）；"sqrt_relative"：
+        ε=(y−q)/sqrt(max(y,floor))/N（固定中间强度）；"relative"：
         ε=(y−q)/max(y,floor)/N（近似 KL 梯度，稀有查询推动力按相对误差
         放大）。只用公开 target 计数做归一化，不引入新信息流；监控
         loss（compute_loss）与接受门口径不受影响。
     residual_geometry_floor : float, default 8.0
-        relative 几何的分母下限（计数单位），防止 target 极小或为 0 时
-        分母爆炸。仅 residual_geometry="relative" 时使用，必须 > 0。
+        sqrt_relative/relative 几何的分母下限（计数单位），防止 target
+        极小或为 0 时分母爆炸。仅这两种几何使用，必须 > 0。
     return_final_table : bool, default False
         为 True 时在诊断中附加 ``final_table``（最后一轮结束时的当前表深
         拷贝）。无门控研究的主输出是最终状态而非 best 追踪表；该字段是
@@ -401,7 +415,9 @@ def run_evolution(
         默认 False 保持诊断字典可序列化，行为与历史一致。
     alpha_schedule_mode : str, default 'legacy_linear_horizon'
         legacy 模式保持按总轮数插值的旧语义；'fixed' 要求 fixed_alpha，且每轮
-        alpha 完全相同。
+        alpha 完全相同；'stall_escape_16_12' 使用 Issue #53 冻结的两档状态机：
+        连续两个自然工作刻度无新最好后，下一轮起用 alpha=12 两个自然工作
+        刻度，再恢复 alpha=16。该模式不读取 n_rounds。
     fixed_alpha : float or None, default None
         fixed alpha 模式的显式有限非负值。
     diffusion_direction_reference_scale : float or None, default None
@@ -416,20 +432,36 @@ def run_evolution(
         真实 post-round 的查询答案、多样性、实际状态运动、工作量和哈希；不重算
         查询、不消费 RNG。该对象不是 JSON，调用方持久化前必须从 diagnostics
         弹出。默认关闭以保持旧诊断和开销。
+    record_natural_work_snapshots : bool, default False
+        是否为状态库记录初态、每个完整自然工作 tick 与 terminal current 的表
+        快照。该观测仅允许与 inner early stopping 一起启用；不消费 RNG，也不
+        参与生成决策。快照包含 DataFrame 的 records，调用方持久化普通诊断前应
+        弹出 ``natural_work_snapshots``。默认关闭。
     stop_on_exact_residual : bool, default True
         是否保留历史 ``residual == 0`` 的 proposal 前早停。Stage 2 校准入口会
         显式关闭，因为精确命中 measured target 不等于长期 current-state 稳定。
         默认 True 保持 legacy 行为。
     horizon_invariant : bool, default False
         启用 Issue #53 fail-closed 门禁，拒绝与总预算耦合或持续变化的配置。
+    inner_early_stopping_patience_ticks : int or None, default None
+        None 保持 legacy 路径与历史 best 主返回。传入正整数 P 时启用当前 A/B/C
+        状态机：A 为 current loss=0，B 为连续 P 个自然 work tick 无严格 best
+        刷新，C 为 n_rounds 或 candidate_budget 外部资源边界；优先级 A>B>C。
+        启用后主返回与 ``final_table`` 都是触发时 terminal current，不返回 best。
+        该模式要求 ``tol=+inf``、``max_retries=0``，以保证 proposal 无门控地成为
+        current。当前 development 候选使用 P=6；该数值可配置且不是收敛结论。
 
     Returns
     -------
-    best_S : pd.DataFrame, shape (n_records, n_attributes)
-        演化过程中见过的 loss 最小的合成表
+    output_S : pd.DataFrame, shape (n_records, n_attributes)
+        legacy 路径返回演化中 loss 最小的合成表；启用 inner early stopping
+        时返回 A/B/C 触发时的 terminal current 表。
     diagnostics : dict
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
+        - alpha_history: List[float]，每轮实际使用的 alpha
+        - adaptive_alpha: 两档状态机配置、逐轮观察、触发次数与终止状态；
+          非两档模式下 enabled=False
         - best_loss: float，最优 loss
         - current_state_metrics_history: List[dict]，初始 current state 与
           每个实际轮后 current state 的 normalized L1/平方 loss。每项
@@ -470,11 +502,13 @@ def run_evolution(
 
     Notes
     -----
-    **终止条件：** 残差全 0（达标）、达到 n_rounds、达到 candidate_budget
-    （若指定）、或残差比达到 self_cooling_stop_ratio（若指定）。
+    **终止条件：** legacy 路径保留原有条件。启用 inner early stopping 时，
+    统一使用 A（current loss=0）、B（P 个自然 tick 无 best 刷新）和
+    C（n_rounds/candidate_budget 外部资源边界），优先级 A>B>C。
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
-    重试。best_S 保底，即使某轮无进展，最终仍返回历史最优表。
+    重试。legacy 路径仍由 best_S 保底；inner early stopping 路径始终返回
+    terminal current，不用 best_S 替换输出。
 
     **GPU 加速：** device='cuda' 时，距离计算在 GPU 上进行（20-50x 加速），
     所有随机操作仍在 CPU（NumPy），确保相同种子下完全可复现。
@@ -518,7 +552,7 @@ def run_evolution(
             f"residual_geometry 必须是 {RESIDUAL_GEOMETRIES} 之一，"
             f"得到 {residual_geometry!r}"
         )
-    if residual_geometry == "relative":
+    if residual_geometry in {"sqrt_relative", "relative"}:
         if (
             isinstance(residual_geometry_floor, bool)
             or not isinstance(
@@ -540,11 +574,14 @@ def run_evolution(
         )
 
     if alpha_schedule_mode not in (
-        "legacy_linear_horizon", "fixed"
+        "legacy_linear_horizon",
+        "fixed",
+        STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
     ):
         raise ValueError(
-            "alpha_schedule_mode 必须是 'legacy_linear_horizon' 或 "
-            f"'fixed'，得到 {alpha_schedule_mode!r}"
+            "alpha_schedule_mode 必须是 'legacy_linear_horizon'、"
+            f"'fixed' 或 {STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r}，"
+            f"得到 {alpha_schedule_mode!r}"
         )
     if alpha_schedule_mode == "fixed":
         if (
@@ -560,6 +597,14 @@ def run_evolution(
     elif fixed_alpha is not None:
         raise ValueError(
             "fixed_alpha 只允许与 alpha_schedule_mode='fixed' 一起使用"
+        )
+    if (
+        alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+        and distance_mode != "geometric"
+    ):
+        raise ValueError(
+            f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 只支持 "
+            "distance_mode='geometric'"
         )
 
     if isinstance(max_retries, bool) or not isinstance(max_retries, (int, np.integer)):
@@ -579,6 +624,7 @@ def run_evolution(
     for value, name in (
         (record_transition_clocks, "record_transition_clocks"),
         (record_stationarity_trace, "record_stationarity_trace"),
+        (record_natural_work_snapshots, "record_natural_work_snapshots"),
         (stop_on_exact_residual, "stop_on_exact_residual"),
         (horizon_invariant, "horizon_invariant"),
     ):
@@ -586,6 +632,7 @@ def run_evolution(
             raise ValueError(f"{name} 必须是布尔值")
     record_transition_clocks = bool(record_transition_clocks)
     record_stationarity_trace = bool(record_stationarity_trace)
+    record_natural_work_snapshots = bool(record_natural_work_snapshots)
     stop_on_exact_residual = bool(stop_on_exact_residual)
     horizon_invariant = bool(horizon_invariant)
     if candidate_budget is not None:
@@ -633,6 +680,68 @@ def run_evolution(
                 f"得到 {self_cooling_stop_ratio!r}"
             )
         self_cooling_stop_ratio = float(self_cooling_stop_ratio)
+    inner_early_stopping_enabled = (
+        inner_early_stopping_patience_ticks is not None
+    )
+    if record_natural_work_snapshots and not inner_early_stopping_enabled:
+        raise ValueError(
+            "record_natural_work_snapshots 需要启用 inner early stopping"
+        )
+    if inner_early_stopping_enabled:
+        if (
+            isinstance(inner_early_stopping_patience_ticks, bool)
+            or not isinstance(
+                inner_early_stopping_patience_ticks,
+                (int, np.integer),
+            )
+            or inner_early_stopping_patience_ticks <= 0
+        ):
+            raise ValueError(
+                "inner_early_stopping_patience_ticks 必须是正整数或 None"
+            )
+        inner_early_stopping_patience_ticks = int(
+            inner_early_stopping_patience_ticks
+        )
+        if not stop_on_exact_residual:
+            raise ValueError(
+                "启用 inner early stopping 时 A 必须开启；"
+                "stop_on_exact_residual 不能为 False"
+            )
+        if self_cooling_stop_ratio is not None:
+            raise ValueError(
+                "inner A/B/C stopping 不与 self_cooling_stop_ratio 混用"
+            )
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(
+                tol,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isposinf(tol)
+        ):
+            raise ValueError(
+                "启用 inner A/B/C stopping 时必须设置 tol=+inf，"
+                "保证 proposal 无门控地成为 current"
+            )
+        if max_retries != 0:
+            raise ValueError(
+                "启用 inner A/B/C stopping 时 max_retries 必须为 0，"
+                "无门控路径不执行拒绝后的缩步重试"
+            )
+    if alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE:
+        if not inner_early_stopping_enabled:
+            raise ValueError(
+                f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 要求启用 "
+                "inner A/B/C stopping"
+            )
+        if (
+            inner_early_stopping_patience_ticks
+            != REQUIRED_EARLY_STOPPING_PATIENCE_TICKS
+        ):
+            raise ValueError(
+                f"{STALL_ESCAPE_ALPHA_SCHEDULE_MODE!r} 冻结要求 "
+                "inner_early_stopping_patience_ticks=6"
+            )
     if rho_anneal_end is not None:
         if (
             isinstance(rho_anneal_end, (bool, np.bool_))
@@ -858,8 +967,11 @@ def run_evolution(
                 violations.append(f"{name} 必须是 [0, 1] 内的固定标量")
         if distance_mode != "geometric":
             violations.append("distance_mode 必须是 geometric")
-        if alpha_schedule_mode != "fixed":
-            violations.append("alpha 必须使用 fixed 模式")
+        if alpha_schedule_mode not in {
+            "fixed",
+            STALL_ESCAPE_ALPHA_SCHEDULE_MODE,
+        }:
+            violations.append("alpha 必须使用 fixed 或 stall-escape 模式")
         if residual_directed_diffusion and (
             diffusion_direction_normalization != "fixed"
         ):
@@ -882,6 +994,21 @@ def run_evolution(
             raise ValueError(
                 "horizon_invariant 配置不合格：" + "；".join(violations)
             )
+
+    inner_early_stopper = (
+        InnerEarlyStopper(
+            EarlyStoppingConfig(
+                n_records=n_records,
+                patience_ticks=inner_early_stopping_patience_ticks,
+            )
+        )
+        if inner_early_stopping_enabled else None
+    )
+    stall_escape_alpha_controller = (
+        StallEscapeAlphaController(StallEscapeAlphaConfig())
+        if alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+        else None
+    )
 
     rng = np.random.default_rng(seed)
     factorized_gibbs_rng = (
@@ -950,7 +1077,11 @@ def run_evolution(
         initialization_diagnostics = {"method": "random"}
     initial_table_sha256 = (
         _table_sha256(S)
-        if residual_directed_diffusion or record_stationarity_trace
+        if (
+            residual_directed_diffusion
+            or record_stationarity_trace
+            or record_natural_work_snapshots
+        )
         else None
     )
     primary_rng_post_initialization_state_sha256 = _rng_state_sha256(rng)
@@ -961,6 +1092,8 @@ def run_evolution(
     donor_distance_history: List[float] = []     # 每轮到 donor 的平均距离
     donor_self_rate_history: List[float] = []    # 每轮抽到自己的比例（donor_idx==i）
     alpha_history: List[float] = []              # 每轮的锐度 α_t（geometric 模式）
+    adaptive_alpha_observation_history: List[Dict[str, Any]] = []
+    adaptive_alpha_last_observation = None
     proposal_attempts_history: List[int] = []    # 每轮实际评估的提案数（含首次）
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
@@ -991,10 +1124,12 @@ def run_evolution(
     transition_clock_history: List[Dict[str, Any]] = []
     stationarity_observations: List[Dict[str, Any]] = []
     stationarity_query_answers: List[np.ndarray] = []
+    natural_work_snapshots: List[Dict[str, Any]] = []
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
     termination_reason: Optional[str] = None
+    inner_early_stopping_decision = None
     stopped_early = False
     candidate_budget_exhausted = False
     rounds_run = 0
@@ -1065,6 +1200,59 @@ def run_evolution(
             phase="initial",
         )
     ]
+    if inner_early_stopper is not None:
+        inner_early_stopping_decision = inner_early_stopper.observe_initial(
+            initial_loss,
+            resource_cap_reached=n_rounds == 0,
+        )
+        if stall_escape_alpha_controller is not None:
+            stall_escape_alpha_controller.observe_initial(
+                inner_early_stopping_decision
+            )
+        if inner_early_stopping_decision.should_stop:
+            termination_reason = (
+                inner_early_stopping_decision.termination_reason
+            )
+            stopped_early = termination_reason == "fit_target_reached"
+        if record_natural_work_snapshots:
+            natural_work_snapshots.append({
+                "snapshot_format": "natural_work_current_v1",
+                "state_index": 0,
+                "round": 0,
+                "phase": "initial",
+                "completed_work_ticks": 0,
+                "cumulative_participating_rows": 0,
+                "normalized_work": 0.0,
+                "work_tick_completed": False,
+                "termination_reason": (
+                    inner_early_stopping_decision.termination_reason
+                ),
+                "current_squared_loss": float(initial_loss),
+                "current_normalized_l1": float(
+                    current_state_metrics_history[0][
+                        "current_normalized_l1"
+                    ]
+                ),
+                "current_query_answers": np.asarray(
+                    initial_q, dtype=float
+                ).tolist(),
+                "current_residual_signal": np.asarray(
+                    initial_residual, dtype=float
+                ).tolist(),
+                "current_table_sha256": initial_table_sha256,
+                "table_columns": list(S.columns),
+                "table_records": S.reset_index(drop=True).to_dict(
+                    orient="records"
+                ),
+                "primary_rng_state_sha256": (
+                    primary_rng_post_initialization_state_sha256
+                ),
+                "factorized_gibbs_rng_state_sha256": (
+                    factorized_gibbs_initial_rng_state_sha256
+                ),
+                "candidate_evaluation_count_cumulative": 0,
+                "direction_reference_scale": None,
+            })
     if record_stationarity_trace:
         stationarity_query_answers.append(
             np.asarray(initial_q, dtype=float).copy()
@@ -1102,12 +1290,18 @@ def run_evolution(
         )
 
     for t in range(n_rounds):
+        if termination_reason is not None:
+            break
         rounds_run = t + 1
 
-        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed
-        # 模式完全不读取 n_rounds，供 Issue #53 前缀不变参考过程使用。
+        # 计算当前轮锐度。legacy 模式保留按总预算插值的历史语义；fixed 与
+        # stall-escape 模式完全不读取 n_rounds。两档控制器只使用上一轮已经
+        # 完成的早停观察，因此触发边界轮仍用 alpha=16。
         if alpha_schedule_mode == "fixed":
             alpha_t = fixed_alpha
+        elif alpha_schedule_mode == STALL_ESCAPE_ALPHA_SCHEDULE_MODE:
+            assert stall_escape_alpha_controller is not None
+            alpha_t = stall_escape_alpha_controller.alpha_for_next_round
         else:
             if n_rounds > 1:
                 progress = t / (n_rounds - 1)
@@ -1169,7 +1363,11 @@ def run_evolution(
         )
 
         # 3. 终止检查：残差全 0（达标）→ 抽样前停止
-        if stop_on_exact_residual and np.all(residual == 0):
+        if (
+            inner_early_stopper is None
+            and stop_on_exact_residual
+            and np.all(residual == 0)
+        ):
             if do_log:
                 print(f"轮次 {t+1}/{n_rounds} | loss: {loss:.2e} | 达标提前停止")
             stopped_early = True
@@ -1437,6 +1635,7 @@ def run_evolution(
         accepted = False
         accepted_attempt = 0
         accepted_rho = None
+        accepted_participating_rows = 0
         proposal_attempts = 0
         current_loss = loss
         attempt_gains: List[float] = []
@@ -1525,7 +1724,11 @@ def run_evolution(
                     independent_transition_kwargs["direction_logit_clip"] = (
                         diffusion_direction_logit_clip
                     )
-                if record_transition_clocks or record_stationarity_trace:
+                if (
+                    record_transition_clocks
+                    or record_stationarity_trace
+                    or inner_early_stopper is not None
+                ):
                     independent_transition_kwargs["return_diagnostics"] = True
                 independent_result = evolve_step(
                     S,
@@ -1537,7 +1740,11 @@ def run_evolution(
                     rng=rng,
                     **independent_transition_kwargs,
                 )
-                if record_transition_clocks or record_stationarity_trace:
+                if (
+                    record_transition_clocks
+                    or record_stationarity_trace
+                    or inner_early_stopper is not None
+                ):
                     proposal, independent_diagnostics = independent_result
                 else:
                     proposal = independent_result
@@ -1553,6 +1760,16 @@ def run_evolution(
             attempt_linear_gains.append(linear_gain)
             attempt_quadratic_penalties.append(quadratic_penalty)
             attempt_gains.append(float(loss - proposal_loss))
+            proposal_participating_rows = 0
+            if inner_early_stopper is not None:
+                proposal_kernel_diagnostics = (
+                    factorized_diagnostics
+                    if factorized_gibbs_sweeps > 0
+                    else independent_diagnostics
+                )
+                proposal_participating_rows = int(
+                    proposal_kernel_diagnostics["participating_rows"]
+                )
             if record_transition_clocks or record_stationarity_trace:
                 changed = (
                     proposal.reset_index(drop=True)
@@ -1601,6 +1818,7 @@ def run_evolution(
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
+                accepted_participating_rows = proposal_participating_rows
                 current_loss = proposal_loss
                 S = proposal
 
@@ -1635,7 +1853,11 @@ def run_evolution(
         post_current_table_sha256 = None
         post_primary_rng_state_sha256 = None
         post_factorized_gibbs_rng_state_sha256 = None
-        if record_transition_clocks or record_stationarity_trace:
+        if (
+            record_transition_clocks
+            or record_stationarity_trace
+            or record_natural_work_snapshots
+        ):
             post_current_table_sha256 = _table_sha256(S)
             post_primary_rng_state_sha256 = _rng_state_sha256(rng)
             post_factorized_gibbs_rng_state_sha256 = (
@@ -1755,6 +1977,107 @@ def run_evolution(
             best_loss = current_loss
             best_S = S.copy()
 
+        if inner_early_stopper is not None:
+            inner_early_stopping_decision = (
+                inner_early_stopper.observe_post_round(
+                    current_loss=current_loss,
+                    participating_rows=accepted_participating_rows,
+                    resource_cap_reached=(
+                        candidate_budget_exhausted or t + 1 >= n_rounds
+                    ),
+                )
+            )
+            if stall_escape_alpha_controller is not None:
+                adaptive_alpha_last_observation = (
+                    stall_escape_alpha_controller.observe_post_round(
+                        inner_early_stopping_decision
+                    )
+                )
+                adaptive_alpha_observation_history.append(
+                    asdict(adaptive_alpha_last_observation)
+                )
+            if (
+                record_natural_work_snapshots
+                and (
+                    inner_early_stopping_decision.work_tick_completed
+                    or inner_early_stopping_decision.should_stop
+                )
+            ):
+                post_round_residual = compute_residual(
+                    target,
+                    post_round_q,
+                    n_records,
+                    geometry=residual_geometry,
+                    geometry_floor=residual_geometry_floor,
+                )
+                post_metrics = current_state_metrics_history[-1]
+                natural_work_snapshots.append({
+                    "snapshot_format": "natural_work_current_v1",
+                    "state_index": int(
+                        inner_early_stopping_decision.state_index
+                    ),
+                    "round": int(t + 1),
+                    "phase": "post_round",
+                    "completed_work_ticks": int(
+                        inner_early_stopping_decision.completed_work_ticks
+                    ),
+                    "cumulative_participating_rows": int(
+                        inner_early_stopping_decision
+                        .cumulative_participating_rows
+                    ),
+                    "normalized_work": float(
+                        inner_early_stopping_decision.normalized_work
+                    ),
+                    "work_tick_completed": bool(
+                        inner_early_stopping_decision.work_tick_completed
+                    ),
+                    "termination_reason": (
+                        inner_early_stopping_decision.termination_reason
+                    ),
+                    "current_squared_loss": float(current_loss),
+                    "current_normalized_l1": float(
+                        post_metrics["current_normalized_l1"]
+                    ),
+                    "current_query_answers": np.asarray(
+                        post_round_q, dtype=float
+                    ).tolist(),
+                    "current_residual_signal": np.asarray(
+                        post_round_residual, dtype=float
+                    ).tolist(),
+                    "current_table_sha256": post_current_table_sha256,
+                    "table_columns": list(S.columns),
+                    "table_records": S.reset_index(drop=True).to_dict(
+                        orient="records"
+                    ),
+                    "primary_rng_state_sha256": (
+                        post_primary_rng_state_sha256
+                    ),
+                    "factorized_gibbs_rng_state_sha256": (
+                        post_factorized_gibbs_rng_state_sha256
+                    ),
+                    "candidate_evaluation_count_cumulative": int(
+                        candidate_evaluation_count
+                    ),
+                    "direction_reference_scale": (
+                        float(direction_reference_scale)
+                        if direction_reference_scale is not None else None
+                    ),
+                })
+            if inner_early_stopping_decision.should_stop:
+                termination_reason = (
+                    inner_early_stopping_decision.termination_reason
+                )
+                stopped_early = termination_reason in {
+                    "fit_target_reached",
+                    "early_stopped",
+                }
+                if do_log or log_every > 0:
+                    print(
+                        f"轮次 {t+1}/{n_rounds} | "
+                        f"inner stopping: {termination_reason}"
+                    )
+                break
+
         # 检查候选预算：轮次结束后再次检查，如果已耗尽则停止
         if candidate_budget_exhausted:
             termination_reason = "candidate_budget"
@@ -1766,6 +2089,17 @@ def run_evolution(
     if termination_reason is None:
         termination_reason = "max_rounds"
 
+    # initial_rms 的 s0 在首个非零方向场出现时才建立，建立后全轨迹固定。
+    # 状态库要求每个时间切片绑定同一个轨迹级 s0，因此在运行结束后仅回填这项
+    # 已冻结的诊断元数据；不改变任何表、随机状态或生成决策。
+    if record_natural_work_snapshots:
+        frozen_reference_scale = (
+            float(direction_reference_scale)
+            if direction_reference_scale is not None else None
+        )
+        for snapshot in natural_work_snapshots:
+            snapshot["direction_reference_scale"] = frozen_reference_scale
+
     elapsed_sec = time.perf_counter() - loop_start
     sec_per_round = elapsed_sec / rounds_run if rounds_run else 0.0
 
@@ -1776,7 +2110,16 @@ def run_evolution(
     # 分母是记录数 |D|（而非逐查询除以自身的 target），因此不会被小 target 查询
     # 的极端相对误差拉高，可跨数据规模比较。
     best_q = evaluate_table(best_S, queries)
-    abs_errors = np.abs(target - best_q)
+    best_abs_errors = np.abs(target - best_q)
+    best_normalized_l1_error = float(
+        np.mean(best_abs_errors) / n_records
+    )
+    output_S = S if inner_early_stopper is not None else best_S
+    output_q = (
+        evaluate_table(output_S, queries)
+        if inner_early_stopper is not None else best_q
+    )
+    abs_errors = np.abs(target - output_q)
     normalized_l1_error = float(np.mean(abs_errors) / n_records)
     # 分布统计：逐查询归一化误差 |target−pred|/N 的中位/P90/最大。
     # 均值易被少数难查询拉高，分布能看清"典型查询"和"最差查询"的差距。
@@ -1785,13 +2128,31 @@ def run_evolution(
     normalized_l1_p90 = float(np.percentile(per_query_nl1, 90))
     normalized_l1_max = float(np.max(per_query_nl1))
     final_current_metrics = current_state_metrics_history[-1]
+    inner_resource_cap_source = None
+    if (
+        inner_early_stopping_decision is not None
+        and inner_early_stopping_decision.external_resource_cap_reached
+    ):
+        inner_resource_cap_source = (
+            "candidate_budget"
+            if candidate_budget_exhausted else "max_rounds"
+        )
 
     diagnostics = {
         "loss_history": loss_history,
         "best_loss": best_loss,
         "best_loss_diagnostic_only": best_loss,
         "normalized_l1_at_best_squared_loss_diagnostic_only": (
-            normalized_l1_error
+            best_normalized_l1_error
+        ),
+        "output_table_identity": (
+            "terminal_current"
+            if inner_early_stopper is not None
+            else "historical_best_legacy"
+        ),
+        "output_squared_loss": (
+            final_current_metrics["current_squared_loss"]
+            if inner_early_stopper is not None else best_loss
         ),
         "current_state_metrics_history": current_state_metrics_history,
         "current_state_transition_count": (
@@ -1808,11 +2169,54 @@ def run_evolution(
         "rounds_run": rounds_run,
         "stopped_early": stopped_early,
         "termination_reason": termination_reason,
+        "fit_target_reached": (
+            inner_early_stopping_decision.fit_target_reached
+            if inner_early_stopping_decision is not None else None
+        ),
+        "inner_complete": (
+            inner_early_stopping_decision.inner_complete
+            if inner_early_stopping_decision is not None else None
+        ),
+        "inner_early_stopping": {
+            "enabled": inner_early_stopper is not None,
+            "patience_ticks": inner_early_stopping_patience_ticks,
+            "last_decision": (
+                asdict(inner_early_stopping_decision)
+                if inner_early_stopping_decision is not None else None
+            ),
+            "resource_cap_source_diagnostic_only": (
+                inner_resource_cap_source
+            ),
+        },
         "accept_history": accept_history,
         "donor_fitness_history": donor_fitness_history,
         "donor_distance_history": donor_distance_history,
         "donor_self_rate_history": donor_self_rate_history,
         "alpha_history": alpha_history,
+        "adaptive_alpha": {
+            "enabled": stall_escape_alpha_controller is not None,
+            "schedule_mode": (
+                STALL_ESCAPE_ALPHA_SCHEDULE_MODE
+                if stall_escape_alpha_controller is not None else None
+            ),
+            "config": (
+                asdict(stall_escape_alpha_controller.config)
+                if stall_escape_alpha_controller is not None else None
+            ),
+            "observation_history": adaptive_alpha_observation_history,
+            "last_observation": (
+                asdict(adaptive_alpha_last_observation)
+                if adaptive_alpha_last_observation is not None else None
+            ),
+            "escape_count": (
+                stall_escape_alpha_controller.escape_count
+                if stall_escape_alpha_controller is not None else 0
+            ),
+            "terminated": (
+                stall_escape_alpha_controller.terminated
+                if stall_escape_alpha_controller is not None else None
+            ),
+        },
         "proposal_attempts_history": proposal_attempts_history,
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
@@ -1955,6 +2359,10 @@ def run_evolution(
                 if distance_mode == "geometric"
                 and alpha_schedule_mode == "fixed" else None
             ),
+            "adaptive_alpha_config": (
+                asdict(stall_escape_alpha_controller.config)
+                if stall_escape_alpha_controller is not None else None
+            ),
             "delta": delta if distance_mode == 'geometric' else None,
             "winsorize_quantiles": winsorize_quantiles if distance_mode == 'geometric' else None,
             "exclude_self": exclude_self,
@@ -2013,11 +2421,17 @@ def run_evolution(
             "residual_geometry": residual_geometry,
             "residual_geometry_floor": (
                 float(residual_geometry_floor)
-                if residual_geometry == "relative" else None
+                if residual_geometry in {"sqrt_relative", "relative"} else None
             ),
             "record_transition_clocks": record_transition_clocks,
             "record_stationarity_trace": record_stationarity_trace,
+            "record_natural_work_snapshots": (
+                record_natural_work_snapshots
+            ),
             "stop_on_exact_residual": stop_on_exact_residual,
+            "inner_early_stopping_patience_ticks": (
+                inner_early_stopping_patience_ticks
+            ),
             "horizon_invariant": horizon_invariant,
         },
     }
@@ -2032,7 +2446,9 @@ def run_evolution(
             ),
             termination_reason=termination_reason,
         )
+    if record_natural_work_snapshots:
+        diagnostics["natural_work_snapshots"] = natural_work_snapshots
     if return_final_table:
         diagnostics["final_table"] = S.copy(deep=True).reset_index(drop=True)
 
-    return best_S.reset_index(drop=True), diagnostics
+    return output_S.reset_index(drop=True), diagnostics
