@@ -232,6 +232,473 @@ KNOWN_LEGACY_ARTIFACT_SHA256 = {
     "51aff5414eb15c9cfdda496dc1549c6fba7216043159bd377be429fb11443f64",
 }
 
+# ---- 第六轮最终合同：正式产物冻结结构（唯一生产验证入口的合同常量）----
+# 任何字段集合的增删都属于产物结构变更，必须升级
+# ARTIFACT_SCHEMA_VERSION 并显式过 review，等价于重新预注册产物格式。
+
+FORMAL_TOP_LEVEL_FIELDS = frozenset({
+    "artifact_schema_version", "protocol", "run_config", "provenance",
+    "datasets",
+})
+FORMAL_AUDIT_SECTION_FIELDS = frozenset({"source_sha256", "source_kind"})
+FORMAL_AUDIT_SOURCE_KINDS = frozenset({"v2", "legacy_migrated"})
+FORMAL_RUN_CONFIG_FIELDS = frozenset({"seeds", "rounds", "datasets"})
+FORMAL_PROVENANCE_FIELDS = frozenset({
+    "git_commit", "git_dirty", "protocol_sha256", "protocol_match",
+    "formal", "started_at", "finished_at", "environment", "input_sha256",
+    "input_hash_mismatches", "command",
+})
+FORMAL_DATASET_FIELDS = frozenset({
+    "initial_state", "reference_sha256", "runs", "judgment",
+})
+FORMAL_INITIAL_STATE_FIELDS = frozenset({
+    "measured_l1_mean", "measured_l1_by_seed", "loss_by_seed", "note",
+})
+FORMAL_RUN_RECORD_FIELDS = frozenset({
+    "dataset", "arm", "seed", "rounds_run", "candidate_evaluations",
+    "pre_final_proposal_loss", "final_loss", "final_table_measured_l1",
+    "best_loss", "rare_query_mean_abs_residual",
+    "common_query_mean_abs_residual", "exact_match_queries",
+    "row_max_prob_mean_final", "effective_donors_mean_final",
+    "tail_mean_pre_proposal_loss", "final_table_sha256", "elapsed_sec",
+    "offline",
+})
+# 生成端允许为 None 的诊断字段（无稀有查询/无历史时）；其余数值必需有限。
+FORMAL_RUN_NULLABLE_FIELDS = frozenset({
+    "rare_query_mean_abs_residual", "common_query_mean_abs_residual",
+    "row_max_prob_mean_final", "effective_donors_mean_final",
+})
+FORMAL_RUN_FLOAT_FIELDS = frozenset({
+    "pre_final_proposal_loss", "final_loss", "final_table_measured_l1",
+    "best_loss", "tail_mean_pre_proposal_loss", "elapsed_sec",
+})
+FORMAL_OFFLINE_FLOAT_FIELDS = frozenset({
+    "unmeasured_3way_l1", "unmeasured_4way_l1", "raw_joint_tvd",
+    "binned_joint_tvd",
+})
+FORMAL_OFFLINE_INT_FIELDS = frozenset({
+    "raw_unique_states", "raw_support_overlap",
+})
+FORMAL_OFFLINE_METRIC_FIELDS = (
+    FORMAL_OFFLINE_FLOAT_FIELDS | FORMAL_OFFLINE_INT_FIELDS
+)
+# initial_state 重算对拍公差（同机确定性重算，历史锚定 rtol=1e-12）。
+INITIAL_STATE_RTOL = 1e-12
+INITIAL_STATE_ATOL = 1e-15
+
+
+class FormalArtifactError(ValueError):
+    """正式产物违反冻结结构合同（第六轮统一验证入口）。"""
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
+def _is_finite_number(value):
+    return (
+        isinstance(value, (int, float, np.integer, np.floating))
+        and not isinstance(value, bool)
+        and np.isfinite(value)
+    )
+
+
+def _is_strict_int(value):
+    return isinstance(value, (int, np.integer)) and not isinstance(
+        value, bool
+    )
+
+
+def _is_sha256_hex(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(c in "0123456789abcdef" for c in value)
+    )
+
+
+def recompute_initial_state(ds_name):
+    """按冻结协议重算 n_rounds=0 初始状态（种子相关，可独立复现）。
+
+    固定使用 FORMAL_SEEDS 与协议共享参数——不信任产物自报的种子
+    （PR #62 三轮意见 1）。返回结构与生成端 initial_state 一致。
+    """
+    spec = DATASETS[ds_name]
+    schema = load_schema(str(spec["schema"]))
+    queries = load_queries(str(spec["queries"]))
+    marginals = load_marginals(str(spec["marginals"]))
+    target = np.asarray([q["result"] for q in queries], dtype=float)
+    first_arm = next(iter(ARMS.values()))
+    l1_by_seed = {}
+    loss_by_seed = {}
+    for seed in FORMAL_SEEDS:
+        _, diag0 = run_evolution(
+            target=target, queries=queries, schema=schema,
+            n_records=spec["n_records"], n_rounds=0, seed=seed,
+            marginals=marginals, log_every=-1, device=spec["device"],
+            return_final_table=True, **{**SHARED_PARAMS, **first_arm},
+        )
+        table0 = diag0.pop("final_table")
+        q0 = evaluate_table(table0, queries)
+        loss_by_seed[str(seed)] = float(compute_loss(target, q0))
+        l1_by_seed[str(seed)] = float(
+            compute_normalized_l1(target, q0, spec["n_records"])
+        )
+    return {
+        "measured_l1_by_seed": l1_by_seed,
+        "loss_by_seed": loss_by_seed,
+    }
+
+
+def validate_formal_artifact(payload, *, source_kind):
+    """唯一生产验证入口（第六轮最终合同）。
+
+    生成器必须在正式结果写入前调用（source_kind="generator"）；审计器
+    必须在输出审计结果前对完整输出调用（source_kind="audit"，此时
+    payload 额外携带冻结结构的 audit 段）。测试直接调用本入口，不得
+    重新实现另一套验证逻辑。
+
+    纯验证：不修改 payload；违反冻结结构合同的任何一条即抛
+    FormalArtifactError（调用方 fail-closed 处理）。规则覆盖：
+
+    1.  顶层字段集合精确等于冻结结构（缺失/多余/冲突字段全拒）；
+    2.  artifact_schema_version 精确匹配；
+    3.  protocol 与冻结代码重建的 canonical 清单整份完全相等；
+    4.  run_config 精确等于冻结协议（seeds 列表逐项、rounds、
+        datasets 排序后精确比较，缺项/重复/顺序错误全拒）；
+    5.  formal is True、protocol_match is True、git_dirty is False
+        （必须是真正的布尔值）；protocol_sha256 精确等于冻结常量；
+    6.  input_sha256 与 reference_sha256 整份完全相等（缺少或增加
+        任何键都拒绝）；
+    7.  数据集集合精确一致；每个数据集字段集合精确等于冻结结构
+        （initial_state / reference_sha256 / runs / judgment）；
+    8.  新版只允许 judgment 拼写（字段集合精确比较天然拒绝旧拼写与
+        双拼写；本入口不做任何迁移或补齐）；
+    9.  每条运行记录字段集合与类型精确匹配；seed×arm 组合恰好一次；
+    10. 必需数值为有限数且非布尔；rounds_run/数据集名/种子/臂必须
+        与所属任务一致；
+    11. 判定为非空映射，并无条件重算后完全一致；
+    12. initial_state 必须已存在（缺失即拒，不补写），并按冻结种子
+        重算后逐种子对拍 measured_l1 与 loss。
+    """
+    if source_kind not in ("generator", "audit"):
+        raise ValueError(f"source_kind 非法: {source_kind!r}")
+
+    def fail(msg):
+        raise FormalArtifactError(f"正式产物验证失败: {msg}")
+
+    if not isinstance(payload, dict):
+        fail(f"顶层必须是映射，得到 {type(payload).__name__}")
+    expected_top = set(FORMAL_TOP_LEVEL_FIELDS)
+    if source_kind == "audit":
+        expected_top.add("audit")
+    if set(payload) != expected_top:
+        fail(
+            f"顶层字段集合不符——缺失 {sorted(expected_top - set(payload))} "
+            f"多余 {sorted(set(payload) - expected_top)}"
+        )
+    if source_kind == "audit":
+        audit = payload["audit"]
+        if not isinstance(audit, dict) or set(audit) != set(
+            FORMAL_AUDIT_SECTION_FIELDS
+        ):
+            fail("audit 段字段集合不符或类型错误")
+        if not _is_sha256_hex(audit["source_sha256"]):
+            fail("audit.source_sha256 必须是 64 位十六进制字符串")
+        if audit["source_kind"] not in FORMAL_AUDIT_SOURCE_KINDS:
+            fail(f"audit.source_kind 非法: {audit['source_kind']!r}")
+
+    if payload["artifact_schema_version"] != ARTIFACT_SCHEMA_VERSION:
+        fail(
+            f"产物结构版本 {payload['artifact_schema_version']!r} != "
+            f"当前 {ARTIFACT_SCHEMA_VERSION!r}"
+        )
+
+    expected_manifest = canonical_protocol_manifest()
+    declared = payload["protocol"]
+    if not isinstance(declared, dict):
+        fail("protocol 必须是映射")
+    if _canonical_json(declared) != _canonical_json(expected_manifest):
+        recorded_keys, expected_keys = set(declared), set(expected_manifest)
+        if recorded_keys != expected_keys:
+            detail = (
+                f"缺失 {sorted(expected_keys - recorded_keys)} "
+                f"多余 {sorted(recorded_keys - expected_keys)}"
+            )
+        else:
+            detail = str(sorted(
+                key for key in expected_keys
+                if _canonical_json(declared[key])
+                != _canonical_json(expected_manifest[key])
+            ))
+        fail(f"protocol 清单与冻结代码重建值整份对拍失败（差异：{detail}）")
+
+    rc = payload["run_config"]
+    if not isinstance(rc, dict) or set(rc) != set(FORMAL_RUN_CONFIG_FIELDS):
+        fail("run_config 字段集合不符或类型错误")
+    seeds = rc["seeds"]
+    if (
+        not isinstance(seeds, list)
+        or len(seeds) != len(FORMAL_SEEDS)
+        or any(not _is_strict_int(s) for s in seeds)
+        or [int(s) for s in seeds] != list(FORMAL_SEEDS)
+    ):
+        fail(f"run_config.seeds {seeds!r} != 冻结 {FORMAL_SEEDS}")
+    if not _is_strict_int(rc["rounds"]) or rc["rounds"] != FORMAL_ROUNDS:
+        fail(f"run_config.rounds {rc['rounds']!r} != 冻结 {FORMAL_ROUNDS}")
+    if rc["datasets"] != sorted(DATASETS):
+        fail(
+            f"run_config.datasets {rc['datasets']!r} != 冻结 "
+            f"{sorted(DATASETS)}（缺项/重复/顺序错误均拒绝）"
+        )
+
+    prov = payload["provenance"]
+    if not isinstance(prov, dict):
+        fail(f"provenance 必须是映射，得到 {type(prov).__name__}")
+    if set(prov) != set(FORMAL_PROVENANCE_FIELDS):
+        fail(
+            "provenance 字段集合不符——缺失 "
+            f"{sorted(set(FORMAL_PROVENANCE_FIELDS) - set(prov))} 多余 "
+            f"{sorted(set(prov) - set(FORMAL_PROVENANCE_FIELDS))}"
+        )
+    if prov["formal"] is not True:
+        fail(f"provenance.formal 必须是布尔 True，得到 {prov['formal']!r}")
+    if prov["protocol_match"] is not True:
+        fail(
+            "provenance.protocol_match 必须是布尔 True，得到 "
+            f"{prov['protocol_match']!r}"
+        )
+    if prov["git_dirty"] is not False:
+        fail(
+            "provenance.git_dirty 必须是布尔 False，得到 "
+            f"{prov['git_dirty']!r}"
+        )
+    if prov["protocol_sha256"] != FROZEN_PROTOCOL_SHA256:
+        fail(
+            f"provenance.protocol_sha256 {prov['protocol_sha256']!r} != "
+            "冻结常量"
+        )
+    if not (
+        isinstance(prov["git_commit"], str)
+        and len(prov["git_commit"]) == 40
+        and all(c in "0123456789abcdef" for c in prov["git_commit"])
+    ):
+        fail("provenance.git_commit 必须是 40 位十六进制提交哈希")
+    for key in ("started_at", "finished_at", "command"):
+        if not isinstance(prov[key], str) or not prov[key]:
+            fail(f"provenance.{key} 必须是非空字符串")
+    if not isinstance(prov["environment"], dict) or not prov["environment"]:
+        fail("provenance.environment 必须是非空映射")
+    if prov["input_hash_mismatches"] != []:
+        fail(
+            "formal 产物 provenance.input_hash_mismatches 必须是空列表，"
+            f"得到 {prov['input_hash_mismatches']!r}"
+        )
+    expected_inputs = json.loads(_canonical_json(
+        {k: dict(v) for k, v in EXPECTED_INPUT_SHA256.items()}
+    ))
+    if _canonical_json(prov["input_sha256"]) != _canonical_json(
+        expected_inputs
+    ):
+        fail(
+            "provenance.input_sha256 与冻结 EXPECTED_INPUT_SHA256 整份"
+            "对拍失败（缺少或增加任何键、任何值差异都拒绝）"
+        )
+
+    datasets = payload["datasets"]
+    if not isinstance(datasets, dict) or set(datasets) != set(DATASETS):
+        fail(
+            f"datasets 集合 {sorted(datasets) if isinstance(datasets, dict) else datasets!r} "
+            f"!= 冻结 {sorted(DATASETS)}"
+        )
+    for name in sorted(DATASETS):
+        ds = datasets[name]
+        if not isinstance(ds, dict) or set(ds) != set(FORMAL_DATASET_FIELDS):
+            fail(
+                f"datasets[{name}] 字段集合不符（必须恰好为 "
+                f"{sorted(FORMAL_DATASET_FIELDS)}；旧拼写 judgement、"
+                "多余或缺失字段均拒绝）"
+            )
+        expected_refs = json.loads(_canonical_json(
+            dict(EXPECTED_REFERENCE_SHA256[name])
+        ))
+        if _canonical_json(ds["reference_sha256"]) != _canonical_json(
+            expected_refs
+        ):
+            fail(
+                f"datasets[{name}].reference_sha256 与冻结常量整份对拍"
+                "失败（缺少或增加任何键都拒绝）"
+            )
+        runs = ds["runs"]
+        if not isinstance(runs, list) or not runs:
+            fail(f"datasets[{name}].runs 必须是非空列表")
+        expected_ref_names = set(DATASETS[name]["references"])
+        combo_counts = {}
+        for idx, run in enumerate(runs):
+            where = f"datasets[{name}].runs[{idx}]"
+            if not isinstance(run, dict) or set(run) != set(
+                FORMAL_RUN_RECORD_FIELDS
+            ):
+                fail(
+                    f"{where} 字段集合不符——缺失 "
+                    f"{sorted(set(FORMAL_RUN_RECORD_FIELDS) - set(run)) if isinstance(run, dict) else '全部'}"
+                    f" 多余 {sorted(set(run) - set(FORMAL_RUN_RECORD_FIELDS)) if isinstance(run, dict) else ''}"
+                )
+            if run["dataset"] != name:
+                fail(f"{where}.dataset {run['dataset']!r} != 所属 {name}")
+            if run["arm"] not in ARMS:
+                fail(f"{where}.arm {run['arm']!r} 不在冻结臂集合中")
+            if not _is_strict_int(run["seed"]) or (
+                run["seed"] not in FORMAL_SEEDS
+            ):
+                fail(f"{where}.seed {run['seed']!r} 不在冻结种子中")
+            if not _is_strict_int(run["rounds_run"]) or (
+                run["rounds_run"] != FORMAL_ROUNDS
+            ):
+                fail(
+                    f"{where}.rounds_run {run['rounds_run']!r} != 冻结轮数 "
+                    f"{FORMAL_ROUNDS}"
+                )
+            if not _is_strict_int(run["candidate_evaluations"]) or (
+                run["candidate_evaluations"] != FORMAL_ROUNDS
+            ):
+                fail(
+                    f"{where}.candidate_evaluations "
+                    f"{run['candidate_evaluations']!r} != 冻结协议候选"
+                    f"评价数 {FORMAL_ROUNDS}（max_retries=0 下每轮恰好"
+                    "一次）"
+                )
+            if not _is_strict_int(run["exact_match_queries"]) or (
+                run["exact_match_queries"] < 0
+            ):
+                fail(f"{where}.exact_match_queries 必须是非负整数")
+            for key in sorted(FORMAL_RUN_FLOAT_FIELDS):
+                if not _is_finite_number(run[key]):
+                    fail(f"{where}.{key}={run[key]!r} 缺失或非有限数值")
+            if run["elapsed_sec"] < 0:
+                fail(f"{where}.elapsed_sec 必须非负")
+            for key in sorted(FORMAL_RUN_NULLABLE_FIELDS):
+                if run[key] is not None and not _is_finite_number(run[key]):
+                    fail(
+                        f"{where}.{key}={run[key]!r} 必须是有限数值或 null"
+                    )
+            if not _is_sha256_hex(run["final_table_sha256"]):
+                fail(f"{where}.final_table_sha256 必须是 64 位十六进制")
+            offline = run["offline"]
+            if not isinstance(offline, dict) or set(offline) != (
+                expected_ref_names
+            ):
+                fail(
+                    f"{where}.offline 参考名集合 != 冻结 "
+                    f"{sorted(expected_ref_names)}"
+                )
+            for ref_name in sorted(expected_ref_names):
+                metrics = offline[ref_name]
+                if not isinstance(metrics, dict) or set(metrics) != set(
+                    FORMAL_OFFLINE_METRIC_FIELDS
+                ):
+                    fail(
+                        f"{where}.offline[{ref_name}] 指标字段集合不符"
+                        f"（必须恰好为 {sorted(FORMAL_OFFLINE_METRIC_FIELDS)}）"
+                    )
+                for key in sorted(FORMAL_OFFLINE_FLOAT_FIELDS):
+                    if not _is_finite_number(metrics[key]):
+                        fail(
+                            f"{where}.offline[{ref_name}].{key}="
+                            f"{metrics[key]!r} 缺失或非有限数值"
+                        )
+                for key in sorted(FORMAL_OFFLINE_INT_FIELDS):
+                    if not _is_strict_int(metrics[key]) or metrics[key] < 0:
+                        fail(
+                            f"{where}.offline[{ref_name}].{key}="
+                            f"{metrics[key]!r} 必须是非负整数"
+                        )
+            combo = (int(run["seed"]), str(run["arm"]))
+            combo_counts[combo] = combo_counts.get(combo, 0) + 1
+        expected_combos = {
+            (seed, arm) for seed in FORMAL_SEEDS for arm in ARMS
+        }
+        if set(combo_counts) != expected_combos:
+            fail(
+                f"datasets[{name}] seed×arm 组合集合不符——缺失 "
+                f"{sorted(expected_combos - set(combo_counts))[:5]} 多余 "
+                f"{sorted(set(combo_counts) - expected_combos)[:5]}"
+            )
+        duplicated = {
+            combo: count for combo, count in combo_counts.items()
+            if count != 1
+        }
+        if duplicated:
+            fail(
+                f"datasets[{name}] 存在重复 seed×arm 运行记录："
+                f"{sorted(duplicated.items())[:5]}"
+            )
+
+        ist = ds["initial_state"]
+        if not isinstance(ist, dict) or set(ist) != set(
+            FORMAL_INITIAL_STATE_FIELDS
+        ):
+            fail(
+                f"datasets[{name}].initial_state 缺失或字段集合不符"
+                "（新版缺失直接拒绝，审计不补写）"
+            )
+        expected_seed_keys = {str(seed) for seed in FORMAL_SEEDS}
+        for map_key in ("measured_l1_by_seed", "loss_by_seed"):
+            mapping = ist[map_key]
+            if not isinstance(mapping, dict) or set(mapping) != (
+                expected_seed_keys
+            ):
+                fail(
+                    f"datasets[{name}].initial_state.{map_key} 种子键集合"
+                    f" != 冻结 {sorted(expected_seed_keys)}"
+                )
+            for seed_key in sorted(expected_seed_keys):
+                if not _is_finite_number(mapping[seed_key]):
+                    fail(
+                        f"datasets[{name}].initial_state.{map_key}"
+                        f"[{seed_key}] 非有限数值"
+                    )
+        if not _is_finite_number(ist["measured_l1_mean"]) or not np.isclose(
+            ist["measured_l1_mean"],
+            float(np.mean(list(ist["measured_l1_by_seed"].values()))),
+            rtol=INITIAL_STATE_RTOL, atol=INITIAL_STATE_ATOL,
+        ):
+            fail(
+                f"datasets[{name}].initial_state.measured_l1_mean 与"
+                " by_seed 均值不一致"
+            )
+        if not isinstance(ist["note"], str) or not ist["note"]:
+            fail(f"datasets[{name}].initial_state.note 必须是非空字符串")
+
+        judgment = ds["judgment"]
+        if not isinstance(judgment, dict) or not judgment:
+            fail(
+                f"datasets[{name}].judgment 必须是非空映射，得到 "
+                f"{type(judgment).__name__}"
+            )
+        recomputed = _judge(runs)
+        if _canonical_json(judgment) != _canonical_json(
+            json.loads(_canonical_json(recomputed))
+        ):
+            fail(f"datasets[{name}].judgment 与无条件重算结果不一致")
+
+    # 规则 12（放最后：结构反例快速失败，昂贵重算只对结构合法产物执行）
+    for name in sorted(DATASETS):
+        rebuilt = recompute_initial_state(name)
+        ist = payload["datasets"][name]["initial_state"]
+        for map_key in ("measured_l1_by_seed", "loss_by_seed"):
+            for seed_key, value in rebuilt[map_key].items():
+                recorded = ist[map_key][seed_key]
+                if not np.isclose(
+                    recorded, value,
+                    rtol=INITIAL_STATE_RTOL, atol=INITIAL_STATE_ATOL,
+                ):
+                    fail(
+                        f"datasets[{name}].initial_state.{map_key}"
+                        f"[{seed_key}] 重算对拍不一致（记录 {recorded} vs"
+                        f" 重算 {value}）"
+                    )
+
 
 # 冻结的预期输入身份（fail-closed）：正式运行必须精确匹配这组公开输入。
 # 与首次正式产物（commit aac1aff）记录的 input_sha256 一致。
@@ -750,7 +1217,8 @@ def main():
         "run_config": {
             "seeds": list(args.seeds),
             "rounds": args.rounds,
-            "datasets": list(args.datasets),
+            # 排序后的确定形态（冻结结构合同：顺序错误也拒绝）
+            "datasets": sorted(args.datasets),
         },
         "provenance": {
             "git_commit": _git("rev-parse", "HEAD"),
@@ -792,6 +1260,11 @@ def main():
     result["provenance"]["finished_at"] = (
         datetime.now().astimezone().isoformat()
     )
+    # 第六轮最终合同：生成器必须在正式结果写入前调用唯一验证入口。
+    # 任何冻结结构违规都在落盘前 fail-closed（探索性运行不受此约束，
+    # 其 formal=False 本身即被审计器拒绝）。
+    if formal:
+        validate_formal_artifact(result, source_kind="generator")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False, indent=2)

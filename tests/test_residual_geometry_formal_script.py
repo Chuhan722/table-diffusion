@@ -34,9 +34,11 @@ def _run_main(module, monkeypatch, tmp_path, argv, dirty, out_name="o.json"):
     monkeypatch.setattr(
         module, "_git",
         lambda *args: ("M x.py" if dirty else "") if "status" in args
-        else "testcommit",
+        else "a" * 40,
     )
     monkeypatch.setattr(module, "DATASETS", {})
+    monkeypatch.setattr(module, "EXPECTED_INPUT_SHA256", {})
+    monkeypatch.setattr(module, "EXPECTED_REFERENCE_SHA256", {})
     monkeypatch.setattr(module, "_run_dataset", lambda *a, **k: ([], {}, {}))
     # DATASETS 被 mock 后协议身份变化，同步冻结常量以隔离测试其它门禁
     monkeypatch.setattr(
@@ -408,12 +410,119 @@ def test_offline_nonfinite_fails_formal(formal_module):
             )
 
 
-def _run_audit(tmp_path, payload, protocol_name):
-    import json as _json
+# ---- PR #62 第六轮最终合同：唯一验证入口 + 冻结结构 + 审计安全 ----
+#
+# 所有结构反例直接调用协议模块的 validate_formal_artifact（测试不得
+# 重新实现另一套验证逻辑）；端到端行为（迁移/幂等/路径与输出安全）
+# 用子进程审计器验证。
+
+
+@pytest.fixture(scope="module")
+def real_initial_states(formal_module):
+    """按冻结协议真实重算的初始状态（module 级缓存供合法产物复用）。"""
+    import numpy as _np
+
+    states = {}
+    for name in formal_module.DATASETS:
+        rebuilt = formal_module.recompute_initial_state(name)
+        states[name] = {
+            "measured_l1_mean": float(_np.mean(
+                list(rebuilt["measured_l1_by_seed"].values())
+            )),
+            "measured_l1_by_seed": rebuilt["measured_l1_by_seed"],
+            "loss_by_seed": rebuilt["loss_by_seed"],
+            "note": "n_rounds=0 的 marginal 初始化状态（种子相关）",
+        }
+    return states
+
+
+def _full_run(formal_module, ds_name, seed, arm, l1=0.001):
+    refs = list(formal_module.DATASETS[ds_name]["references"])
+    return {
+        "dataset": ds_name, "arm": arm, "seed": seed,
+        "rounds_run": formal_module.FORMAL_ROUNDS,
+        "candidate_evaluations": formal_module.FORMAL_ROUNDS,
+        "pre_final_proposal_loss": 123.0, "final_loss": 120.0,
+        "final_table_measured_l1": l1, "best_loss": 119.0,
+        "rare_query_mean_abs_residual": None,
+        "common_query_mean_abs_residual": 1.5,
+        "exact_match_queries": 3,
+        "row_max_prob_mean_final": 0.5,
+        "effective_donors_mean_final": 10.0,
+        "tail_mean_pre_proposal_loss": 121.0,
+        "final_table_sha256": "0" * 64,
+        "elapsed_sec": 1.0,
+        "offline": {ref: {
+            "unmeasured_3way_l1": 0.1, "unmeasured_4way_l1": 0.1,
+            "raw_joint_tvd": 0.2, "binned_joint_tvd": 0.1,
+            "raw_unique_states": 10, "raw_support_overlap": 5,
+        } for ref in refs},
+    }
+
+
+def _formal_base(formal_module, real_initial_states):
+    """构造通过统一严格验证的合法 v2 formal 产物。"""
+    payload = {
+        "artifact_schema_version": formal_module.ARTIFACT_SCHEMA_VERSION,
+        "protocol": formal_module.canonical_protocol_manifest(),
+        "run_config": {
+            "seeds": list(formal_module.FORMAL_SEEDS),
+            "rounds": formal_module.FORMAL_ROUNDS,
+            "datasets": sorted(formal_module.DATASETS),
+        },
+        "provenance": {
+            "git_commit": "a" * 40,
+            "git_dirty": False,
+            "protocol_sha256": formal_module.FROZEN_PROTOCOL_SHA256,
+            "protocol_match": True,
+            "formal": True,
+            "started_at": "2026-01-01T00:00:00+08:00",
+            "finished_at": "2026-01-01T01:00:00+08:00",
+            "environment": {"python": "test"},
+            "input_sha256": {
+                name: dict(expected)
+                for name, expected in
+                formal_module.EXPECTED_INPUT_SHA256.items()
+            },
+            "input_hash_mismatches": [],
+            "command": "scripts/probe_residual_geometry_formal.py",
+        },
+        "datasets": {
+            name: {
+                "initial_state": json.loads(json.dumps(
+                    real_initial_states[name]
+                )),
+                "reference_sha256": dict(
+                    formal_module.EXPECTED_REFERENCE_SHA256[name]
+                ),
+                "runs": [
+                    _full_run(formal_module, name, seed, arm)
+                    for seed in formal_module.FORMAL_SEEDS
+                    for arm in formal_module.ARMS
+                ],
+            }
+            for name in formal_module.DATASETS
+        },
+    }
+    for ds in payload["datasets"].values():
+        ds["judgment"] = formal_module._judge(ds["runs"])
+    return payload
+
+
+def _expect_reject(formal_module, payload, match=None):
+    with pytest.raises(formal_module.FormalArtifactError) as excinfo:
+        formal_module.validate_formal_artifact(
+            payload, source_kind="generator"
+        )
+    if match is not None:
+        assert match in str(excinfo.value), str(excinfo.value)
+
+
+def _run_audit(tmp_path, payload, protocol_name, name="a.json"):
     import subprocess as _sp
 
-    json_path = tmp_path / "a.json"
-    json_path.write_text(_json.dumps(payload, ensure_ascii=False))
+    json_path = tmp_path / name
+    json_path.write_text(json.dumps(payload, ensure_ascii=False))
     return _sp.run(
         [sys.executable, "scripts/audit_formal_json.py",
          "--protocol", protocol_name, "--json", str(json_path)],
@@ -423,78 +532,452 @@ def _run_audit(tmp_path, payload, protocol_name):
     )
 
 
-def test_audit_rejects_protocol_sha_mismatch(formal_module, tmp_path):
-    """审计器对新产物复核协议 SHA：不一致 FATAL 退出（PR #62 意见 3）"""
+def test_validate_accepts_valid_v2(formal_module, real_initial_states):
+    """验收：合法新格式正式产物通过统一验证入口（含初始状态重算对拍）"""
+    formal_module.validate_formal_artifact(
+        _formal_base(formal_module, real_initial_states),
+        source_kind="generator",
+    )
+
+
+def test_audit_accepts_valid_v2_artifact(
+    formal_module, real_initial_states, tmp_path
+):
+    """验收：合法 v2 产物子进程端到端审计通过，输出带冻结 audit 段"""
+    result = _run_audit(
+        tmp_path, _formal_base(formal_module, real_initial_states),
+        "probe_residual_geometry_formal",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    audited = json.loads((tmp_path / "a.json.audited.json").read_text())
+    assert audited["audit"]["source_kind"] == "v2"
+    assert len(audited["audit"]["source_sha256"]) == 64
+
+
+def test_validate_rejects_run_config_cleared(
+    formal_module, real_initial_states
+):
+    """六轮反例 1：run_config 的种子/轮数/数据集全部清空 → 拒绝"""
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["run_config"] = {"seeds": [], "rounds": None, "datasets": []}
+    _expect_reject(formal_module, payload, match="run_config")
+
+
+def test_validate_rejects_string_and_nonbool_flags(
+    formal_module, real_initial_states
+):
+    """六轮反例 2：formal/protocol_match/git_dirty 必须是真正的布尔值"""
+    for field, bad in [
+        ("formal", "true"), ("formal", 1), ("formal", None),
+        ("formal", False),
+        ("protocol_match", "true"), ("protocol_match", 1),
+        ("git_dirty", "false"), ("git_dirty", 0), ("git_dirty", True),
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        payload["provenance"][field] = bad
+        _expect_reject(formal_module, payload, match=field)
+
+
+def test_validate_rejects_extra_fields_all_levels(
+    formal_module, real_initial_states
+):
+    """六轮反例 3 + 验收矩阵：各层多余/冲突字段全部拒绝"""
+    def mutate(path):
+        payload = _formal_base(formal_module, real_initial_states)
+        node = payload
+        for key in path:
+            node = node[key]
+        node["unexpected_extra_field"] = 1
+        return payload
+
+    for path in [
+        (), ("run_config",), ("provenance",), ("protocol",),
+        ("datasets", "nltcs"),
+        ("datasets", "nltcs", "initial_state"),
+        ("datasets", "nltcs", "runs", 0),
+        ("datasets", "nltcs", "runs", 0, "offline", "train"),
+        ("provenance", "input_sha256", "nltcs"),
+        ("datasets", "nltcs", "reference_sha256"),
+    ]:
+        _expect_reject(formal_module, mutate(path))
+
+
+def test_validate_rejects_hash_map_tampering(
+    formal_module, real_initial_states
+):
+    """六轮反例 4：输入/参考哈希整份相等——增键、删键、改值全拒"""
+    cases = []
+    p = _formal_base(formal_module, real_initial_states)
+    p["provenance"]["input_sha256"]["nltcs"]["forged"] = "0" * 64
+    cases.append(p)
+    p = _formal_base(formal_module, real_initial_states)
+    del p["provenance"]["input_sha256"]["nltcs"]["schema"]
+    cases.append(p)
+    p = _formal_base(formal_module, real_initial_states)
+    p["provenance"]["input_sha256"]["nltcs"]["schema"] = "f" * 64
+    cases.append(p)
+    p = _formal_base(formal_module, real_initial_states)
+    p["datasets"]["nltcs"]["reference_sha256"]["forged"] = "0" * 64
+    cases.append(p)
+    p = _formal_base(formal_module, real_initial_states)
+    p["datasets"]["nltcs"]["reference_sha256"] = {}
+    cases.append(p)
+    for payload in cases:
+        _expect_reject(formal_module, payload)
+
+
+def test_validate_rejects_old_spelling_in_v2(
+    formal_module, real_initial_states
+):
+    """六轮反例 5：新版产物使用旧拼写 judgement（含双拼写）→ 拒绝"""
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["datasets"]["nltcs"]["judgement"] = (
+        payload["datasets"]["nltcs"].pop("judgment")
+    )
+    _expect_reject(formal_module, payload, match="judgement")
+    payload2 = _formal_base(formal_module, real_initial_states)
+    payload2["datasets"]["nltcs"]["judgement"] = dict(
+        payload2["datasets"]["nltcs"]["judgment"]
+    )
+    _expect_reject(formal_module, payload2)
+
+
+def test_validate_rejects_missing_initial_state_no_backfill(
+    formal_module, real_initial_states, tmp_path
+):
+    """六轮反例 6：新版缺 initial_state 直接拒绝；审计器不自动补写"""
+    payload = _formal_base(formal_module, real_initial_states)
+    del payload["datasets"]["nltcs"]["initial_state"]
+    _expect_reject(formal_module, payload, match="initial_state")
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    assert not (tmp_path / "a.json.audited.json").exists()
+
+
+def test_validate_rejects_initial_state_recompute_mismatch(
+    formal_module, real_initial_states
+):
+    """初始状态存在但与冻结种子重算值不一致 → 拒绝（不能伪造）"""
+    payload = _formal_base(formal_module, real_initial_states)
+    ist = payload["datasets"]["test_300x10"]["initial_state"]
+    seed_key = str(formal_module.FORMAL_SEEDS[0])
+    ist["measured_l1_by_seed"][seed_key] += 1e-3
+    ist["measured_l1_mean"] = float(
+        sum(ist["measured_l1_by_seed"].values())
+        / len(ist["measured_l1_by_seed"])
+    )
+    _expect_reject(formal_module, payload, match="重算对拍不一致")
+
+
+def test_validate_protected_field_matrix(
+    formal_module, real_initial_states
+):
+    """验收矩阵：整份结构每个必需字段 × 删除/空值/错误类型/内容篡改。
+
+    程序化遍历顶层、protocol 清单、run_config、provenance、数据集、
+    initial_state、运行记录与 offline 指标的全部受保护字段。
+
+    边界（显式声明）：进入科学判定的一切数值（final_table_measured_l1、
+    unmeasured_3/4way、binned_joint_tvd、initial_state 种子映射）都被
+    判定/初态重算锚定，内容篡改必拒；下面豁免集合是"无冻结锚点的运行
+    诊断记录"——审计器不重跑 2000 轮实验，数学上无法区分被篡改的
+    墙钟/loss 快照与真实值。这些字段的删除/空值/类型错误仍然全部拒绝，
+    仅内容篡改不可判定。
+    """
+    # (容器名, 字段) → 豁免的变换集合
+    free_value = {"tamper"}
+    nullable = {"tamper", "null"}
+    exemptions = {
+        ("provenance", "started_at"): free_value,
+        ("provenance", "finished_at"): free_value,
+        ("provenance", "command"): free_value,
+        ("provenance", "environment"): free_value,
+        ("initial_state", "note"): free_value,
+        ("run", "pre_final_proposal_loss"): free_value,
+        ("run", "final_loss"): free_value,
+        ("run", "best_loss"): free_value,
+        ("run", "tail_mean_pre_proposal_loss"): free_value,
+        ("run", "elapsed_sec"): free_value,
+        ("run", "exact_match_queries"): free_value,
+        ("run", "rare_query_mean_abs_residual"): free_value,
+        ("run", "common_query_mean_abs_residual"): nullable,
+        ("run", "row_max_prob_mean_final"): nullable,
+        ("run", "effective_donors_mean_final"): nullable,
+        ("offline", "raw_joint_tvd"): free_value,
+        ("offline", "raw_unique_states"): free_value,
+        ("offline", "raw_support_overlap"): free_value,
+    }
+
+    def containers(payload):
+        yield "top", payload, sorted(formal_module.FORMAL_TOP_LEVEL_FIELDS)
+        yield "protocol", payload["protocol"], sorted(payload["protocol"])
+        yield "run_config", payload["run_config"], sorted(
+            formal_module.FORMAL_RUN_CONFIG_FIELDS
+        )
+        yield "provenance", payload["provenance"], sorted(
+            formal_module.FORMAL_PROVENANCE_FIELDS
+        )
+        yield "dataset", payload["datasets"]["nltcs"], sorted(
+            formal_module.FORMAL_DATASET_FIELDS
+        )
+        yield (
+            "initial_state",
+            payload["datasets"]["nltcs"]["initial_state"],
+            sorted(formal_module.FORMAL_INITIAL_STATE_FIELDS),
+        )
+        yield "run", payload["datasets"]["nltcs"]["runs"][0], sorted(
+            formal_module.FORMAL_RUN_RECORD_FIELDS
+        )
+        yield (
+            "offline",
+            payload["datasets"]["nltcs"]["runs"][0]["offline"]["train"],
+            sorted(formal_module.FORMAL_OFFLINE_METRIC_FIELDS),
+        )
+
+    n_checked = 0
+    template = _formal_base(formal_module, real_initial_states)
+    layout = [
+        (index, cname, fields)
+        for index, (cname, _, fields) in enumerate(containers(template))
+    ]
+    for container_index, cname, fields in layout:
+        for field in fields:
+            for mutation in ("delete", "null", "wrong_type", "tamper"):
+                if mutation in exemptions.get((cname, field), set()):
+                    continue
+                payload = _formal_base(formal_module, real_initial_states)
+                container = list(containers(payload))[container_index][1]
+                original = container[field]
+                if mutation == "delete":
+                    del container[field]
+                elif mutation == "null":
+                    if original is None:
+                        continue
+                    container[field] = None
+                elif mutation == "wrong_type":
+                    container[field] = (
+                        "wrong" if not isinstance(original, str)
+                        else 12345
+                    )
+                else:
+                    if isinstance(original, bool):
+                        container[field] = not original
+                    elif isinstance(original, (int, float)) and (
+                        original is not None
+                    ):
+                        container[field] = (original or 1) * 31 + 7
+                    elif isinstance(original, str):
+                        container[field] = original + "_tampered"
+                    elif isinstance(original, list):
+                        container[field] = original + ["tampered"]
+                    elif isinstance(original, dict):
+                        container[field] = {**original, "tampered": 1}
+                    elif original is None:
+                        container[field] = 0.5
+                with pytest.raises(formal_module.FormalArtifactError):
+                    formal_module.validate_formal_artifact(
+                        payload, source_kind="generator"
+                    )
+                n_checked += 1
+    assert n_checked > 150
+
+
+def test_validate_rejects_list_anomalies(
+    formal_module, real_initial_states
+):
+    """验收矩阵：列表缺项、重复项和顺序错误全部拒绝"""
+    seeds = list(formal_module.FORMAL_SEEDS)
+    for bad_seeds in [
+        seeds[:-1],                       # 缺项
+        seeds + [seeds[0]],               # 重复
+        list(reversed(seeds)),            # 顺序错误
+        [True] + seeds[1:],               # 布尔伪装整数
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        payload["run_config"]["seeds"] = bad_seeds
+        _expect_reject(formal_module, payload, match="seeds")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["run_config"]["datasets"] = sorted(
+        formal_module.DATASETS, reverse=True
+    )
+    _expect_reject(formal_module, payload, match="datasets")
+    # runs：缺组合 / 重复组合
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["datasets"]["nltcs"]["runs"] = (
+        payload["datasets"]["nltcs"]["runs"][:-1]
+    )
+    _expect_reject(formal_module, payload)
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["datasets"]["nltcs"]["runs"].append(
+        json.loads(json.dumps(payload["datasets"]["nltcs"]["runs"][0]))
+    )
+    _expect_reject(formal_module, payload, match="重复")
+
+
+def test_validate_rejects_judgment_variants(
+    formal_module, real_initial_states
+):
+    """验收矩阵：判定缺失/空值/空映射/错误类型/重算不一致全部拒绝"""
+    for mutate in [
+        lambda ds: ds.pop("judgment"),
+        lambda ds: ds.__setitem__("judgment", None),
+        lambda ds: ds.__setitem__("judgment", {}),
+        lambda ds: ds.__setitem__("judgment", "supports"),
+        lambda ds: ds["judgment"].__setitem__(
+            "classification", "forged_supports"
+        ),
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        mutate(payload["datasets"]["nltcs"])
+        _expect_reject(formal_module, payload)
+
+
+def test_validate_rejects_forged_protocol_fields(
+    formal_module, real_initial_states
+):
+    """五轮反例回归：issue/primary_dataset/arms/shared_params 篡改全拒"""
+    for field, value in [
+        ("issue", 999), ("primary_dataset", "adult"),
+        ("seeds", [1, 2, 3]), ("rounds", 10),
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        payload["protocol"][field] = value
+        _expect_reject(formal_module, payload, match="protocol")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["protocol"]["arms"]["forged_arm"] = {}
+    _expect_reject(formal_module, payload, match="protocol")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["protocol"]["shared_params"]["rho"] = 0.99
+    _expect_reject(formal_module, payload, match="protocol")
+
+
+def test_validate_rejects_identity_tampering(
+    formal_module, real_initial_states
+):
+    """回归：schema version/protocol_sha256/git_commit 身份字段篡改全拒"""
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["artifact_schema_version"] = "residual-geometry-formal-v999"
+    _expect_reject(formal_module, payload, match="结构版本")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["provenance"]["protocol_sha256"] = "0" * 64
+    _expect_reject(formal_module, payload, match="protocol_sha256")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["provenance"]["git_commit"] = "not-a-commit"
+    _expect_reject(formal_module, payload, match="git_commit")
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["provenance"]["input_hash_mismatches"] = ["x"]
+    _expect_reject(formal_module, payload, match="input_hash_mismatches")
+
+
+def test_validate_rejects_run_record_task_mismatch(
+    formal_module, real_initial_states
+):
+    """回归：运行记录的数据集名/种子/臂/轮数必须与所属任务一致"""
+    for field, value, match in [
+        ("dataset", "test_300x10", "所属"),
+        ("seed", 999, "种子"),
+        ("arm", "forged_arm", "臂"),
+        ("rounds_run", 1999, "轮数"),
+        ("candidate_evaluations", 0, "candidate_evaluations"),
+        ("final_table_measured_l1", True, "final_table_measured_l1"),
+        ("final_table_measured_l1", float("nan"),
+         "final_table_measured_l1"),
+        ("final_table_measured_l1", "0.001", "final_table_measured_l1"),
+        ("final_table_sha256", "zz", "final_table_sha256"),
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        payload["datasets"]["nltcs"]["runs"][0][field] = value
+        _expect_reject(formal_module, payload, match=match)
+
+
+def test_validate_rejects_wrong_offline_reference_names(
+    formal_module, real_initial_states
+):
+    """回归（四轮意见 3）：离线参考名集合必须与冻结参考精确一致"""
+    payload = _formal_base(formal_module, real_initial_states)
+    run = payload["datasets"]["nltcs"]["runs"][0]
+    run["offline"] = {"forged_ref": run["offline"]["train"]}
+    _expect_reject(formal_module, payload, match="参考名")
+    payload2 = _formal_base(formal_module, real_initial_states)
+    payload2["datasets"]["nltcs"]["runs"][0]["offline"] = {}
+    _expect_reject(formal_module, payload2, match="参考名")
+
+
+def test_validate_source_kind_contract(
+    formal_module, real_initial_states
+):
+    """audit 段合同：generator 禁止 audit 段；audit 要求冻结结构段"""
+    payload = _formal_base(formal_module, real_initial_states)
+    payload["audit"] = {"source_sha256": "0" * 64, "source_kind": "v2"}
+    _expect_reject(formal_module, payload, match="多余")
+    good_audit = _formal_base(formal_module, real_initial_states)
+    good_audit["audit"] = {
+        "source_sha256": "0" * 64, "source_kind": "v2",
+    }
+    formal_module.validate_formal_artifact(good_audit, source_kind="audit")
+    for bad in [
+        {"source_sha256": "0" * 64},                        # 缺字段
+        {"source_sha256": "0" * 64, "source_kind": "v2",
+         "extra": 1},                                       # 多字段
+        {"source_sha256": "xyz", "source_kind": "v2"},      # 非 hex
+        {"source_sha256": "0" * 64, "source_kind": "v3"},   # 非法枚举
+    ]:
+        payload = _formal_base(formal_module, real_initial_states)
+        payload["audit"] = bad
+        with pytest.raises(formal_module.FormalArtifactError):
+            formal_module.validate_formal_artifact(
+                payload, source_kind="audit"
+            )
+    missing = _formal_base(formal_module, real_initial_states)
+    with pytest.raises(formal_module.FormalArtifactError):
+        formal_module.validate_formal_artifact(missing, source_kind="audit")
+    with pytest.raises(ValueError):
+        formal_module.validate_formal_artifact(
+            _formal_base(formal_module, real_initial_states),
+            source_kind="unknown",
+        )
+
+
+def test_generator_invokes_unified_validator(
+    formal_module, monkeypatch, tmp_path
+):
+    """生成器必须在正式结果写入前调用唯一验证入口（合同一）"""
+    calls = []
+
+    def spy(payload, *, source_kind):
+        calls.append(source_kind)
+
+    monkeypatch.setattr(formal_module, "validate_formal_artifact", spy)
+    payload = _run_main(
+        formal_module, monkeypatch, tmp_path, argv=[], dirty=False,
+    )
+    assert payload["provenance"]["formal"] is True
+    assert calls == ["generator"]
+    # 探索性运行（formal=False）不经过正式合同校验
+    calls.clear()
+    _run_main(
+        formal_module, monkeypatch, tmp_path,
+        argv=["--allow-dirty"], dirty=False, out_name="o2.json",
+    )
+    assert calls == []
+
+
+def test_audit_rejects_non_formal_artifact(formal_module, tmp_path):
+    """审计器语义收窄：非 formal（探索性）产物一律拒绝"""
     payload = {
-        "provenance": {
-            "protocol_sha256": "0" * 64, "protocol_match": True,
-            "formal": True,
-        },
-        "protocol": {"seeds": []},
+        "artifact_schema_version": formal_module.ARTIFACT_SCHEMA_VERSION,
+        "protocol": formal_module.canonical_protocol_manifest(),
+        "run_config": {"seeds": [1], "rounds": 5, "datasets": ["nltcs"]},
+        "provenance": {"formal": False},
         "datasets": {},
     }
     result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
     assert result.returncode == 1
-    assert "协议身份不一致" in result.stdout
-
-
-def test_audit_accepts_matching_protocol_sha_and_legacy(
-    formal_module, tmp_path
-):
-    """审计器：协议 SHA 一致的非正式产物通过（完整性检查只对 formal
-    执行）；白名单命中的真实归档 legacy 产物端到端通过"""
-    good = {
-        "provenance": {
-            "protocol_sha256": formal_module.protocol_sha256(),
-            "protocol_match": True, "formal": False,
-        },
-        "protocol": {"seeds": []},
-        "datasets": {},
-    }
-    result = _run_audit(tmp_path, good, "probe_residual_geometry_formal")
-    assert result.returncode == 0
-    assert "协议 SHA 复核一致" in result.stdout
-    # legacy 接受路径：只有白名单命中的真实归档产物可通过
-    import shutil as _shutil
-
-    archived = (
-        Path(__file__).resolve().parents[1]
-        / "docs/实验结果/formal_residual_geometry_5seed_2000round.json"
-    )
-    json_path = tmp_path / "legacy.json"
-    _shutil.copy(archived, json_path)
-    import subprocess as _sp
-
-    result2 = _sp.run(
-        [sys.executable, "scripts/audit_formal_json.py",
-         "--protocol", "probe_residual_geometry_formal",
-         "--json", str(json_path)],
-        capture_output=True, text=True,
-        env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
-    )
-    assert result2.returncode == 0
-    assert "已知 legacy 产物" in result2.stdout
-
-
-def test_audit_rejects_formal_without_protocol_match(
-    formal_module, tmp_path
-):
-    """formal=true 但 protocol_match=false 的产物被审计器拒绝"""
-    payload = {
-        "provenance": {
-            "protocol_sha256": formal_module.protocol_sha256(),
-            "protocol_match": False, "formal": True,
-        },
-        "protocol": {"seeds": []},
-        "datasets": {},
-    }
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "protocol_match" in result.stdout
+    assert not (tmp_path / "a.json.audited.json").exists()
 
 
 def test_audit_rejects_unknown_legacy_artifact(formal_module, tmp_path):
-    """缺 protocol_sha256 且文件 SHA 不在白名单 → FATAL（PR #62 二轮）"""
+    """缺 artifact_schema_version 且文件 SHA 不在白名单 → FATAL"""
     payload = {"provenance": {"formal": True}, "protocol": {"seeds": []},
                "datasets": {}}
     result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
@@ -502,218 +985,11 @@ def test_audit_rejects_unknown_legacy_artifact(formal_module, tmp_path):
     assert "白名单" in result.stdout
 
 
-def test_audit_rejects_empty_datasets_formal(formal_module, tmp_path):
-    """身份字段全部正确但 datasets 为空的 formal 产物 → FATAL（空壳拒绝）"""
-    payload = _formal_base(formal_module)
-    payload["datasets"] = {}
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    # 空 datasets 先在 reference_sha256 对拍处失败（同为 fail-closed）
-    assert "reference_sha256" in result.stdout or "数据集不完整" in result.stdout
-
-
-def test_audit_rejects_missing_combo_and_nonfinite(formal_module, tmp_path):
-    """缺 seed×arm 组合或指标非有限的 formal 产物 → FATAL"""
-    # 缺一个组合
-    payload = _formal_base(formal_module)
-    payload["datasets"]["nltcs"]["runs"] = [
-        run for run in payload["datasets"]["nltcs"]["runs"]
-        if (run["seed"], run["arm"]) != (
-            formal_module.FORMAL_SEEDS[0], "absolute"
-        )
-    ]
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "组合不完整" in result.stdout
-    # NaN 主指标
-    payload2 = _formal_base(formal_module)
-    payload2["datasets"]["nltcs"]["runs"][0][
-        "final_table_measured_l1"
-    ] = float("nan")
-    result2 = _run_audit(tmp_path, payload2, "probe_residual_geometry_formal")
-    assert result2.returncode == 1
-    assert "缺失或非有限" in result2.stdout
-
-
-# ---- PR #62 三轮审查：审计器身份对拍/恰好一次/类型检查 ----
-
-def _formal_base(formal_module):
-    """构造通过全部统一验证的 v2 结构 formal 产物骨架。"""
-    def _runs(ds_name):
-        refs = list(formal_module.DATASETS[ds_name]["references"])
-        return [
-            {
-                "seed": seed, "arm": arm,
-                "final_table_measured_l1": 0.001,
-                "offline": {ref: {
-                    "unmeasured_3way_l1": 0.1,
-                    "unmeasured_4way_l1": 0.1,
-                    "binned_joint_tvd": 0.1,
-                } for ref in refs},
-            }
-            for seed in formal_module.FORMAL_SEEDS
-            for arm in formal_module.ARMS
-        ]
-
-    payload = {
-        "artifact_schema_version": formal_module.ARTIFACT_SCHEMA_VERSION,
-        "protocol": formal_module.canonical_protocol_manifest(),
-        "run_config": {
-            "seeds": list(formal_module.FORMAL_SEEDS),
-            "rounds": formal_module.FORMAL_ROUNDS,
-            "datasets": list(formal_module.DATASETS),
-        },
-        "provenance": {
-            "protocol_sha256": formal_module.protocol_sha256(),
-            "protocol_match": True, "formal": True,
-            "input_sha256": {
-                name: dict(expected)
-                for name, expected in
-                formal_module.EXPECTED_INPUT_SHA256.items()
-            },
-        },
-        "datasets": {
-            name: {
-                "runs": _runs(name),
-                "reference_sha256": dict(
-                    formal_module.EXPECTED_REFERENCE_SHA256[name]
-                ),
-            }
-            for name in formal_module.DATASETS
-        },
-    }
-    # 判定字段填真实重算值（无条件重算要求精确一致）
-    for name, ds in payload["datasets"].items():
-        ds["judgment"] = formal_module._judge(ds["runs"])
-    return payload
-
-
-def test_audit_accepts_valid_v2_artifact(formal_module, tmp_path):
-    """验收矩阵：一份合法的新格式正式产物能够通过"""
-    result = _run_audit(
-        tmp_path, _formal_base(formal_module),
-        "probe_residual_geometry_formal",
-    )
-    assert result.returncode == 0, result.stdout
-    assert "canonical 清单整份对拍一致" in result.stdout
-    assert "判定无条件重算一致" in result.stdout
-
-
-def test_audit_rejects_missing_input_hashes(formal_module, tmp_path):
-    """删除全部 input_sha256 的 formal 产物 → FATAL（三轮意见 1）"""
-    payload = _formal_base(formal_module)
-    payload["provenance"].pop("input_sha256")
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "input_sha256" in result.stdout
-
-
-def test_audit_rejects_missing_reference_hashes(formal_module, tmp_path):
-    """删除数据集 reference_sha256 的 formal 产物 → FATAL（三轮意见 1）"""
-    payload = _formal_base(formal_module)
-    payload["datasets"]["nltcs"].pop("reference_sha256")
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "reference_sha256" in result.stdout
-
-
-def test_audit_rejects_forged_seeds(formal_module, tmp_path):
-    """伪造 protocol.seeds 的 formal 产物 → FATAL（三轮意见 1，
-    初态重建同时改为固定使用 FORMAL_SEEDS）"""
-    payload = _formal_base(formal_module)
-    payload["protocol"]["seeds"] = []
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "protocol" in result.stdout  # 整份对拍或 seeds 检查拒绝
-
-
-def test_audit_rejects_duplicate_runs(formal_module, tmp_path):
-    """追加重复 seed×arm run → FATAL（三轮意见 2：Counter 恰好一次）"""
-    payload = _formal_base(formal_module)
-    runs = payload["datasets"]["nltcs"]["runs"]
-    runs.append(dict(runs[0]))
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "重复" in result.stdout
-
-
-def test_audit_rejects_boolean_metrics(formal_module, tmp_path):
-    """offline 指标为 true 的 formal 产物 → FATAL（三轮意见 3：
-    np.isfinite(True) 为真，需显式拒绝 bool）"""
-    payload = _formal_base(formal_module)
-    for run in payload["datasets"]["nltcs"]["runs"]:
-        run["offline"]["train"]["unmeasured_3way_l1"] = True
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "非有限数值" in result.stdout
-
-
-def test_audit_rejects_string_metrics(formal_module, tmp_path):
-    """主指标为字符串 → FATAL（类型检查与生成端一致）"""
-    payload = _formal_base(formal_module)
-    payload["datasets"]["nltcs"]["runs"][0][
-        "final_table_measured_l1"
-    ] = "0.001"
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "非有限数值" in result.stdout
-
-
-# ---- PR #62 四轮审查：完整协议对拍/judgment 强制/参考名/幂等 ----
-
-def test_audit_rejects_forged_arms_and_shared_params(
+def test_audit_legacy_idempotent_and_source_untouched(
     formal_module, tmp_path
 ):
-    """伪造 protocol.arms 或 shared_params（保留正确协议哈希）→ FATAL
-    （四轮意见 1）"""
-    payload = _formal_base(formal_module)
-    payload["protocol"]["arms"] = {"absolute": {"residual_geometry": "chi2"}}
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "整份对拍失败" in result.stdout
-    payload2 = _formal_base(formal_module)
-    payload2["protocol"]["shared_params"]["rho"] = 0.99
-    result2 = _run_audit(tmp_path, payload2, "probe_residual_geometry_formal")
-    assert result2.returncode == 1
-    assert "整份对拍失败" in result2.stdout
-
-
-def test_audit_rejects_missing_judgment_formal(formal_module, tmp_path):
-    """formal 产物删除全部判定字段 → FATAL（四轮意见 2）"""
-    payload = _formal_base(formal_module)
-    for ds in payload["datasets"].values():
-        ds.pop("judgment", None)
-        ds.pop("judgement", None)
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "缺失判定字段" in result.stdout
-
-
-def test_audit_rejects_dual_judgment_spellings(formal_module, tmp_path):
-    """judgment 与 judgement 同时存在 → FATAL（拼写歧义）"""
-    payload = _formal_base(formal_module)
-    ds = payload["datasets"]["nltcs"]
-    ds["judgement"] = ds["judgment"]
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "同时存在" in result.stdout
-
-
-def test_audit_rejects_wrong_offline_reference_names(
-    formal_module, tmp_path
-):
-    """offline 参考名改为任意错误名称 → FATAL（四轮意见 3）"""
-    payload = _formal_base(formal_module)
-    for run in payload["datasets"]["test_300x10"]["runs"]:
-        run["offline"] = {"bogus": run["offline"].popitem()[1]}
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "离线参考名" in result.stdout
-
-
-def test_audit_is_idempotent_on_legacy_artifact(formal_module, tmp_path):
-    """连续两次审计同一 legacy 归档产物均成功且原文件字节不变
-    （四轮意见 4：审计输出写 .audited.json，原产物永不改写）"""
+    """验收：已知 legacy 连续审计两次均通过；原文件逐字节不变；两次
+    输出逐字节相同（audit 段无时间戳）"""
     import hashlib as _hashlib
     import shutil as _shutil
     import subprocess as _sp
@@ -725,133 +1001,142 @@ def test_audit_is_idempotent_on_legacy_artifact(formal_module, tmp_path):
     json_path = tmp_path / "legacy.json"
     _shutil.copy(archived, json_path)
     before = _hashlib.sha256(json_path.read_bytes()).hexdigest()
+    assert before in formal_module.KNOWN_LEGACY_ARTIFACT_SHA256
 
-    def _audit_once():
+    def run(out_name):
         return _sp.run(
             [sys.executable, "scripts/audit_formal_json.py",
              "--protocol", "probe_residual_geometry_formal",
-             "--json", str(json_path)],
+             "--json", str(json_path),
+             "--output", str(tmp_path / out_name)],
             capture_output=True, text=True,
             env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
         )
 
-    first = _audit_once()
-    assert first.returncode == 0, first.stdout
-    assert "已知 legacy 产物" in first.stdout
-    after_first = _hashlib.sha256(json_path.read_bytes()).hexdigest()
-    assert after_first == before, "审计不得改写原产物文件"
-    assert (tmp_path / "legacy.json.audited.json").exists()
-    second = _audit_once()
-    assert second.returncode == 0, second.stdout
-    assert "已知 legacy 产物" in second.stdout
-
-
-# ---- PR #62 五轮审查：统一不变量验收矩阵 ----
-
-def test_audit_rejects_null_judgment(formal_module, tmp_path):
-    """判定字段值为 null 的 formal 产物 → FATAL（五轮反例 1）"""
-    payload = _formal_base(formal_module)
-    payload["datasets"]["nltcs"]["judgment"] = None
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "非空映射" in result.stdout
-
-
-def test_audit_rejects_judgment_recompute_mismatch(formal_module, tmp_path):
-    """判定内容与无条件重算不一致 → FATAL"""
-    payload = _formal_base(formal_module)
-    payload["datasets"]["nltcs"]["judgment"]["classification"] = "forged"
-    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
-    assert result.returncode == 1
-    assert "判定重算与记录不一致" in result.stdout
-
-
-def test_audit_protected_manifest_field_matrix(formal_module, tmp_path):
-    """规范协议清单每个受保护字段的删除/空值/篡改全部拒绝（五轮反例 2
-    与验收矩阵）"""
-    manifest = formal_module.canonical_protocol_manifest()
-    for field in sorted(manifest):
-        # 删除
-        payload = _formal_base(formal_module)
-        del payload["protocol"][field]
-        result = _run_audit(
-            tmp_path, payload, "probe_residual_geometry_formal",
-        )
-        assert result.returncode == 1, f"删除 {field} 未被拒绝"
-        # 空值
-        payload = _formal_base(formal_module)
-        payload["protocol"][field] = None
-        result = _run_audit(
-            tmp_path, payload, "probe_residual_geometry_formal",
-        )
-        assert result.returncode == 1, f"{field}=null 未被拒绝"
-        # 内容篡改
-        payload = _formal_base(formal_module)
-        payload["protocol"][field] = "tampered"
-        result = _run_audit(
-            tmp_path, payload, "probe_residual_geometry_formal",
-        )
-        assert result.returncode == 1, f"篡改 {field} 未被拒绝"
+    first = run("audit1.json")
+    assert first.returncode == 0, first.stdout + first.stderr
+    second = run("audit2.json")
+    assert second.returncode == 0, second.stdout + second.stderr
+    after = _hashlib.sha256(json_path.read_bytes()).hexdigest()
+    assert after == before
+    out1 = (tmp_path / "audit1.json").read_bytes()
+    out2 = (tmp_path / "audit2.json").read_bytes()
+    assert out1 == out2
+    audited = json.loads(out1)
+    assert audited["audit"]["source_kind"] == "legacy_migrated"
+    assert audited["audit"]["source_sha256"] == before
+    # 迁移后的输出本身满足新版全部结构合同
+    core = dict(audited)
+    del core["audit"]
+    formal_module.validate_formal_artifact(core, source_kind="generator")
 
 
 def test_audit_rejects_same_path_alias_symlink_hardlink(
-    formal_module, tmp_path
+    formal_module, real_initial_states, tmp_path
 ):
-    """输入输出同路径/相对别名/符号链接/硬链接全部拒绝且不改输入
-    （五轮反例 3 + 不变量 4）"""
+    """验收：输入输出同路径/路径别名/符号链接/硬链接全部拒绝，且任一
+    场景原文件逐字节不变"""
     import hashlib as _hashlib
+    import os as _os
     import subprocess as _sp
 
-    src = tmp_path / "artifact.json"
-    import json as _json
-    src.write_text(_json.dumps(_formal_base(formal_module)))
-    before = _hashlib.sha256(src.read_bytes()).hexdigest()
+    payload = _formal_base(formal_module, real_initial_states)
+    json_path = tmp_path / "src.json"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False))
+    before = _hashlib.sha256(json_path.read_bytes()).hexdigest()
 
-    def _audit_with_output(out):
+    alias = str(tmp_path / "." / "src.json")
+    link_path = tmp_path / "src_link.json"
+    _os.symlink(json_path, link_path)
+    hard_path = tmp_path / "src_hard.json"
+    _os.link(json_path, hard_path)
+
+    for output in [str(json_path), alias, str(link_path), str(hard_path)]:
+        result = _sp.run(
+            [sys.executable, "scripts/audit_formal_json.py",
+             "--protocol", "probe_residual_geometry_formal",
+             "--json", str(json_path), "--output", output],
+            capture_output=True, text=True,
+            env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
+        )
+        assert result.returncode == 1, output
+        assert "只读不变量" in result.stdout or "相同" in result.stdout
+        assert _hashlib.sha256(
+            json_path.read_bytes()
+        ).hexdigest() == before, output
+
+
+def test_audit_refuses_foreign_or_unparseable_existing_output(
+    formal_module, real_initial_states, tmp_path
+):
+    """验收（输出安全 4）：已有输出不属于同一源文件或无法解析 → 拒绝
+    覆盖且原有输出保持不变"""
+    import subprocess as _sp
+
+    def audit(src_name, out_name):
         return _sp.run(
             [sys.executable, "scripts/audit_formal_json.py",
              "--protocol", "probe_residual_geometry_formal",
-             "--json", str(src), "--output", str(out)],
+             "--json", str(tmp_path / src_name),
+             "--output", str(tmp_path / out_name)],
             capture_output=True, text=True,
             env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
         )
 
-    # 同路径
-    r1 = _audit_with_output(src)
-    assert r1.returncode != 0 and "拒绝审计" in (r1.stdout + r1.stderr)
-    # 相对路径别名
-    alias = tmp_path / "sub" / ".." / "artifact.json"
-    r2 = _audit_with_output(alias)
-    assert r2.returncode != 0
-    # 符号链接
-    link = tmp_path / "link.json"
-    link.symlink_to(src)
-    r3 = _audit_with_output(link)
-    assert r3.returncode != 0
-    # 硬链接
-    hard = tmp_path / "hard.json"
-    __import__("os").link(src, hard)
-    r4 = _audit_with_output(hard)
-    assert r4.returncode != 0
-    after = _hashlib.sha256(src.read_bytes()).hexdigest()
-    assert after == before, "任一拒绝场景不得修改输入文件"
+    payload = _formal_base(formal_module, real_initial_states)
+    (tmp_path / "one.json").write_text(
+        json.dumps(payload, ensure_ascii=False)
+    )
+    assert audit("one.json", "out.json").returncode == 0
+    original_output = (tmp_path / "out.json").read_bytes()
+    # 同源重复审计：允许覆盖（幂等）
+    assert audit("one.json", "out.json").returncode == 0
+    assert (tmp_path / "out.json").read_bytes() == original_output
+    # 另一源文件（字节不同 → source_sha256 不同）指向既有输出 → 拒绝
+    payload2 = _formal_base(formal_module, real_initial_states)
+    payload2["provenance"]["command"] = "another run"
+    (tmp_path / "two.json").write_text(
+        json.dumps(payload2, ensure_ascii=False)
+    )
+    blocked = audit("two.json", "out.json")
+    assert blocked.returncode == 1
+    assert "拒绝覆盖" in blocked.stdout
+    assert (tmp_path / "out.json").read_bytes() == original_output
+    # 无法解析的既有输出 → 拒绝覆盖
+    (tmp_path / "corrupt.json").write_text("not json")
+    blocked2 = audit("one.json", "corrupt.json")
+    assert blocked2.returncode == 1
+    assert (tmp_path / "corrupt.json").read_text() == "not json"
 
 
-def test_audit_failure_leaves_no_output(formal_module, tmp_path):
-    """任一失败场景不得留下可被误认为成功的审计输出"""
-    payload = _formal_base(formal_module)
+def test_audit_failure_leaves_no_output(
+    formal_module, real_initial_states, tmp_path
+):
+    """验收：任一失败场景不得留下可被误认为成功的审计输出"""
+    payload = _formal_base(formal_module, real_initial_states)
     payload["datasets"]["nltcs"]["judgment"] = None
-    import json as _json
-    src = tmp_path / "bad.json"
-    src.write_text(_json.dumps(payload))
+    result = _run_audit(tmp_path, payload, "probe_residual_geometry_formal")
+    assert result.returncode == 1
+    leftovers = [
+        p for p in tmp_path.iterdir()
+        if p.name != "a.json" and not p.name.startswith(".")
+    ]
+    assert leftovers == []
+
+
+def test_audit_requires_unified_entry(formal_module, tmp_path):
+    """审计器只支持实现统一验证入口合同的协议模块"""
     import subprocess as _sp
+
+    (tmp_path / "stub_protocol.py").write_text("X = 1\n")
+    json_path = tmp_path / "a.json"
+    json_path.write_text("{}")
     result = _sp.run(
         [sys.executable, "scripts/audit_formal_json.py",
-         "--protocol", "probe_residual_geometry_formal",
-         "--json", str(src)],
+         "--protocol", "stub_protocol", "--json", str(json_path)],
         capture_output=True, text=True,
-        env={**__import__("os").environ, "PYTHONPATH": "src:scripts"},
+        env={**__import__("os").environ,
+             "PYTHONPATH": f"src:scripts:{tmp_path}"},
     )
     assert result.returncode == 1
-    assert not (tmp_path / "bad.json.audited.json").exists()
-    assert not list(tmp_path.glob("*.tmp"))
+    assert "统一验证入口" in result.stdout
