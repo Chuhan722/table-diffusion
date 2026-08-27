@@ -48,7 +48,12 @@ from table_diffevo.metrics import compute_normalized_l1
 from table_diffevo.fitness import compute_fitness
 from table_diffevo.distance import pairwise_block_distance
 from table_diffevo.sampling import compute_sampling_probs, sample_donors
-from table_diffevo.update import evolve_step
+from table_diffevo.update import (
+    apply_planned_mutations,
+    apply_update_random_plan,
+    evolve_step,
+    sample_update_random_plan,
+)
 from table_diffevo.directional_diffusion import (
     DEFAULT_DIRECTION_LOGIT_CLIP,
     additive_copy_drift_diagnostics,
@@ -65,6 +70,16 @@ from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     compile_mask_workload,
     evolve_step_factorized_gibbs,
+)
+from table_diffevo.gap_l1_diffusion import (
+    DEFAULT_GAP_L1_FLOOR,
+    DEFAULT_GAP_L1_LOGIT_CLIP,
+    DEFAULT_GAP_L1_STRENGTH,
+    DEFAULT_GAP_L1_SWEEPS,
+    compile_gap_l1_workload,
+    evolve_step_gap_l1_global,
+    isolated_gap_l1_scores,
+    stable_nonzero_rms,
 )
 from table_diffevo.stationarity import (
     StationarityTrace,
@@ -145,6 +160,17 @@ def _factorized_gibbs_seed(seed: int) -> int:
     return int(sequence.generate_state(1, dtype=np.uint64)[0])
 
 
+def _gap_l1_round_seed(seed: int, round_index: int) -> int:
+    """为每一轮派生独立缺口扫描随机流，避免 K 改变后续轮次地址。"""
+
+    sequence = np.random.SeedSequence([
+        int(seed),
+        0x4741504C31,
+        int(round_index),
+    ])
+    return int(sequence.generate_state(1, dtype=np.uint64)[0])
+
+
 def _mean_selected_distance(distances, donor_idx, use_torch: bool = False) -> float:
     """只提取每行选中 donor 的距离并求均值，避免回传完整 GPU 距离矩阵。"""
     donor_idx = np.asarray(donor_idx, dtype=np.intp)
@@ -203,6 +229,7 @@ def run_evolution(
     factorized_gibbs_max_order: int = 3,
     factorized_gibbs_logit_clip: Optional[float] = DEFAULT_LOGIT_CLIP,
     factorized_gibbs_use_compiled_workload: bool = False,
+    gap_l1_sweeps: int = 0,
     candidate_budget: Optional[int] = None,
     residual_self_cooling: Optional[float] = None,
     self_cooling_monotone: bool = False,
@@ -337,6 +364,12 @@ def run_evolution(
     factorized_gibbs_use_compiled_workload : bool, default False
         True 时预编译公开 schema/query 结构，并使用与逐行因子构造输出等价的
         批量条件评价路径。只影响非零 Gibbs sweep 的实现与性能，不改变核。
+    gap_l1_sweeps : int, default 0
+        0 保持现有独立 B/因子核路径；8 启用剩余缺口绝对误差随机扫描。新核先
+        复用现行 B 的参与行、初始复制开关和后置突变随机方案，再以独立逐轮
+        随机流执行固定 ``8*K`` 个微步。启用时强制 ``tol=+inf``、
+        ``max_retries=0``，每轮唯一下一张表无条件接续；不允许与因子核同时启用。
+        参考尺度在首个非零孤立分数轮次建立后永久冻结，建立前原样应用 B 开关。
     candidate_budget : int or None, default None
         可选的全局候选评估次数上限。若指定，演化会在达到此预算时提前停止，
         与 n_rounds 并存（先达到者停止）。
@@ -455,7 +488,7 @@ def run_evolution(
     -------
     output_S : pd.DataFrame, shape (n_records, n_attributes)
         legacy 路径返回演化中 loss 最小的合成表；启用 inner early stopping
-        时返回 A/B/C 触发时的 terminal current 表。
+        或剩余缺口核时返回 terminal current 表，禁止从历史状态中挑赢家。
     diagnostics : dict
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
@@ -492,6 +525,8 @@ def run_evolution(
           提前停止
         - factorized_gibbs_attempt_diagnostics_history: 每轮每次尝试的因子构造、
           Gibbs 微步和墙钟诊断；不参与接受或早停
+        - gap_l1_attempt_diagnostics_history: 剩余缺口核的定尺状态、独立逐轮
+          随机流、微步和最终复制计数诊断；不参与是否接续的决策
         - primary_rng_state_sha256/factorized_gibbs_rng_state_sha256:
           主随机流与附加随机流最终状态摘要
 
@@ -508,7 +543,8 @@ def run_evolution(
 
     **整代检查失败：** max_retries=0 时保持原表；否则缩小 rho
     重试。legacy 路径仍由 best_S 保底；inner early stopping 路径始终返回
-    terminal current，不用 best_S 替换输出。
+    terminal current，不用 best_S 替换输出。剩余缺口核不执行整代检查、重试
+    或历史赢家选择，每轮和最终输出都使用 terminal current。
 
     **GPU 加速：** device='cuda' 时，距离计算在 GPU 上进行（20-50x 加速），
     所有随机操作仍在 CPU（NumPy），确保相同种子下完全可复现。
@@ -871,6 +907,16 @@ def run_evolution(
             raise ValueError(f"{name} 必须是非负整数，得到 {value!r}")
     factorized_gibbs_sweeps = int(factorized_gibbs_sweeps)
     factorized_gibbs_max_order = int(factorized_gibbs_max_order)
+    if (
+        isinstance(gap_l1_sweeps, (bool, np.bool_))
+        or not isinstance(gap_l1_sweeps, (int, np.integer))
+        or int(gap_l1_sweeps) not in (0, DEFAULT_GAP_L1_SWEEPS)
+    ):
+        raise ValueError(
+            "gap_l1_sweeps 只允许为 0 或冻结的 8，"
+            f"得到 {gap_l1_sweeps!r}"
+        )
+    gap_l1_sweeps = int(gap_l1_sweeps)
     if not isinstance(
         factorized_gibbs_use_compiled_workload, (bool, np.bool_)
     ):
@@ -934,6 +980,40 @@ def run_evolution(
             raise ValueError(
                 "factorized Gibbs 要求 eta 是 (0, 1) 内的有限数值，"
                 f"得到 {eta!r}"
+            )
+    if gap_l1_sweeps > 0:
+        if factorized_gibbs_sweeps > 0:
+            raise ValueError(
+                "剩余缺口核不能与 factorized Gibbs 同时启用"
+            )
+        if not residual_directed_diffusion:
+            raise ValueError(
+                "剩余缺口核要求启用 residual_directed_diffusion，"
+                "以复用现行 B 初始开关"
+            )
+        if (
+            isinstance(seed, (bool, np.bool_))
+            or not isinstance(seed, (int, np.integer))
+        ):
+            raise ValueError("剩余缺口核要求 seed 是整数")
+        if (
+            isinstance(eta, (bool, np.bool_))
+            or not isinstance(eta, (int, float, np.integer, np.floating))
+            or not np.isfinite(eta)
+            or not 0.0 < eta < 1.0
+        ):
+            raise ValueError("剩余缺口核要求 eta 是 (0, 1) 内的有限数值")
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(tol, (int, float, np.integer, np.floating))
+            or not np.isposinf(tol)
+        ):
+            raise ValueError(
+                "剩余缺口核要求 tol=+inf，保证每轮唯一下一张表无条件接续"
+            )
+        if max_retries != 0:
+            raise ValueError(
+                "剩余缺口核要求 max_retries=0，不执行拒绝、缩步或重试"
             )
 
     if horizon_invariant:
@@ -1128,6 +1208,9 @@ def run_evolution(
     factorized_gibbs_attempt_diagnostics_history: List[
         List[Dict[str, Any]]
     ] = []
+    gap_l1_attempt_diagnostics_history: List[List[Dict[str, Any]]] = []
+    gap_l1_reference_scale_history: List[Optional[float]] = []
+    gap_l1_calibration_history: List[Dict[str, Any]] = []
     termination_reason: Optional[str] = None
     inner_early_stopping_decision = None
     stopped_early = False
@@ -1161,6 +1244,19 @@ def run_evolution(
             max_factor_order=factorized_gibbs_max_order,
         )
         factorized_gibbs_workload_compile_elapsed_sec = (
+            time.perf_counter() - compile_start
+        )
+    gap_l1_device = "cuda" if device == "cuda" else "numpy"
+    gap_l1_reference_scale: Optional[float] = None
+    gap_l1_microsteps = 0
+    gap_l1_clip_hit_count = 0
+    gap_l1_unscaled_round_count = 0
+    gap_l1_workload_compile_elapsed_sec = 0.0
+    gap_l1_compiled_workload = None
+    if gap_l1_sweeps > 0:
+        compile_start = time.perf_counter()
+        gap_l1_compiled_workload = compile_gap_l1_workload(schema, queries)
+        gap_l1_workload_compile_elapsed_sec = (
             time.perf_counter() - compile_start
         )
 
@@ -1642,6 +1738,7 @@ def run_evolution(
         attempt_linear_gains: List[float] = []
         attempt_quadratic_penalties: List[float] = []
         attempt_factorized_gibbs_diagnostics: List[Dict[str, Any]] = []
+        attempt_gap_l1_diagnostics: List[Dict[str, Any]] = []
         attempt_transition_clocks: List[Dict[str, Any]] = []
         count_residual = target - q
         direction_kwargs = (
@@ -1655,7 +1752,146 @@ def run_evolution(
             attempt_rho = (
                 rho_t * self_cooling_factor * (retry_rho_decay ** attempt)
             )
-            if factorized_gibbs_sweeps > 0:
+            gap_l1_diagnostics = None
+            factorized_diagnostics = None
+            independent_diagnostics = None
+            if gap_l1_sweeps > 0:
+                update_plan = sample_update_random_plan(
+                    S,
+                    donors,
+                    schema,
+                    rho=attempt_rho,
+                    eta=eta,
+                    mu=mu * self_cooling_factor,
+                    rng=rng,
+                    copy_direction_scores=copy_direction_scores,
+                    copy_direction_strength=effective_direction_strength,
+                    direction_logit_clip=diffusion_direction_logit_clip,
+                )
+                calibration_distribution = None
+                if gap_l1_reference_scale is None:
+                    isolated = isolated_gap_l1_scores(
+                        S,
+                        donors,
+                        schema,
+                        queries,
+                        target,
+                        q,
+                        floor=DEFAULT_GAP_L1_FLOOR,
+                        compiled_workload=gap_l1_compiled_workload,
+                        device=gap_l1_device,
+                    )
+                    candidate_scale, calibration_distribution = (
+                        stable_nonzero_rms(isolated["scores"])
+                    )
+                    if candidate_scale > 0.0:
+                        gap_l1_reference_scale = candidate_scale
+                        calibration_status = "calibrated"
+                    else:
+                        calibration_status = "no_nonzero_score_this_round"
+                else:
+                    calibration_status = "already_frozen"
+                gap_l1_calibration_history.append({
+                    "round": int(t + 1),
+                    "status": calibration_status,
+                    "reference_scale": (
+                        float(gap_l1_reference_scale)
+                        if gap_l1_reference_scale is not None else None
+                    ),
+                    "distribution": calibration_distribution,
+                })
+                gap_l1_reference_scale_history.append(
+                    float(gap_l1_reference_scale)
+                    if gap_l1_reference_scale is not None else None
+                )
+
+                if gap_l1_reference_scale is None:
+                    proposal = apply_update_random_plan(
+                        S, donors, schema, update_plan
+                    )
+                    gap_l1_unscaled_round_count += 1
+                    gap_l1_diagnostics = {
+                        "kernel": "independent_b_unscaled_gap_fallback",
+                        "backend": None,
+                        "no_gate": True,
+                        "gap_l1_scan_applied": False,
+                        "calibration_status": calibration_status,
+                        "reference_scale": None,
+                        "n_sweeps": int(gap_l1_sweeps),
+                        "active_switches_k": 0,
+                        "gibbs_microsteps": 0,
+                        "participating_rows": int(
+                            update_plan.participate.sum()
+                        ),
+                        "mutated_rows": int(
+                            len(update_plan.mutation_events)
+                        ),
+                        "initial_on_switches": int(
+                            update_plan.initial_copy_mask.sum()
+                        ),
+                        "scan_rng_seed_uint64": None,
+                        "scan_rng_initial_state_sha256": None,
+                        "scan_rng_endpoint_state_sha256": None,
+                    }
+                else:
+                    gap_seed = _gap_l1_round_seed(seed, t)
+                    gap_rng = np.random.default_rng(gap_seed)
+                    gap_initial_rng_state = _rng_state_sha256(gap_rng)
+                    copy_table, _final_mask, kernel_diagnostics = (
+                        evolve_step_gap_l1_global(
+                            S,
+                            donors,
+                            schema,
+                            queries,
+                            target,
+                            q,
+                            participate=update_plan.participate,
+                            initial_mask=update_plan.initial_copy_mask,
+                            reference_scale=gap_l1_reference_scale,
+                            rng=gap_rng,
+                            n_sweeps=gap_l1_sweeps,
+                            eta=eta,
+                            strength=DEFAULT_GAP_L1_STRENGTH,
+                            floor=DEFAULT_GAP_L1_FLOOR,
+                            logit_clip=DEFAULT_GAP_L1_LOGIT_CLIP,
+                            compiled_workload=gap_l1_compiled_workload,
+                            verify_full_recount=True,
+                            device=gap_l1_device,
+                        )
+                    )
+                    proposal = apply_planned_mutations(
+                        copy_table, schema, update_plan
+                    )
+                    gap_l1_diagnostics = {
+                        **kernel_diagnostics,
+                        "backend": gap_l1_device,
+                        "gap_l1_scan_applied": True,
+                        "calibration_status": calibration_status,
+                        "participating_rows": int(
+                            update_plan.participate.sum()
+                        ),
+                        "mutated_rows": int(
+                            len(update_plan.mutation_events)
+                        ),
+                        "initial_on_switches": int(
+                            update_plan.initial_copy_mask.sum()
+                        ),
+                        "scan_rng_seed_uint64": int(gap_seed),
+                        "scan_rng_initial_state_sha256": (
+                            gap_initial_rng_state
+                        ),
+                        "scan_rng_endpoint_state_sha256": (
+                            _rng_state_sha256(gap_rng)
+                        ),
+                    }
+                    gap_l1_microsteps += int(
+                        kernel_diagnostics["gibbs_microsteps"]
+                    )
+                    gap_l1_clip_hit_count += int(
+                        kernel_diagnostics["clip_hit_count"]
+                    )
+                attempt_gap_l1_diagnostics.append(gap_l1_diagnostics)
+            elif factorized_gibbs_sweeps > 0:
                 proposal, factorized_diagnostics = (
                     evolve_step_factorized_gibbs(
                         S,
@@ -1763,9 +1999,13 @@ def run_evolution(
             proposal_participating_rows = 0
             if inner_early_stopper is not None:
                 proposal_kernel_diagnostics = (
-                    factorized_diagnostics
-                    if factorized_gibbs_sweeps > 0
-                    else independent_diagnostics
+                    gap_l1_diagnostics
+                    if gap_l1_sweeps > 0
+                    else (
+                        factorized_diagnostics
+                        if factorized_gibbs_sweeps > 0
+                        else independent_diagnostics
+                    )
                 )
                 proposal_participating_rows = int(
                     proposal_kernel_diagnostics["participating_rows"]
@@ -1777,9 +2017,13 @@ def run_evolution(
                     .to_numpy(dtype=bool)
                 )
                 kernel_diagnostics = (
-                    factorized_diagnostics
-                    if factorized_gibbs_sweeps > 0
-                    else independent_diagnostics
+                    gap_l1_diagnostics
+                    if gap_l1_sweeps > 0
+                    else (
+                        factorized_diagnostics
+                        if factorized_gibbs_sweeps > 0
+                        else independent_diagnostics
+                    )
                 )
                 query_l1_movement = float(np.abs(delta_q).sum())
                 changed_query_count = int(np.count_nonzero(delta_q))
@@ -1813,8 +2057,16 @@ def run_evolution(
                     and candidate_evaluation_count >= candidate_budget):
                 candidate_budget_exhausted = True
 
-            # 边界上这个已评估的候选仍可正常应用（接受即生效），但随后必须停止。
-            if proposal_loss <= loss + tol:
+            # 缺口核是结构上的无门控路径：查询评价只作状态更新和诊断，不能
+            # 决定是否采用。其他历史路径继续使用原整代检查。
+            if gap_l1_sweeps > 0 and not np.isfinite(proposal_loss):
+                raise RuntimeError("剩余缺口核生成了非有限查询损失")
+            apply_proposal = (
+                True
+                if gap_l1_sweeps > 0
+                else proposal_loss <= loss + tol
+            )
+            if apply_proposal:
                 accepted = True
                 accepted_attempt = attempt + 1
                 accepted_rho = attempt_rho
@@ -1836,6 +2088,9 @@ def run_evolution(
         )
         factorized_gibbs_attempt_diagnostics_history.append(
             attempt_factorized_gibbs_diagnostics
+        )
+        gap_l1_attempt_diagnostics_history.append(
+            attempt_gap_l1_diagnostics
         )
 
         post_round_q = proposal_q if accepted else q
@@ -2114,10 +2369,13 @@ def run_evolution(
     best_normalized_l1_error = float(
         np.mean(best_abs_errors) / n_records
     )
-    output_S = S if inner_early_stopper is not None else best_S
+    terminal_output = (
+        inner_early_stopper is not None or gap_l1_sweeps > 0
+    )
+    output_S = S if terminal_output else best_S
     output_q = (
         evaluate_table(output_S, queries)
-        if inner_early_stopper is not None else best_q
+        if terminal_output else best_q
     )
     abs_errors = np.abs(target - output_q)
     normalized_l1_error = float(np.mean(abs_errors) / n_records)
@@ -2147,12 +2405,12 @@ def run_evolution(
         ),
         "output_table_identity": (
             "terminal_current"
-            if inner_early_stopper is not None
+            if terminal_output
             else "historical_best_legacy"
         ),
         "output_squared_loss": (
             final_current_metrics["current_squared_loss"]
-            if inner_early_stopper is not None else best_loss
+            if terminal_output else best_loss
         ),
         "current_state_metrics_history": current_state_metrics_history,
         "current_state_transition_count": (
@@ -2271,6 +2529,13 @@ def run_evolution(
         "factorized_gibbs_attempt_diagnostics_history": (
             factorized_gibbs_attempt_diagnostics_history
         ),
+        "gap_l1_attempt_diagnostics_history": (
+            gap_l1_attempt_diagnostics_history
+        ),
+        "gap_l1_calibration_history": gap_l1_calibration_history,
+        "gap_l1_reference_scale_history": (
+            gap_l1_reference_scale_history
+        ),
         "state_evaluation_count": state_evaluation_count,
         "candidate_evaluation_count": candidate_evaluation_count,
         "candidate_budget_exhausted": candidate_budget_exhausted,
@@ -2302,6 +2567,16 @@ def run_evolution(
         "factorized_gibbs_workload_compile_elapsed_sec": (
             factorized_gibbs_workload_compile_elapsed_sec
         ),
+        "gap_l1_reference_scale": gap_l1_reference_scale,
+        "gap_l1_microsteps": int(gap_l1_microsteps),
+        "gap_l1_clip_hit_count": int(gap_l1_clip_hit_count),
+        "gap_l1_unscaled_round_count": int(
+            gap_l1_unscaled_round_count
+        ),
+        "gap_l1_workload_compile_elapsed_sec": (
+            gap_l1_workload_compile_elapsed_sec
+        ),
+        "gap_l1_device": gap_l1_device if gap_l1_sweeps > 0 else None,
         "initial_table_sha256": initial_table_sha256,
         "primary_rng_post_initialization_state_sha256": (
             primary_rng_post_initialization_state_sha256
@@ -2390,6 +2665,16 @@ def run_evolution(
             "factorized_gibbs_logit_clip": factorized_gibbs_logit_clip,
             "factorized_gibbs_use_compiled_workload": (
                 factorized_gibbs_use_compiled_workload
+            ),
+            "gap_l1_sweeps": gap_l1_sweeps,
+            "gap_l1_strength": (
+                DEFAULT_GAP_L1_STRENGTH if gap_l1_sweeps > 0 else None
+            ),
+            "gap_l1_floor": (
+                DEFAULT_GAP_L1_FLOOR if gap_l1_sweeps > 0 else None
+            ),
+            "gap_l1_logit_clip": (
+                DEFAULT_GAP_L1_LOGIT_CLIP if gap_l1_sweeps > 0 else None
             ),
             "candidate_budget": (
                 int(candidate_budget) if candidate_budget is not None else None

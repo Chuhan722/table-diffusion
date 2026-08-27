@@ -7,7 +7,14 @@ import numpy as np
 import pandas as pd
 import pytest
 from table_diffevo.schema import Schema, AttributeBlock
-from table_diffevo.update import evolve_step
+from table_diffevo.directional_diffusion import tilted_copy_probabilities
+from table_diffevo.update import (
+    _sample_legal_value,
+    _sample_mutation_block,
+    apply_update_random_plan,
+    evolve_step,
+    sample_update_random_plan,
+)
 
 
 def make_toy_schema():
@@ -34,6 +41,52 @@ def make_tables(n=5):
         "job": ["c", "c", "c", "c", "c"],
     })
     return current.head(n), donors.head(n)
+
+
+def legacy_valid_evolve_step(
+    current,
+    donors,
+    schema,
+    *,
+    rho,
+    eta,
+    mu,
+    rng,
+    direction_scores=None,
+    direction_strength=0.0,
+):
+    """重放拆分前的有效输入路径，锁定历史随机数消费顺序。"""
+
+    n_records = len(current)
+    attr_names = schema.attribute_names()
+    next_table = current.reset_index(drop=True).copy()
+    donors = donors.reset_index(drop=True)
+    participate = rng.random(n_records) < rho
+    for attr_idx, attr in enumerate(attr_names):
+        current_values = current[attr].reset_index(drop=True).to_numpy()
+        donor_values = donors[attr].to_numpy()
+        differ = current_values != donor_values
+        if direction_scores is None or direction_strength == 0.0:
+            copy_roll = rng.random(n_records) < eta
+        else:
+            copy_probability = tilted_copy_probabilities(
+                eta,
+                direction_scores[:, attr_idx],
+                direction_strength,
+            )
+            copy_roll = rng.random(n_records) < copy_probability
+        copy_mask = participate & differ & copy_roll
+        if copy_mask.any():
+            new_values = next_table[attr].to_numpy().copy()
+            new_values[copy_mask] = donor_values[copy_mask]
+            next_table[attr] = new_values
+
+    mutate_mask = participate & (rng.random(n_records) < mu)
+    for row_index in np.nonzero(mutate_mask)[0]:
+        attribute = _sample_mutation_block(schema, rng)
+        value = _sample_legal_value(schema.get_block(attribute), rng)
+        next_table.at[row_index, attribute] = value
+    return next_table
 
 
 class TestEvolveStepBasics:
@@ -268,6 +321,135 @@ class TestTransitionDiagnostics:
             "participating_rows": len(current),
             "mutated_rows": 0,
         }
+
+
+class TestUpdateRandomPlan:
+    @pytest.mark.parametrize(
+        (
+            "seed",
+            "rho",
+            "eta",
+            "mu",
+            "direction_strength",
+        ),
+        [
+            (2026082601, 0.6, 0.4, 0.7, 0.0),
+            (2026082602, 0.0, 0.5, 1.0, 0.0),
+            (2026082603, 1.0, 0.0, 1.0, 0.0),
+            (2026082604, 0.8, 0.5, 0.6, 1.7),
+        ],
+    )
+    def test_evolve_step_matches_pre_split_table_and_rng_endpoint(
+        self,
+        seed,
+        rho,
+        eta,
+        mu,
+        direction_strength,
+    ):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        direction_scores = np.asarray([
+            [-1.5, 0.0, 1.2],
+            [0.2, -0.9, 0.0],
+            [1.0, 0.3, -0.4],
+            [-0.1, 1.6, -1.1],
+            [0.7, -0.2, 0.5],
+        ])
+        use_direction = direction_strength != 0.0
+        legacy_rng = np.random.default_rng(seed)
+        split_rng = np.random.default_rng(seed)
+
+        expected = legacy_valid_evolve_step(
+            current,
+            donors,
+            schema,
+            rho=rho,
+            eta=eta,
+            mu=mu,
+            rng=legacy_rng,
+            direction_scores=(direction_scores if use_direction else None),
+            direction_strength=direction_strength,
+        )
+        observed = evolve_step(
+            current,
+            donors,
+            schema,
+            rho=rho,
+            eta=eta,
+            mu=mu,
+            rng=split_rng,
+            copy_direction_scores=(
+                direction_scores if use_direction else None
+            ),
+            copy_direction_strength=direction_strength,
+        )
+
+        pd.testing.assert_frame_equal(observed, expected)
+        assert split_rng.bit_generator.state == legacy_rng.bit_generator.state
+
+    def test_sample_then_apply_is_the_same_public_transition(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        plan_rng = np.random.default_rng(2026082605)
+        evolve_rng = np.random.default_rng(2026082605)
+
+        plan = sample_update_random_plan(
+            current,
+            donors,
+            schema,
+            rho=0.8,
+            eta=0.35,
+            mu=0.6,
+            rng=plan_rng,
+        )
+        materialized = apply_update_random_plan(
+            current, donors, schema, plan
+        )
+        expected = evolve_step(
+            current,
+            donors,
+            schema,
+            rho=0.8,
+            eta=0.35,
+            mu=0.6,
+            rng=evolve_rng,
+        )
+
+        pd.testing.assert_frame_equal(materialized, expected)
+        assert plan_rng.bit_generator.state == evolve_rng.bit_generator.state
+        assert plan.participate.dtype == np.bool_
+        assert plan.initial_copy_mask.shape == (len(current), schema.n_blocks())
+        assert plan.initial_copy_mask.dtype == np.bool_
+
+    def test_final_copy_override_reuses_the_same_mutations(self):
+        schema = make_toy_schema()
+        current, donors = make_tables()
+        plan = sample_update_random_plan(
+            current,
+            donors,
+            schema,
+            rho=1.0,
+            eta=1.0,
+            mu=1.0,
+            rng=np.random.default_rng(2026082606),
+        )
+        no_copy = np.zeros_like(plan.initial_copy_mask)
+
+        observed = apply_update_random_plan(
+            current,
+            donors,
+            schema,
+            plan,
+            final_copy_mask=no_copy,
+        )
+        expected = current.reset_index(drop=True).copy()
+        for event in plan.mutation_events:
+            expected.at[event.row_index, event.attribute] = event.value
+
+        pd.testing.assert_frame_equal(observed, expected)
+        assert plan.initial_copy_mask.any()
+        assert len(plan.mutation_events) == len(current)
 
 
 class TestIntegration:
