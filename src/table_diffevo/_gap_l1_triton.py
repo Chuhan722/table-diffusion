@@ -96,9 +96,31 @@ def _condition_kernel(
 
 
 @triton.jit
+def _combine_kernel(
+    error_sum_ptr,
+    old_term_sum_ptr,
+    term_sum0_ptr,
+    term_sum1_ptr,
+    e0_values_ptr,
+    e1_values_ptr,
+    step,
+    N_QUERIES: tl.constexpr,
+):
+    error_sum = tl.load(error_sum_ptr)
+    old_term_sum = tl.load(old_term_sum_ptr)
+    term_sum0 = tl.load(term_sum0_ptr)
+    term_sum1 = tl.load(term_sum1_ptr)
+    reciprocal = tl.full((), 1.0 / N_QUERIES, tl.float64)
+    sum0_without_new_terms = error_sum - old_term_sum
+    sum0 = sum0_without_new_terms + term_sum0
+    sum1_without_new_terms = error_sum - old_term_sum
+    sum1 = sum1_without_new_terms + term_sum1
+    tl.store(e0_values_ptr + step, sum0 * reciprocal)
+    tl.store(e1_values_ptr + step, sum1 * reciprocal)
+
+
+@triton.jit
 def _prepare_kernel(
-    e0_ptr,
-    e1_ptr,
     term_sum0_ptr,
     term_sum1_ptr,
     scale_ptr,
@@ -136,8 +158,10 @@ def _prepare_kernel(
 ):
     offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     valid = offsets < width
-    e0 = tl.load(e0_ptr)
-    e1 = tl.load(e1_ptr)
+    term_sum0 = tl.load(term_sum0_ptr)
+    term_sum1 = tl.load(term_sum1_ptr)
+    e0 = tl.load(e0_values_ptr + step)
+    e1 = tl.load(e1_values_ptr + step)
     scale = tl.load(scale_ptr)
     base = tl.load(base_ptr)
     strength = tl.load(strength_ptr)
@@ -152,8 +176,6 @@ def _prepare_kernel(
     clipped = raw != effective
     selected = roll < probability
     first = offsets == 0
-    tl.store(e0_values_ptr + step + offsets, e0, mask=first)
-    tl.store(e1_values_ptr + step + offsets, e1, mask=first)
     tl.store(score_values_ptr + step + offsets, score, mask=first)
     tl.store(normalized_values_ptr + step + offsets, normalized, mask=first)
     tl.store(raw_values_ptr + step + offsets, raw, mask=first)
@@ -161,8 +183,6 @@ def _prepare_kernel(
     tl.store(before_values_ptr + step + offsets, before, mask=first)
     tl.store(after_values_ptr + step + offsets, selected, mask=first)
     tl.store(clipped_values_ptr + step + offsets, clipped, mask=first)
-    term_sum0 = tl.load(term_sum0_ptr)
-    term_sum1 = tl.load(term_sum1_ptr)
     selected_term_sum = tl.where(selected, term_sum1, term_sum0)
     tl.store(
         candidate_term_sum_ptr + offsets,
@@ -200,7 +220,8 @@ def _commit_kernel(
     failure_row_ptr,
     indicator_row_ptr,
     error_terms_ptr,
-    candidate_error_sum_ptr,
+    old_term_sum_ptr,
+    candidate_term_sum_ptr,
     error_sum_ptr,
     state_mask_row_ptr,
     attribute_index,
@@ -229,7 +250,11 @@ def _commit_kernel(
     tl.store(failure_row_ptr + offsets, failures, mask=update)
     tl.store(indicator_row_ptr + offsets, indicators, mask=update)
     first = offsets == 0
-    candidate_error_sum = tl.load(candidate_error_sum_ptr)
+    error_sum = tl.load(error_sum_ptr)
+    old_term_sum = tl.load(old_term_sum_ptr)
+    candidate_term_sum = tl.load(candidate_term_sum_ptr)
+    candidate_without_new_terms = error_sum - old_term_sum
+    candidate_error_sum = candidate_without_new_terms + candidate_term_sum
     tl.store(
         error_sum_ptr + offsets,
         candidate_error_sum,
@@ -239,6 +264,19 @@ def _commit_kernel(
         state_mask_row_ptr + attribute_index + offsets,
         selected,
         mask=first,
+    )
+
+
+def launch_combine(
+    *arguments: Any,
+    n_queries: int,
+) -> None:
+    """按历史双精度顺序结合归约，并物化E0/E1舍入边界。"""
+
+    _combine_kernel[(1,)](
+        *arguments,
+        N_QUERIES=n_queries,
+        num_warps=1,
     )
 
 

@@ -502,9 +502,7 @@ def test_cuda_triton_condition_matches_eager():
         assert torch.equal(actual, expected)
 
 
-def test_cuda_triton_selected_term_sum_matches_candidate_reduction(
-    monkeypatch,
-):
+def test_cuda_triton_scalar_fusion_matches_eager(monkeypatch):
     (
         schema,
         queries,
@@ -517,36 +515,75 @@ def test_cuda_triton_selected_term_sum_matches_candidate_reduction(
     ) = _case()
     from table_diffevo import _gap_l1_triton as triton_gap
 
+    original_combine = triton_gap.launch_combine
     original_prepare = triton_gap.launch_prepare
-    original_error_sum = gap._exact_cuda_candidate_error_sum
+    original_commit = triton_gap.launch_commit
     state = {}
     comparisons = []
+
+    def observe_combine(*args, **kwargs):
+        error_sum = args[0]
+        old_term_sum = args[1]
+        expected_e0 = (
+            error_sum - old_term_sum + args[2]
+        ) / kwargs["n_queries"]
+        expected_e1 = (
+            error_sum - old_term_sum + args[3]
+        ) / kwargs["n_queries"]
+        step = args[-1]
+        result = original_combine(*args, **kwargs)
+        state["error_sum"] = error_sum
+        state["old_term_sum"] = old_term_sum
+        comparisons.append((
+            torch.equal(args[4][step], expected_e0),
+            torch.equal(args[5][step], expected_e1),
+        ))
+        return result
 
     def observe_prepare(*args, **kwargs):
         result = original_prepare(*args, **kwargs)
         state["candidate_term_sum"] = args[-6]
         state["candidate_terms"] = args[-4]
         state["width"] = kwargs["width"]
+        historical_candidate_sum = state["candidate_terms"][
+            :state["width"]
+        ].sum(dtype=state["error_sum"].dtype)
+        state["candidate_error_sum"] = (
+            gap._exact_cuda_candidate_error_sum(
+                state["error_sum"],
+                state["old_term_sum"],
+                state["candidate_term_sum"],
+            )
+        )
+        state["unchanged_error_sum"] = state["error_sum"].clone()
+        comparisons[-1] += (
+            torch.equal(
+                state["candidate_term_sum"],
+                historical_candidate_sum,
+            ),
+        )
         return result
 
-    def observe_error_sum(error_sum, old_term_sum, candidate_term_sum):
-        assert candidate_term_sum is state["candidate_term_sum"]
-        historical_sum = state["candidate_terms"][
-            :state["width"]
-        ].sum(dtype=error_sum.dtype)
-        comparisons.append(torch.equal(candidate_term_sum, historical_sum))
-        return original_error_sum(
-            error_sum,
-            old_term_sum,
-            candidate_term_sum,
+    def observe_commit(*args, **kwargs):
+        assert args[11] is state["candidate_term_sum"]
+        step = args[-1]
+        changed = bool(
+            (args[16][step] != args[15][step]).item()
         )
+        expected_error_sum = (
+            state["candidate_error_sum"]
+            if changed
+            else state["unchanged_error_sum"]
+        )
+        result = original_commit(*args, **kwargs)
+        comparisons[-1] += (
+            torch.equal(args[12], expected_error_sum),
+        )
+        return result
 
+    monkeypatch.setattr(triton_gap, "launch_combine", observe_combine)
     monkeypatch.setattr(triton_gap, "launch_prepare", observe_prepare)
-    monkeypatch.setattr(
-        gap,
-        "_exact_cuda_candidate_error_sum",
-        observe_error_sum,
-    )
+    monkeypatch.setattr(triton_gap, "launch_commit", observe_commit)
     _, _, diagnostics = gap.evolve_step_gap_l1_global(
         current,
         donors,
@@ -563,10 +600,12 @@ def test_cuda_triton_selected_term_sum_matches_candidate_reduction(
     )
 
     assert len(comparisons) == diagnostics["gibbs_microsteps"]
-    assert set(comparisons) == {True}
+    assert set(comparisons) == {(True, True, True, True)}
 
 
-def test_cuda_scan_reuses_condition_term_reduction_for_candidate(monkeypatch):
+def test_cuda_scan_fuses_scalars_after_three_condition_reductions(
+    monkeypatch,
+):
     (
         schema,
         queries,
@@ -577,17 +616,17 @@ def test_cuda_scan_reuses_condition_term_reduction_for_candidate(monkeypatch):
         participate,
         initial_mask,
     ) = _case()
-    original_error_sum = gap._exact_cuda_candidate_error_sum
+    original_term_sums = gap._cuda_condition_term_sums
     original_sum = torch.Tensor.sum
     state = {"inside_reduction": False, "reduction_count": 0}
     reductions_per_microstep = []
 
-    def observe_error_sum(*args, **kwargs):
+    def observe_term_sums(*args, **kwargs):
         assert state["inside_reduction"] is False
         state["inside_reduction"] = True
         state["reduction_count"] = 0
         try:
-            return original_error_sum(*args, **kwargs)
+            return original_term_sums(*args, **kwargs)
         finally:
             reductions_per_microstep.append(state["reduction_count"])
             state["inside_reduction"] = False
@@ -597,10 +636,19 @@ def test_cuda_scan_reuses_condition_term_reduction_for_candidate(monkeypatch):
             state["reduction_count"] += 1
         return original_sum(tensor, *args, **kwargs)
 
+    def forbidden_eager_scalar_path(*_args, **_kwargs):
+        raise AssertionError("非空查询扫描不得回到eager标量结合")
+
+    monkeypatch.setattr(gap, "_cuda_condition_term_sums", observe_term_sums)
+    monkeypatch.setattr(
+        gap,
+        "_exact_cuda_condition_error_pair",
+        forbidden_eager_scalar_path,
+    )
     monkeypatch.setattr(
         gap,
         "_exact_cuda_candidate_error_sum",
-        observe_error_sum,
+        forbidden_eager_scalar_path,
     )
     monkeypatch.setattr(torch.Tensor, "sum", observe_sum)
     _, _, diagnostics = gap.evolve_step_gap_l1_global(
@@ -620,10 +668,10 @@ def test_cuda_scan_reuses_condition_term_reduction_for_candidate(monkeypatch):
 
     assert state["inside_reduction"] is False
     assert len(reductions_per_microstep) == diagnostics["gibbs_microsteps"]
-    assert set(reductions_per_microstep) == {0}
+    assert set(reductions_per_microstep) == {3}
 
 
-def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):
+def test_cuda_scan_launches_four_triton_kernels_per_microstep(monkeypatch):
     (
         schema,
         queries,
@@ -637,13 +685,18 @@ def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):
     from table_diffevo import _gap_l1_triton as triton_gap
 
     original_condition = triton_gap.launch_condition
+    original_combine = triton_gap.launch_combine
     original_prepare = triton_gap.launch_prepare
     original_commit = triton_gap.launch_commit
-    calls = {"condition": 0, "prepare": 0, "commit": 0}
+    calls = {"condition": 0, "combine": 0, "prepare": 0, "commit": 0}
 
     def observe_condition(*args, **kwargs):
         calls["condition"] += 1
         return original_condition(*args, **kwargs)
+
+    def observe_combine(*args, **kwargs):
+        calls["combine"] += 1
+        return original_combine(*args, **kwargs)
 
     def observe_prepare(*args, **kwargs):
         calls["prepare"] += 1
@@ -654,6 +707,7 @@ def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):
         return original_commit(*args, **kwargs)
 
     monkeypatch.setattr(triton_gap, "launch_condition", observe_condition)
+    monkeypatch.setattr(triton_gap, "launch_combine", observe_combine)
     monkeypatch.setattr(triton_gap, "launch_prepare", observe_prepare)
     monkeypatch.setattr(triton_gap, "launch_commit", observe_commit)
     _, _, diagnostics = gap.evolve_step_gap_l1_global(
@@ -673,6 +727,7 @@ def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):
 
     assert calls == {
         "condition": diagnostics["gibbs_microsteps"],
+        "combine": diagnostics["gibbs_microsteps"],
         "prepare": diagnostics["gibbs_microsteps"],
         "commit": diagnostics["gibbs_microsteps"],
     }

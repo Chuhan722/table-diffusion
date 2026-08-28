@@ -786,6 +786,20 @@ def _exact_cuda_condition_error_pair(
     )
 
 
+def _cuda_condition_term_sums(
+    error_sum: Any,
+    old_terms: Any,
+    terms0: Any,
+    terms1: Any,
+) -> Tuple[Any, Any, Any]:
+    """只执行历史三棵float64归约树，标量结合交给Triton。"""
+
+    old_term_sum = old_terms.sum(dtype=error_sum.dtype)
+    term_sum0 = terms0.sum(dtype=error_sum.dtype)
+    term_sum1 = terms1.sum(dtype=error_sum.dtype)
+    return old_term_sum, term_sum0, term_sum1
+
+
 def _condition_pair_cuda(
     plan: _CudaGapPlan,
     row_index: Any,
@@ -2191,22 +2205,25 @@ def _evolve_step_gap_l1_global_cuda(
                 condition_old_terms,
                 width=query_width,
             )
-            (
-                e0,
-                e1,
+            old_term_sum, term_sum0, term_sum1 = (
+                _cuda_condition_term_sums(
+                    plan.error_sum,
+                    condition_old_terms[:query_width],
+                    condition_terms0[:query_width],
+                    condition_terms1[:query_width],
+                )
+            )
+            triton_gap.launch_combine(
+                plan.error_sum,
                 old_term_sum,
                 term_sum0,
                 term_sum1,
-            ) = _exact_cuda_condition_error_pair(
-                plan.error_sum,
-                condition_old_terms[:query_width],
-                condition_terms0[:query_width],
-                condition_terms1[:query_width],
-                plan.compiled.n_queries,
+                e0_values,
+                e1_values,
+                step,
+                n_queries=plan.compiled.n_queries,
             )
             triton_gap.launch_prepare(
-                e0,
-                e1,
                 term_sum0,
                 term_sum1,
                 scale_t,
@@ -2241,11 +2258,6 @@ def _evolve_step_gap_l1_global_cuda(
                 step,
                 width=query_width,
             )
-            candidate_error_sum = _exact_cuda_candidate_error_sum(
-                plan.error_sum,
-                old_term_sum,
-                candidate_term_sum,
-            )
             triton_gap.launch_commit(
                 candidate_counts,
                 candidate_terms,
@@ -2257,7 +2269,8 @@ def _evolve_step_gap_l1_global_cuda(
                 plan.failure_counts[local_row],
                 plan.row_indicators[local_row],
                 plan.error_terms,
-                candidate_error_sum,
+                old_term_sum,
+                candidate_term_sum,
                 plan.error_sum,
                 mask_row,
                 attribute_index,
