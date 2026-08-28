@@ -767,7 +767,7 @@ def _condition_pair_cuda(
     attribute_index: int,
     *,
     local_row: Optional[int] = None,
-) -> Tuple[Any, Any, Any, Any, Any, Any]:
+) -> Tuple[Any, Any, Any, Any, Any, Any, Optional[Any]]:
     """CUDA 版 E0/E1，只读评价当前完整临时组合。"""
 
     torch = plan.torch
@@ -791,6 +791,7 @@ def _condition_pair_cuda(
             empty_failures,
             empty_indicators,
             empty_indicators,
+            None,
         )
     current_failures = plan.current_attribute_failures[
         attribute_index
@@ -840,20 +841,20 @@ def _condition_pair_cuda(
         failures1,
         indicators0,
         indicators1,
+        old_term_sum,
     )
 
 
 def _exact_cuda_candidate_error_sum(
     error_sum: Any,
-    error_terms: Any,
-    query_indices: Any,
+    old_term_sum: Any,
     candidate_terms: Any,
 ) -> Any:
     """保持历史 eager 双精度归约及其左结合更新顺序。"""
 
     return (
         error_sum
-        - error_terms[query_indices].sum(dtype=error_sum.dtype)
+        - old_term_sum
         + candidate_terms.sum(dtype=error_sum.dtype)
     )
 
@@ -2134,6 +2135,7 @@ def _evolve_step_gap_l1_global_cuda(
             failures1,
             indicators0,
             indicators1,
+            old_term_sum,
         ) = _condition_pair_cuda(
             plan,
             row_index,
@@ -2180,8 +2182,7 @@ def _evolve_step_gap_l1_global_cuda(
             )
             candidate_error_sum = _exact_cuda_candidate_error_sum(
                 plan.error_sum,
-                plan.error_terms,
-                query_indices,
+                old_term_sum,
                 candidate_terms[:query_width],
             )
             triton_gap.launch_commit(

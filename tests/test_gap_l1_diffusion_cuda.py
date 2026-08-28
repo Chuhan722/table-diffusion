@@ -354,9 +354,10 @@ def test_cuda_condition_pair_reuses_old_error_term_reduction(monkeypatch):
         return original_sum(tensor, *args, **kwargs)
 
     monkeypatch.setattr(torch.Tensor, "sum", observe_sum)
-    gap._condition_pair_cuda(plan, 0, 0)
+    *_, old_term_sum = gap._condition_pair_cuda(plan, 0, 0)
 
     assert reduction_widths == [3, 3, 3]
+    assert old_term_sum is not None
 
 
 def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
@@ -413,7 +414,7 @@ def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
 
     assert state["inside_reduction"] is False
     assert len(reductions_per_microstep) == diagnostics["gibbs_microsteps"]
-    assert set(reductions_per_microstep) == {2}
+    assert set(reductions_per_microstep) == {1}
 
 
 def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
