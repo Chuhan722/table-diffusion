@@ -322,6 +322,43 @@ def test_cuda_scan_keeps_coordinate_tape_on_host(monkeypatch):
     assert coordinate_transfers == []
 
 
+def test_cuda_condition_pair_reuses_old_error_term_reduction(monkeypatch):
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    plan = gap._prepare_cuda_plan(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate,
+        initial_mask,
+        floor=8.0,
+        compiled_workload=None,
+    )
+    original_sum = torch.Tensor.sum
+    reduction_widths = []
+
+    def observe_sum(tensor, *args, **kwargs):
+        if kwargs.get("dtype") == torch.float64:
+            reduction_widths.append(tensor.numel())
+        return original_sum(tensor, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "sum", observe_sum)
+    gap._condition_pair_cuda(plan, 0, 0)
+
+    assert reduction_widths == [3, 3, 3]
+
+
 def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
     (
         schema,

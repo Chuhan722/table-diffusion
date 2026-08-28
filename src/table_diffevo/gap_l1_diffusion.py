@@ -830,12 +830,9 @@ def _condition_pair_cuda(
         / plan.denominators[query_indices]
     )
     old_terms = plan.error_terms[query_indices]
-    sum0 = plan.error_sum - old_terms.sum(dtype=torch.float64) + terms0.sum(
-        dtype=torch.float64
-    )
-    sum1 = plan.error_sum - old_terms.sum(dtype=torch.float64) + terms1.sum(
-        dtype=torch.float64
-    )
+    old_term_sum = old_terms.sum(dtype=torch.float64)
+    sum0 = plan.error_sum - old_term_sum + terms0.sum(dtype=torch.float64)
+    sum1 = plan.error_sum - old_term_sum + terms1.sum(dtype=torch.float64)
     return (
         sum0 / plan.compiled.n_queries,
         sum1 / plan.compiled.n_queries,
