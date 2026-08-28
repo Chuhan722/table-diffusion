@@ -672,17 +672,18 @@ def test_validate_rejects_initial_state_recompute_mismatch(
 def test_validate_protected_field_matrix(
     formal_module, real_initial_states
 ):
-    """验收矩阵：整份结构每个必需字段 × 删除/空值/错误类型/内容篡改。
+    """验收矩阵：每个必需字段 × 删除/空值/错误类型/单字段内容修改。
 
     程序化遍历顶层、protocol 清单、run_config、provenance、数据集、
     initial_state、运行记录与 offline 指标的全部受保护字段。
 
-    边界（显式声明）：进入科学判定的一切数值（final_table_measured_l1、
-    unmeasured_3/4way、binned_joint_tvd、initial_state 种子映射）都被
-    判定/初态重算锚定，内容篡改必拒；下面豁免集合是"无冻结锚点的运行
-    诊断记录"——审计器不重跑 2000 轮实验，数学上无法区分被篡改的
-    墙钟/loss 快照与真实值。这些字段的删除/空值/类型错误仍然全部拒绝，
-    仅内容篡改不可判定。
+    边界（显式声明）：initial_state 种子映射由独立重算对拍；进入判定
+    的指标发生单字段修改时会与记录的 judgment 不一致，因而被拒绝。
+    这只证明冻结结构、协议身份与记录内容的内部一致性，不证明运行指标
+    的来源真实性；若同时协调修改指标与 judgment，审计器不重跑 2000
+    轮实验，也没有签名或可信产物哈希，无法识别这种修改。下面豁免集合
+    是无独立锚点的运行诊断记录：这些字段的删除、空值和类型错误仍拒绝，
+    但合法类型之间的内容修改本来就不可判定。
     """
     # (容器名, 字段) → 豁免的变换集合
     free_value = {"tamper"}
