@@ -322,7 +322,7 @@ def test_cuda_scan_keeps_coordinate_tape_on_host(monkeypatch):
     assert coordinate_transfers == []
 
 
-def test_cuda_scan_uses_dense_deterministic_query_writes(monkeypatch):
+def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
     (
         schema,
         queries,
@@ -333,40 +333,32 @@ def test_cuda_scan_uses_dense_deterministic_query_writes(monkeypatch):
         participate,
         initial_mask,
     ) = _case()
-    original_set_coordinate = gap._set_coordinate_cuda
-    original_setitem = torch.Tensor.__setitem__
-    original_where = torch.where
-    state = {"inside_update": False, "out_wheres": 0}
-    out_wheres_per_microstep = []
-    advanced_writes = []
+    original_error_sum = gap._exact_cuda_candidate_error_sum
+    original_sum = torch.Tensor.sum
+    state = {"inside_reduction": False, "reduction_count": 0}
+    reductions_per_microstep = []
 
-    def observe_set_coordinate(*args, **kwargs):
-        before = state["out_wheres"]
-        state["inside_update"] = True
+    def observe_error_sum(*args, **kwargs):
+        assert state["inside_reduction"] is False
+        state["inside_reduction"] = True
+        state["reduction_count"] = 0
         try:
-            return original_set_coordinate(*args, **kwargs)
+            return original_error_sum(*args, **kwargs)
         finally:
-            state["inside_update"] = False
-            out_wheres_per_microstep.append(state["out_wheres"] - before)
+            reductions_per_microstep.append(state["reduction_count"])
+            state["inside_reduction"] = False
 
-    def observe_setitem(tensor, index, value):
-        indices = index if isinstance(index, tuple) else (index,)
-        if state["inside_update"] and any(
-            isinstance(item, torch.Tensor) for item in indices
-        ):
-            advanced_writes.append(index)
-        return original_setitem(tensor, index, value)
-
-    def observe_where(*args, **kwargs):
-        if state["inside_update"] and kwargs.get("out") is not None:
-            state["out_wheres"] += 1
-        return original_where(*args, **kwargs)
+    def observe_sum(tensor, *args, **kwargs):
+        if state["inside_reduction"] and kwargs.get("dtype") == torch.float64:
+            state["reduction_count"] += 1
+        return original_sum(tensor, *args, **kwargs)
 
     monkeypatch.setattr(
-        gap, "_set_coordinate_cuda", observe_set_coordinate
+        gap,
+        "_exact_cuda_candidate_error_sum",
+        observe_error_sum,
     )
-    monkeypatch.setattr(torch.Tensor, "__setitem__", observe_setitem)
-    monkeypatch.setattr(torch, "where", observe_where)
+    monkeypatch.setattr(torch.Tensor, "sum", observe_sum)
     _, _, diagnostics = gap.evolve_step_gap_l1_global(
         current,
         donors,
@@ -382,9 +374,144 @@ def test_cuda_scan_uses_dense_deterministic_query_writes(monkeypatch):
         device="cuda",
     )
 
-    assert advanced_writes == []
-    assert len(out_wheres_per_microstep) == diagnostics["gibbs_microsteps"]
-    assert set(out_wheres_per_microstep) == {4}
+    assert state["inside_reduction"] is False
+    assert len(reductions_per_microstep) == diagnostics["gibbs_microsteps"]
+    assert set(reductions_per_microstep) == {2}
+
+
+def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    from table_diffevo import _gap_l1_triton as triton_gap
+
+    original_prepare = triton_gap.launch_prepare
+    original_commit = triton_gap.launch_commit
+    calls = {"prepare": 0, "commit": 0}
+
+    def observe_prepare(*args, **kwargs):
+        calls["prepare"] += 1
+        return original_prepare(*args, **kwargs)
+
+    def observe_commit(*args, **kwargs):
+        calls["commit"] += 1
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(triton_gap, "launch_prepare", observe_prepare)
+    monkeypatch.setattr(triton_gap, "launch_commit", observe_commit)
+    _, _, diagnostics = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate=participate,
+        initial_mask=initial_mask,
+        reference_scale=0.02,
+        rng=np.random.default_rng(20260827),
+        n_sweeps=8,
+        device="cuda",
+    )
+
+    assert calls == {
+        "prepare": diagnostics["gibbs_microsteps"],
+        "commit": diagnostics["gibbs_microsteps"],
+    }
+
+
+def test_cuda_triton_microstep_trajectory_is_frozen():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    rng = np.random.default_rng(20260827)
+    _, mask, diagnostics = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate=participate,
+        initial_mask=initial_mask,
+        reference_scale=0.02,
+        rng=rng,
+        n_sweeps=8,
+        device="cuda",
+    )
+
+    assert diagnostics["microstep_trace_sha256"] == (
+        "5fa1c82c7d8e374ac06636c68832e2580871497a316f22958abd9ee67955b278"
+    )
+    assert diagnostics["final_query_counts"] == [4, 2, 1, 2, 1]
+    np.testing.assert_array_equal(
+        mask,
+        np.asarray([
+            [1, 0, 1],
+            [0, 1, 1],
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [1, 0, 0],
+        ], dtype=bool),
+    )
+
+
+def test_cuda_triton_normalizes_column_major_initial_mask():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    column_major_mask = np.asfortranarray(initial_mask)
+    assert column_major_mask.flags.f_contiguous
+    assert not column_major_mask.flags.c_contiguous
+
+    results = [
+        gap.evolve_step_gap_l1_global(
+            current,
+            donors,
+            schema,
+            queries,
+            targets,
+            counts,
+            participate=participate,
+            initial_mask=mask,
+            reference_scale=0.02,
+            rng=np.random.default_rng(20260826),
+            n_sweeps=8,
+            device="cuda",
+        )
+        for mask in (initial_mask, column_major_mask)
+    ]
+
+    pd.testing.assert_frame_equal(results[0][0], results[1][0])
+    np.testing.assert_array_equal(results[0][1], results[1][1])
+    assert results[0][2]["microstep_trace_sha256"] == (
+        results[1][2]["microstep_trace_sha256"]
+    )
+    assert results[0][2]["final_query_counts"] == (
+        results[1][2]["final_query_counts"]
+    )
 
 
 def test_cuda_k_zero_consumes_no_rng():

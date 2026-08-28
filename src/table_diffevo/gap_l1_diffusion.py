@@ -692,7 +692,7 @@ def _prepare_cuda_plan(
 
     mask = torch.as_tensor(
         structure.mask, dtype=torch.bool, device=device
-    ).clone()
+    ).contiguous()
     if n_active_rows:
         active_rows_t = torch.as_tensor(
             structure.active_rows, dtype=torch.long, device=device
@@ -846,75 +846,19 @@ def _condition_pair_cuda(
     )
 
 
-def _set_coordinate_cuda(
-    plan: _CudaGapPlan,
-    row_index: Any,
-    attribute_index: int,
-    selected: Any,
-    failures: Any,
-    indicators: Any,
-    *,
-    local_row: Optional[int] = None,
-    dense_query_positions: Any,
-    dense_query_membership: Any,
-) -> None:
-    torch = plan.torch
-    if local_row is None:
-        local_row = int(plan.row_lookup[int(row_index)])
-    query_indices = plan.query_indices_by_attribute[attribute_index]
-    old_selected = plan.mask[row_index, attribute_index]
-    changed = selected != old_selected
-    if query_indices.numel():
-        old_indicators = plan.row_indicators[local_row, query_indices]
-        old_counts = plan.plan_counts[query_indices]
-        candidate_counts = (
-            old_counts
-            + indicators.to(torch.int64)
-            - old_indicators.to(torch.int64)
-        )
-        candidate_terms = (
-            torch.abs(
-                plan.target[query_indices]
-                - candidate_counts.to(torch.float64)
-            )
-            / plan.denominators[query_indices]
-        )
-        candidate_error_sum = (
-            plan.error_sum
-            - plan.error_terms[query_indices].sum(dtype=torch.float64)
-            + candidate_terms.sum(dtype=torch.float64)
-        )
-        update = dense_query_membership & changed
-        torch.where(
-            update,
-            candidate_counts.gather(0, dense_query_positions),
-            plan.plan_counts,
-            out=plan.plan_counts,
-        )
-        failure_row = plan.failure_counts[local_row]
-        torch.where(
-            update,
-            failures.gather(0, dense_query_positions),
-            failure_row,
-            out=failure_row,
-        )
-        indicator_row = plan.row_indicators[local_row]
-        torch.where(
-            update,
-            indicators.gather(0, dense_query_positions),
-            indicator_row,
-            out=indicator_row,
-        )
-        torch.where(
-            update,
-            candidate_terms.gather(0, dense_query_positions),
-            plan.error_terms,
-            out=plan.error_terms,
-        )
-        plan.error_sum = torch.where(
-            changed, candidate_error_sum, plan.error_sum
-        )
-    plan.mask[row_index, attribute_index] = selected
+def _exact_cuda_candidate_error_sum(
+    error_sum: Any,
+    error_terms: Any,
+    query_indices: Any,
+    candidate_terms: Any,
+) -> Any:
+    """保持历史 eager 双精度归约及其左结合更新顺序。"""
+
+    return (
+        error_sum
+        - error_terms[query_indices].sum(dtype=error_sum.dtype)
+        + candidate_terms.sum(dtype=error_sum.dtype)
+    )
 
 
 def _cuda_dense_query_write_layout(plan: _CudaGapPlan) -> Tuple[Any, Any]:
@@ -2123,9 +2067,11 @@ def _evolve_step_gap_l1_global_cuda(
     dense_query_positions, dense_query_membership = (
         _cuda_dense_query_write_layout(plan)
     )
-    plan.torch.cuda.synchronize(plan.device)
-    prepared_elapsed = time.perf_counter() - started
     torch = plan.torch
+    from table_diffevo import _gap_l1_triton as triton_gap
+
+    torch.cuda.synchronize(plan.device)
+    prepared_elapsed = time.perf_counter() - started
     k = len(plan.active_coordinates)
     microsteps = sweeps * k
 
@@ -2161,12 +2107,29 @@ def _evolve_step_gap_l1_global_cuda(
     )
     after_values = torch.empty_like(before_values)
     clipped_values = torch.empty_like(before_values)
+    maximum_query_width = max(
+        (int(indices.numel()) for indices in plan.query_indices_by_attribute),
+        default=0,
+    )
+    scratch_width = max(1, maximum_query_width)
+    candidate_counts = torch.empty(
+        scratch_width, dtype=torch.int64, device=plan.device
+    )
+    candidate_terms = torch.empty(
+        scratch_width, dtype=torch.float64, device=plan.device
+    )
+    selected_failures = torch.empty(
+        scratch_width, dtype=torch.int32, device=plan.device
+    )
+    selected_indicators = torch.empty(
+        scratch_width, dtype=torch.bool, device=plan.device
+    )
 
     for step in range(microsteps):
         row_index = int(coordinate_tape[step, 0])
         attribute_index = int(coordinate_tape[step, 1])
         local_row = int(local_row_tape[step])
-        before = plan.mask[row_index, attribute_index].clone()
+        query_indices = plan.query_indices_by_attribute[attribute_index]
         (
             e0,
             e1,
@@ -2180,40 +2143,94 @@ def _evolve_step_gap_l1_global_cuda(
             attribute_index,
             local_row=local_row,
         )
-        score = e0 - e1
-        normalized = score / scale_t
-        probability, raw_logit, _, clipped = (
-            _conditional_probability_cuda(
-                score,
+        if query_indices.numel():
+            query_width = int(query_indices.numel())
+            mask_row = plan.mask[row_index]
+            triton_gap.launch_prepare(
+                e0,
+                e1,
                 scale_t,
                 base_logit_t,
                 strength_t,
                 clip_t,
+                random_rolls_t,
+                failures0,
+                failures1,
+                indicators0,
+                indicators1,
+                plan.row_indicators[local_row],
+                plan.plan_counts,
+                plan.target,
+                plan.denominators,
+                query_indices,
+                mask_row,
+                attribute_index,
+                e0_values,
+                e1_values,
+                score_values,
+                normalized_values,
+                raw_logit_values,
+                probability_values,
+                before_values,
+                after_values,
+                clipped_values,
+                candidate_counts,
+                candidate_terms,
+                selected_failures,
+                selected_indicators,
+                step,
+                width=query_width,
             )
-        )
-        after = random_rolls_t[step] < probability
-        selected_failures = torch.where(after, failures1, failures0)
-        selected_indicators = torch.where(after, indicators1, indicators0)
-        _set_coordinate_cuda(
-            plan,
-            row_index,
-            attribute_index,
-            after,
-            selected_failures,
-            selected_indicators,
-            local_row=local_row,
-            dense_query_positions=dense_query_positions[attribute_index],
-            dense_query_membership=dense_query_membership[attribute_index],
-        )
-        e0_values[step] = e0
-        e1_values[step] = e1
-        score_values[step] = score
-        normalized_values[step] = normalized
-        raw_logit_values[step] = raw_logit
-        probability_values[step] = probability
-        before_values[step] = before
-        after_values[step] = after
-        clipped_values[step] = clipped
+            candidate_error_sum = _exact_cuda_candidate_error_sum(
+                plan.error_sum,
+                plan.error_terms,
+                query_indices,
+                candidate_terms[:query_width],
+            )
+            triton_gap.launch_commit(
+                candidate_counts,
+                candidate_terms,
+                selected_failures,
+                selected_indicators,
+                dense_query_positions[attribute_index],
+                dense_query_membership[attribute_index],
+                plan.plan_counts,
+                plan.failure_counts[local_row],
+                plan.row_indicators[local_row],
+                plan.error_terms,
+                candidate_error_sum,
+                plan.error_sum,
+                mask_row,
+                attribute_index,
+                before_values,
+                after_values,
+                step,
+                n_queries=plan.compiled.n_queries,
+            )
+        else:
+            before = plan.mask[row_index, attribute_index].clone()
+            score = e0 - e1
+            normalized = score / scale_t
+            probability, raw_logit, _, clipped = (
+                _conditional_probability_cuda(
+                    score,
+                    scale_t,
+                    base_logit_t,
+                    strength_t,
+                    clip_t,
+                )
+            )
+            after = random_rolls_t[step] < probability
+            plan.mask[row_index, attribute_index] = after
+            e0_values[step] = e0
+            e1_values[step] = e1
+            score_values[step] = score
+            normalized_values[step] = normalized
+            raw_logit_values[step] = raw_logit
+            probability_values[step] = probability
+            before_values[step] = before
+            after_values[step] = after
+            clipped_values[step] = clipped
 
     one_minus_probability = 1.0 - probability_values
     entropy_values = -(

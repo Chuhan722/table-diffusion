@@ -375,6 +375,7 @@ def _source_hashes(root: Path) -> dict[str, str]:
     paths = (
         Path("src/table_diffevo/evolution.py"),
         Path("src/table_diffevo/gap_l1_diffusion.py"),
+        Path("src/table_diffevo/_gap_l1_triton.py"),
         Path("src/table_diffevo/update.py"),
         Path("scripts/profile_issue53_gap_l1_nltcs.py"),
     )
