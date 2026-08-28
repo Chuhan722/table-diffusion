@@ -322,6 +322,71 @@ def test_cuda_scan_keeps_coordinate_tape_on_host(monkeypatch):
     assert coordinate_transfers == []
 
 
+def test_cuda_scan_uses_dense_deterministic_query_writes(monkeypatch):
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    original_set_coordinate = gap._set_coordinate_cuda
+    original_setitem = torch.Tensor.__setitem__
+    original_where = torch.where
+    state = {"inside_update": False, "out_wheres": 0}
+    out_wheres_per_microstep = []
+    advanced_writes = []
+
+    def observe_set_coordinate(*args, **kwargs):
+        before = state["out_wheres"]
+        state["inside_update"] = True
+        try:
+            return original_set_coordinate(*args, **kwargs)
+        finally:
+            state["inside_update"] = False
+            out_wheres_per_microstep.append(state["out_wheres"] - before)
+
+    def observe_setitem(tensor, index, value):
+        indices = index if isinstance(index, tuple) else (index,)
+        if state["inside_update"] and any(
+            isinstance(item, torch.Tensor) for item in indices
+        ):
+            advanced_writes.append(index)
+        return original_setitem(tensor, index, value)
+
+    def observe_where(*args, **kwargs):
+        if state["inside_update"] and kwargs.get("out") is not None:
+            state["out_wheres"] += 1
+        return original_where(*args, **kwargs)
+
+    monkeypatch.setattr(
+        gap, "_set_coordinate_cuda", observe_set_coordinate
+    )
+    monkeypatch.setattr(torch.Tensor, "__setitem__", observe_setitem)
+    monkeypatch.setattr(torch, "where", observe_where)
+    _, _, diagnostics = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate=participate,
+        initial_mask=initial_mask,
+        reference_scale=0.02,
+        rng=np.random.default_rng(20260826),
+        n_sweeps=8,
+        device="cuda",
+    )
+
+    assert advanced_writes == []
+    assert len(out_wheres_per_microstep) == diagnostics["gibbs_microsteps"]
+    assert set(out_wheres_per_microstep) == {4}
+
+
 def test_cuda_k_zero_consumes_no_rng():
     schema = _binary_schema("a")
     queries = [{"conditions": [_equals("a")]}]

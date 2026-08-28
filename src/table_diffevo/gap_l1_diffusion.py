@@ -855,6 +855,8 @@ def _set_coordinate_cuda(
     indicators: Any,
     *,
     local_row: Optional[int] = None,
+    dense_query_positions: Any,
+    dense_query_membership: Any,
 ) -> None:
     torch = plan.torch
     if local_row is None:
@@ -882,23 +884,64 @@ def _set_coordinate_cuda(
             - plan.error_terms[query_indices].sum(dtype=torch.float64)
             + candidate_terms.sum(dtype=torch.float64)
         )
-        plan.plan_counts[query_indices] = torch.where(
-            changed, candidate_counts, old_counts
+        update = dense_query_membership & changed
+        torch.where(
+            update,
+            candidate_counts.gather(0, dense_query_positions),
+            plan.plan_counts,
+            out=plan.plan_counts,
         )
-        old_failures = plan.failure_counts[local_row, query_indices]
-        plan.failure_counts[local_row, query_indices] = torch.where(
-            changed, failures, old_failures
+        failure_row = plan.failure_counts[local_row]
+        torch.where(
+            update,
+            failures.gather(0, dense_query_positions),
+            failure_row,
+            out=failure_row,
         )
-        plan.row_indicators[local_row, query_indices] = torch.where(
-            changed, indicators, old_indicators
+        indicator_row = plan.row_indicators[local_row]
+        torch.where(
+            update,
+            indicators.gather(0, dense_query_positions),
+            indicator_row,
+            out=indicator_row,
         )
-        plan.error_terms[query_indices] = torch.where(
-            changed, candidate_terms, plan.error_terms[query_indices]
+        torch.where(
+            update,
+            candidate_terms.gather(0, dense_query_positions),
+            plan.error_terms,
+            out=plan.error_terms,
         )
         plan.error_sum = torch.where(
             changed, candidate_error_sum, plan.error_sum
         )
     plan.mask[row_index, attribute_index] = selected
+
+
+def _cuda_dense_query_write_layout(plan: _CudaGapPlan) -> Tuple[Any, Any]:
+    """把逐属性唯一查询索引变成全查询位置和成员掩码。"""
+
+    by_attribute = plan.compiled.query_indices_by_attribute
+    n_attributes = len(by_attribute)
+    n_queries = plan.compiled.n_queries
+    positions = np.zeros((n_attributes, n_queries), dtype=np.int64)
+    membership = np.zeros((n_attributes, n_queries), dtype=bool)
+    for attribute_index, query_indices in enumerate(by_attribute):
+        indices = np.asarray(query_indices, dtype=np.int64)
+        if len(indices) != len(np.unique(indices)):
+            raise RuntimeError("逐属性查询索引必须唯一")
+        if len(indices):
+            positions[attribute_index, indices] = np.arange(
+                len(indices), dtype=np.int64
+            )
+            membership[attribute_index, indices] = True
+    return (
+        plan.torch.as_tensor(
+            positions, dtype=plan.torch.long, device=plan.device
+        ),
+        plan.torch.as_tensor(
+            membership, dtype=plan.torch.bool, device=plan.device
+        ),
+    )
 
 
 def _validate_cuda_batch_inputs(
@@ -2077,6 +2120,9 @@ def _evolve_step_gap_l1_global_cuda(
         strength=strength,
         logit_clip=logit_clip,
     )
+    dense_query_positions, dense_query_membership = (
+        _cuda_dense_query_write_layout(plan)
+    )
     plan.torch.cuda.synchronize(plan.device)
     prepared_elapsed = time.perf_counter() - started
     torch = plan.torch
@@ -2156,6 +2202,8 @@ def _evolve_step_gap_l1_global_cuda(
             selected_failures,
             selected_indicators,
             local_row=local_row,
+            dense_query_positions=dense_query_positions[attribute_index],
+            dense_query_membership=dense_query_membership[attribute_index],
         )
         e0_values[step] = e0
         e1_values[step] = e1
