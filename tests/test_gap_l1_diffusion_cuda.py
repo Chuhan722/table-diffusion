@@ -256,6 +256,72 @@ def test_cuda_random_scan_matches_cpu_at_every_microstep(monkeypatch):
     assert cuda_result[2]["backend"] == "torch_cuda_float64"
 
 
+def test_cuda_scan_keeps_coordinate_tape_on_host(monkeypatch):
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    original_evolve_cuda = gap._evolve_step_gap_l1_global_cuda
+    original_prepare = gap._prepare_cuda_plan
+    original_as_tensor = torch.as_tensor
+    state = {"inside_scan": False, "plan_ready": False}
+    coordinate_transfers = []
+
+    def observe_evolve_cuda(*args, **kwargs):
+        state["inside_scan"] = True
+        try:
+            return original_evolve_cuda(*args, **kwargs)
+        finally:
+            state["inside_scan"] = False
+            state["plan_ready"] = False
+
+    def observe_prepare(*args, **kwargs):
+        plan = original_prepare(*args, **kwargs)
+        if state["inside_scan"]:
+            state["plan_ready"] = True
+        return plan
+
+    def observe_as_tensor(data, *args, **kwargs):
+        dtype = kwargs.get("dtype", args[0] if args else None)
+        if (
+            state["plan_ready"]
+            and isinstance(data, np.ndarray)
+            and data.ndim == 2
+            and data.shape[1] == 2
+            and dtype == torch.long
+        ):
+            coordinate_transfers.append(data.shape)
+        return original_as_tensor(data, *args, **kwargs)
+
+    monkeypatch.setattr(
+        gap, "_evolve_step_gap_l1_global_cuda", observe_evolve_cuda
+    )
+    monkeypatch.setattr(gap, "_prepare_cuda_plan", observe_prepare)
+    monkeypatch.setattr(torch, "as_tensor", observe_as_tensor)
+    gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate=participate,
+        initial_mask=initial_mask,
+        reference_scale=0.02,
+        rng=np.random.default_rng(20260826),
+        n_sweeps=8,
+        device="cuda",
+    )
+
+    assert coordinate_transfers == []
+
+
 def test_cuda_k_zero_consumes_no_rng():
     schema = _binary_schema("a")
     queries = [{"conditions": [_equals("a")]}]

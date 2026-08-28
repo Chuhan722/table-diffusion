@@ -2083,7 +2083,7 @@ def _evolve_step_gap_l1_global_cuda(
     k = len(plan.active_coordinates)
     microsteps = sweeps * k
 
-    # 必须逐微步交替消费“坐标、均匀随机数”，之后只读移交显卡。
+    # 必须逐微步交替消费“坐标、均匀随机数”；坐标留在主机，随机带只读移交显卡。
     coordinate_indices = np.empty(microsteps, dtype=np.int64)
     random_rolls = np.empty(microsteps, dtype=np.float64)
     scan_started = time.perf_counter()
@@ -2098,9 +2098,6 @@ def _evolve_step_gap_l1_global_cuda(
     else:
         coordinate_tape = np.empty((0, 2), dtype=np.int64)
         local_row_tape = np.empty(0, dtype=np.intp)
-    coordinate_tape_t = torch.as_tensor(
-        coordinate_tape, dtype=torch.long, device=plan.device
-    )
     random_rolls_t = torch.as_tensor(
         random_rolls, dtype=torch.float64, device=plan.device
     )
@@ -2123,8 +2120,7 @@ def _evolve_step_gap_l1_global_cuda(
         row_index = int(coordinate_tape[step, 0])
         attribute_index = int(coordinate_tape[step, 1])
         local_row = int(local_row_tape[step])
-        row_index_t = coordinate_tape_t[step, 0]
-        before = plan.mask[row_index_t, attribute_index].clone()
+        before = plan.mask[row_index, attribute_index].clone()
         (
             e0,
             e1,
@@ -2134,7 +2130,7 @@ def _evolve_step_gap_l1_global_cuda(
             indicators1,
         ) = _condition_pair_cuda(
             plan,
-            row_index_t,
+            row_index,
             attribute_index,
             local_row=local_row,
         )
@@ -2154,7 +2150,7 @@ def _evolve_step_gap_l1_global_cuda(
         selected_indicators = torch.where(after, indicators1, indicators0)
         _set_coordinate_cuda(
             plan,
-            row_index_t,
+            row_index,
             attribute_index,
             after,
             selected_failures,
