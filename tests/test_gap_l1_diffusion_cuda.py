@@ -360,6 +360,148 @@ def test_cuda_condition_pair_reuses_old_error_term_reduction(monkeypatch):
     assert old_term_sum is not None
 
 
+def test_cuda_triton_condition_matches_eager():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    plan = gap._prepare_cuda_plan(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate,
+        initial_mask,
+        floor=8.0,
+        compiled_workload=None,
+    )
+    from table_diffevo import _gap_l1_triton as triton_gap
+
+    width = max(
+        int(indices.numel()) for indices in plan.query_indices_by_attribute
+    )
+    failures0 = torch.empty(width, dtype=torch.int32, device=plan.device)
+    failures1 = torch.empty_like(failures0)
+    indicators0 = torch.empty(width, dtype=torch.bool, device=plan.device)
+    indicators1 = torch.empty_like(indicators0)
+    counts0 = torch.empty(width, dtype=torch.int64, device=plan.device)
+    counts1 = torch.empty_like(counts0)
+    terms0 = torch.empty(width, dtype=torch.float64, device=plan.device)
+    terms1 = torch.empty_like(terms0)
+    old_terms = torch.empty_like(terms0)
+    original_state = (
+        plan.failure_counts.clone(),
+        plan.row_indicators.clone(),
+        plan.plan_counts.clone(),
+        plan.error_terms.clone(),
+        plan.mask.clone(),
+    )
+
+    for row_raw, attribute_raw in plan.active_coordinates:
+        row = int(row_raw)
+        attribute = int(attribute_raw)
+        local_row = int(plan.row_lookup[row])
+        query_indices = plan.query_indices_by_attribute[attribute]
+        query_width = int(query_indices.numel())
+        eager = gap._condition_pair_cuda(
+            plan,
+            row,
+            attribute,
+            local_row=local_row,
+        )
+        triton_gap.launch_condition(
+            plan.current_attribute_failures[attribute][local_row],
+            plan.donor_attribute_failures[attribute][local_row],
+            plan.failure_counts[local_row],
+            plan.row_indicators[local_row],
+            plan.plan_counts,
+            plan.target,
+            plan.denominators,
+            plan.error_terms,
+            query_indices,
+            plan.mask[row],
+            attribute,
+            failures0,
+            failures1,
+            indicators0,
+            indicators1,
+            counts0,
+            counts1,
+            terms0,
+            terms1,
+            old_terms,
+            width=query_width,
+        )
+        expected_counts0 = (
+            plan.plan_counts[query_indices]
+            + eager[4].to(torch.int64)
+            - plan.row_indicators[local_row, query_indices].to(torch.int64)
+        )
+        expected_counts1 = (
+            plan.plan_counts[query_indices]
+            + eager[5].to(torch.int64)
+            - plan.row_indicators[local_row, query_indices].to(torch.int64)
+        )
+        expected_terms0 = (
+            torch.abs(
+                plan.target[query_indices]
+                - expected_counts0.to(torch.float64)
+            )
+            / plan.denominators[query_indices]
+        )
+        expected_terms1 = (
+            torch.abs(
+                plan.target[query_indices]
+                - expected_counts1.to(torch.float64)
+            )
+            / plan.denominators[query_indices]
+        )
+        old_term_sum = old_terms[:query_width].sum(dtype=torch.float64)
+        shadow_e0 = (
+            plan.error_sum
+            - old_term_sum
+            + terms0[:query_width].sum(dtype=torch.float64)
+        ) / plan.compiled.n_queries
+        shadow_e1 = (
+            plan.error_sum
+            - old_term_sum
+            + terms1[:query_width].sum(dtype=torch.float64)
+        ) / plan.compiled.n_queries
+
+        assert torch.equal(failures0[:query_width], eager[2])
+        assert torch.equal(failures1[:query_width], eager[3])
+        assert torch.equal(indicators0[:query_width], eager[4])
+        assert torch.equal(indicators1[:query_width], eager[5])
+        assert torch.equal(counts0[:query_width], expected_counts0)
+        assert torch.equal(counts1[:query_width], expected_counts1)
+        assert torch.equal(terms0[:query_width], expected_terms0)
+        assert torch.equal(terms1[:query_width], expected_terms1)
+        assert torch.equal(old_terms[:query_width], plan.error_terms[query_indices])
+        assert torch.equal(old_term_sum, eager[6])
+        assert torch.equal(shadow_e0, eager[0])
+        assert torch.equal(shadow_e1, eager[1])
+
+    for actual, expected in zip(
+        (
+            plan.failure_counts,
+            plan.row_indicators,
+            plan.plan_counts,
+            plan.error_terms,
+            plan.mask,
+        ),
+        original_state,
+    ):
+        assert torch.equal(actual, expected)
+
+
 def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
     (
         schema,
@@ -417,7 +559,7 @@ def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
     assert set(reductions_per_microstep) == {1}
 
 
-def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
+def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):
     (
         schema,
         queries,
@@ -430,9 +572,14 @@ def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
     ) = _case()
     from table_diffevo import _gap_l1_triton as triton_gap
 
+    original_condition = triton_gap.launch_condition
     original_prepare = triton_gap.launch_prepare
     original_commit = triton_gap.launch_commit
-    calls = {"prepare": 0, "commit": 0}
+    calls = {"condition": 0, "prepare": 0, "commit": 0}
+
+    def observe_condition(*args, **kwargs):
+        calls["condition"] += 1
+        return original_condition(*args, **kwargs)
 
     def observe_prepare(*args, **kwargs):
         calls["prepare"] += 1
@@ -442,6 +589,7 @@ def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
         calls["commit"] += 1
         return original_commit(*args, **kwargs)
 
+    monkeypatch.setattr(triton_gap, "launch_condition", observe_condition)
     monkeypatch.setattr(triton_gap, "launch_prepare", observe_prepare)
     monkeypatch.setattr(triton_gap, "launch_commit", observe_commit)
     _, _, diagnostics = gap.evolve_step_gap_l1_global(
@@ -460,6 +608,7 @@ def test_cuda_scan_launches_two_triton_kernels_per_microstep(monkeypatch):
     )
 
     assert calls == {
+        "condition": diagnostics["gibbs_microsteps"],
         "prepare": diagnostics["gibbs_microsteps"],
         "commit": diagnostics["gibbs_microsteps"],
     }

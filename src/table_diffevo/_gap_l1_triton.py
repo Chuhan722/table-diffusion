@@ -12,6 +12,90 @@ BLOCK_SIZE = 256
 
 
 @triton.jit
+def _condition_kernel(
+    current_failures_ptr,
+    donor_failures_ptr,
+    failure_row_ptr,
+    indicator_row_ptr,
+    plan_counts_ptr,
+    target_ptr,
+    denominators_ptr,
+    error_terms_ptr,
+    query_indices_ptr,
+    state_mask_row_ptr,
+    attribute_index,
+    failures0_ptr,
+    failures1_ptr,
+    indicators0_ptr,
+    indicators1_ptr,
+    counts0_ptr,
+    counts1_ptr,
+    terms0_ptr,
+    terms1_ptr,
+    old_terms_ptr,
+    width,
+    BLOCK: tl.constexpr,
+):
+    offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    valid = offsets < width
+    query_index = tl.load(query_indices_ptr + offsets, mask=valid, other=0)
+    current_failures = tl.load(
+        current_failures_ptr + offsets, mask=valid, other=0
+    )
+    donor_failures = tl.load(
+        donor_failures_ptr + offsets, mask=valid, other=0
+    )
+    selected = tl.load(state_mask_row_ptr + attribute_index).to(tl.int1)
+    old_failures = tl.where(
+        selected,
+        donor_failures,
+        current_failures,
+    )
+    base_failures = (
+        tl.load(failure_row_ptr + query_index, mask=valid, other=0)
+        - old_failures
+    )
+    failures0 = base_failures + current_failures
+    failures1 = base_failures + donor_failures
+    indicators0 = failures0 == 0
+    indicators1 = failures1 == 0
+    old_indicators = tl.load(
+        indicator_row_ptr + query_index, mask=valid, other=0
+    ).to(tl.int1)
+    old_counts = tl.load(
+        plan_counts_ptr + query_index, mask=valid, other=0
+    )
+    counts0 = (
+        old_counts
+        + indicators0.to(tl.int64)
+        - old_indicators.to(tl.int64)
+    )
+    counts1 = (
+        old_counts
+        + indicators1.to(tl.int64)
+        - old_indicators.to(tl.int64)
+    )
+    target = tl.load(target_ptr + query_index, mask=valid, other=0.0)
+    denominator = tl.load(
+        denominators_ptr + query_index, mask=valid, other=1.0
+    )
+    terms0 = tl.abs(target - counts0.to(tl.float64)) / denominator
+    terms1 = tl.abs(target - counts1.to(tl.float64)) / denominator
+    old_terms = tl.load(
+        error_terms_ptr + query_index, mask=valid, other=0.0
+    )
+    tl.store(failures0_ptr + offsets, failures0, mask=valid)
+    tl.store(failures1_ptr + offsets, failures1, mask=valid)
+    tl.store(indicators0_ptr + offsets, indicators0, mask=valid)
+    tl.store(indicators1_ptr + offsets, indicators1, mask=valid)
+    tl.store(counts0_ptr + offsets, counts0, mask=valid)
+    tl.store(counts1_ptr + offsets, counts1, mask=valid)
+    tl.store(terms0_ptr + offsets, terms0, mask=valid)
+    tl.store(terms1_ptr + offsets, terms1, mask=valid)
+    tl.store(old_terms_ptr + offsets, old_terms, mask=valid)
+
+
+@triton.jit
 def _prepare_kernel(
     e0_ptr,
     e1_ptr,
@@ -24,11 +108,10 @@ def _prepare_kernel(
     failures1_ptr,
     indicators0_ptr,
     indicators1_ptr,
-    indicator_row_ptr,
-    plan_counts_ptr,
-    target_ptr,
-    denominators_ptr,
-    query_indices_ptr,
+    counts0_ptr,
+    counts1_ptr,
+    terms0_ptr,
+    terms1_ptr,
     state_mask_row_ptr,
     attribute_index,
     e0_values_ptr,
@@ -76,23 +159,18 @@ def _prepare_kernel(
     tl.store(after_values_ptr + step + offsets, selected, mask=first)
     tl.store(clipped_values_ptr + step + offsets, clipped, mask=first)
 
-    query_index = tl.load(query_indices_ptr + offsets, mask=valid, other=0)
     failures0 = tl.load(failures0_ptr + offsets, mask=valid, other=0)
     failures1 = tl.load(failures1_ptr + offsets, mask=valid, other=0)
     indicators0 = tl.load(indicators0_ptr + offsets, mask=valid, other=0).to(tl.int1)
     indicators1 = tl.load(indicators1_ptr + offsets, mask=valid, other=0).to(tl.int1)
     selected_failures = tl.where(selected, failures1, failures0)
     selected_indicators = tl.where(selected, indicators1, indicators0)
-    old_indicators = tl.load(indicator_row_ptr + query_index, mask=valid, other=0).to(
-        tl.int1
-    )
-    old_counts = tl.load(plan_counts_ptr + query_index, mask=valid, other=0)
-    candidate_counts = (
-        old_counts + selected_indicators.to(tl.int64) - old_indicators.to(tl.int64)
-    )
-    target = tl.load(target_ptr + query_index, mask=valid, other=0.0)
-    denominator = tl.load(denominators_ptr + query_index, mask=valid, other=1.0)
-    candidate_terms = tl.abs(target - candidate_counts.to(tl.float64)) / denominator
+    counts0 = tl.load(counts0_ptr + offsets, mask=valid, other=0)
+    counts1 = tl.load(counts1_ptr + offsets, mask=valid, other=0)
+    terms0 = tl.load(terms0_ptr + offsets, mask=valid, other=0.0)
+    terms1 = tl.load(terms1_ptr + offsets, mask=valid, other=0.0)
+    candidate_counts = tl.where(selected, counts1, counts0)
+    candidate_terms = tl.where(selected, terms1, terms0)
     tl.store(candidate_counts_ptr + offsets, candidate_counts, mask=valid)
     tl.store(candidate_terms_ptr + offsets, candidate_terms, mask=valid)
     tl.store(selected_failures_ptr + offsets, selected_failures, mask=valid)
@@ -157,6 +235,16 @@ def launch_prepare(*arguments: Any, width: int) -> None:
     """提交一个候选计算 kernel；所有局部输出由调用者预分配。"""
 
     _prepare_kernel[(triton.cdiv(width, BLOCK_SIZE),)](
+        *arguments,
+        width,
+        BLOCK=BLOCK_SIZE,
+    )
+
+
+def launch_condition(*arguments: Any, width: int) -> None:
+    """提交一个只读条件状态准备kernel；局部输出由调用者预分配。"""
+
+    _condition_kernel[(triton.cdiv(width, BLOCK_SIZE),)](
         *arguments,
         width,
         BLOCK=BLOCK_SIZE,

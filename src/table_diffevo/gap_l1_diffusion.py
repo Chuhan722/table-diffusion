@@ -761,6 +761,29 @@ def _prepare_cuda_plan(
     )
 
 
+def _exact_cuda_condition_error_pair(
+    error_sum: Any,
+    old_terms: Any,
+    terms0: Any,
+    terms1: Any,
+    n_queries: int,
+) -> Tuple[Any, Any, Any]:
+    """保持历史E0/E1的三次eager归约与标量结合顺序。"""
+
+    old_term_sum = old_terms.sum(dtype=error_sum.dtype)
+    sum0 = (
+        error_sum
+        - old_term_sum
+        + terms0.sum(dtype=error_sum.dtype)
+    )
+    sum1 = (
+        error_sum
+        - old_term_sum
+        + terms1.sum(dtype=error_sum.dtype)
+    )
+    return sum0 / n_queries, sum1 / n_queries, old_term_sum
+
+
 def _condition_pair_cuda(
     plan: _CudaGapPlan,
     row_index: Any,
@@ -831,12 +854,16 @@ def _condition_pair_cuda(
         / plan.denominators[query_indices]
     )
     old_terms = plan.error_terms[query_indices]
-    old_term_sum = old_terms.sum(dtype=torch.float64)
-    sum0 = plan.error_sum - old_term_sum + terms0.sum(dtype=torch.float64)
-    sum1 = plan.error_sum - old_term_sum + terms1.sum(dtype=torch.float64)
+    e0, e1, old_term_sum = _exact_cuda_condition_error_pair(
+        plan.error_sum,
+        old_terms,
+        terms0,
+        terms1,
+        plan.compiled.n_queries,
+    )
     return (
-        sum0 / plan.compiled.n_queries,
-        sum1 / plan.compiled.n_queries,
+        e0,
+        e1,
         failures0,
         failures1,
         indicators0,
@@ -2122,29 +2149,54 @@ def _evolve_step_gap_l1_global_cuda(
     selected_indicators = torch.empty(
         scratch_width, dtype=torch.bool, device=plan.device
     )
+    condition_failures0 = torch.empty_like(selected_failures)
+    condition_failures1 = torch.empty_like(selected_failures)
+    condition_indicators0 = torch.empty_like(selected_indicators)
+    condition_indicators1 = torch.empty_like(selected_indicators)
+    condition_counts0 = torch.empty_like(candidate_counts)
+    condition_counts1 = torch.empty_like(candidate_counts)
+    condition_terms0 = torch.empty_like(candidate_terms)
+    condition_terms1 = torch.empty_like(candidate_terms)
+    condition_old_terms = torch.empty_like(candidate_terms)
 
     for step in range(microsteps):
         row_index = int(coordinate_tape[step, 0])
         attribute_index = int(coordinate_tape[step, 1])
         local_row = int(local_row_tape[step])
         query_indices = plan.query_indices_by_attribute[attribute_index]
-        (
-            e0,
-            e1,
-            failures0,
-            failures1,
-            indicators0,
-            indicators1,
-            old_term_sum,
-        ) = _condition_pair_cuda(
-            plan,
-            row_index,
-            attribute_index,
-            local_row=local_row,
-        )
         if query_indices.numel():
             query_width = int(query_indices.numel())
             mask_row = plan.mask[row_index]
+            triton_gap.launch_condition(
+                plan.current_attribute_failures[attribute_index][local_row],
+                plan.donor_attribute_failures[attribute_index][local_row],
+                plan.failure_counts[local_row],
+                plan.row_indicators[local_row],
+                plan.plan_counts,
+                plan.target,
+                plan.denominators,
+                plan.error_terms,
+                query_indices,
+                mask_row,
+                attribute_index,
+                condition_failures0,
+                condition_failures1,
+                condition_indicators0,
+                condition_indicators1,
+                condition_counts0,
+                condition_counts1,
+                condition_terms0,
+                condition_terms1,
+                condition_old_terms,
+                width=query_width,
+            )
+            e0, e1, old_term_sum = _exact_cuda_condition_error_pair(
+                plan.error_sum,
+                condition_old_terms[:query_width],
+                condition_terms0[:query_width],
+                condition_terms1[:query_width],
+                plan.compiled.n_queries,
+            )
             triton_gap.launch_prepare(
                 e0,
                 e1,
@@ -2153,15 +2205,14 @@ def _evolve_step_gap_l1_global_cuda(
                 strength_t,
                 clip_t,
                 random_rolls_t,
-                failures0,
-                failures1,
-                indicators0,
-                indicators1,
-                plan.row_indicators[local_row],
-                plan.plan_counts,
-                plan.target,
-                plan.denominators,
-                query_indices,
+                condition_failures0,
+                condition_failures1,
+                condition_indicators0,
+                condition_indicators1,
+                condition_counts0,
+                condition_counts1,
+                condition_terms0,
+                condition_terms1,
                 mask_row,
                 attribute_index,
                 e0_values,
@@ -2206,6 +2257,20 @@ def _evolve_step_gap_l1_global_cuda(
                 n_queries=plan.compiled.n_queries,
             )
         else:
+            (
+                e0,
+                e1,
+                _,
+                _,
+                _,
+                _,
+                _,
+            ) = _condition_pair_cuda(
+                plan,
+                row_index,
+                attribute_index,
+                local_row=local_row,
+            )
             before = plan.mask[row_index, attribute_index].clone()
             score = e0 - e1
             normalized = score / scale_t
