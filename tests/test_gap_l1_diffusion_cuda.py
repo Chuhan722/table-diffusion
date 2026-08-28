@@ -502,7 +502,71 @@ def test_cuda_triton_condition_matches_eager():
         assert torch.equal(actual, expected)
 
 
-def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
+def test_cuda_triton_selected_term_sum_matches_candidate_reduction(
+    monkeypatch,
+):
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    from table_diffevo import _gap_l1_triton as triton_gap
+
+    original_prepare = triton_gap.launch_prepare
+    original_error_sum = gap._exact_cuda_candidate_error_sum
+    state = {}
+    comparisons = []
+
+    def observe_prepare(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
+        state["candidate_term_sum"] = args[-6]
+        state["candidate_terms"] = args[-4]
+        state["width"] = kwargs["width"]
+        return result
+
+    def observe_error_sum(error_sum, old_term_sum, candidate_term_sum):
+        assert candidate_term_sum is state["candidate_term_sum"]
+        historical_sum = state["candidate_terms"][
+            :state["width"]
+        ].sum(dtype=error_sum.dtype)
+        comparisons.append(torch.equal(candidate_term_sum, historical_sum))
+        return original_error_sum(
+            error_sum,
+            old_term_sum,
+            candidate_term_sum,
+        )
+
+    monkeypatch.setattr(triton_gap, "launch_prepare", observe_prepare)
+    monkeypatch.setattr(
+        gap,
+        "_exact_cuda_candidate_error_sum",
+        observe_error_sum,
+    )
+    _, _, diagnostics = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        participate=participate,
+        initial_mask=initial_mask,
+        reference_scale=0.02,
+        rng=np.random.default_rng(20260827),
+        n_sweeps=8,
+        device="cuda",
+    )
+
+    assert len(comparisons) == diagnostics["gibbs_microsteps"]
+    assert set(comparisons) == {True}
+
+
+def test_cuda_scan_reuses_condition_term_reduction_for_candidate(monkeypatch):
     (
         schema,
         queries,
@@ -556,7 +620,7 @@ def test_cuda_scan_keeps_error_reductions_outside_triton_kernels(monkeypatch):
 
     assert state["inside_reduction"] is False
     assert len(reductions_per_microstep) == diagnostics["gibbs_microsteps"]
-    assert set(reductions_per_microstep) == {1}
+    assert set(reductions_per_microstep) == {0}
 
 
 def test_cuda_scan_launches_three_triton_kernels_per_microstep(monkeypatch):

@@ -767,21 +767,23 @@ def _exact_cuda_condition_error_pair(
     terms0: Any,
     terms1: Any,
     n_queries: int,
-) -> Tuple[Any, Any, Any]:
+) -> Tuple[Any, Any, Any, Any, Any]:
     """保持历史E0/E1的三次eager归约与标量结合顺序。"""
 
     old_term_sum = old_terms.sum(dtype=error_sum.dtype)
-    sum0 = (
-        error_sum
-        - old_term_sum
-        + terms0.sum(dtype=error_sum.dtype)
+    sum0_without_new_terms = error_sum - old_term_sum
+    term_sum0 = terms0.sum(dtype=error_sum.dtype)
+    sum0 = sum0_without_new_terms + term_sum0
+    sum1_without_new_terms = error_sum - old_term_sum
+    term_sum1 = terms1.sum(dtype=error_sum.dtype)
+    sum1 = sum1_without_new_terms + term_sum1
+    return (
+        sum0 / n_queries,
+        sum1 / n_queries,
+        old_term_sum,
+        term_sum0,
+        term_sum1,
     )
-    sum1 = (
-        error_sum
-        - old_term_sum
-        + terms1.sum(dtype=error_sum.dtype)
-    )
-    return sum0 / n_queries, sum1 / n_queries, old_term_sum
 
 
 def _condition_pair_cuda(
@@ -854,7 +856,7 @@ def _condition_pair_cuda(
         / plan.denominators[query_indices]
     )
     old_terms = plan.error_terms[query_indices]
-    e0, e1, old_term_sum = _exact_cuda_condition_error_pair(
+    e0, e1, old_term_sum, _, _ = _exact_cuda_condition_error_pair(
         plan.error_sum,
         old_terms,
         terms0,
@@ -875,15 +877,11 @@ def _condition_pair_cuda(
 def _exact_cuda_candidate_error_sum(
     error_sum: Any,
     old_term_sum: Any,
-    candidate_terms: Any,
+    candidate_term_sum: Any,
 ) -> Any:
-    """保持历史 eager 双精度归约及其左结合更新顺序。"""
+    """复用已归约分支，并保持历史双精度左结合更新顺序。"""
 
-    return (
-        error_sum
-        - old_term_sum
-        + candidate_terms.sum(dtype=error_sum.dtype)
-    )
+    return error_sum - old_term_sum + candidate_term_sum
 
 
 def _cuda_dense_query_write_layout(plan: _CudaGapPlan) -> Tuple[Any, Any]:
@@ -2158,6 +2156,9 @@ def _evolve_step_gap_l1_global_cuda(
     condition_terms0 = torch.empty_like(candidate_terms)
     condition_terms1 = torch.empty_like(candidate_terms)
     condition_old_terms = torch.empty_like(candidate_terms)
+    candidate_term_sum = torch.empty(
+        (), dtype=torch.float64, device=plan.device
+    )
 
     for step in range(microsteps):
         row_index = int(coordinate_tape[step, 0])
@@ -2190,7 +2191,13 @@ def _evolve_step_gap_l1_global_cuda(
                 condition_old_terms,
                 width=query_width,
             )
-            e0, e1, old_term_sum = _exact_cuda_condition_error_pair(
+            (
+                e0,
+                e1,
+                old_term_sum,
+                term_sum0,
+                term_sum1,
+            ) = _exact_cuda_condition_error_pair(
                 plan.error_sum,
                 condition_old_terms[:query_width],
                 condition_terms0[:query_width],
@@ -2200,6 +2207,8 @@ def _evolve_step_gap_l1_global_cuda(
             triton_gap.launch_prepare(
                 e0,
                 e1,
+                term_sum0,
+                term_sum1,
                 scale_t,
                 base_logit_t,
                 strength_t,
@@ -2224,6 +2233,7 @@ def _evolve_step_gap_l1_global_cuda(
                 before_values,
                 after_values,
                 clipped_values,
+                candidate_term_sum,
                 candidate_counts,
                 candidate_terms,
                 selected_failures,
@@ -2234,7 +2244,7 @@ def _evolve_step_gap_l1_global_cuda(
             candidate_error_sum = _exact_cuda_candidate_error_sum(
                 plan.error_sum,
                 old_term_sum,
-                candidate_terms[:query_width],
+                candidate_term_sum,
             )
             triton_gap.launch_commit(
                 candidate_counts,

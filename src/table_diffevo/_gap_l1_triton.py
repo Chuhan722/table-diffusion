@@ -99,6 +99,8 @@ def _condition_kernel(
 def _prepare_kernel(
     e0_ptr,
     e1_ptr,
+    term_sum0_ptr,
+    term_sum1_ptr,
     scale_ptr,
     base_ptr,
     strength_ptr,
@@ -123,6 +125,7 @@ def _prepare_kernel(
     before_values_ptr,
     after_values_ptr,
     clipped_values_ptr,
+    candidate_term_sum_ptr,
     candidate_counts_ptr,
     candidate_terms_ptr,
     selected_failures_ptr,
@@ -158,6 +161,14 @@ def _prepare_kernel(
     tl.store(before_values_ptr + step + offsets, before, mask=first)
     tl.store(after_values_ptr + step + offsets, selected, mask=first)
     tl.store(clipped_values_ptr + step + offsets, clipped, mask=first)
+    term_sum0 = tl.load(term_sum0_ptr)
+    term_sum1 = tl.load(term_sum1_ptr)
+    selected_term_sum = tl.where(selected, term_sum1, term_sum0)
+    tl.store(
+        candidate_term_sum_ptr + offsets,
+        selected_term_sum,
+        mask=first,
+    )
 
     failures0 = tl.load(failures0_ptr + offsets, mask=valid, other=0)
     failures1 = tl.load(failures1_ptr + offsets, mask=valid, other=0)
