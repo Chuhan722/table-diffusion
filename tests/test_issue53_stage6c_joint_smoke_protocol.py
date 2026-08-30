@@ -11,21 +11,28 @@ from scripts import issue53_stage6c_joint_trajectories as joint
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_protocol_document_sources_and_manifest_are_frozen():
+def test_protocol_manifest_is_frozen_and_old_source_fails_closed():
     assert protocol.file_sha256(REPOSITORY_ROOT / protocol.PROTOCOL_DOC) == (
         protocol.PROTOCOL_DOC_SHA256
     )
-    for binding in protocol.IMPLEMENTATION_SOURCES.values():
-        assert protocol.file_sha256(REPOSITORY_ROOT / binding["path"]) == (
-            binding["sha256"]
-        )
+    drifted_sources = [
+        name
+        for name, binding in protocol.IMPLEMENTATION_SOURCES.items()
+        if protocol.file_sha256(REPOSITORY_ROOT / binding["path"])
+        != binding["sha256"]
+    ]
+    assert drifted_sources == ["gap_kernel"]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
-    assert protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT) == (
-        protocol.FROZEN_PROTOCOL_SHA256
+    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+        protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
+
+
+def test_plan_is_read_only_and_lists_the_complete_joint_matrix(monkeypatch):
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
     )
-
-
-def test_plan_is_read_only_and_lists_the_complete_joint_matrix():
     plan = protocol.build_plan(REPOSITORY_ROOT)
 
     assert plan == {

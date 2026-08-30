@@ -170,11 +170,18 @@ def test_recovery_inventory_freezes_exact_21_9_case_manifests():
     )
 
 
-def test_recovery_protocol_and_all_plan_entrypoints_are_read_only():
+def test_old_generation_source_fails_closed_and_recovery_plans_are_read_only(
+    monkeypatch,
+):
     root = Path(__file__).resolve().parents[1]
 
-    assert recovery_protocol.assert_frozen_recovery_identity(root) == (
-        recovery_protocol.FROZEN_RECOVERY_PROTOCOL_SHA256
+    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+        recovery_protocol.assert_frozen_recovery_identity(root)
+
+    monkeypatch.setattr(
+        recovery_protocol,
+        "assert_frozen_recovery_identity",
+        lambda _root: recovery_protocol.FROZEN_RECOVERY_PROTOCOL_SHA256,
     )
     assert recovery.build_plan()["new_generation_case_count"] == 0
     assert recovery.build_plan()["gpu_access_allowed"] is False

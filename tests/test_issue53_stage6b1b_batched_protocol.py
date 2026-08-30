@@ -107,16 +107,23 @@ def test_batch_equivalence_is_exact_without_reusing_single_trace_identity():
     }
 
 
-def test_batch_protocol_document_sources_and_manifest_are_frozen():
+def test_batch_protocol_manifest_is_frozen_and_old_source_fails_closed():
     assert protocol.file_sha256(
         REPOSITORY_ROOT / protocol.PROTOCOL_DOC
     ) == protocol.PROTOCOL_DOC_SHA256
-    for binding in protocol.BATCH_EXECUTION_SOURCES.values():
-        assert protocol.file_sha256(
-            REPOSITORY_ROOT / binding["path"]
-        ) == binding["sha256"]
+    drifted_sources = [
+        name
+        for name, binding in protocol.BATCH_EXECUTION_SOURCES.items()
+        if protocol.file_sha256(REPOSITORY_ROOT / binding["path"])
+        != binding["sha256"]
+    ]
+    assert drifted_sources == ["production_batched_gap_kernel"]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
-    protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
+    with pytest.raises(
+        RuntimeError,
+        match="批量执行来源漂移：production_batched_gap_kernel",
+    ):
+        protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
 
 
 def test_batch_protocol_uses_new_output_dirs_and_cannot_resume_old_run():

@@ -208,11 +208,18 @@ def test_v2_evaluation_identity_adapter_always_restores_v1_contract():
     assert source_binding["sha256"] == original_sha256
 
 
-def test_compatibility_protocol_and_all_plan_entrypoints_are_read_only():
+def test_old_generation_source_fails_closed_and_compat_plans_are_read_only(
+    monkeypatch,
+):
     root = Path(__file__).resolve().parents[1]
 
-    assert compat_protocol.assert_frozen_compatibility_identity(root) == (
-        compat_protocol.FROZEN_COMPATIBILITY_PROTOCOL_SHA256
+    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+        compat_protocol.assert_frozen_compatibility_identity(root)
+
+    monkeypatch.setattr(
+        compat_protocol,
+        "assert_frozen_compatibility_identity",
+        lambda _root: compat_protocol.FROZEN_COMPATIBILITY_PROTOCOL_SHA256,
     )
     assert validator.build_plan()["quality_metrics_interpreted"] is False
     assert compat_evaluator.build_plan()["evaluation_started"] is False

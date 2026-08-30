@@ -172,6 +172,11 @@ def test_plan_does_not_load_data_check_gpu_or_generate(monkeypatch):
     monkeypatch.setattr(runner, "_audit_inputs", forbidden)
     monkeypatch.setattr(runner, "_gpu_preflight", forbidden)
     monkeypatch.setattr(runner, "run_evolution", forbidden)
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
+    )
 
     plan = runner.build_plan()
 

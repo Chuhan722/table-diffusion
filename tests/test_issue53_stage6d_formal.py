@@ -16,11 +16,25 @@ from table_diffevo.evolution import run_evolution
 from table_diffevo.schema import AttributeBlock, Schema
 
 
-def test_frozen_identity_and_all_plan_entrypoints_are_read_only():
+def test_frozen_identity_fails_closed_and_plan_entrypoints_are_read_only(
+    monkeypatch,
+):
     root = Path(__file__).resolve().parents[1]
 
-    assert protocol.assert_frozen_protocol_identity(root) == (
-        protocol.FROZEN_PROTOCOL_SHA256
+    drifted_sources = [
+        name
+        for name, binding in protocol.IMPLEMENTATION_SOURCES.items()
+        if protocol.file_sha256(root / binding["path"]) != binding["sha256"]
+    ]
+    assert drifted_sources == ["gap_kernel"]
+    assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
+    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+        protocol.assert_frozen_protocol_identity(root)
+
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
     )
     collection_plan = runner.build_plan()
     evaluation_plan = evaluator.build_plan()
