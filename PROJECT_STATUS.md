@@ -933,7 +933,55 @@ git diff --check                           clean
 当前真正下一步需另行确认：把原型推广到正式同状态下 20 个不同供体、不同参与行、不同 K 的地址，批量计算完整查询指标，
 并实现与生产算术分离的独立批量审计；随后冻结新的性能执行差量协议、重跑普通测试与 10 地址小规模接线。当前旧正式运行
 不能恢复，人工原型没有正式运行资格，没有推送远端、创建拉取请求、更新议题或修改公共默认核。
+### 最新暂停点：Stage 5 同温度核比较完成正式闭环并收口（2026-08-27）
 
+> 本节覆盖下方“Stage 5 尚未实现或运行”的历史暂停描述。正式 collection（采集）、frozen evaluator
+> （冻结评价器）与 independent audit（独立审计）均已完成；本次收口只补充结果文档与状态记录，
+> 不重跑实验、不改写正式产物、不审查或合并任何 PR。
+
+正式身份：
+
+```text
+execution commit       a5455ca1574a45acbbbe68abe3100a97e4b976ba（clean）
+formal cases           2 datasets × 2 arms × 10 seeds = 40 / 40 complete
+seeds                  338..347
+protocol document SHA  4d0ffb8ebf77006becea00849eef452174559aea62faeb86dd70c227e3fc7fab
+protocol manifest SHA  1d447be0fb0ce9a2c7707abd2e259ed6ea41edbf3780f30426e320b1bad94f1c
+audit                  overall_pass=true / 40 of 40 cases recomputed
+```
+
+冻结主结果：
+
+| 数据集 | independent（独立核）总误差 | factor（因子核）总误差 | 相对变化 | 配对胜/平/负 | 正式分类 |
+|---|---:|---:|---:|---:|---|
+| `test_300x10` | 407 | 373 | -8.35% | 6/1/3 | 无稳定因子核增益 |
+| `nltcs` | 54,759 | 49,393 | -9.80% | 6/0/4 | 无稳定因子核增益 |
+
+两套数据的总误差方向都偏向 factor（因子核），但都只有 6/10 个种子严格胜出，未达到预注册的
+8/10 稳定门槛。nltcs 的离线质量和外层工作量门通过，但墙钟时间更慢；test 的四组离线安全、参考
+支持集和外层工作量门失败。跨数据结论为 `no_shared_factor_support`（无共享的因子核支持证据），因此：
+
+```text
+kernel_default_changed       false（不修改默认核）
+tau_selected                 null（不据此选择温度）
+additional_seed_requested    false（不追加种子）
+```
+
+40/40 案例均由 P=6 正常提前停止，0 个资源上限案例、0 次方向/条件对数几率裁剪、有效行比例全部为 1。
+独立审计从终态表重新计算全部案例指标、配对差、门禁和最终分类，全部精确一致。正式输出约 210 MiB，
+继续保留在 ignored（被 Git 忽略）的 `outputs/issue53_stage5_kernel_ab_v1/`；结果文档为
+`docs/实验结果/Issue53_Stage5同温度独立核与factor核外层公平比较正式结果.md`。
+
+只读产物 SHA-256：
+
+```text
+collection report   375377849aaec401ec6e2dcd29ed850f180c4204c17ed785f67fba2f8f6c506d
+evaluation report   8368c58d462a9f4b540f32c0d815faf93c436a7b23fef7fa852cda013a8f94f5
+independent audit   c14fb651466e641b4bf75d0b5966aed4b4a2dcd8f588da2cf5862aaa035e34bb
+```
+
+Stage 4 的 8-sweep（8 次扫描）内层混合资格保持有效；Stage 5 证明该资格没有转化为跨数据、跨种子
+稳定的完整外层优势。当前继续保留 independent（独立核）作为 development reference（开发参考核）。
 ### 最新暂停点：Draft PR #67 本地同步结果已获授权推送，远端冲突解除（2026-08-22）
 
 > 用户检查本地结果后明确授权“推”。本步只发布上一节已经完成并验证的 #67 同步提交；没有修改
