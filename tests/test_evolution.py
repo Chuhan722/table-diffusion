@@ -1131,6 +1131,7 @@ class TestGapL1ClosedLoop:
         assert candidate_diagnostics["gap_l1_reference_scale"] > 0.0
         assert candidate_diagnostics["gap_l1_microsteps"] > 0
         assert candidate_diagnostics["gap_l1_clip_hit_count"] == 0
+        assert "gap_l1_weighting" not in candidate_diagnostics["params"]
         assert all(candidate_diagnostics["accept_history"])
         attempts = candidate_diagnostics[
             "gap_l1_attempt_diagnostics_history"
@@ -1162,6 +1163,27 @@ class TestGapL1ClosedLoop:
                 "final_on_switches",
             ):
                 assert first[key] == second[key]
+
+    def test_bounded_weighting_is_opt_in_and_recorded(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            gap_l1_weighting="bounded_relative",
+            gap_l1_max_weight_ratio=8.0,
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["params"]["gap_l1_weighting"] == (
+            "bounded_relative"
+        )
+        assert diagnostics["params"]["gap_l1_max_weight_ratio"] == 8.0
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["gap_l1_weighting"] == "bounded_relative"
+        assert attempt["gap_l1_max_weight_ratio"] == 8.0
+        assert attempt["gap_l1_actual_weight_ratio"] <= 8.0
 
     def test_missing_scale_uses_b_plan_without_starting_scan(
         self, monkeypatch
@@ -1265,6 +1287,32 @@ class TestGapL1ClosedLoop:
         [
             ({"gap_l1_sweeps": 1}, "0 或冻结的 8"),
             ({"gap_l1_sweeps": True}, "0 或冻结的 8"),
+            (
+                {"gap_l1_weighting": "bounded_relative"},
+                "max_weight_ratio",
+            ),
+            (
+                {
+                    "gap_l1_weighting": "bounded_relative",
+                    "gap_l1_max_weight_ratio": 1.0,
+                },
+                "大于 1",
+            ),
+            (
+                {
+                    "gap_l1_weighting": "legacy_relative",
+                    "gap_l1_max_weight_ratio": 8.0,
+                },
+                "不允许",
+            ),
+            (
+                {
+                    "gap_l1_sweeps": 0,
+                    "gap_l1_weighting": "bounded_relative",
+                    "gap_l1_max_weight_ratio": 8.0,
+                },
+                "只允许与 gap_l1_sweeps=8",
+            ),
             ({"residual_directed_diffusion": False}, "B 初始开关"),
             ({"tol": 0.0}, "tol=\\+inf"),
             ({"max_retries": 1}, "max_retries=0"),

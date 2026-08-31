@@ -80,7 +80,18 @@ def _case():
     )
 
 
-def test_cuda_condition_and_isolated_scores_match_cpu():
+@pytest.mark.parametrize(
+    "weighting_kwargs",
+    [
+        {},
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+            "max_weight_ratio": 8.0,
+        },
+    ],
+    ids=("legacy", "bounded-r8"),
+)
+def test_cuda_condition_and_isolated_scores_match_cpu(weighting_kwargs):
     (
         schema,
         queries,
@@ -97,6 +108,7 @@ def test_cuda_condition_and_isolated_scores_match_cpu():
         row_index=0,
         attribute_index=0,
         reference_scale=0.02,
+        **weighting_kwargs,
     )
     cpu = gap.evaluate_gap_l1_condition(
         current, donors, schema, queries, targets, counts, **kwargs
@@ -125,7 +137,13 @@ def test_cuda_condition_and_isolated_scores_match_cpu():
     assert cuda["backend"] == "torch_cuda_float64"
 
     cpu_isolated = gap.isolated_gap_l1_scores(
-        current, donors, schema, queries, targets, counts
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        **weighting_kwargs,
     )
     cuda_isolated = gap.isolated_gap_l1_scores(
         current,
@@ -135,6 +153,7 @@ def test_cuda_condition_and_isolated_scores_match_cpu():
         targets,
         counts,
         device="cuda",
+        **weighting_kwargs,
     )
     np.testing.assert_array_equal(
         cpu_isolated["coordinates"], cuda_isolated["coordinates"]
@@ -171,7 +190,48 @@ def test_cuda_exact_rational_zero_is_excluded_from_scale():
     assert diagnostics["zero_count"] == 1
 
 
-def test_cuda_random_scan_matches_cpu_at_every_microstep(monkeypatch):
+def test_cuda_bounded_exact_rational_zero_is_excluded_from_scale():
+    schema = _binary_schema("a")
+    queries = [{"conditions": [_equals("a")]} for _ in range(3)]
+    current = pd.DataFrame({"a": [1] * 10 + [0] * 60})
+    donors = current.copy()
+    donors.at[10, "a"] = 1
+    targets = np.array([2.0, 14.0, 14.0])
+    result = gap.isolated_gap_l1_scores(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        np.array([10, 10, 10]),
+        exact_target_numerators=targets.astype(np.int64),
+        exact_target_denominator=1,
+        weighting=gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+        max_weight_ratio=8.0,
+        device="cuda",
+    )
+    scale, diagnostics = gap.stable_nonzero_rms(result["scores"])
+
+    np.testing.assert_array_equal(result["coordinates"], [[10, 0]])
+    assert result["scores"][0] == 0.0
+    assert scale == 0.0
+    assert diagnostics["zero_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "weighting_kwargs",
+    [
+        {},
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+            "max_weight_ratio": 8.0,
+        },
+    ],
+    ids=("legacy", "bounded-r8"),
+)
+def test_cuda_random_scan_matches_cpu_at_every_microstep(
+    monkeypatch, weighting_kwargs
+):
     (
         schema,
         queries,
@@ -195,6 +255,7 @@ def test_cuda_random_scan_matches_cpu_at_every_microstep(monkeypatch):
         initial_mask=initial_mask,
         reference_scale=0.02,
         n_sweeps=8,
+        **weighting_kwargs,
     )
     cpu_rng = np.random.default_rng(20260826)
     cuda_rng = np.random.default_rng(20260826)
@@ -845,7 +906,20 @@ def test_cuda_k_zero_consumes_no_rng():
     assert rng.bit_generator.state == before
 
 
-def test_cuda_batched_different_addresses_match_single_results():
+@pytest.mark.parametrize(
+    "weighting_kwargs",
+    [
+        {},
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+            "max_weight_ratio": 8.0,
+        },
+    ],
+    ids=("legacy", "bounded-r8"),
+)
+def test_cuda_batched_different_addresses_match_single_results(
+    weighting_kwargs,
+):
     (
         schema,
         queries,
@@ -893,6 +967,7 @@ def test_cuda_batched_different_addresses_match_single_results():
             n_sweeps=8,
             compiled_workload=compiled,
             device="cuda",
+            **weighting_kwargs,
         )
         for index in range(len(donor_tables))
     ]
@@ -910,6 +985,7 @@ def test_cuda_batched_different_addresses_match_single_results():
         n_sweeps=8,
         compiled_workload=compiled,
         device="cuda",
+        **weighting_kwargs,
     )
 
     assert len(results) == len(references) == 3

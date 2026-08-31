@@ -44,11 +44,18 @@ def test_recovery_inventory_freezes_exact_single_shard_30_cases():
     }
 
 
-def test_recovery_protocol_and_plan_entrypoints_are_read_only():
+def test_recovery_protocol_fails_closed_and_plan_entrypoints_are_read_only(
+    monkeypatch,
+):
     root = _root()
 
-    assert recovery_protocol.assert_frozen_recovery_identity(root) == (
-        recovery_protocol.FROZEN_RECOVERY_PROTOCOL_SHA256
+    with pytest.raises(RuntimeError, match="实现源码漂移：full_generator"):
+        recovery_protocol.assert_frozen_recovery_identity(root)
+
+    monkeypatch.setattr(
+        recovery_protocol,
+        "assert_frozen_recovery_identity",
+        lambda _root: recovery_protocol.FROZEN_RECOVERY_PROTOCOL_SHA256,
     )
     assert recovery.build_plan()["new_generation_allowed"] is False
     assert recovery.build_plan()["gpu_access_allowed"] is False

@@ -4,9 +4,13 @@
 它没有候选接受、拒绝、重试、回滚或赢家选择；完成固定数量的微步后，最终
 开关表会被一次性物化成唯一复制表。
 
-目标函数是全部已测查询的相对绝对误差：
+默认目标函数是全部已测查询的历史相对绝对误差：
 
 ``E = mean_j(abs(target_j - count_j) / max(target_j, floor))``。
+
+研究模式可把分母改成 ``clip(target_j, 0, N) + smoothing``，其中
+``smoothing = max(floor, N / (R - 1))``。这样仍优先修复稀有查询，但任意
+两条有效计数查询之间的单位误差权重比不超过显式上限 ``R``。
 
 每个条件微步精确维护同一行内多属性的合取作用，以及多行先求总查询计数再
 计算误差的共同作用。历史端点使用 NumPy 双精度浮点数；可选 CUDA 后端复用
@@ -37,6 +41,14 @@ DEFAULT_GAP_L1_ETA = 0.5
 DEFAULT_GAP_L1_STRENGTH = 2.0
 DEFAULT_GAP_L1_SWEEPS = 8
 DEFAULT_GAP_L1_LOGIT_CLIP = 30.0
+GAP_L1_WEIGHTING_LEGACY_RELATIVE = "legacy_relative"
+GAP_L1_WEIGHTING_BOUNDED_RELATIVE = "bounded_relative"
+GAP_L1_WEIGHTING_MODES = (
+    GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+    GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+)
+DEFAULT_GAP_L1_WEIGHTING = GAP_L1_WEIGHTING_LEGACY_RELATIVE
+DEFAULT_GAP_L1_MAX_WEIGHT_RATIO = 8.0
 TRACE_FORMAT = "issue53_gap_l1_microstep_trace_le_v1"
 BATCH_EXECUTION_FORMAT = "issue53_gap_l1_batched_cuda_float64_v2"
 
@@ -62,6 +74,14 @@ class CompiledGapL1Workload:
     signature: Tuple[Any, ...]
 
 
+@dataclass(frozen=True)
+class _GapL1WeightingSpec:
+    mode: str
+    max_weight_ratio: Optional[float]
+    smoothing_count: Optional[float]
+    actual_weight_ratio: float
+
+
 @dataclass
 class _GapPlan:
     compiled: CompiledGapL1Workload
@@ -79,6 +99,7 @@ class _GapPlan:
     plan_counts: np.ndarray
     target: np.ndarray
     denominators: np.ndarray
+    weighting: _GapL1WeightingSpec
     error_terms: np.ndarray
     error_sum: float
     mask: np.ndarray
@@ -96,6 +117,7 @@ class _GapInputStructure:
     counts: np.ndarray
     targets: np.ndarray
     denominators: np.ndarray
+    weighting: _GapL1WeightingSpec
 
 
 @dataclass
@@ -116,6 +138,7 @@ class _CudaGapPlan:
     plan_counts: Any
     target: Any
     denominators: Any
+    weighting: _GapL1WeightingSpec
     error_terms: Any
     error_sum: Any
     mask: Any
@@ -163,6 +186,82 @@ def _require_nonnegative_integer(value: Any, name: str) -> int:
     ):
         raise ValueError(f"{name} 必须是非负整数")
     return int(value)
+
+
+def _require_positive_integer(value: Any, name: str) -> int:
+    result = _require_nonnegative_integer(value, name)
+    if result == 0:
+        raise ValueError(f"{name} 必须是正整数")
+    return result
+
+
+def validate_gap_l1_weighting(
+    weighting: Any,
+    max_weight_ratio: Any,
+) -> Tuple[str, Optional[float]]:
+    """验证缺口核查询权重模式，不读取数据或构造分母。"""
+
+    if weighting not in GAP_L1_WEIGHTING_MODES:
+        raise ValueError(
+            "gap_l1 weighting 必须是 "
+            f"{GAP_L1_WEIGHTING_MODES} 之一，得到 {weighting!r}"
+        )
+    mode = str(weighting)
+    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        if max_weight_ratio is not None:
+            raise ValueError(
+                "legacy_relative 不允许设置 max_weight_ratio"
+            )
+        return mode, None
+
+    ratio = _require_positive_finite(
+        max_weight_ratio, "max_weight_ratio"
+    )
+    if ratio <= 1.0:
+        raise ValueError("max_weight_ratio 必须大于 1")
+    return mode, ratio
+
+
+def _build_gap_l1_denominators(
+    targets: np.ndarray,
+    *,
+    floor: float,
+    weighting: str,
+    max_weight_ratio: Optional[float],
+    n_records: Optional[int],
+) -> Tuple[np.ndarray, _GapL1WeightingSpec]:
+    """一次性构造所有后端共享的 float64 查询误差分母。"""
+
+    floor_value = _require_positive_finite(floor, "floor")
+    mode, ratio = validate_gap_l1_weighting(
+        weighting, max_weight_ratio
+    )
+    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        denominators = np.maximum(targets, floor_value)
+        smoothing_count = None
+    else:
+        records = _require_positive_integer(n_records, "n_records")
+        bounded_targets = np.clip(targets, 0.0, float(records))
+        smoothing_count = float(max(
+            floor_value,
+            np.float64(records) / np.float64(ratio - 1.0),
+        ))
+        denominators = bounded_targets + smoothing_count
+
+    denominators = np.asarray(denominators, dtype=np.float64)
+    if np.any(~np.isfinite(denominators)) or np.any(denominators <= 0.0):
+        raise ValueError("gap L1 分母必须是正有限数值")
+    actual_ratio = float(
+        np.max(denominators) / np.min(denominators)
+    )
+    if ratio is not None and actual_ratio > ratio * (1.0 + 1e-12):
+        raise RuntimeError("bounded_relative 实际权重比超过配置上限")
+    return denominators, _GapL1WeightingSpec(
+        mode=mode,
+        max_weight_ratio=ratio,
+        smoothing_count=smoothing_count,
+        actual_weight_ratio=actual_ratio,
+    )
 
 
 def _freeze_value(value: Any) -> Any:
@@ -297,10 +396,12 @@ def normalized_gap_l1_error(
     target: Any,
     *,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    n_records: Optional[int] = None,
 ) -> float:
-    """计算协议定义的相对绝对查询误差。"""
+    """计算指定查询权重几何下的平均绝对查询误差。"""
 
-    floor_value = _require_positive_finite(floor, "floor")
     raw_counts = np.asarray(query_counts)
     raw_target = np.asarray(target)
     if raw_counts.ndim != 1 or raw_counts.dtype.kind not in "iuf":
@@ -311,9 +412,13 @@ def normalized_gap_l1_error(
         raise ValueError("query_counts 必须是一维有限数值向量")
     if len(counts) == 0:
         raise ValueError("至少需要一个查询")
-    denominators = np.maximum(targets, floor_value)
-    if np.any(denominators <= 0.0):
-        raise ValueError("max(target, floor) 必须为正")
+    denominators, _ = _build_gap_l1_denominators(
+        targets,
+        floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=n_records,
+    )
     return float(np.mean(np.abs(targets - counts) / denominators))
 
 
@@ -341,6 +446,8 @@ def _prepare_input_structure(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
 ) -> _GapInputStructure:
     """验证公共输入并构造与数值后端无关的稀疏活跃结构。"""
 
@@ -406,10 +513,13 @@ def _prepare_input_structure(
     if compiled.n_queries == 0:
         raise ValueError("至少需要一个查询")
     targets = _require_finite_vector(target, compiled.n_queries, "target")
-    floor_value = _require_positive_finite(floor, "floor")
-    denominators = np.maximum(targets, floor_value)
-    if np.any(denominators <= 0.0):
-        raise ValueError("max(target, floor) 必须为正")
+    denominators, weighting_spec = _build_gap_l1_denominators(
+        targets,
+        floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=n_rows,
+    )
     return _GapInputStructure(
         compiled=compiled,
         current=current_reset,
@@ -421,6 +531,7 @@ def _prepare_input_structure(
         counts=counts,
         targets=targets,
         denominators=denominators,
+        weighting=weighting_spec,
     )
 
 
@@ -436,6 +547,8 @@ def _prepare_plan(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
 ) -> _GapPlan:
     structure = _prepare_input_structure(
         current,
@@ -448,6 +561,8 @@ def _prepare_plan(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     compiled = structure.compiled
     current_reset = structure.current
@@ -552,6 +667,7 @@ def _prepare_plan(
         plan_counts=plan_counts,
         target=targets,
         denominators=denominators,
+        weighting=structure.weighting,
         error_terms=error_terms,
         error_sum=error_sum,
         mask=mask,
@@ -606,6 +722,8 @@ def _prepare_cuda_plan(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
 ) -> _CudaGapPlan:
     """在 CUDA 上建立缺口条件状态，不调用 NumPy 条件算术。"""
 
@@ -621,6 +739,8 @@ def _prepare_cuda_plan(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     compiled = structure.compiled
     n_active_rows = len(structure.active_rows)
@@ -755,6 +875,7 @@ def _prepare_cuda_plan(
         plan_counts=plan_counts,
         target=target_t,
         denominators=denominators_t,
+        weighting=structure.weighting,
         error_terms=error_terms,
         error_sum=error_sum,
         mask=mask,
@@ -1505,6 +1626,7 @@ def _build_scan_diagnostics(
     materialize_elapsed: float,
     recount_elapsed: float,
     total_elapsed: float,
+    weighting: Optional[_GapL1WeightingSpec] = None,
 ) -> Dict[str, Any]:
     microsteps = sweeps * k
     minimum_outcome = (
@@ -1515,8 +1637,18 @@ def _build_scan_diagnostics(
     digest = trace.hexdigest()
     if microsteps == 0 and digest != hashlib.sha256(b"").hexdigest():
         raise RuntimeError("空扫描 trace 身份失败")
+    weighting_spec = weighting or _GapL1WeightingSpec(
+        mode=GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+        max_weight_ratio=None,
+        smoothing_count=None,
+        actual_weight_ratio=1.0,
+    )
     result = {
-        "kernel": "gap_l1_global_random_scan",
+        "kernel": (
+            "gap_l1_global_random_scan"
+            if weighting_spec.mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE
+            else "gap_l1_global_random_scan_bounded_relative"
+        ),
         "no_gate": True,
         "n_sweeps": sweeps,
         "active_switches_k": int(k),
@@ -1554,6 +1686,15 @@ def _build_scan_diagnostics(
     }
     if backend is not None:
         result["backend"] = backend
+    if weighting_spec.mode != GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        result.update({
+            "gap_l1_weighting": weighting_spec.mode,
+            "gap_l1_max_weight_ratio": weighting_spec.max_weight_ratio,
+            "gap_l1_smoothing_count": weighting_spec.smoothing_count,
+            "gap_l1_actual_weight_ratio": (
+                weighting_spec.actual_weight_ratio
+            ),
+        })
     return result
 
 
@@ -1562,6 +1703,10 @@ def _build_exact_zero_spec(
     floor: float,
     exact_target_numerators: Optional[Any],
     exact_target_denominator: Optional[int],
+    *,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    n_records: Optional[int] = None,
 ) -> Optional[Tuple[List[int], int, List[int], List[int]]]:
     if (exact_target_numerators is None) != (
         exact_target_denominator is None
@@ -1585,10 +1730,38 @@ def _build_exact_zero_spec(
         raise ValueError("精确目标必须是整数向量和正整数共同分母")
     numerator_values = [int(value) for value in raw_numerators]
     denominator_value = int(exact_target_denominator)
-    raw_denominators = [
-        max(numerator, int(floor) * denominator_value)
-        for numerator in numerator_values
-    ]
+    mode, ratio = validate_gap_l1_weighting(
+        weighting, max_weight_ratio
+    )
+    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        raw_denominators = [
+            max(numerator, int(floor) * denominator_value)
+            for numerator in numerator_values
+        ]
+    else:
+        records = _require_positive_integer(n_records, "n_records")
+        if not float(ratio).is_integer():
+            raise ValueError(
+                "精确目标零分数判定要求整数 max_weight_ratio"
+            )
+        ratio_integer = int(ratio)
+        bounded_numerators = [
+            min(max(numerator, 0), records * denominator_value)
+            for numerator in numerator_values
+        ]
+        if records >= int(floor) * (ratio_integer - 1):
+            # smoothing=N/(R-1)。误差项中共同的 (R-1) 因子不影响零判定。
+            raw_denominators = [
+                numerator * (ratio_integer - 1)
+                + records * denominator_value
+                for numerator in bounded_numerators
+            ]
+        else:
+            # floor 主导 smoothing；所有分母的共同整数尺度仍为 target 的尺度。
+            raw_denominators = [
+                numerator + int(floor) * denominator_value
+                for numerator in bounded_numerators
+            ]
     divisors = [
         math.gcd(
             math.gcd(abs(numerator), denominator_value), denominator
@@ -1650,6 +1823,8 @@ def _isolated_gap_l1_scores_cuda(
     compiled_workload: Optional[CompiledGapL1Workload],
     exact_target_numerators: Optional[Any],
     exact_target_denominator: Optional[int],
+    weighting: str,
+    max_weight_ratio: Optional[float],
 ) -> Dict[str, Any]:
     """显卡批量计算全零上下文中的全部孤立分数。"""
 
@@ -1665,12 +1840,17 @@ def _isolated_gap_l1_scores_cuda(
         np.zeros((len(current), len(attributes)), dtype=bool),
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     exact_zero_spec = _build_exact_zero_spec(
         queries,
         floor,
         exact_target_numerators,
         exact_target_denominator,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=len(current),
     )
     torch = plan.torch
     n_rows = len(current)
@@ -1793,6 +1973,8 @@ def isolated_gap_l1_scores(
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     exact_target_numerators: Optional[Any] = None,
     exact_target_denominator: Optional[int] = None,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
     device: str = "numpy",
 ) -> Dict[str, Any]:
     """计算其他开关全为 0 时所有不同值行—属性的孤立分数。
@@ -1814,6 +1996,8 @@ def isolated_gap_l1_scores(
             compiled_workload=compiled_workload,
             exact_target_numerators=exact_target_numerators,
             exact_target_denominator=exact_target_denominator,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
         )
     if device != "numpy":
         raise ValueError("缺口孤立分数 device 只支持 'numpy' 或 'cuda'")
@@ -1829,12 +2013,17 @@ def isolated_gap_l1_scores(
         np.zeros((len(current), len(attributes)), dtype=bool),
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     exact_zero_spec = _build_exact_zero_spec(
         queries,
         floor,
         exact_target_numerators,
         exact_target_denominator,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=len(current),
     )
 
     coordinates: list[Tuple[int, int]] = []
@@ -1894,6 +2083,8 @@ def evaluate_gap_l1_condition(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     device: str = "numpy",
@@ -1928,6 +2119,8 @@ def evaluate_gap_l1_condition(
         mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     coordinates = {tuple(map(int, pair)) for pair in plan.active_coordinates}
     coordinate = (int(row_index), int(attribute_index))
@@ -2069,6 +2262,8 @@ def _evolve_step_gap_l1_global_cuda(
     logit_clip: float,
     compiled_workload: Optional[CompiledGapL1Workload],
     verify_full_recount: bool,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
 ) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
     """CUDA 双精度后端；随机带仍由冻结的 NumPy 流形成。"""
 
@@ -2087,6 +2282,8 @@ def _evolve_step_gap_l1_global_cuda(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     (
         scale,
@@ -2423,6 +2620,7 @@ def _evolve_step_gap_l1_global_cuda(
         materialize_elapsed=materialize_elapsed,
         recount_elapsed=recount_elapsed,
         total_elapsed=time.perf_counter() - started,
+        weighting=plan.weighting,
     )
     return copy_table, final_mask.copy(), diagnostics
 
@@ -2446,6 +2644,8 @@ def _evolve_step_gap_l1_global_cuda_batched(
     logit_clip: float,
     compiled_workload: Optional[CompiledGapL1Workload],
     verify_full_recount: bool,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
 ) -> Tuple[
     Tuple[Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]], ...],
     Dict[str, Any],
@@ -2474,6 +2674,8 @@ def _evolve_step_gap_l1_global_cuda_batched(
             initial_masks[index],
             floor=floor,
             compiled_workload=compiled,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
         )
         for index in range(batch_size)
     ]
@@ -2635,6 +2837,7 @@ def _evolve_step_gap_l1_global_cuda_batched(
     batch_indices = torch.arange(
         batch_size, dtype=torch.long, device=device
     )
+    weighting_specs = [plan.weighting for plan in plans]
     del plan
     del first
     del plans
@@ -2831,6 +3034,7 @@ def _evolve_step_gap_l1_global_cuda_batched(
             materialize_elapsed=row["materialize_elapsed"],
             recount_elapsed=row["recount_elapsed"],
             total_elapsed=total_elapsed,
+            weighting=weighting_specs[batch_index],
         )
         diagnostics["batch_execution"] = {
             "format": BATCH_EXECUTION_FORMAT,
@@ -2891,6 +3095,8 @@ def evolve_step_gap_l1_global_batched(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     verify_full_recount: bool = True,
@@ -2920,6 +3126,8 @@ def evolve_step_gap_l1_global_batched(
         eta=eta,
         strength=strength,
         floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
         logit_clip=logit_clip,
         compiled_workload=compiled_workload,
         verify_full_recount=verify_full_recount,
@@ -2943,6 +3151,8 @@ def evolve_step_gap_l1_global(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     verify_full_recount: bool = True,
@@ -2970,6 +3180,8 @@ def evolve_step_gap_l1_global(
             eta=eta,
             strength=strength,
             floor=floor,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
             logit_clip=logit_clip,
             compiled_workload=compiled_workload,
             verify_full_recount=verify_full_recount,
@@ -2993,6 +3205,8 @@ def evolve_step_gap_l1_global(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
     )
     prepared_elapsed = time.perf_counter() - started
     k = len(plan.active_coordinates)
@@ -3106,5 +3320,6 @@ def evolve_step_gap_l1_global(
         materialize_elapsed=materialize_elapsed,
         recount_elapsed=recount_elapsed,
         total_elapsed=time.perf_counter() - started,
+        weighting=plan.weighting,
     )
     return copy_table, plan.mask.copy(), diagnostics

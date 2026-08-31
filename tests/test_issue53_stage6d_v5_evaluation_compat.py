@@ -213,7 +213,7 @@ def test_old_generation_source_fails_closed_and_compat_plans_are_read_only(
 ):
     root = Path(__file__).resolve().parents[1]
 
-    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+    with pytest.raises(RuntimeError, match="实现源码漂移：full_generator"):
         compat_protocol.assert_frozen_compatibility_identity(root)
 
     monkeypatch.setattr(

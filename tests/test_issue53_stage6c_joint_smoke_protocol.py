@@ -21,9 +21,9 @@ def test_protocol_manifest_is_frozen_and_old_source_fails_closed():
         if protocol.file_sha256(REPOSITORY_ROOT / binding["path"])
         != binding["sha256"]
     ]
-    assert drifted_sources == ["gap_kernel"]
+    assert drifted_sources == ["full_generator", "gap_kernel"]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
-    with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
+    with pytest.raises(RuntimeError, match="实现源码漂移：full_generator"):
         protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
 
 
