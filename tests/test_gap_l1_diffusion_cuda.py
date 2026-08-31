@@ -88,8 +88,11 @@ def _case():
             "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
             "max_weight_ratio": 8.0,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+        },
     ],
-    ids=("legacy", "bounded-r8"),
+    ids=("legacy", "bounded-r8", "sqrt-target"),
 )
 def test_cuda_condition_and_isolated_scores_match_cpu(weighting_kwargs):
     (
@@ -226,8 +229,11 @@ def test_cuda_bounded_exact_rational_zero_is_excluded_from_scale():
             "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
             "max_weight_ratio": 8.0,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+        },
     ],
-    ids=("legacy", "bounded-r8"),
+    ids=("legacy", "bounded-r8", "sqrt-target"),
 )
 def test_cuda_random_scan_matches_cpu_at_every_microstep(
     monkeypatch, weighting_kwargs
@@ -914,8 +920,11 @@ def test_cuda_k_zero_consumes_no_rng():
             "weighting": gap.GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
             "max_weight_ratio": 8.0,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+        },
     ],
-    ids=("legacy", "bounded-r8"),
+    ids=("legacy", "bounded-r8", "sqrt-target"),
 )
 def test_cuda_batched_different_addresses_match_single_results(
     weighting_kwargs,

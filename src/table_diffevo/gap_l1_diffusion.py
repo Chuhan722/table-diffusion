@@ -10,7 +10,9 @@
 
 研究模式可把分母改成 ``clip(target_j, 0, N) + smoothing``，其中
 ``smoothing = max(floor, N / (R - 1))``。这样仍优先修复稀有查询，但任意
-两条有效计数查询之间的单位误差权重比不超过显式上限 ``R``。
+两条有效计数查询之间的单位误差权重比不超过显式上限 ``R``。另一研究模式
+使用 ``sqrt(max(target_j, 1))``，在绝对计数误差与纯相对计数误差之间取固定
+的几何中点，不引入数据集专用比例。
 
 每个条件微步精确维护同一行内多属性的合取作用，以及多行先求总查询计数再
 计算误差的共同作用。历史端点使用 NumPy 双精度浮点数；可选 CUDA 后端复用
@@ -43,9 +45,11 @@ DEFAULT_GAP_L1_SWEEPS = 8
 DEFAULT_GAP_L1_LOGIT_CLIP = 30.0
 GAP_L1_WEIGHTING_LEGACY_RELATIVE = "legacy_relative"
 GAP_L1_WEIGHTING_BOUNDED_RELATIVE = "bounded_relative"
+GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE = "sqrt_target_relative"
 GAP_L1_WEIGHTING_MODES = (
     GAP_L1_WEIGHTING_LEGACY_RELATIVE,
     GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+    GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
 )
 DEFAULT_GAP_L1_WEIGHTING = GAP_L1_WEIGHTING_LEGACY_RELATIVE
 DEFAULT_GAP_L1_MAX_WEIGHT_RATIO = 8.0
@@ -207,10 +211,13 @@ def validate_gap_l1_weighting(
             f"{GAP_L1_WEIGHTING_MODES} 之一，得到 {weighting!r}"
         )
     mode = str(weighting)
-    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+    if mode in (
+        GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+        GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+    ):
         if max_weight_ratio is not None:
             raise ValueError(
-                "legacy_relative 不允许设置 max_weight_ratio"
+                f"{mode} 不允许设置 max_weight_ratio"
             )
         return mode, None
 
@@ -239,7 +246,7 @@ def _build_gap_l1_denominators(
     if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
         denominators = np.maximum(targets, floor_value)
         smoothing_count = None
-    else:
+    elif mode == GAP_L1_WEIGHTING_BOUNDED_RELATIVE:
         records = _require_positive_integer(n_records, "n_records")
         bounded_targets = np.clip(targets, 0.0, float(records))
         smoothing_count = float(max(
@@ -247,6 +254,9 @@ def _build_gap_l1_denominators(
             np.float64(records) / np.float64(ratio - 1.0),
         ))
         denominators = bounded_targets + smoothing_count
+    else:
+        denominators = np.sqrt(np.maximum(targets, 1.0))
+        smoothing_count = None
 
     denominators = np.asarray(denominators, dtype=np.float64)
     if np.any(~np.isfinite(denominators)) or np.any(denominators <= 0.0):
@@ -1647,7 +1657,7 @@ def _build_scan_diagnostics(
         "kernel": (
             "gap_l1_global_random_scan"
             if weighting_spec.mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE
-            else "gap_l1_global_random_scan_bounded_relative"
+            else f"gap_l1_global_random_scan_{weighting_spec.mode}"
         ),
         "no_gate": True,
         "n_sweeps": sweeps,
@@ -1695,6 +1705,11 @@ def _build_scan_diagnostics(
                 weighting_spec.actual_weight_ratio
             ),
         })
+        if (
+            weighting_spec.mode
+            == GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE
+        ):
+            result["gap_l1_target_count_quantum"] = 1.0
     return result
 
 
@@ -1733,6 +1748,12 @@ def _build_exact_zero_spec(
     mode, ratio = validate_gap_l1_weighting(
         weighting, max_weight_ratio
     )
+    if mode == GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE:
+        raise ValueError(
+            "sqrt_target_relative 不支持旧权重专用的整数公共分母"
+            "精确抵消；请省略 exact_target_numerators 与"
+            " exact_target_denominator"
+        )
     if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
         raw_denominators = [
             max(numerator, int(floor) * denominator_value)

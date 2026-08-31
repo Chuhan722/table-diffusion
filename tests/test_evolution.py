@@ -1185,6 +1185,27 @@ class TestGapL1ClosedLoop:
         assert attempt["gap_l1_max_weight_ratio"] == 8.0
         assert attempt["gap_l1_actual_weight_ratio"] <= 8.0
 
+    def test_sqrt_target_weighting_is_opt_in_and_recorded(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            gap_l1_weighting="sqrt_target_relative",
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["params"]["gap_l1_weighting"] == (
+            "sqrt_target_relative"
+        )
+        assert diagnostics["params"]["gap_l1_max_weight_ratio"] is None
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["gap_l1_weighting"] == "sqrt_target_relative"
+        assert attempt["gap_l1_max_weight_ratio"] is None
+        assert attempt["gap_l1_smoothing_count"] is None
+        assert attempt["gap_l1_target_count_quantum"] == 1.0
+
     def test_missing_scale_uses_b_plan_without_starting_scan(
         self, monkeypatch
     ):

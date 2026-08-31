@@ -378,7 +378,8 @@ def run_evolution(
     gap_l1_weighting : str, default 'legacy_relative'
         缺口核查询误差的权重几何。默认 ``legacy_relative`` 精确保留 Stage 6
         的 ``max(target, 8)`` 分母；研究值 ``bounded_relative`` 使用按表行数
-        平滑的分母，并要求显式设置 ``gap_l1_max_weight_ratio``。
+        平滑的分母，并要求显式设置 ``gap_l1_max_weight_ratio``；研究值
+        ``sqrt_target_relative`` 使用 ``sqrt(max(target, 1))`` 分母。
     gap_l1_max_weight_ratio : float or None, default None
         ``bounded_relative`` 下稀有与常见有效计数查询的单位误差最大权重比，
         必须是大于 1 的有限数；其他模式不允许设置。
