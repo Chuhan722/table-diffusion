@@ -277,10 +277,10 @@ def _load_sqrt_baseline(root: Path) -> tuple[dict[str, Any], list[dict[str, Any]
     required_audit = {
         "contract_version": "issue53-gap-weight-sqrt-target-recovered-independent-audit-v1",
         "audit_adapter_protocol_sha256": protocol.SQRT_AUDIT_ADAPTER_SHA256,
-        "evaluation_report_sha256": evaluation_spec["sha256"],
+        "candidate_evaluation_report_sha256": evaluation_spec["sha256"],
         "pass": True,
         "classification_independently_reproduced": True,
-        "summary_independently_reproduced": True,
+        "dual_baseline_summary_independently_reproduced": True,
         "evaluator_arithmetic_imported": False,
         "generation_rerun": False,
         "evaluation_artifacts_modified": False,
@@ -799,4 +799,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -21,7 +21,7 @@ ADAPTER_DOC_SHA256 = (
     "a879d095b53a607199a602ddf2f842c73de06ea67db58c91907868613021397c"
 )
 FROZEN_ADAPTER_SHA256 = (
-    "a3bd0bd10a9b566ccbe4cac1318dcd396e24522cb42d631c1d353c2502d67959"
+    "429283f02fb375d357ecba524ce7b570b2621a6e411998932f46b565fcb171e0"
 )
 
 SOURCE_COLLECTION_SHA256 = (
@@ -93,7 +93,7 @@ IMPLEMENTATION_SOURCES = {
     },
     "evaluation_adapter": {
         "path": Path("scripts/evaluate_issue53_gap_weight_dual_ar_screen_recovered.py"),
-        "sha256": "fb8db5766424cc51bf959272ab3810813bbd944e5e9ccf5dca54b181cf4421ea",
+        "sha256": "e94ee56bdda6c6f0933898d3d16be3916b41414376827e11ac0b876c8ee18bee",
     },
 }
 

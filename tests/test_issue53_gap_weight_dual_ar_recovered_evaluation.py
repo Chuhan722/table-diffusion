@@ -167,3 +167,9 @@ def test_confirmation_fails_before_any_quality_access(monkeypatch):
     with pytest.raises(PermissionError, match="确认"):
         adapter.evaluate("wrong", protocol.SOURCE_COLLECTION_SHA256)
 
+
+def test_actual_frozen_sqrt_baseline_contract_loads():
+    evaluation, cases, audit = adapter._load_sqrt_baseline(ROOT)
+    assert evaluation["execution_valid"] is True
+    assert len(cases) == 2
+    assert audit["pass"] is True
