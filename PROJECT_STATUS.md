@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-### 最新暂停点：Issue #53 问题一 A/R 双通道已实现并冻结，待干净提交后只读 preflight（2026-09-02）
+### 最新暂停点：Issue #53 问题一 A/R 双通道已通过开跑前预检，停在 collect 前（2026-09-02）
 
 > 用户授权的范围是完成真实 GPU 候选生成之前的设计、实现、测试、协议和预检；
 > 不授权启动两条候选轨迹、质量评价、新种子、调参、推送或操作 PR #69。
@@ -54,9 +54,32 @@ execution protocol SHA-256   4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f
 已独立审计的 legacy/R8/sqrt 基线，不重跑旧臂。执行入口已实现双层哈希和
 用户后续授权门。
 
-当前尚差最后一步：提交本地实现/协议，在干净工作树上运行只读 `plan` 与
-`preflight`，回报提交、协议/源码身份、环境、预计耗时和未授权状态后停在
-`collect` 之前。
+已在干净实现提交 `2e01f26a628635904717d29a17a191ea274978f5` 上执行只读
+`plan` 和 `preflight`：
+
+```text
+worktree clean including untracked   true
+protocol / source / input identity   pass
+GPU                                  linyao-system physical 1, RTX 4090 24 GiB
+CUDA_VISIBLE_DEVICES                 1 (process cuda:0)
+GPU preflight                        0% utilization, 18 MiB, no compute process
+software                             Python 3.11 / NumPy 2.4.6 / pandas 3.0.3
+                                     PyTorch 2.13.0+cu130 / CUDA 13.0
+runtime executables                  all executable
+ready_for_final_user_confirmation    true
+screen_generation_authorized         false
+generation_started                   false
+candidate output / shard output      absent / absent
+```
+
+干净提交后的最终相关套件为 `215 passed in 9.14s`。已有平方根轨迹的案例耗时是
+test 约 5.8 分钟、NLTCS 约 25.5 分钟；新模式单任务 CUDA 每微步需多维护一个
+通道，尚无正式轨迹实测。执行预留保守墙钟范围为约 45--120 分钟；该范围只是
+资源规划，不是质量或性能结论。
+
+当前严格停在真实 GPU `collect` 前。只有用户后续单独明确授权并确认执行协议
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`，才能运行已冻结的
+`collect` 命令。采集后仍必须先报告 collection SHA 并停止，不自动评价。
 
 ### 最新暂停点：第 6D 第四版启动前监控编号失败关闭，第五版修复已冻结并等待新授权（2026-08-27）
 
