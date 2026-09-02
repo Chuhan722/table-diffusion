@@ -379,7 +379,9 @@ def run_evolution(
         缺口核查询误差的权重几何。默认 ``legacy_relative`` 精确保留 Stage 6
         的 ``max(target, 8)`` 分母；研究值 ``bounded_relative`` 使用按表行数
         平滑的分母，并要求显式设置 ``gap_l1_max_weight_ratio``；研究值
-        ``sqrt_target_relative`` 使用 ``sqrt(max(target, 1))`` 分母。
+        ``sqrt_target_relative`` 使用 ``sqrt(max(target, 1))`` 分母；研究值
+        ``dual_abs_relative_max`` 在全查询等权绝对误差率与正目标查询
+        归一化相对权重误差率中取较大者，零目标只进入前者。
     gap_l1_max_weight_ratio : float or None, default None
         ``bounded_relative`` 下稀有与常见有效计数查询的单位误差最大权重比，
         必须是大于 1 的有限数；其他模式不允许设置。

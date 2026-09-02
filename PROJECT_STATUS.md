@@ -2,6 +2,62 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 问题一 A/R 双通道已实现并冻结，待干净提交后只读 preflight（2026-09-02）
+
+> 用户授权的范围是完成真实 GPU 候选生成之前的设计、实现、测试、协议和预检；
+> 不授权启动两条候选轨迹、质量评价、新种子、调参、推送或操作 PR #69。
+
+新增显式研究模式 `dual_abs_relative_max`，公共默认仍为
+`legacy_relative`。冻结公式为：
+
+```text
+A = sum_all(|target-current|) / (N*J)
+R = sum_positive(|target-current|/target)
+    / [N*sum_positive(1/target)]
+E = max(A,R)
+```
+
+`target=0` 只进 A，不进 R，不另设 Z；无正目标时退化为 `E=A`。
+`floor` 不进入新公式，`max_weight_ratio` 必须为 null。微步在两侧分别先求
+`max(A_b,R_b)` 再取 `E0-E1`，切换点不加 epsilon、滞回或随机平局。
+
+实现只为新模式新增 R 通道的 float64 增量误差项/和；A 复用原误差状态。
+旧 legacy/bounded/sqrt 继续走原 NumPy/Triton 结合顺序；新模式有专用单任务
+CUDA eager 提交和逐微步批量 CUDA 分支。B 残差、`gap_l1_sweeps=8`、strength、
+孤立分数 RMS 定尺、概率、RNG、自动停止和 terminal-current 均未改。
+
+已通过：
+
+- 相关 CPU/主循环回归 `155 passed`；
+- 完整缺口核 CUDA 套件 `27 passed`；
+- 新模式包括零目标、全零目标、等误差校准、A/R 各自主导、切换点、
+  CPU 全量重算对拍、CPU/单 CUDA 逐微步对拍、单/批量 CUDA 轨迹哈希和 RNG 终点；
+- 旧三种模式的现有数值与冻结 CUDA 轨迹测试全部通过。
+
+全库试跑为 `2272 passed, 31 failed`。31 项集中于历史实验协议对
+`evolution.py` / `gap_l1_diffusion.py` 旧提交哈希的预期失败关闭，以及本工作树
+已存在/未复制的历史 outputs 前提；无 A/R 公式、增量状态、旧模式数值轨迹或
+CUDA 回归失败。不改写历史冻结协议去伪装旧提交未变。
+
+结果前科学协议：
+
+```text
+mode                         dual_abs_relative_max
+tasks                        test_300x10 / NLTCS, development seed 9908
+candidate arm                gap_dual_abs_relative_max_s8
+scientific protocol SHA-256  85016eb9b91364006537b4ccadd71bea8685b502a96aa05d88f73c700d75532d
+execution protocol SHA-256   4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386
+```
+
+目标权重审计只读两份 measured query JSON，逐条固定 1051 条查询的 A/R 权重；
+未导入核实现，未读参考表或任何候选结果。任务矩阵只新增两条轨迹，复用
+已独立审计的 legacy/R8/sqrt 基线，不重跑旧臂。执行入口已实现双层哈希和
+用户后续授权门。
+
+当前尚差最后一步：提交本地实现/协议，在干净工作树上运行只读 `plan` 与
+`preflight`，回报提交、协议/源码身份、环境、预计耗时和未授权状态后停在
+`collect` 之前。
+
 ### 最新暂停点：第 6D 第四版启动前监控编号失败关闭，第五版修复已冻结并等待新授权（2026-08-27）
 
 > 用户确认第四版运行后，两端于2026-08-27 14:41:46同时发起。当前服务器后台进程被启动工具在进入采集器前回收，

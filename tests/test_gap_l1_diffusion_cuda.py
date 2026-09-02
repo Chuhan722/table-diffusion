@@ -91,8 +91,11 @@ def _case():
         {
             "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        },
     ],
-    ids=("legacy", "bounded-r8", "sqrt-target"),
+    ids=("legacy", "bounded-r8", "sqrt-target", "dual-ar-max"),
 )
 def test_cuda_condition_and_isolated_scores_match_cpu(weighting_kwargs):
     (
@@ -169,6 +172,53 @@ def test_cuda_condition_and_isolated_scores_match_cpu(weighting_kwargs):
     ) <= 1e-12
 
 
+@pytest.mark.parametrize(
+    "targets",
+    [np.array([0.0, 2.0]), np.array([0.0, 0.0])],
+    ids=("mixed-zero-positive", "all-zero"),
+)
+def test_dual_cuda_zero_target_boundaries_match_cpu(targets):
+    schema = _binary_schema("a")
+    queries = [
+        {"conditions": [_equals("a", 1)]},
+        {"conditions": [_equals("a", 0)]},
+    ]
+    current = pd.DataFrame({"a": [0, 1, 0]})
+    donors = pd.DataFrame({"a": [1, 0, 1]})
+    counts = evaluate_table(current, queries)
+    kwargs = {
+        "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+    }
+
+    cpu = gap.isolated_gap_l1_scores(
+        current, donors, schema, queries, targets, counts, **kwargs
+    )
+    cuda = gap.isolated_gap_l1_scores(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        device="cuda",
+        **kwargs,
+    )
+
+    np.testing.assert_array_equal(cpu["coordinates"], cuda["coordinates"])
+    np.testing.assert_allclose(cpu["scores"], cuda["scores"], rtol=0, atol=1e-12)
+    assert cpu["current_error"] == pytest.approx(
+        gap.normalized_gap_l1_error(
+            counts,
+            targets,
+            n_records=len(current),
+            weighting=gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        )
+    )
+    assert cuda["current_error"] == pytest.approx(
+        cpu["current_error"], abs=1e-12
+    )
+
+
 def test_cuda_exact_rational_zero_is_excluded_from_scale():
     schema = _binary_schema("a")
     queries = [{"conditions": [_equals("a")]} for _ in range(3)]
@@ -232,8 +282,11 @@ def test_cuda_bounded_exact_rational_zero_is_excluded_from_scale():
         {
             "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        },
     ],
-    ids=("legacy", "bounded-r8", "sqrt-target"),
+    ids=("legacy", "bounded-r8", "sqrt-target", "dual-ar-max"),
 )
 def test_cuda_random_scan_matches_cpu_at_every_microstep(
     monkeypatch, weighting_kwargs
@@ -923,8 +976,11 @@ def test_cuda_k_zero_consumes_no_rng():
         {
             "weighting": gap.GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
         },
+        {
+            "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        },
     ],
-    ids=("legacy", "bounded-r8", "sqrt-target"),
+    ids=("legacy", "bounded-r8", "sqrt-target", "dual-ar-max"),
 )
 def test_cuda_batched_different_addresses_match_single_results(
     weighting_kwargs,
@@ -1005,6 +1061,13 @@ def test_cuda_batched_different_addresses_match_single_results(
         assert result[2]["final_query_counts"] == (
             reference[2]["final_query_counts"]
         )
+        if weighting_kwargs.get("weighting") == (
+            gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX
+        ):
+            # 哈希包含每个微步的 E0/E1、score、概率、随机数与开关。
+            assert result[2]["microstep_trace_sha256"] == (
+                reference[2]["microstep_trace_sha256"]
+            )
         assert result[2]["no_gate"] is True
         assert result[2]["backend"] == "torch_cuda_float64_batched"
         assert result[2]["gibbs_microsteps"] == (
