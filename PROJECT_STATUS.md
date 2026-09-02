@@ -2,6 +2,77 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #53 问题一 A/R 双通道单种子筛查已评价，未通过（2026-09-02）
+
+> 用户已明确授权完成冻结的两条候选轨迹及质量评价。本轮已完成采集、结果盲
+> 勘误恢复和离线评价；未扩种子、未调参、未自动运行独立审计、未推送，也未
+> 操作 PR #69。
+
+候选仍是唯一研究臂 `gap_dual_abs_relative_max_s8`，开发种子 9908，数据集为
+`test_300x10` 与 NLTCS。源生成提交为
+`a3ba71fa2e84512fc6c8ba1bc818ba03e908cc71`，执行协议 SHA-256 为
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`。
+
+两条 GPU 轨迹均完整生成：
+
+```text
+dataset        applied rounds  termination    case elapsed
+test_300x10    1505            early_stopped  319.0563068520278 s
+NLTCS          2805            early_stopped  5762.858124156017 s
+```
+
+源采集器在两个 case 均写入 staging 后，因继承的 Stage 6E 发布校验错误要求
+`state_evaluation_count == applied_rounds+1` 而失败关闭；实际生成器契约为
+`state_evaluation_count == max(1,applied_rounds)`，与此前 R8/sqrt 已冻结的同类
+勘误一致。八个源 case 文件未改写、未删除，GPU 生成器未重跑。结果盲恢复协议
+只对旧校验器构造内存代理计数，其余旧护栏与 A/R 逐轮权重/`8*K` 护栏原样通过：
+
+```text
+recovery protocol SHA-256  2132a4392740114398064b62bfc604cb97b3226e4b758d654dbd6a71dcc8c4b3
+recovery commit            d51600e3f5b7b26261bf4ddca62318acbbfca1c0
+collection SHA-256         3b53fcac678924205a4bd1038ec15f404b5245b09894d2b065d28794e615a790
+```
+
+最终评价在干净提交 `1a6194fd43437751b4b117e5dc4c30090637f239` 上运行，
+复用已独立审计的 legacy/R8/sqrt 六条基线，不重跑旧臂；终表与所有已达到的
+固定检查点均评价，未使用历史最好或检查点选表：
+
+```text
+evaluation adapter SHA-256  ebb1d6726b99f0f486934cb3c8b7bff8c561d594d02895ede68ed711dc422cb4
+evaluation report SHA-256   df9c64430be28f45c0a354dff0861ba501b4c3e429e66a85956119961f5b5c56
+screen metrics CSV SHA-256  3517bb58884f9aab2533a807a7e3996745de0e5b03154871489a76fa9fb4680e
+candidate / baseline cases  2 / 6
+CSV rows                     123
+execution valid              true
+```
+
+冻结门的关键结果（越小越好）：
+
+| 门 | candidate | baseline | ratio | threshold | pass |
+|---|---:|---:|---:|---:|:---:|
+| NLTCS measured normalized L1 vs legacy | 0.0001487913 | 0.0002894331 | 0.5141 | `<1.0` | ✅ |
+| NLTCS 常见箱 mean error vs legacy | 2.7300771 | 6.3239075 | 0.4317 | `<1.0` | ✅ |
+| NLTCS 稀有箱 mean error vs legacy | 1.4705882 | 0.9411765 | 1.5625 | `<=1.25` | ❌ |
+| NLTCS 稀有箱 mean error vs sqrt | 1.4705882 | 1.5882353 | 0.9259 | `<1.0` | ✅ |
+| test measured normalized L1 vs legacy | 0.0010000 | 0.0008667 | 1.1538 | `<=1.05` | ❌ |
+| test one-way safety vs legacy | 0.0442667 | 0.0485333 | 0.9121 | `<=1.05` | ✅ |
+| NLTCS one-way safety vs legacy | 0.0000927013 | 0.0002549286 | 0.3636 | `<=1.05` | ✅ |
+
+冻结分类为 `rare_query_protection_not_recovered`，因为分类优先级先命中稀有箱
+失败；test 总 L1 同时也独立失败。结论是：A/R 的 A 通道确实大幅保住并改善了
+NLTCS 常见查询和总体误差，R 通道也使稀有箱优于 sqrt 约 7.4%，但仍比 legacy
+差 56.25%，未达到 25% 容忍线；同时 test 总 L1 比 legacy 差 15.38%。因此当前
+无参数 A/R `max` 设计不能作为问题一的合格解，也不得进入新种子确认。
+
+评价过程中有两次结果发布前失败关闭：第一次是适配器错用 sqrt 顶层审计字段名，
+第二次是把检查点历史字段 `gap_e` 误解释为 A/R C 能量。实际 `gap_e` 仍是
+legacy relative 诊断，A/R C 核身份在逐轮 transition audit 中。两次均未生成
+evaluation/CSV；修正、重冻结并通过 `13 passed` 后才执行上述正式评价。
+
+当前严格停在单种子开发筛查结论处。`automatic_followup_authorized=false`，下一步
+若继续问题一，应先讨论失败机制和新的结果前设计；不得自动调 A/R 比例、改门、
+扩种子或把本结果描述为成功。
+
 ### 最新暂停点：Issue #53 问题一 A/R 双通道已通过开跑前预检，停在 collect 前（2026-09-02）
 
 > 用户授权的范围是完成真实 GPU 候选生成之前的设计、实现、测试、协议和预检；
