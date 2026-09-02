@@ -18,10 +18,10 @@ ADAPTER_DOC = Path(
     "docs/设计/Issue53_BC问题一AR双通道恢复版离线评价适配协议.md"
 )
 ADAPTER_DOC_SHA256 = (
-    "a879d095b53a607199a602ddf2f842c73de06ea67db58c91907868613021397c"
+    "ed2b0d519c0fc254589f0e0599f7b87075dcfb61e3f1b272f3b5ed09b46d43de"
 )
 FROZEN_ADAPTER_SHA256 = (
-    "429283f02fb375d357ecba524ce7b570b2621a6e411998932f46b565fcb171e0"
+    "ebb1d6726b99f0f486934cb3c8b7bff8c561d594d02895ede68ed711dc422cb4"
 )
 
 SOURCE_COLLECTION_SHA256 = (
@@ -93,7 +93,7 @@ IMPLEMENTATION_SOURCES = {
     },
     "evaluation_adapter": {
         "path": Path("scripts/evaluate_issue53_gap_weight_dual_ar_screen_recovered.py"),
-        "sha256": "e94ee56bdda6c6f0933898d3d16be3916b41414376827e11ac0b876c8ee18bee",
+        "sha256": "5a54f9662d36f77a71b03d3e0c8c6a3744ab5da2182a987a5885ef4cfd56311d",
     },
 }
 
@@ -164,7 +164,8 @@ def frozen_adapter_manifest() -> dict[str, Any]:
             "ratio_zero_denominator_rule_modified": False,
             "csv_schema_modified": False,
             "atomic_publication_modified": False,
-            "dual_gap_e_identity_check_added": True,
+            "checkpoint_gap_e_legacy_diagnostic_preserved": True,
+            "dual_kernel_identity_source": "recovered_transition_audit",
         },
         "comparison_and_decision": {
             "candidate_arm": CANDIDATE_ARM,

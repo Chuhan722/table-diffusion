@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -33,142 +32,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _dual_gap_objective(
-    targets: Sequence[Any], answers: Sequence[Any], n_records: int
-) -> float:
-    target, _answer, absolute = source_evaluator._integer_vectors(
-        targets, answers, n_records
-    )
-    absolute_channel = math.fsum(int(value) for value in absolute) / (
-        n_records * len(absolute)
-    )
-    positive = [index for index, value in enumerate(target) if int(value) > 0]
-    if not positive:
-        relative_channel = 0.0
-    else:
-        normalizer = math.fsum(1.0 / int(target[index]) for index in positive)
-        relative_channel = math.fsum(
-            int(absolute[index]) / int(target[index]) for index in positive
-        ) / (n_records * normalizer)
-    return float(max(absolute_channel, relative_channel))
-
-
-def _audit_checkpoint_artifact(
-    root: Path,
-    source: dict[str, Any],
-    dataset_input: dict[str, Any],
-    terminal_answers: Any,
-) -> dict[str, Any]:
-    artifact = source_evaluator._load_json(
-        source_evaluator._artifact_path(root, source["checkpoint_artifact_path"])
-    )
-    dataset = source["dataset"]
-    spec = protocol.DATASETS[dataset]
-    if (
-        artifact.get("contract_version") != protocol.PROTOCOL_VERSION
-        or artifact.get("protocol_sha256") != protocol.FROZEN_PROTOCOL_SHA256
-        or artifact.get("task_id") != source["task_id"]
-        or artifact.get("dataset") != dataset
-        or artifact.get("arm") != source["arm"]
-        or artifact.get("seed") != source["seed"]
-        or artifact.get("n_records") != spec["n_records"]
-        or artifact.get("query_count") != spec["query_count"]
-        or artifact.get("query_identity_sha256") != spec["query_identity_sha256"]
-        or artifact.get("target_vector_sha256") != spec["target_vector_sha256"]
-        or artifact.get("trace_query_identity_sha256")
-        != spec["trace_query_identity_sha256"]
-        or artifact.get("trace_target_vector_sha256")
-        != spec["trace_target_vector_sha256"]
-        or artifact.get("fixed_checkpoint_rounds_requested")
-        != list(protocol.CHECKPOINT_ROUNDS)
-        or artifact.get("historical_best_included") is not False
-    ):
-        raise RuntimeError(f"A/R 检查点身份漂移：{source['task_id']}")
-
-    def recompute(row: dict[str, Any]) -> dict[str, Any]:
-        answers = source_evaluator.np.asarray(row.get("query_answers"), dtype=float)
-        vector = source_evaluator._vector_metrics(
-            dataset,
-            dataset_input["raw_queries"],
-            dataset_input["targets"],
-            answers,
-            spec["n_records"],
-        )
-        squared = float(
-            sum(
-                (int(target) - int(answer)) ** 2
-                for target, answer in zip(
-                    dataset_input["targets"], answers, strict=True
-                )
-            )
-            / 2
-        )
-        dual_gap = _dual_gap_objective(
-            dataset_input["targets"], answers, spec["n_records"]
-        )
-        if (
-            row.get("absolute_count_error_sum")
-            != vector["absolute_count_error_sum"]
-            or row.get("normalized_l1") != vector["normalized_l1"]
-            or not math.isclose(
-                float(row.get("gap_e", math.nan)),
-                dual_gap,
-                rel_tol=1e-15,
-                abs_tol=1e-15,
-            )
-            or row.get("squared_loss") != squared
-        ):
-            identity = f"{source['task_id']}/{row.get('round')}"
-            raise RuntimeError(f"A/R 检查点指标复算漂移：{identity}")
-        return {
-            "kind": row["kind"],
-            "state_index": int(row["state_index"]),
-            "round": int(row["round"]),
-            "phase": row["phase"],
-            "squared_loss": squared,
-            "dual_abs_relative_max_gap": dual_gap,
-            **vector,
-        }
-
-    fixed_source = artifact.get("fixed_checkpoints")
-    if not isinstance(fixed_source, list):
-        raise TypeError("A/R 固定检查点列表缺失")
-    expected_rounds = [
-        value
-        for value in protocol.CHECKPOINT_ROUNDS
-        if value <= source["applied_rounds"]
-    ]
-    if [row.get("round") for row in fixed_source] != expected_rounds:
-        raise RuntimeError(f"A/R 固定检查点覆盖漂移：{source['task_id']}")
-    fixed = [recompute(row) for row in fixed_source]
-    terminal_source = artifact.get("terminal")
-    if not isinstance(terminal_source, dict):
-        raise TypeError("A/R terminal 检查点缺失")
-    if not source_evaluator.np.array_equal(
-        source_evaluator.np.asarray(
-            terminal_source.get("query_answers"), dtype=float
-        ),
-        terminal_answers,
-    ):
-        raise RuntimeError(f"A/R 终表与终点向量不一致：{source['task_id']}")
-    terminal = recompute(terminal_source)
-    if terminal["round"] != source["applied_rounds"]:
-        raise RuntimeError(f"A/R 终点轮次漂移：{source['task_id']}")
-    return {"fixed_checkpoints": fixed, "terminal": terminal}
-
-
 @contextlib.contextmanager
 def _source_evaluator_runtime():
     """把冻结 R8 指标算术临时绑定到 A/R 两 case。"""
 
     original_protocol = source_evaluator.protocol
-    original_checkpoint = source_evaluator._audit_checkpoint_artifact
     source_evaluator.protocol = protocol
-    source_evaluator._audit_checkpoint_artifact = _audit_checkpoint_artifact
     try:
         yield
     finally:
-        source_evaluator._audit_checkpoint_artifact = original_checkpoint
         source_evaluator.protocol = original_protocol
 
 
@@ -194,7 +66,7 @@ def build_plan() -> dict[str, Any]:
         "evaluation_report": str(protocol.OUTPUT_DIR / protocol.EVALUATION_REPORT),
         "screen_metrics_csv": str(protocol.OUTPUT_DIR / protocol.L1_RESULTS_CSV),
         "candidate_metric_arithmetic_modified": False,
-        "dual_gap_e_identity_check_added": True,
+        "checkpoint_gap_e_legacy_diagnostic_preserved": True,
         "ratio_zero_denominator_rule_modified": False,
         "classification_source": "frozen_dual_ar_scientific_protocol",
         "screen_gates": scientific.frozen_protocol_manifest()["screen_gates"],

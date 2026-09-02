@@ -98,21 +98,12 @@ def test_adapter_identity_and_confirmation_gate():
         protocol.require_evaluation_confirmation(None, None)
 
 
-def test_dual_gap_objective_handles_positive_and_all_zero_targets():
-    assert adapter._dual_gap_objective([10, 20], [11, 21], 100) == pytest.approx(
-        0.01
-    )
-    assert adapter._dual_gap_objective([0, 0], [1, 3], 100) == pytest.approx(
-        0.02
-    )
-
-
 def test_source_runtime_binding_is_scoped():
     original_protocol = source_evaluator.protocol
     original_checkpoint = source_evaluator._audit_checkpoint_artifact
     with adapter._source_evaluator_runtime():
         assert source_evaluator.protocol is protocol
-        assert source_evaluator._audit_checkpoint_artifact is adapter._audit_checkpoint_artifact
+        assert source_evaluator._audit_checkpoint_artifact is original_checkpoint
     assert source_evaluator.protocol is original_protocol
     assert source_evaluator._audit_checkpoint_artifact is original_checkpoint
 

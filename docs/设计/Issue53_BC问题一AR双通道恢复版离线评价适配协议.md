@@ -28,16 +28,11 @@ recovery protocol SHA-256
 query groups 全部复用冻结 R8 evaluator 的同一算术、查询集合、reference 和
 零分母比例规则。
 
-A/R 检查点中的 `gap_e` 不是 legacy proxy，适配器按冻结候选公式独立复算并
-只用于身份校验：
-
-```text
-A = sum_all |y-q| / (N*J)
-R = sum_positive(|y-q|/y) / (N*sum_positive(1/y))
-E = max(A,R)
-```
-
-这不改变 normalized L1、分箱、one-way 或任何决策指标的算术。
+检查点中的历史字段 `gap_e` 按既有持久化契约仍是 legacy relative 诊断值，
+不代表候选 C 核能量。适配器保持源 evaluator 对该字段的原有复算，不重新解释
+字段语义。A/R 真实 C 核的逐轮模式、`max` 聚合、零目标策略和权重常数已经由
+恢复 loader 在 `transition_audit.json` 中逐轮验证。这不改变 normalized L1、
+分箱、one-way 或任何决策指标的算术。
 
 ## 3. 结果前筛查门
 
@@ -70,4 +65,3 @@ collection SHA 同时确认后，才允许读取候选终表、reference 和冻�
 
 本评价是读取 R8/sqrt 开发结果后提出的新候选的单种子开发筛查，不是独立确认。
 评价完成后不得自动扩种子、调参、运行独立审计、推送或操作 PR #69。
-
