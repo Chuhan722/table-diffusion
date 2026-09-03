@@ -376,6 +376,136 @@ def test_cuda_random_scan_matches_cpu_at_every_microstep(
     assert cuda_result[2]["backend"] == "torch_cuda_float64"
 
 
+def test_dual_progress_cuda_condition_isolated_and_scan_match_cpu():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    reference = gap.build_gap_l1_channel_reference(
+        counts, targets, n_records=len(current)
+    )
+    weighting_kwargs = {
+        "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+        "channel_reference": reference,
+    }
+    condition_kwargs = {
+        "participate": participate,
+        "mask": initial_mask,
+        "row_index": 0,
+        "attribute_index": 0,
+        "reference_scale": 0.02,
+        **weighting_kwargs,
+    }
+    cpu_condition = gap.evaluate_gap_l1_condition(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        **condition_kwargs,
+    )
+    cuda_condition = gap.evaluate_gap_l1_condition(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        device="cuda",
+        **condition_kwargs,
+    )
+    for key in (
+        "e0",
+        "e1",
+        "score",
+        "normalized_score",
+        "raw_logit",
+        "logit",
+        "probability",
+    ):
+        assert abs(cpu_condition[key] - cuda_condition[key]) <= 1e-12
+
+    cpu_isolated = gap.isolated_gap_l1_scores(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        **weighting_kwargs,
+    )
+    cuda_isolated = gap.isolated_gap_l1_scores(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        device="cuda",
+        **weighting_kwargs,
+    )
+    np.testing.assert_array_equal(
+        cpu_isolated["coordinates"], cuda_isolated["coordinates"]
+    )
+    np.testing.assert_allclose(
+        cpu_isolated["scores"], cuda_isolated["scores"], rtol=0, atol=1e-12
+    )
+
+    scan_kwargs = {
+        "participate": participate,
+        "initial_mask": initial_mask,
+        "reference_scale": 0.02,
+        "n_sweeps": 2,
+        **weighting_kwargs,
+    }
+    cpu_rng = np.random.default_rng(20260903)
+    cuda_rng = np.random.default_rng(20260903)
+    cpu_result = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        rng=cpu_rng,
+        **scan_kwargs,
+    )
+    cuda_result = gap.evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        counts,
+        rng=cuda_rng,
+        device="cuda",
+        **scan_kwargs,
+    )
+    pd.testing.assert_frame_equal(cpu_result[0], cuda_result[0])
+    np.testing.assert_array_equal(cpu_result[1], cuda_result[1])
+    assert cpu_result[2]["final_query_counts"] == (
+        cuda_result[2]["final_query_counts"]
+    )
+    assert cpu_result[2]["gap_l1_channel_dominance_counts"] == (
+        cuda_result[2]["gap_l1_channel_dominance_counts"]
+    )
+    for key, value in cpu_result[2]["gap_l1_final_channels"].items():
+        if isinstance(value, float):
+            assert value == pytest.approx(
+                cuda_result[2]["gap_l1_final_channels"][key], abs=1e-12
+            )
+        else:
+            assert value == cuda_result[2]["gap_l1_final_channels"][key]
+    assert cpu_rng.bit_generator.state == cuda_rng.bit_generator.state
+
+
 def test_cuda_scan_keeps_coordinate_tape_on_host(monkeypatch):
     (
         schema,
@@ -1082,6 +1212,96 @@ def test_cuda_batched_different_addresses_match_single_results(
         assert (
             batch_rngs[index].bit_generator.state
             == reference_rngs[index].bit_generator.state
+        )
+
+
+def test_dual_progress_cuda_batched_matches_single_results():
+    (
+        schema,
+        queries,
+        current,
+        donors,
+        counts,
+        targets,
+        participate,
+        initial_mask,
+    ) = _case()
+    donor_tables = (
+        donors,
+        current.iloc[[1, 2, 3, 4, 5, 0]].reset_index(drop=True),
+    )
+    participates = (
+        participate,
+        np.array([True, False, True, True, False, True]),
+    )
+    initial_masks = [initial_mask]
+    active = participates[1][:, None] & (
+        current.to_numpy() != donor_tables[1].to_numpy()
+    )
+    initial_masks.append(active & (
+        np.random.default_rng(703).random(active.shape) < 0.5
+    ))
+    reference = gap.build_gap_l1_channel_reference(
+        counts, targets, n_records=len(current)
+    )
+    kwargs = {
+        "reference_scale": 0.02,
+        "n_sweeps": 2,
+        "weighting": gap.GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+        "channel_reference": reference,
+        "device": "cuda",
+    }
+    seeds = (20260904, 20260905)
+    single_rngs = [np.random.default_rng(seed) for seed in seeds]
+    batch_rngs = [np.random.default_rng(seed) for seed in seeds]
+    singles = [
+        gap.evolve_step_gap_l1_global(
+            current,
+            donor_tables[index],
+            schema,
+            queries,
+            targets,
+            counts,
+            participate=participates[index],
+            initial_mask=initial_masks[index],
+            rng=single_rngs[index],
+            **kwargs,
+        )
+        for index in range(2)
+    ]
+    batched = gap.evolve_step_gap_l1_global_batched(
+        current,
+        donor_tables,
+        schema,
+        queries,
+        targets,
+        counts,
+        participates=participates,
+        initial_masks=initial_masks,
+        rngs=batch_rngs,
+        **kwargs,
+    )
+
+    for index, (single, batch) in enumerate(zip(singles, batched)):
+        pd.testing.assert_frame_equal(single[0], batch[0])
+        np.testing.assert_array_equal(single[1], batch[1])
+        # padded 批量归约与 eager 归约允许有数个 float64 ULP 尾差；
+        # 对拍冻结状态轨迹、随机端点和显式通道诊断，不要求字节哈希相同。
+        assert single[2]["final_query_counts"] == (
+            batch[2]["final_query_counts"]
+        )
+        assert single[2]["gap_l1_channel_dominance_counts"] == (
+            batch[2]["gap_l1_channel_dominance_counts"]
+        )
+        for key, value in single[2]["gap_l1_final_channels"].items():
+            if isinstance(value, float):
+                assert value == pytest.approx(
+                    batch[2]["gap_l1_final_channels"][key], abs=1e-12
+                )
+            else:
+                assert value == batch[2]["gap_l1_final_channels"][key]
+        assert single_rngs[index].bit_generator.state == (
+            batch_rngs[index].bit_generator.state
         )
 
 

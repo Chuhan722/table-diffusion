@@ -77,7 +77,9 @@ from table_diffevo.gap_l1_diffusion import (
     DEFAULT_GAP_L1_STRENGTH,
     DEFAULT_GAP_L1_SWEEPS,
     DEFAULT_GAP_L1_WEIGHTING,
+    GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
     GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+    build_gap_l1_channel_reference,
     compile_gap_l1_workload,
     evolve_step_gap_l1_global,
     isolated_gap_l1_scores,
@@ -381,7 +383,9 @@ def run_evolution(
         平滑的分母，并要求显式设置 ``gap_l1_max_weight_ratio``；研究值
         ``sqrt_target_relative`` 使用 ``sqrt(max(target, 1))`` 分母；研究值
         ``dual_abs_relative_max`` 在全查询等权绝对误差率与正目标查询
-        归一化相对权重误差率中取较大者，零目标只进入前者。
+        归一化相对权重误差率中取较大者，零目标只进入前者；研究值
+        ``dual_abs_relative_progress_max`` 先让两个通道分别除以第 1 轮前
+        冻结的初始通道值，再取较大者。
     gap_l1_max_weight_ratio : float or None, default None
         ``bounded_relative`` 下稀有与常见有效计数查询的单位误差最大权重比，
         必须是大于 1 的有限数；其他模式不允许设置。
@@ -1275,6 +1279,7 @@ def run_evolution(
         )
     gap_l1_device = "cuda" if device == "cuda" else "numpy"
     gap_l1_reference_scale: Optional[float] = None
+    gap_l1_channel_reference = None
     gap_l1_microsteps = 0
     gap_l1_clip_hit_count = 0
     gap_l1_unscaled_round_count = 0
@@ -1301,6 +1306,17 @@ def run_evolution(
     # 又在第一轮重复扫描同一张 S_0。
     initial_q, initial_residual, initial_fitness = _eval_counts_resid_fitness(S)
     initial_loss = compute_loss(target, initial_q)
+    if (
+        gap_l1_weighting
+        == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+        and not (
+            stop_on_exact_residual
+            and np.all(np.asarray(initial_residual) == 0)
+        )
+    ):
+        gap_l1_channel_reference = build_gap_l1_channel_reference(
+            initial_q, target, n_records=n_records
+        )
     self_cooling_initial_l1 = float(np.abs(target - initial_q).sum())
     self_cooling_history: List[float] = []
     self_cooling_stopped = False
@@ -1807,6 +1823,7 @@ def run_evolution(
                         floor=DEFAULT_GAP_L1_FLOOR,
                         weighting=gap_l1_weighting,
                         max_weight_ratio=gap_l1_max_weight_ratio,
+                        channel_reference=gap_l1_channel_reference,
                         compiled_workload=gap_l1_compiled_workload,
                         device=gap_l1_device,
                     )
@@ -1884,6 +1901,7 @@ def run_evolution(
                             floor=DEFAULT_GAP_L1_FLOOR,
                             weighting=gap_l1_weighting,
                             max_weight_ratio=gap_l1_max_weight_ratio,
+                            channel_reference=gap_l1_channel_reference,
                             logit_clip=DEFAULT_GAP_L1_LOGIT_CLIP,
                             compiled_workload=gap_l1_compiled_workload,
                             verify_full_recount=True,
@@ -2599,6 +2617,20 @@ def run_evolution(
             factorized_gibbs_workload_compile_elapsed_sec
         ),
         "gap_l1_reference_scale": gap_l1_reference_scale,
+        "gap_l1_channel_reference": (
+            {
+                "absolute_initial": float(
+                    gap_l1_channel_reference.absolute_initial
+                ),
+                "relative_initial": (
+                    float(gap_l1_channel_reference.relative_initial)
+                    if gap_l1_channel_reference.relative_initial is not None
+                    else None
+                ),
+                "source": gap_l1_channel_reference.source,
+            }
+            if gap_l1_channel_reference is not None else None
+        ),
         "gap_l1_microsteps": int(gap_l1_microsteps),
         "gap_l1_clip_hit_count": int(gap_l1_clip_hit_count),
         "gap_l1_unscaled_round_count": int(
