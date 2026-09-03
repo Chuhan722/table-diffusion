@@ -12,19 +12,19 @@ from scripts import issue53_gap_weight_dual_ar_screen_execution_protocol as prio
 
 
 PROTOCOL_VERSION = (
-    "issue53-gap-weight-dual-ar-progress-max-screen-execution-v1"
+    "issue53-gap-weight-dual-ar-progress-max-screen-execution-v2"
 )
 PROTOCOL_DOC = Path(
     "docs/设计/Issue53_BC问题一AR相对初始进度筛查执行接线协议.md"
 )
 PROTOCOL_DOC_SHA256 = (
-    "910a326fd4aeae1c38d3088e87c58c5749cdddff4d02a07c35e4df4c218370fa"
+    "df36204574403af0871a3338011d99111c4d283a0a5e8b24f5d974114c936ec9"
 )
 FROZEN_PROTOCOL_SHA256 = (
-    "c782e1514a1a3c4895d1b5e4f71234195e32d2dcb00c79032cf30568aae5b754"
+    "56f852fb925f2ec2785a3a7f56593a51f73d4b39a1649db82725cb1076647685"
 )
 SCIENTIFIC_PROTOCOL_SHA256 = (
-    "0c523145426e559c4536f66a1b97c0947e0819754874c232b7f0f036056029ef"
+    "8c90f51b09179c738f6ea5a45110873844061e2ba1adc4b5a253ac6875f87e46"
 )
 
 DEVELOPMENT_SEED = scientific.DEVELOPMENT_SEED
@@ -54,7 +54,7 @@ ARM_GAP = scientific.CANDIDATE_ARM
 
 OUTPUT_DIR = scientific.OUTPUT_DIR
 SHARD_OUTPUT_ROOT = Path(
-    "outputs/issue53_gap_weight_dual_ar_progress_max_screen_seed9908_v1_shards"
+    "outputs/issue53_gap_weight_dual_ar_progress_max_screen_seed9908_v2_shards"
 )
 COLLECTION_REPORT = "collection_report.json"
 SHARD_REPORT = "shard_report.json"
@@ -82,7 +82,7 @@ IMPLEMENTATION_SOURCES = {
             "scripts/issue53_gap_weight_dual_ar_progress_screen_protocol.py"
         ),
         "sha256": (
-            "af89a96e7e4501eded08bb065ed4fa5525beec21ae608629212367c4449d3632"
+            "9da9ce118b4d455c7d53b1941638f2fdbd0dac948bbb3f5a6b465aa96b778f3b"
         ),
     },
     "stage6d_collection_infrastructure": dict(

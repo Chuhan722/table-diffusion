@@ -1,5 +1,6 @@
 """A/R 相对初始进度开发筛查的结果前协议测试。"""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,7 @@ def test_offline_audit_reconstructs_frozen_initial_references_and_activation():
     rebuilt = audit.build_audit(REPOSITORY_ROOT)
     assert rebuilt["audit"] == {
         "read_only": True,
+        "runtime_float64_reduction_order_reproduced": True,
         "historical_candidate_checkpoint_answers_only": True,
         "new_candidate_generated": False,
         "raw_reference_table_accessed": False,
@@ -82,6 +84,43 @@ def test_offline_audit_reconstructs_frozen_initial_references_and_activation():
         assert observed["relative_initial"] == expected["relative_initial"]
         assert observed["terminal"]["progress_dominant_channel"] == "relative"
         assert observed["summary"]["terminal_dominance_changed"] is True
+
+
+def test_frozen_references_match_runtime_builder_bit_for_bit():
+    for dataset in protocol.DATASET_ORDER:
+        spec = protocol.DATASETS[dataset]
+        query_rows = json.loads(
+            (REPOSITORY_ROOT / spec["queries"]).read_text(encoding="utf-8")
+        )["queries"]
+        targets = [row["result"] for row in query_rows]
+        checkpoint = (
+            REPOSITORY_ROOT
+            / prior.OUTPUT_DIR
+            / "cases"
+            / (
+                f"seed_{prior.DEVELOPMENT_SEED}__"
+                f"{prior.CANDIDATE_ARM}__{dataset}"
+            )
+            / "checkpoint_query_answers.json"
+        )
+        initial_counts = json.loads(
+            checkpoint.read_text(encoding="utf-8")
+        )["fixed_checkpoints"][0]["query_answers"]
+        reference = gap.build_gap_l1_channel_reference(
+            initial_counts,
+            targets,
+            n_records=spec["n_records"],
+        )
+        assert reference.absolute_initial == (
+            protocol.EXPECTED_INITIAL_CHANNEL_REFERENCES[dataset][
+                "absolute_initial"
+            ]
+        )
+        assert reference.relative_initial == (
+            protocol.EXPECTED_INITIAL_CHANNEL_REFERENCES[dataset][
+                "relative_initial"
+            ]
+        )
 
 
 @pytest.mark.parametrize(

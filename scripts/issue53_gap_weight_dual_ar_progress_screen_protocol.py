@@ -14,16 +14,16 @@ import numpy as np
 from scripts import issue53_gap_weight_dual_ar_screen_protocol as prior
 
 
-PROTOCOL_VERSION = "issue53-gap-weight-dual-ar-progress-max-screen-v1"
+PROTOCOL_VERSION = "issue53-gap-weight-dual-ar-progress-max-screen-v2"
 PROTOCOL_DOC = Path(
     "docs/设计/"
     "Issue53_BC问题一AR相对初始进度单种子开发筛查结果前协议.md"
 )
 PROTOCOL_DOC_SHA256 = (
-    "8b5ffb1d4745aeee62a1ca6359cb908d4f059d711edc203ee4a6b59468805004"
+    "97012db9516f5eb24859dbe615eed50f5b8f889322b3c3103d85de3a3235a31d"
 )
 FROZEN_PROTOCOL_SHA256 = (
-    "0c523145426e559c4536f66a1b97c0947e0819754874c232b7f0f036056029ef"
+    "8c90f51b09179c738f6ea5a45110873844061e2ba1adc4b5a253ac6875f87e46"
 )
 
 DESIGN_DOC = Path(
@@ -36,7 +36,7 @@ OFFLINE_AUDIT_DOC = Path(
     "docs/设计/Issue53_BC问题一AR相对初始进度历史轨迹离线审计.md"
 )
 OFFLINE_AUDIT_DOC_SHA256 = (
-    "074301610da56e209dbed1cef2a4ff8517753c87a12808b4d00c17e5e782a0ec"
+    "26f23b383ac46fa712c8794b532804b7fc44a356b4371c5d227c749405fdbf90"
 )
 
 DEVELOPMENT_SEED = prior.DEVELOPMENT_SEED
@@ -59,10 +59,10 @@ EXPECTED_WEIGHT_AUDIT = prior.EXPECTED_WEIGHT_AUDIT
 EXPECTED_INITIAL_CHANNEL_REFERENCES = {
     "test_300x10": {
         "absolute_initial": 0.023733333333333332,
-        "relative_initial": 0.011553523550340313,
+        "relative_initial": 0.011553523550340315,
     },
     "nltcs": {
-        "absolute_initial": 0.063173770793819,
+        "absolute_initial": 0.06317377079381899,
         "relative_initial": 0.03520355244885822,
     },
 }
@@ -76,7 +76,7 @@ TEST_MEASURED_L1_RATIO_MAX = 1.05
 ONE_WAY_RATIO_MAX = 1.05
 
 OUTPUT_DIR = Path(
-    "outputs/issue53_gap_weight_dual_ar_progress_max_screen_seed9908_v1"
+    "outputs/issue53_gap_weight_dual_ar_progress_max_screen_seed9908_v2"
 )
 
 PRIOR_CANDIDATE_ARTIFACTS = {
@@ -122,7 +122,7 @@ IMPLEMENTATION_SOURCES = {
             "scripts/audit_issue53_gap_weight_dual_ar_progress_offline.py"
         ),
         "sha256": (
-            "c601abbcb7656539477ddc9ee8c2d77b69f4d083f13def301c5864711d98f8e5"
+            "952799d6c8874926d95ba7c75015ed9577171e56381475abbcb01f03961ccd94"
         ),
     },
 }

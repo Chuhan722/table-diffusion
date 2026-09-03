@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from scripts import issue53_gap_weight_dual_ar_screen_protocol as prior
 
@@ -51,17 +52,24 @@ def _channels(
 ) -> tuple[float, float | None]:
     if len(counts) != len(targets) or not counts:
         raise RuntimeError("查询计数向量长度漂移")
-    errors = [abs(int(count) - target) for count, target in zip(
-        counts, targets, strict=True
-    )]
-    absolute = math.fsum(errors) / (n_records * len(targets))
-    positive = [index for index, target in enumerate(targets) if target > 0]
-    if not positive:
+    count_array = np.asarray(counts, dtype=np.float64)
+    target_array = np.asarray(targets, dtype=np.float64)
+    errors = np.abs(count_array - target_array)
+    denominators = np.full(len(targets), float(n_records), dtype=np.float64)
+    absolute = float(np.mean(errors / denominators, dtype=np.float64))
+    positive = target_array > 0.0
+    if not np.any(positive):
         return absolute, None
-    inverse_normalizer = math.fsum(1.0 / targets[index] for index in positive)
-    relative = math.fsum(
-        errors[index] / targets[index] for index in positive
-    ) / (n_records * inverse_normalizer)
+    inverse = 1.0 / target_array[positive]
+    inverse_normalizer = float(np.sum(inverse, dtype=np.float64))
+    weights = np.zeros_like(target_array, dtype=np.float64)
+    weights[positive] = (
+        inverse / inverse_normalizer / float(n_records)
+    )
+    relative = float(np.sum(
+        errors * weights,
+        dtype=np.float64,
+    ))
     return absolute, relative
 
 
@@ -203,6 +211,7 @@ def build_audit(repository_root: str | Path) -> dict[str, Any]:
         "datasets": datasets,
         "audit": {
             "read_only": True,
+            "runtime_float64_reduction_order_reproduced": True,
             "historical_candidate_checkpoint_answers_only": True,
             "new_candidate_generated": False,
             "raw_reference_table_accessed": False,
