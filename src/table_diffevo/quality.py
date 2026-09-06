@@ -22,15 +22,60 @@ from table_diffevo.schema import AttributeBlock, Schema
 QUALITY_CONTRACT_VERSION = "issue53-stage0-v1"
 
 
-def canonical_query_payload(query: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the canonical semantic payload of a conjunction query.
+def _canonical_halfspace_payload(query: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the canonical semantic payload of a halfspace query.
 
-    Query metadata such as ``id``, ``expression``, ``type`` and ``result`` is
+    Terms (attribute, weight) are order-insensitive because the projection
+    sum is commutative, so they are sorted by attribute name.  Weights and
+    theta are normalized to float so ``1`` and ``1.0`` hash identically.
+    """
+    spec = query.get("halfspace")
+    if not isinstance(spec, dict):
+        raise ValueError("halfspace query 必须包含 halfspace 字典字段")
+    attrs = spec.get("attributes")
+    weights = spec.get("weights")
+    theta = spec.get("theta")
+    if not isinstance(attrs, list) or not attrs:
+        raise ValueError("halfspace.attributes 必须是非空列表")
+    if not isinstance(weights, list) or len(weights) != len(attrs):
+        raise ValueError("halfspace.weights 必须是与 attributes 等长的列表")
+    terms = []
+    for attr, weight in zip(attrs, weights):
+        if not isinstance(attr, str) or not attr:
+            raise ValueError("halfspace 属性名必须是非空字符串")
+        if (
+            isinstance(weight, bool)
+            or not isinstance(weight, (int, float))
+            or not np.isfinite(weight)
+        ):
+            raise ValueError("halfspace 权重必须是有限数值")
+        terms.append([attr, float(weight)])
+    if len({attr for attr, _ in terms}) != len(terms):
+        raise ValueError("halfspace.attributes 不允许重复属性")
+    if (
+        isinstance(theta, bool)
+        or not isinstance(theta, (int, float))
+        or not np.isfinite(theta)
+    ):
+        raise ValueError("halfspace.theta 必须是有限数值")
+    terms.sort(key=lambda item: item[0])
+    return {"halfspace": {"terms": terms, "theta": float(theta)}}
+
+
+def canonical_query_payload(query: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the canonical semantic payload of a query.
+
+    Query metadata such as ``id``, ``expression`` and ``result`` is
     intentionally ignored.  Conjunction order is semantically irrelevant, so
-    conditions are ordered by canonical JSON before hashing.
+    conditions are ordered by canonical JSON before hashing.  Halfspace
+    queries (``type == "halfspace"``) use an independent payload namespace
+    (see ``_canonical_halfspace_payload``), so they can never collide with a
+    conjunction fingerprint.
     """
     if not isinstance(query, dict):
         raise ValueError("query 必须是字典")
+    if query.get("type") == "halfspace":
+        return _canonical_halfspace_payload(query)
     conditions = query.get("conditions")
     if not isinstance(conditions, list) or not conditions:
         raise ValueError("query.conditions 必须是非空列表")

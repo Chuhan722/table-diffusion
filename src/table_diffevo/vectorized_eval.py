@@ -30,6 +30,10 @@ eval_query_mask / eval_condition / compute_fitness 全部保留：
 - 什么都不做 → 新算子自动走慢路径，结果一定正确（只是不加速）
 - 想让它也快 → 把算子加进白名单 + 补一段向量化实现，其余不用动
 
+半空间查询（type == "halfspace"，见 queries.eval_halfspace_mask）不是合取
+条件结构，整条固定走回退组，由旧 eval_query_mask 精确评价（计数与 fitness
+贡献都对）。若将来成为性能瓶颈，可按同一机制补向量化（本质一次矩阵乘）。
+
 ## 权重与噪声接口（照原样保留）
 
 - fitness 的查询权重 w_j：通过 weights 参数传入，默认全 1。
@@ -159,6 +163,9 @@ def _compile_queries(
     fast_orig_idx: List[int] = []
 
     for qi in range(n):
+        if queries[qi].get("type") == "halfspace":
+            # 半空间查询不是合取条件结构，整条进回退组（旧 eval_query_mask 精确评价）
+            continue
         conds = queries[qi]["conditions"]
         # 判断整条查询是否全部条件都可向量化
         all_ops_ok = all(c["operator"] in VECTORIZED_OPS for c in conds)
@@ -511,14 +518,16 @@ def evaluate_vectorized(
     fast_set = set(fast_orig)
     fallback_idx = [qi for qi in range(m) if qi not in fast_set]
     if fallback_idx and verbose:
-        bad_ops = sorted({
+        reasons = sorted({
             c["operator"]
             for qi in fallback_idx
-            for c in queries[qi]["conditions"]
+            for c in queries[qi].get("conditions", [])
             if c["operator"] not in VECTORIZED_OPS
         })
+        if any(queries[qi].get("type") == "halfspace" for qi in fallback_idx):
+            reasons.append("type=halfspace")
         print(
-            f"提示：{len(fallback_idx)} 个查询含未向量化算子 {bad_ops}，"
+            f"提示：{len(fallback_idx)} 个查询含未向量化算子/类型 {reasons}，"
             f"已走慢路径（旧 evaluate_table）。如需加速请补向量化实现。"
         )
 
@@ -640,14 +649,16 @@ def evaluate_directional_potential(
     fast_set = set(fast_orig)
     fallback_idx = [qi for qi in range(m) if qi not in fast_set]
     if fallback_idx and verbose:
-        bad_ops = sorted({
+        reasons = sorted({
             c["operator"]
             for qi in fallback_idx
-            for c in queries[qi]["conditions"]
+            for c in queries[qi].get("conditions", [])
             if c["operator"] not in VECTORIZED_OPS
         })
+        if any(queries[qi].get("type") == "halfspace" for qi in fallback_idx):
+            reasons.append("type=halfspace")
         print(
-            f"提示：{len(fallback_idx)} 个方向查询含未向量化算子 {bad_ops}，"
+            f"提示：{len(fallback_idx)} 个方向查询含未向量化算子/类型 {reasons}，"
             "已走慢路径。"
         )
 
