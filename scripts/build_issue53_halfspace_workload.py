@@ -4,20 +4,21 @@
 对应设计稿：docs/设计/半空间不可微查询能力线设计稿.md 第 2 节。
 
 半空间查询 q(w, θ) = #{行 x : w·x ≥ θ} 是清单里唯一不可微（硬阈值）的
-查询类型；本脚本为 plants 构造两档题并冻结：
+查询类型；本脚本为每个已注册数据集（plants / nltcs）构造两档题并冻结：
 
 - A 档 row-sum（权重全 1）：θ 取真实行重量谱的全部非退化格点（两端各留
   0.5% 边距），按 θ 升序交替分配 measured / heldout（两组都覆盖全谱）；
-- B 档一般半空间：固定种子生成，权重在 k=16 的属性子集上取 ±1，θ 取该
-  投影分布的分位点（分位数从 [0.2, 0.8] 均匀抽取），按生成序交替分配。
+- B 档一般半空间：固定种子生成，权重在 k 列属性子集上取 ±1（k 按数据集
+  规格：plants 16、nltcs 8），θ 取该投影分布的分位点（分位数从 [0.2, 0.8]
+  均匀抽取），按生成序交替分配。
 
 【与 heldout 构造器的边界差异，明示不藏】本工作负载的查询选择依赖源表
 （谱边界与分位点），不是 result-blind 构造：这是诊断线（diagnostic_only、
 无噪声内层）专用的能力测试考卷。若未来进入正式 DP 管道，选择规则必须换成
 只依赖公共信息的版本（例如由公开 marginals 推导投影界）。
 
-输出单文件（configs/plants/halfspace_issue53_v1.json），每条 query 携带
-role=measured/heldout 与 tier=rowsum/general 标签，runner 按 role 过滤。
+输出每数据集单文件（configs/<dataset>/halfspace_issue53_v1.json），每条 query
+携带 role=measured/heldout 与 tier=rowsum/general 标签，runner 按 role 过滤。
 支持 --verify-existing 确定性重建复核。
 """
 
@@ -39,10 +40,11 @@ NAMESPACE = "issue53-halfspace-v1"
 # A 档：非退化边距（θ 保留的计数须落在 [MARGIN*N, (1-MARGIN)*N]）
 ROWSUM_MARGIN = 0.005
 
-# B 档：固定生成参数
+# B 档：固定生成参数（k 为数据集相关：plants 16/69≈23% 稀疏；
+# nltcs 全表仅 16 列，k=16 会退化为稠密全列，取 k=8=半数列保持稀疏形态，
+# k=4 时 ±1 投影只有 9 个档位、θ 谱过粗，故不取比例缩放）
 GENERAL_SEED = 20260905
 GENERAL_COUNT = 64          # 生成总数，交替分配 → 32 measured + 32 heldout
-GENERAL_K = 16              # 稀疏子集大小
 GENERAL_QUANTILE_RANGE = (0.2, 0.8)
 GENERAL_MARGIN = 0.005
 GENERAL_MAX_ATTEMPTS = 1000
@@ -52,6 +54,13 @@ DATASETS = {
         "schema": Path("configs/plants/schema.yaml"),
         "source": Path("data/plants/plants.csv"),
         "output": Path("configs/plants/halfspace_issue53_v1.json"),
+        "general_k": 16,
+    },
+    "nltcs": {
+        "schema": Path("configs/nltcs/schema.yaml"),
+        "source": Path("data/nltcs/nltcs.csv"),
+        "output": Path("configs/nltcs/halfspace_issue53_v1.json"),
+        "general_k": 8,
     },
 }
 
@@ -126,8 +135,10 @@ def build_rowsum_tier(source_matrix: np.ndarray, columns: List[str]) -> List[Dic
     return queries
 
 
-def build_general_tier(source_matrix: np.ndarray, columns: List[str]) -> List[Dict[str, Any]]:
-    """B 档：固定种子生成 k=16 稀疏 ±1 半空间，θ 取投影分位点，交替分配。"""
+def build_general_tier(
+    source_matrix: np.ndarray, columns: List[str], general_k: int
+) -> List[Dict[str, Any]]:
+    """B 档：固定种子生成 k 列稀疏 ±1 半空间，θ 取投影分位点，交替分配。"""
     n_records = source_matrix.shape[0]
     rng = np.random.default_rng(GENERAL_SEED)
     lower = GENERAL_MARGIN * n_records
@@ -145,8 +156,8 @@ def build_general_tier(source_matrix: np.ndarray, columns: List[str]) -> List[Di
                 f"B 档在 {GENERAL_MAX_ATTEMPTS} 次尝试内未能生成 "
                 f"{GENERAL_COUNT} 条非退化查询"
             )
-        attr_idx = np.sort(rng.choice(len(columns), size=GENERAL_K, replace=False))
-        weights = rng.choice([-1, 1], size=GENERAL_K)
+        attr_idx = np.sort(rng.choice(len(columns), size=general_k, replace=False))
+        weights = rng.choice([-1, 1], size=general_k)
         quantile = float(rng.uniform(q_lo, q_hi))
         projection = source_matrix[:, attr_idx] @ weights
         theta = int(round(float(np.quantile(projection, quantile))))
@@ -178,7 +189,7 @@ def build_general_tier(source_matrix: np.ndarray, columns: List[str]) -> List[Di
             tier="general",
             role=role,
             rank=ranks[role],
-            expression=f"halfspace(k={GENERAL_K}) >= {theta}",
+            expression=f"halfspace(k={general_k}) >= {theta}",
         ))
     return queries
 
@@ -190,7 +201,7 @@ def _identity(queries: List[Dict[str, Any]]) -> str:
     ).hexdigest()
 
 
-def build_dataset_workload(dataset: str, specification: Dict[str, Path]) -> Dict[str, Any]:
+def build_dataset_workload(dataset: str, specification: Dict[str, Any]) -> Dict[str, Any]:
     schema = load_schema(str(specification["schema"]))
     source = load_data(str(specification["source"]))
     if list(source.columns) != schema.attribute_names():
@@ -201,7 +212,9 @@ def build_dataset_workload(dataset: str, specification: Dict[str, Path]) -> Dict
         raise ValueError(f"{dataset} 不是二值表，halfspace 构造规则假设 0/1 数据")
 
     queries = build_rowsum_tier(source_matrix, columns)
-    queries.extend(build_general_tier(source_matrix, columns))
+    queries.extend(
+        build_general_tier(source_matrix, columns, int(specification["general_k"]))
+    )
 
     # 贴指纹与精确答案（评价走 queries.eval_halfspace_mask 分派）
     answers = evaluate_table(source, queries)
@@ -247,7 +260,7 @@ def build_dataset_workload(dataset: str, specification: Dict[str, Path]) -> Dict
                 },
                 "general": {
                     "seed": GENERAL_SEED,
-                    "k": GENERAL_K,
+                    "k": int(specification["general_k"]),
                     "weight_values": [-1, 1],
                     "quantile_range": list(GENERAL_QUANTILE_RANGE),
                     "margin": GENERAL_MARGIN,

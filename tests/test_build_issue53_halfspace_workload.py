@@ -3,10 +3,10 @@
 
 对应设计稿：docs/设计/半空间不可微查询能力线设计稿.md 第 2 节。
 
-验证：
+验证（对每个已注册数据集 plants / nltcs 各跑一遍）：
 1. 构造确定性：同一源两次构建 payload 逐字段相同
 2. 结构合同：A 档全属性全 1 权重、θ 非退化、交替分配覆盖全谱；
-   B 档 k=16、权重 ±1、θ 非退化；id/role/tier 一致性
+   B 档 k 按数据集规格、权重 ±1、θ 非退化；id/role/tier 一致性
 3. 指纹与互斥：全部查询指纹唯一，measured/heldout 语义不相交，
    身份 SHA 与逐条指纹一致
 4. 答案正确：result 与 evaluate_table 在源表上的重算逐条一致
@@ -25,20 +25,25 @@ from table_diffevo.quality import query_fingerprint
 from table_diffevo.queries import evaluate_table, load_data
 
 
-@pytest.fixture(scope="module")
-def payload():
-    return builder.build_dataset_workload("plants", builder.DATASETS["plants"])
+@pytest.fixture(scope="module", params=sorted(builder.DATASETS))
+def dataset(request):
+    return request.param
 
 
 @pytest.fixture(scope="module")
-def source():
-    return load_data(str(builder.DATASETS["plants"]["source"]))
+def payload(dataset):
+    return builder.build_dataset_workload(dataset, builder.DATASETS[dataset])
+
+
+@pytest.fixture(scope="module")
+def source(dataset):
+    return load_data(str(builder.DATASETS[dataset]["source"]))
 
 
 class TestConstructionContract:
-    def test_deterministic_rebuild(self, payload):
+    def test_deterministic_rebuild(self, payload, dataset):
         rebuilt = builder.build_dataset_workload(
-            "plants", builder.DATASETS["plants"]
+            dataset, builder.DATASETS[dataset]
         )
         assert rebuilt == payload
 
@@ -74,15 +79,17 @@ class TestConstructionContract:
         roles = [q["role"] for q in rowsum]
         assert all(a != b for a, b in zip(roles, roles[1:]))
 
-    def test_general_tier_structure(self, payload, source):
+    def test_general_tier_structure(self, payload, source, dataset):
         columns = set(source.columns)
         general = [q for q in payload["queries"] if q["tier"] == "general"]
         n = payload["record_count"]
         lower = builder.GENERAL_MARGIN * n
+        general_k = int(builder.DATASETS[dataset]["general_k"])
+        assert payload["construction"]["tiers"]["general"]["k"] == general_k
         for query in general:
             spec = query["halfspace"]
-            assert len(spec["attributes"]) == builder.GENERAL_K
-            assert len(set(spec["attributes"])) == builder.GENERAL_K
+            assert len(spec["attributes"]) == general_k
+            assert len(set(spec["attributes"])) == general_k
             assert set(spec["attributes"]) <= columns
             assert set(spec["weights"]) <= {-1, 1}
             assert lower <= query["result"] <= n - lower, "B 档 θ 必须非退化"
@@ -136,8 +143,8 @@ class TestSerializationAndFrozenFile:
         # 一行一 query 的审计格式
         assert text.count('"halfspace":') == payload["query_count"]
 
-    def test_frozen_file_reproducible_if_present(self, payload):
-        output = builder.DATASETS["plants"]["output"]
+    def test_frozen_file_reproducible_if_present(self, payload, dataset):
+        output = builder.DATASETS[dataset]["output"]
         if not Path(output).exists():
             pytest.skip("正式冻结文件尚未物化")
         frozen = json.loads(Path(output).read_text(encoding="utf-8"))
