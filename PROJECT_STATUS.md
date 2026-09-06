@@ -2,7 +2,51 @@
 
 ## 当前阶段
 
-### 最新暂停点：plants all-2way 全家族考卷收官——病③元凶=考卷覆盖坐实，非引擎瓶颈（2026-09-06 下午）
+### 最新暂停点：半空间不可微查询能力线双数据集收官——H1-H4 四问全过（2026-09-06 傍晚）
+
+> 结论一句话：把冻结半空间考卷的 measured 档追加进各自演化池（plants
+> 9522+64=9586、nltcs 1033+40=1073），κ=1 配方逐位不变——**H1 硬阈值不可微
+> 查询确实可被零阶引导优化**（in-pool vs 裸猜地板：plants 2.4×、nltcs 3.1×），
+> H2 有真泛化迁移（heldout：plants 2.0×、nltcs 1.4×），H3 普通组零回退
+> （plants heldout3/4 反而 -30%/-38% 意外之喜），H4 定位能力边界=稀疏随机
+> 方向的 heldout 半空间最硬。"适应度只要掩码不要梯度"的卖点在两个数据集坐实。
+
+**协议与产物**（runner `scripts/run_fitness_only_halfspace_pool_{plants,nltcs}_diagnostic.py`，
+协议 SHA plants `41831179…` / nltcs `29a9fa80…`；考卷 plants 127 题 SHA `5ee4f681…` /
+nltcs 80 题 SHA `40159977…`（本轮新冻结，A 档 rowsum 16 + B 档 general k=8 64）；
+报告 plants `outputs/fitness_only_halfspace_pool_plants_seed9908_v1/report.json`
+SHA `2205451b…` / nltcs `…nltcs_seed9908_v1/report.json` SHA `1875d232…`）：
+构造器参数化双数据集（B 档 k：plants 16 / nltcs 8，k=4 投影仅 9 档太粗）；
+裸猜地板=各自旧终表只读评价（从未见过半空间题，免费无重跑）：plants=all2way
+终表 `1849…`、nltcs=polish 终表 `2ec0…`；测试 26 项新增 + 相关回归 122 项全绿。
+
+**H1-H4 对账**：
+
+- H1 ✓ **可优化性（主问题）**：in-pool 半空间 vs 裸猜——plants 0.010284 vs
+  0.024565（2.4×）、nltcs 0.001040 vs 0.003271（3.1×）；
+- H2 ✓ 泛化：heldout（从未进池）vs 裸猜——plants 0.013950 vs 0.027936（2.0×）、
+  nltcs 0.002738 vs 0.003801（1.4×，polish 终表太强地板天生低）；
+- H3 ✓✓ 无回退：nltcs 四指标漂移 ±0.00005 内；plants measured +0.000114 /
+  one-way -0.000039 / all2way_pool 0.001292→0.001321 均噪声级，且
+  **heldout3 0.005712→0.003986（-30%）、heldout4 0.006630→0.004101（-38%）**
+  ——64 道全局投影题帮了高阶泛化（单种子 observation-only）；
+- H4 ✓ 难度档两数据集方向相反：nltcs 全列 rowsum（17 档）比 k=8 难；plants
+  heldout A 档 rowsum 0.0072 远好于 B 档 general k=16 0.0205（裸猜只压 1.6×）
+  ——**稀疏随机方向 heldout 半空间=最硬一档**。
+
+**运行形态**：nltcs 24min 跑满 7000（resource_cap_reached，预算贴身如预期）；
+plants 59min 早停 3805/27000（最优 ~3127，与 all2way 3506 同款）；墙钟冒烟
+946ms/219ms 每轮兑现（64 道半空间走 fallback 慢路径只贵 9%）。
+
+**边界注记**：θ 看了源投影谱（非 result-blind），diagnostic_only 能力考卷，正式
+赛道须换公共信息选题规则（GSD θ~N(0,1) 即一例）；PGM 设计上缺席（吃不了半空间）；
+nltcs 池基底=polish 局（含 522 in-pool 三维题），纯 all-2way 池版排队。
+
+**下一步**：无噪声阶段清单顺次——PGM-on-all2way 重拟合基线；nltcs 纯二维池
+（消 522 三维沾光、统一 one-shot 口径）；可选 GSD 无噪声横评；然后壳子阶段
+（加噪 + 选择测量 + 停止规则打包，用户明示到时候商量）。
+
+### 上一暂停点：plants all-2way 全家族考卷收官——病③元凶=考卷覆盖坐实，非引擎瓶颈（2026-09-06 下午）
 
 > 结论一句话：把 plants 演化池从 980 稀疏考卷（2-way 覆盖 4.9%）换成 all-2way
 > 全家族 9384 格（覆盖 100%，GSD 对齐），κ=1 配方逐位不变——heldout3
