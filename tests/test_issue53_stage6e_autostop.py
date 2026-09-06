@@ -146,7 +146,12 @@ def test_frozen_protocol_identity_fails_closed_after_kernel_source_change():
         if protocol.file_sha256(root / binding["path"]) != binding["sha256"]
     ]
 
-    assert drifted_sources == ["full_generator", "gap_kernel"]
+    # 2026-09-06：update.py 因 lottery_first_donor_selection（先抽签后
+    # 选供体提速，等价性见 tests/test_lottery_first_donor_selection.py）
+    # 合法演进，加入预期漂移清单。
+    assert drifted_sources == [
+        "full_generator", "shared_update_plan", "gap_kernel",
+    ]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
     assert protocol.file_sha256(root / protocol.PROTOCOL_DOC) == (
         protocol.PROTOCOL_DOC_SHA256

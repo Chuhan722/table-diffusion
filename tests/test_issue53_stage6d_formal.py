@@ -26,7 +26,12 @@ def test_frozen_identity_fails_closed_and_plan_entrypoints_are_read_only(
         for name, binding in protocol.IMPLEMENTATION_SOURCES.items()
         if protocol.file_sha256(root / binding["path"]) != binding["sha256"]
     ]
-    assert drifted_sources == ["full_generator", "gap_kernel"]
+    # 2026-09-06：update.py 因 lottery_first_donor_selection（先抽签后
+    # 选供体提速，等价性见 tests/test_lottery_first_donor_selection.py）
+    # 合法演进，加入预期漂移清单。
+    assert drifted_sources == [
+        "full_generator", "shared_update_plan", "gap_kernel",
+    ]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
     with pytest.raises(RuntimeError, match="实现源码漂移：full_generator"):
         protocol.assert_frozen_protocol_identity(root)

@@ -64,6 +64,7 @@ class FitnessOnlyConfig:
     ] = "relative"
     residual_geometry_floor: float = 8.0
     exclude_self: bool = True
+    lottery_first_donor_selection: bool = False
     record_transition_clocks: bool = False
     inner_early_stopping_patience_ticks: Optional[int] = None
 
@@ -274,6 +275,10 @@ class FitnessOnlyConfig:
             errors.append("residual_geometry_floor 必须是正有限数")
         if not isinstance(self.exclude_self, (bool, np.bool_)):
             errors.append("exclude_self 必须是布尔值")
+        if not isinstance(
+            self.lottery_first_donor_selection, (bool, np.bool_)
+        ):
+            errors.append("lottery_first_donor_selection 必须是布尔值")
         if not isinstance(self.record_transition_clocks, (bool, np.bool_)):
             errors.append("record_transition_clocks 必须是布尔值")
         if self.inner_early_stopping_patience_ticks is not None and (
@@ -329,6 +334,9 @@ def build_fitness_only_kwargs(
         "delta": float(config.delta),
         "winsorize_quantiles": tuple(config.winsorize_quantiles),
         "exclude_self": bool(config.exclude_self),
+        "lottery_first_donor_selection": bool(
+            config.lottery_first_donor_selection
+        ),
         "max_retries": 0,
         "residual_directed_diffusion": False,
         "diffusion_direction_strength": 0.0,
@@ -491,10 +499,16 @@ def _audit_fitness_only_run(
     ):
         failures.append("fitness-only 合同诊断与请求不一致")
     if fitness_mode == "equal" and any(
-        value != 0.0
+        value is not None and value != 0.0
         for value in diagnostics.get("donor_fitness_history", [])
     ):
+        # lottery 换位口径下零中签轮记 None，不属于非零 fitness 违约。
         failures.append("equal 对照出现了非零 donor fitness")
+    run_params = diagnostics.get("params", {})
+    if bool(run_params.get("lottery_first_donor_selection")) != bool(
+        config.lottery_first_donor_selection
+    ):
+        failures.append("lottery_first_donor_selection 与请求配置不一致")
     schedule_history = diagnostics.get("rho_schedule_history")
     expected_schedule_length = (
         rounds_run if early_stopping_enabled else config.n_rounds

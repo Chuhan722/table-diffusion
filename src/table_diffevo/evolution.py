@@ -272,6 +272,7 @@ def run_evolution(
     horizon_invariant: bool = False,
     inner_early_stopping_patience_ticks: Optional[int] = None,
     fitness_only_mode: Optional[str] = None,
+    lottery_first_donor_selection: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回合成表和诊断信息。
@@ -568,6 +569,16 @@ def run_evolution(
         尺度不变 geometric donor、固定 alpha、盲独立复制核、固定轮数、无
         接受门/重试/残差冷却/退火/结果相关早停，并强制主返回 terminal current。
         违反任一条件都会在运行前失败，不会静默退回 legacy 行为。
+    lottery_first_donor_selection : bool, default False
+        先抽签后选供体（换位提速）。True 时每轮先按原随机流槽位抽供体均匀数
+        与参与签，再只对中签行算距离/概率/供体（非中签行填身份供体，对更新
+        计划零影响），省掉 ~99% 供体计算。等价性：numpy 路径与 False 逐位
+        一致；cuda 路径为数值等价（float32 行归约顺序随矩阵形状变化，随机
+        流终态逐位一致、loss 轨迹数值接近，nltcs 实测相对差 ~4e-4）。要求
+        max_retries=0、无 residual_directed_diffusion、gap_l1_sweeps=0、
+        factorized_gibbs_sweeps=0（fail-closed，违反即报错）。启用后供体
+        诊断口径变为只统计中签行（donor_diagnostics_scope=
+        "participants_only"），零中签轮记 None。
 
     Returns
     -------
@@ -672,6 +683,40 @@ def run_evolution(
             "fitness_only_mode 必须是 None、'residual' 或 'equal'，"
             f"得到 {fitness_only_mode!r}"
         )
+
+    if not isinstance(lottery_first_donor_selection, (bool, np.bool_)):
+        raise ValueError(
+            "lottery_first_donor_selection 必须是布尔值，"
+            f"得到 {lottery_first_donor_selection!r}"
+        )
+    if lottery_first_donor_selection:
+        # fail-closed：换位路径只在"每轮恰好一份参与签、供体表只被独立核
+        # 消费"的结构下与原路径逐位一致。任何会重抽参与签（重试）或让非
+        # 中签行供体值参与计算（方向倾斜、gap/gibbs 核）的组合都直接拒绝。
+        lottery_violations = []
+        if max_retries != 0:
+            lottery_violations.append(
+                f"max_retries 必须为 0（重试会重抽参与签），得到 {max_retries}"
+            )
+        if residual_directed_diffusion:
+            lottery_violations.append(
+                "residual_directed_diffusion 必须为 False"
+                "（方向分数读取全表供体值）"
+            )
+        if gap_l1_sweeps != 0:
+            lottery_violations.append(
+                f"gap_l1_sweeps 必须为 0，得到 {gap_l1_sweeps}"
+            )
+        if factorized_gibbs_sweeps != 0:
+            lottery_violations.append(
+                f"factorized_gibbs_sweeps 必须为 0，"
+                f"得到 {factorized_gibbs_sweeps}"
+            )
+        if lottery_violations:
+            raise ValueError(
+                "lottery_first_donor_selection=True 与当前配置不兼容："
+                + "；".join(lottery_violations)
+            )
 
     if eval_method not in ('vectorized', 'legacy'):
         raise ValueError(
@@ -1885,75 +1930,182 @@ def run_evolution(
         #   数据不下显存，只回传 N 个 donor 索引；随机数仍用 numpy rng（保可复现）。
         # numpy：原路径，全程 NumPy。
         use_torch = device in ('cuda', 'cpu')
-        if distance_cache is None:
-            distance_cache = pairwise_block_distance(
-                S, S, schema, device=device, return_tensor=use_torch
+        lottery_participate = None
+        if lottery_first_donor_selection:
+            # 换位提速：先按原随机流槽位抽供体均匀数（槽①）和参与签（槽②），
+            # 再只对中签行算 距离 → 概率 → 供体。非中签行填身份供体——其供体
+            # 值在更新计划里被 participate=False 屏蔽。等价性：numpy 逐位一致；
+            # cuda 数值等价（float32 行归约顺序随形状变化，见参数 docstring）。
+            # 参与签表达式与 sample_update_random_plan 首次尝试完全相同
+            # （max_retries=0 已由 fail-closed 校验保证，不存在重试重抽）；
+            # 长度与 plan 内部 len(current) 严格同源。
+            n_rows_S = len(S)
+            u_donor = rng.uniform(size=n_rows_S)
+            lottery_participate = (
+                rng.random(n_rows_S) < rho_t * self_cooling_factor
             )
-            distance_evaluation_count += 1
-        distances = distance_cache
-        probs = compute_sampling_probs(
-            fitness, distances, beta=beta, h=h, device=device,
-            distance_mode=distance_mode, p=p,
-            lambda_param=lambda_param, alpha=alpha_t, delta=delta,
-            winsorize_quantiles=winsorize_quantiles,
-            # 候选池=全表（全对全），排除对角线=禁止记录抽到自己。
-            # 抽到自己 = 该行本轮不变、对演化零贡献；小表高锐度下自身率可达 8%
-            # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
-            # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
-            exclude_self=exclude_self,
-            scale_invariant=selection_scale_invariant,
-            scale_invariant_min_spread=selection_scale_invariant_min_spread,
-        )
-        donor_idx = sample_donors(probs, rng, device=device)
-        # 逐行选择集中度诊断（第二轮审查意见 4）：全局 top share 不能
-        # 判断单行 softmax 是否接近确定性——即使每行都以 99.9% 概率选
-        # 各自不同的 donor，全局 top share 仍可能很低。补充逐行最大
-        # 概率与概率熵（有效 donor 数 = exp(熵)），在设备上归约成标量
-        # 后回传。只在尺度不变选择启用时记录。
-        if selection_scale_invariant:
-            if use_torch:
-                import torch
-                row_max = probs.max(dim=1).values
-                safe = torch.clamp(probs, min=1e-30)
-                row_entropy = -(probs * torch.log(safe)).sum(dim=1)
-                row_max_prob_mean_history.append(float(row_max.mean()))
-                row_max_prob_max_history.append(float(row_max.max()))
-                effective_donors_mean_history.append(
-                    float(torch.exp(row_entropy).mean())
-                )
+            part_idx = np.flatnonzero(lottery_participate)
+            if part_idx.size == 0:
+                # 零中签轮：本轮无行参与复制，供体全为身份（plan 不读值），
+                # 供体诊断按 participants_only 口径记 None。
+                distances = None
+                donors = S
+                if selection_scale_invariant:
+                    row_max_prob_mean_history.append(None)
+                    row_max_prob_max_history.append(None)
+                    effective_donors_mean_history.append(None)
+                    donor_top_share_history.append(None)
+                donor_fitness_history.append(None)
+                donor_distance_history.append(None)
+                donor_self_rate_history.append(None)
             else:
-                row_max = probs.max(axis=1)
-                safe = np.clip(probs, 1e-30, None)
-                row_entropy = -(probs * np.log(safe)).sum(axis=1)
-                row_max_prob_mean_history.append(float(row_max.mean()))
-                row_max_prob_max_history.append(float(row_max.max()))
-                effective_donors_mean_history.append(
-                    float(np.exp(row_entropy).mean())
+                distances_sub = pairwise_block_distance(
+                    S.iloc[part_idx], S, schema,
+                    device=device, return_tensor=use_torch,
                 )
-        # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
-        del probs
-        donors = S.iloc[donor_idx].reset_index(drop=True)
-        # 全局集中度（第三轮审查）：被选最多的 donor 占比。
-        if selection_scale_invariant:
-            donor_top_share_history.append(
-                float(np.bincount(donor_idx).max() / len(donor_idx))
+                distance_evaluation_count += 1
+                distances = distances_sub
+                probs_sub = compute_sampling_probs(
+                    fitness, distances_sub, beta=beta, h=h, device=device,
+                    distance_mode=distance_mode, p=p,
+                    lambda_param=lambda_param, alpha=alpha_t, delta=delta,
+                    winsorize_quantiles=winsorize_quantiles,
+                    exclude_self=exclude_self,
+                    scale_invariant=selection_scale_invariant,
+                    scale_invariant_min_spread=(
+                        selection_scale_invariant_min_spread
+                    ),
+                    self_indices=part_idx,
+                )
+                donor_idx_sub = sample_donors(
+                    probs_sub, rng, device=device,
+                    uniforms=u_donor[part_idx],
+                )
+                # 逐行集中度诊断：口径为只统计中签行（participants_only）。
+                if selection_scale_invariant:
+                    if use_torch:
+                        import torch
+                        row_max = probs_sub.max(dim=1).values
+                        safe = torch.clamp(probs_sub, min=1e-30)
+                        row_entropy = -(
+                            probs_sub * torch.log(safe)
+                        ).sum(dim=1)
+                        row_max_prob_mean_history.append(
+                            float(row_max.mean())
+                        )
+                        row_max_prob_max_history.append(
+                            float(row_max.max())
+                        )
+                        effective_donors_mean_history.append(
+                            float(torch.exp(row_entropy).mean())
+                        )
+                    else:
+                        row_max = probs_sub.max(axis=1)
+                        safe = np.clip(probs_sub, 1e-30, None)
+                        row_entropy = -(probs_sub * np.log(safe)).sum(axis=1)
+                        row_max_prob_mean_history.append(
+                            float(row_max.mean())
+                        )
+                        row_max_prob_max_history.append(
+                            float(row_max.max())
+                        )
+                        effective_donors_mean_history.append(
+                            float(np.exp(row_entropy).mean())
+                        )
+                    donor_top_share_history.append(
+                        float(
+                            np.bincount(donor_idx_sub).max()
+                            / len(donor_idx_sub)
+                        )
+                    )
+                del probs_sub
+                # 供体表：非中签行=自己（身份），中签行=抽中的全表供体行。
+                donor_arrays = {}
+                for attr in S.columns:
+                    col = S[attr].to_numpy()
+                    vals = col.copy()
+                    vals[part_idx] = col[donor_idx_sub]
+                    donor_arrays[attr] = vals
+                donors = pd.DataFrame(donor_arrays, columns=S.columns)
+                selected_fitness = fitness[donor_idx_sub]
+                selected_distance_mean = _mean_selected_distance(
+                    distances_sub, donor_idx_sub, use_torch=use_torch
+                )
+                donor_fitness_history.append(float(selected_fitness.mean()))
+                donor_distance_history.append(selected_distance_mean)
+                donor_self_rate_history.append(
+                    float(np.mean(donor_idx_sub == part_idx))
+                )
+        else:
+            if distance_cache is None:
+                distance_cache = pairwise_block_distance(
+                    S, S, schema, device=device, return_tensor=use_torch
+                )
+                distance_evaluation_count += 1
+            distances = distance_cache
+            probs = compute_sampling_probs(
+                fitness, distances, beta=beta, h=h, device=device,
+                distance_mode=distance_mode, p=p,
+                lambda_param=lambda_param, alpha=alpha_t, delta=delta,
+                winsorize_quantiles=winsorize_quantiles,
+                # 候选池=全表（全对全），排除对角线=禁止记录抽到自己。
+                # 抽到自己 = 该行本轮不变、对演化零贡献；小表高锐度下自身率可达 8%
+                # （见 scripts/diagnose_self_sampling.py），屏蔽后消除该浪费。
+                # 默认 True；实验脚本可传 False 复现屏蔽前的 baseline 做对照。
+                exclude_self=exclude_self,
+                scale_invariant=selection_scale_invariant,
+                scale_invariant_min_spread=selection_scale_invariant_min_spread,
+            )
+            donor_idx = sample_donors(probs, rng, device=device)
+            # 逐行选择集中度诊断（第二轮审查意见 4）：全局 top share 不能
+            # 判断单行 softmax 是否接近确定性——即使每行都以 99.9% 概率选
+            # 各自不同的 donor，全局 top share 仍可能很低。补充逐行最大
+            # 概率与概率熵（有效 donor 数 = exp(熵)），在设备上归约成标量
+            # 后回传。只在尺度不变选择启用时记录。
+            if selection_scale_invariant:
+                if use_torch:
+                    import torch
+                    row_max = probs.max(dim=1).values
+                    safe = torch.clamp(probs, min=1e-30)
+                    row_entropy = -(probs * torch.log(safe)).sum(dim=1)
+                    row_max_prob_mean_history.append(float(row_max.mean()))
+                    row_max_prob_max_history.append(float(row_max.max()))
+                    effective_donors_mean_history.append(
+                        float(torch.exp(row_entropy).mean())
+                    )
+                else:
+                    row_max = probs.max(axis=1)
+                    safe = np.clip(probs, 1e-30, None)
+                    row_entropy = -(probs * np.log(safe)).sum(axis=1)
+                    row_max_prob_mean_history.append(float(row_max.mean()))
+                    row_max_prob_max_history.append(float(row_max.max()))
+                    effective_donors_mean_history.append(
+                        float(np.exp(row_entropy).mean())
+                    )
+            # donor 索引得到后不再需要 N×N 概率矩阵，尽早释放设备内存。
+            del probs
+            donors = S.iloc[donor_idx].reset_index(drop=True)
+            # 全局集中度（第三轮审查）：被选最多的 donor 占比。
+            if selection_scale_invariant:
+                donor_top_share_history.append(
+                    float(np.bincount(donor_idx).max() / len(donor_idx))
+                )
+
+            # 诊断：记录选中 donor 的适应度和距离
+            N = len(S)  # 记录数
+            selected_fitness = fitness[donor_idx]  # (N,) 每条记录选中的 donor 适应度
+            # GPU/torch 路径只 gather 被选中的 N 个元素并回传一个均值标量，不再为了
+            # 诊断把完整 N×N 距离矩阵搬回 CPU。
+            selected_distance_mean = _mean_selected_distance(
+                distances, donor_idx, use_torch=use_torch
             )
 
-        # 诊断：记录选中 donor 的适应度和距离
-        N = len(S)  # 记录数
-        selected_fitness = fitness[donor_idx]  # (N,) 每条记录选中的 donor 适应度
-        # GPU/torch 路径只 gather 被选中的 N 个元素并回传一个均值标量，不再为了
-        # 诊断把完整 N×N 距离矩阵搬回 CPU。
-        selected_distance_mean = _mean_selected_distance(
-            distances, donor_idx, use_torch=use_torch
-        )
-
-        # 记录平均值
-        donor_fitness_history.append(float(selected_fitness.mean()))
-        donor_distance_history.append(selected_distance_mean)
-        # 自身抽样率：抽到自己（donor_idx==i）的比例。exclude_self=True 时恒为 0；
-        # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
-        donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
+            # 记录平均值
+            donor_fitness_history.append(float(selected_fitness.mean()))
+            donor_distance_history.append(selected_distance_mean)
+            # 自身抽样率：抽到自己（donor_idx==i）的比例。exclude_self=True 时恒为 0；
+            # 全对全候选池下这是"自我复制空转"的直接度量（见 scripts/diagnose_self_sampling.py）。
+            donor_self_rate_history.append(float(np.mean(donor_idx == np.arange(N))))
 
         if residual_directed_diffusion:
             direction_start = time.perf_counter()
@@ -2365,6 +2517,12 @@ def run_evolution(
                     or inner_early_stopper is not None
                 ):
                     independent_transition_kwargs["return_diagnostics"] = True
+                # 只在 lottery 模式传参与签，保持 legacy 调用面不变
+                # （既有测试会用不认识该参数的桩替换 evolve_step）。
+                if lottery_participate is not None:
+                    independent_transition_kwargs["participate"] = (
+                        lottery_participate
+                    )
                 independent_result = evolve_step(
                     S,
                     donors,
@@ -3227,6 +3385,13 @@ def run_evolution(
                 inner_early_stopping_patience_ticks
             ),
             "horizon_invariant": horizon_invariant,
+            "lottery_first_donor_selection": bool(
+                lottery_first_donor_selection
+            ),
+            "donor_diagnostics_scope": (
+                "participants_only"
+                if lottery_first_donor_selection else "all_rows"
+            ),
             **({
                 "fitness_only_mode": fitness_only_mode,
             } if fitness_only_mode is not None else {}),

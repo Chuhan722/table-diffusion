@@ -95,11 +95,17 @@ def sample_update_random_plan(
     copy_direction_scores: Optional[np.ndarray] = None,
     copy_direction_strength: float = 0.0,
     direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
+    participate: Optional[np.ndarray] = None,
 ) -> UpdateRandomPlan:
     """按现行顺序抽取参与行、初始复制开关和突变事件。
 
     本函数只抽取随机方案，不生成下一张表。随机数消费顺序严格保持为：参与
     行、逐属性复制开关、突变行、逐突变行的属性和值。
+
+    participate 提供时跳过内部参与行抽签，直接使用外部掩码；调用方必须已在
+    本函数原本的随机流槽位（即传入的 rng 的当前位置之前、供体均匀数之后）
+    用同一 rng 以 ``rng.random(n_records) < rho`` 抽出该掩码，才能保证与
+    历史路径逐位一致。后续复制开关与突变的随机消费不变（全长随机带）。
     """
 
     if not (0.0 <= rho <= 1.0):
@@ -162,7 +168,19 @@ def sample_update_random_plan(
     donors_reset = donors.reset_index(drop=True)
 
     # 保持历史随机数表达式和消费顺序，不按参与行数量缩短随机带。
-    participate = rng.random(n_records) < rho
+    # 外部掩码提供时不再抽参与签（调用方已在原槽位抽过，见 docstring）。
+    if participate is None:
+        participate = rng.random(n_records) < rho
+    else:
+        participate = np.asarray(participate)
+        if (
+            participate.shape != (n_records,)
+            or participate.dtype.kind != "b"
+        ):
+            raise ValueError(
+                "participate 必须是与 current 行数一致的布尔向量，"
+                f"得到 shape {participate.shape}"
+            )
     initial_copy_mask = np.zeros(
         (n_records, len(attr_names)), dtype=bool
     )
@@ -298,6 +316,7 @@ def evolve_step(
     copy_direction_strength: float = 0.0,
     direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
     return_diagnostics: bool = False,
+    participate: Optional[np.ndarray] = None,
 ) -> Any:
     """
     全表同步向参考记录靠近一步，生成下一代 S_{t+1}。
@@ -330,6 +349,9 @@ def evolve_step(
     return_diagnostics : bool, default False
         True 时返回 ``(next_table, diagnostics)``，其中只含不参与决策的公开
         转移工作量。默认 False 保持历史 DataFrame 返回值。
+    participate : np.ndarray or None, default None
+        预抽好的参与行掩码（bool, shape (N,)）。提供时跳过内部参与签，
+        随机流约束见 sample_update_random_plan 文档。None 保持历史行为。
 
     Returns
     -------
@@ -373,6 +395,7 @@ def evolve_step(
         copy_direction_scores=copy_direction_scores,
         copy_direction_strength=copy_direction_strength,
         direction_logit_clip=direction_logit_clip,
+        participate=participate,
     )
     next_table = apply_update_random_plan(current, donors, schema, plan)
 

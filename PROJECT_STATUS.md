@@ -2,7 +2,84 @@
 
 ## 当前阶段
 
-### 最新暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
+### 最新暂停点：距离编码向量化落地——稳态单轮 42ms→24.9ms（累计 8.2×），全设备逐位一致（2026-09-06 晚9）
+
+> 结论一句话：`_pairwise_distance_torch` 类别块编码由"每轮 Python set/dict
+> 逐元素映射（16 属性 × 16181 行 ≈ 26 万次字典查询，实测 17.9ms，占距离段
+> 92%）"改为 `pd.factorize` 向量化（C 哈希表）。整数标签仅参与 `!=` 比较，
+> 任何单射编码结果相同 → **新旧实现逐位一致**（git HEAD 旧实现 vs 新实现，
+> cpu/cuda/numpy 三设备 × 子集 (16,16181) / legacy 全表 (2000,2000) 两形状
+> 全部 `torch.equal`/`array_equal` 为 True；numpy 路径本次未改动）。方案由
+> 用户拍板（原计划"编码缓存+增量更新"实测 2.4ms 反而慢于无状态 factorize
+> 1.8ms 且复杂得多，故弃用）。**实测提速**（同计时脚本、正式 all2way-pool
+> 配置、稳态 ρ=0.001、GPU 1）：距离段 19.1ms → 2.2ms，稳态单轮 42ms →
+> **24.9ms**，相对最初 204ms 累计 **8.2×**。7000 轮正式跑预计 ~3 分钟。
+> 剩余大头：Python/pandas 杂项 13.2ms（53%）、查询评估 6.3ms（25%）。
+
+**实现**：
+- `distance.py`：torch 路径类别块 set/dict Python 循环 → `pd.factorize`
+  （约 10 行，无状态、无缓存、不依赖 schema values、任意值可编码）。
+- 验证：距离/lottery 相关 29 项 + 相邻回归 574 项全过（含 lottery 12 项
+  等价合同）；HEAD 8 个历史遗留守卫失败与本次无关。
+
+### 上一暂停点：先抽签后选供体落地——稳态单轮 204ms→42ms（4.9×），numpy 逐位 / CUDA 数值等价（2026-09-06 晚8）
+
+> 结论一句话：`lottery_first_donor_selection` 开关实现并全量验证——同种子下
+> numpy/torch-cpu 与旧路径**逐位一致**（终表 sha、loss 轨迹、主 RNG 终态；
+> nltcs 16181 行全规模 numpy 3 轮复核通过）；CUDA 为**数值等价**（随机流
+> 终态逐位一致，loss 轨迹相对差 ≤4.4e-4，60 轮首分歧在第 36 轮）——float32
+> 行归约切块顺序随矩阵形状变化（(P,N) 子集 vs (N,N) 全表），属 Stage 6
+> "numpy 逐位 + cuda 数值等价"既有惯例，用户已拍板接受。**实测提速**（同
+> 计时脚本、正式 all2way-pool 配置、稳态 ρ=0.001、GPU 1）：稳态单轮
+> 204ms → 42ms（4.9×），供体机制 171ms → 20ms；剩余大头是长方形距离的
+> 全表 one-hot 编码（19ms）与 Python/pandas 杂项（13ms）。7000 轮正式跑
+> 预计 22 分钟 → **~5 分钟**。
+
+**实现**：
+- `sampling.py`：`compute_sampling_probs` 加 `self_indices`（长方形子集 +
+  显式自身列屏蔽）；`sample_donors` 加 `uniforms`（预抽均匀数，不耗随机流）。
+- `update.py`：`sample_update_random_plan`/`evolve_step` 加可选 `participate`
+  （外部参与签，调用方须同流同槽位抽取）。
+- `evolution.py`：`run_evolution` 加 `lottery_first_donor_selection`
+  （fail-closed：要求 max_retries=0、无方向倾斜、gap/gibbs 均 0）；主循环
+  新分支按原槽位先抽 u_donor、参与签，再只对中签行算距离/概率/供体，
+  非中签行填身份供体；诊断口径 participants_only（`params` 带
+  `donor_diagnostics_scope` 标记），零中签轮记 None。
+- `fitness_only.py`：config 字段 + validate + kwargs 透传 + 审计（equal 臂
+  None 容忍 + params 一致性检查）。
+- 测试：`tests/test_lottery_first_donor_selection.py` 12 项（numpy/cpu 逐位、
+  cuda 数值等价合同、零中签、守卫、口径、子集概率/均匀数/参与签单元）。
+- 守卫更新（用户批准，循 93ec152 先例）：stage6c/6d/6e 三个冻结指纹测试的
+  预期漂移清单加入 `shared_update_plan`（update.py 合法演进）。
+- 相邻回归：sampling/update/evolution/fitness_only/退火/MW/守卫等 446 项全过；
+  HEAD 上另有 8 个守卫失败为历史遗留（r8 screen + stage6e recovery），与本次无关。
+
+**下一步（等用户指令）**：正式跑是否切换 lottery 模式重跑基线（CUDA 数值
+等价意味着新轨迹是"平行世界"，不可与旧 report 逐位比对，只能整跑替换）；
+以及是否继续压缩剩余 42ms（全表 one-hot 编码缓存是下一个候选）。
+
+### 上一暂停点：单轮分段计时实测——供体机制占 84%，"先抽签后选供体"预期 ~7×（2026-09-06 晚7）
+
+> 结论一句话：用计时脚本（`scripts/profile_round_segments.py`，
+> monkeypatch 同步计时、不改主代码）按正式 all2way-pool 配置（nltcs 16181 行、
+> 512 池查询、cuda、rho=稳态地板 0.001）实测 60 轮：**稳态单轮 ≈ 205ms**
+> （与正式跑 1332s/7000 轮 ≈ 190ms/轮吻合）。**供体机制合计 171ms（84%）**：
+> N×N 距离 126ms + softmax 36ms + 抽样 9ms；查询评估仅 7ms（3%，7 月向量化
+> 已解决）；其他 Python/诊断 24ms（12%，含 N×N 逐行熵诊断与 donors 行收集）。
+
+**优化方案（用户提出，已确认方向、尚未实现）**：把"先给全表选供体、再抽
+ρ 签"换位成"先抽 ρ 签、只给中签行选供体"。ρ 抽签与供体身份独立，联合分布
+不变；随机数流按原顺序照抽可保逐位一致。稳态 ρ=0.001 → 每轮仅 ~16 行参与，
+供体机制从 N×N 降到 ρN×N（÷1000），预期单轮 205ms → ~25-30ms，
+全程 22 分钟 → **~3 分钟（~7×）**。
+
+**已拍板**：donor 诊断历史（donor_fitness/distance/self_rate、逐行熵等）
+直接改口径为"只统计中签行"，报告注明新旧曲线不可直接对比。
+
+**下一步**：实现换位核 + 逐位等价验证（随机数流顺序不变）+ 用同一计时
+脚本复测分段耗时。
+
+### 上一暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
 
 > 结论一句话：引擎与 PGM 吃完全同一份饭（480 格 all-2way + 32 格一维，真答案）
 > 在冻结三维/四维 heldout 上正面对决——**PGM 高阶外推略强 ~30-40%**
