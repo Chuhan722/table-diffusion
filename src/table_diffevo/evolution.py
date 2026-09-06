@@ -1383,10 +1383,11 @@ def run_evolution(
                 "fitness-only 只允许绝对轮数的纯时间驱动时间表：启用 "
                 "eta_anneal_end 必须同时指定 eta_anneal_rounds"
             )
-        if stop_on_exact_residual:
-            violations.append("stop_on_exact_residual 必须关闭")
-        if inner_early_stopping_enabled:
-            violations.append("inner early stopping 必须关闭")
+        if stop_on_exact_residual and not inner_early_stopping_enabled:
+            violations.append(
+                "stop_on_exact_residual 只允许与 inner early stopping "
+                "成对开启（A/B/C 早停合同），不允许单独启用"
+            )
         if candidate_budget is not None:
             violations.append("candidate_budget 必须为 None，仅使用固定 n_rounds")
         if init_method == "pairwise_maxent":
@@ -3245,7 +3246,11 @@ def run_evolution(
             ),
             "transition_kernel": "blind_independent",
             "proposal_transition": "unconditional",
-            "termination_rule": "fixed_n_rounds",
+            "termination_rule": (
+                "inner_early_stopping_a_b_c"
+                if inner_early_stopping_enabled
+                else "fixed_n_rounds"
+            ),
             "output_identity": "terminal_current",
         }
     if record_stationarity_trace:

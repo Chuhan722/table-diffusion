@@ -65,6 +65,7 @@ class FitnessOnlyConfig:
     residual_geometry_floor: float = 8.0
     exclude_self: bool = True
     record_transition_clocks: bool = False
+    inner_early_stopping_patience_ticks: Optional[int] = None
 
     def validate(self) -> None:
         """拒绝会改变合同语义或造成隐式退化的配置。"""
@@ -275,6 +276,18 @@ class FitnessOnlyConfig:
             errors.append("exclude_self 必须是布尔值")
         if not isinstance(self.record_transition_clocks, (bool, np.bool_)):
             errors.append("record_transition_clocks 必须是布尔值")
+        if self.inner_early_stopping_patience_ticks is not None and (
+            isinstance(
+                self.inner_early_stopping_patience_ticks, (bool, np.bool_)
+            )
+            or not isinstance(
+                self.inner_early_stopping_patience_ticks, (int, np.integer)
+            )
+            or self.inner_early_stopping_patience_ticks <= 0
+        ):
+            errors.append(
+                "inner_early_stopping_patience_ticks 必须是正整数或 None"
+            )
         if errors:
             raise ValueError("fitness-only 配置验证失败：" + "；".join(errors))
 
@@ -379,9 +392,16 @@ def build_fitness_only_kwargs(
         "record_transition_clocks": bool(config.record_transition_clocks),
         "record_stationarity_trace": False,
         "record_natural_work_snapshots": False,
-        "stop_on_exact_residual": False,
+        # 引擎合同：启用 inner A/B/C 早停时 A（loss=0 停止）必须同时开启。
+        "stop_on_exact_residual": (
+            config.inner_early_stopping_patience_ticks is not None
+        ),
         "horizon_invariant": True,
-        "inner_early_stopping_patience_ticks": None,
+        "inner_early_stopping_patience_ticks": (
+            int(config.inner_early_stopping_patience_ticks)
+            if config.inner_early_stopping_patience_ticks is not None
+            else None
+        ),
         "fitness_only_mode": fitness_mode,
     }
 
@@ -395,17 +415,58 @@ def _audit_fitness_only_run(
 
     contract = diagnostics.get("fitness_only_contract")
     expected_channels = ["fitness"] if fitness_mode == "residual" else []
+    early_stopping_enabled = (
+        config.inner_early_stopping_patience_ticks is not None
+    )
+    rounds_run = diagnostics.get("rounds_run")
     failures = []
     if diagnostics.get("output_table_identity") != "terminal_current":
         failures.append("主输出不是 terminal current")
-    if diagnostics.get("termination_reason") != "max_rounds":
-        failures.append("终止原因不是固定轮数")
-    if diagnostics.get("rounds_run") != config.n_rounds:
-        failures.append("实际轮数不等于固定预算")
-    if diagnostics.get("candidate_evaluation_count") != config.n_rounds:
-        failures.append("候选评价数不等于固定轮数")
-    if diagnostics.get("stopped_early"):
-        failures.append("发生了结果相关提前停止")
+    if early_stopping_enabled:
+        reason = diagnostics.get("termination_reason")
+        # 引擎 A/B/C 早停状态机的全部终止标签：A=fit_target_reached、
+        # B=early_stopped、C=resource_cap_reached（跑满外部预算上限）。
+        if reason not in {
+            "fit_target_reached",
+            "early_stopped",
+            "resource_cap_reached",
+        }:
+            failures.append("终止原因不在早停合同允许集合内")
+        if (
+            isinstance(rounds_run, bool)
+            or not isinstance(rounds_run, int)
+            or rounds_run < 1
+            or rounds_run > config.n_rounds
+        ):
+            failures.append("实际轮数超出固定预算上限范围")
+        elif (
+            reason == "resource_cap_reached"
+            and rounds_run != config.n_rounds
+        ):
+            failures.append("触顶终止但实际轮数不等于预算上限")
+        if diagnostics.get("candidate_evaluation_count") != rounds_run:
+            failures.append("候选评价数不等于实际轮数")
+        if bool(diagnostics.get("stopped_early")) != (
+            reason in {"fit_target_reached", "early_stopped"}
+        ):
+            failures.append("stopped_early 与终止原因不一致")
+        inner = diagnostics.get("inner_early_stopping")
+        if (
+            not isinstance(inner, dict)
+            or not inner.get("enabled")
+            or inner.get("patience_ticks")
+            != config.inner_early_stopping_patience_ticks
+        ):
+            failures.append("inner early stopping 诊断缺失或与配置不一致")
+    else:
+        if diagnostics.get("termination_reason") != "max_rounds":
+            failures.append("终止原因不是固定轮数")
+        if rounds_run != config.n_rounds:
+            failures.append("实际轮数不等于固定预算")
+        if diagnostics.get("candidate_evaluation_count") != config.n_rounds:
+            failures.append("候选评价数不等于固定轮数")
+        if diagnostics.get("stopped_early"):
+            failures.append("发生了结果相关提前停止")
     if not all(diagnostics.get("accept_history", [])):
         failures.append("存在未接续 proposal")
     if diagnostics.get("direction_evaluation_count") != 0:
@@ -421,7 +482,11 @@ def _audit_fitness_only_run(
         or contract.get("residual_driving_channels") != expected_channels
         or contract.get("transition_kernel") != "blind_independent"
         or contract.get("proposal_transition") != "unconditional"
-        or contract.get("termination_rule") != "fixed_n_rounds"
+        or contract.get("termination_rule") != (
+            "inner_early_stopping_a_b_c"
+            if early_stopping_enabled
+            else "fixed_n_rounds"
+        )
         or contract.get("output_identity") != "terminal_current"
     ):
         failures.append("fitness-only 合同诊断与请求不一致")
@@ -431,11 +496,14 @@ def _audit_fitness_only_run(
     ):
         failures.append("equal 对照出现了非零 donor fitness")
     schedule_history = diagnostics.get("rho_schedule_history")
+    expected_schedule_length = (
+        rounds_run if early_stopping_enabled else config.n_rounds
+    )
     if (
         not isinstance(schedule_history, list)
-        or len(schedule_history) != config.n_rounds
+        or len(schedule_history) != expected_schedule_length
     ):
-        failures.append("rho_schedule_history 缺失或长度不等于固定轮数")
+        failures.append("rho_schedule_history 缺失或长度不等于实际轮数")
     else:
         rho0 = float(config.rho)
         for t, actual in enumerate(schedule_history):
@@ -501,6 +569,11 @@ def run_paired_fitness_only_attribution(
 ]:
     """运行 residual/equal 两臂并验证初始化与随机流地址严格配对。"""
 
+    if config.inner_early_stopping_patience_ticks is not None:
+        raise ValueError(
+            "配对归因合同要求两臂固定同长轨迹；"
+            "inner early stopping 只允许单臂运行"
+        )
     runs = {
         mode: run_fitness_only_evolution(
             target,
