@@ -2,7 +2,80 @@
 
 ## 当前阶段
 
-### 最新暂停点：半空间不可微查询能力线双数据集收官——H1-H4 四问全过（2026-09-06 傍晚）
+### 最新暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
+
+> 结论一句话：引擎与 PGM 吃完全同一份饭（480 格 all-2way + 32 格一维，真答案）
+> 在冻结三维/四维 heldout 上正面对决——**PGM 高阶外推略强 ~30-40%**
+> （heldout_combined 0.001431 vs 引擎 0.001894，同量级），**引擎池内拟合 2.6× 胜**
+> （0.000135 vs 0.000357）、**一维 3× 胜**（0.000062 vs 0.000185）。四局战局
+> 盘点定调：引擎赢在"什么都能吃"（任意阶/不可微/大属性数），不赢在无信息
+> 外推；maxent 是更好的无信息先验，引擎是更好的信息吸收器——选择测量壳子
+> 正是把"能吃"变成"吃得聪明"的机制。
+
+**协议与产物**：runner `scripts/run_fitness_only_all2way_pool_nltcs_diagnostic.py`
+（SHA `e11ea5b2…`；池 512=480+32，479 旧二维收编+522 旧三维出池双对账；
+对照五份全钉死含 PGM-all2way 公平组 `b7760bab…`）；测试 11 项新增全绿；
+报告 `outputs/fitness_only_all2way_pool_nltcs_seed9908_v1/report.json`；
+跑满 7000 轮 resource_cap_reached，23 分钟。
+
+**O2-O6 对账**：
+
+- O2 同餐 heldout：引擎 3way 0.001638 / 4way 0.002151 / comb 0.001894 vs
+  PGM 0.001368 / 0.001494 / 0.001431——纯二维日粮下 maxent 外推略强；
+- O3 纯日粮代价：引擎 heldout 0.000575（polish 含三维）→0.001894（3.3×），
+  PGM 0.000762→0.001431（1.9×）——两边都付代价，引擎付更多；
+- O4 出池三维探针 ✓：522 三维出池后 0.001525 ≈ heldout 水平（非旧拟合 0.000189），
+  覆盖机制自洽；
+- O5 一维安全 ✓：0.000062 守住 polish 水平且胜 PGM 同餐 0.000185；
+- O6 家族内直比：引擎 0.000135 vs PGM 0.000357（同格同答案，2.6×）。
+
+**四局战局（诚实定位）**：① 纯二维同餐 PGM 外推略强；② 混合日粮（含三维）
+引擎 0.000575 < PGM-980 0.000762；③ plants all-2way PGM 结构性不可行
+（2^69 收据），引擎照吃全面领先；④ 半空间 PGM 缺席，引擎 2.4×/3.1× 压裸猜。
+
+**下一步**：可选 GSD 无噪声横评；然后壳子阶段（加噪 + 选择测量 + 停止规则
+打包，用户明示到时候商量）。
+
+### 上一暂停点：PGM-on-all2way 重拟合收官——信息不对称修正后 PGM 高阶反而更差（2026-09-06 晚）
+
+> 结论一句话：把 nltcs 480 格 all-2way 全家族原样喂给 PGM 重拟合（修"引擎吃
+> 全家族、PGM 只吃 980 题"的喂料不对称质疑）——PGM 家族内拟合很好
+> （measured 0.000357），但**高阶 heldout 反而比旧 980 局差近 2 倍**
+> （heldout_combined 0.001431 vs 0.000762）：旧考卷里混着 522 道三维题=喂过
+> 高阶信息，纯二维日粮下最大熵外推撑不住。**质疑被反转：信息量不在格子数，
+> 在阶数。** plants 侧出具结构性不可行收据（2^69 格=4096 艾字节，超上限
+> 1.1e12 倍），PGM 系"选择测量"的存在理由拿到正式钉死凭证。
+
+**协议与产物**：nltcs 重拟合 runner
+`scripts/run_baseline_pgm_all2way_nltcs_diagnostic.py`（SHA `a80a73d2…`）+
+plants 收据 runner `scripts/run_baseline_pgm_all2way_plants_feasibility_diagnostic.py`
+（SHA `89f5ae06…`）；考卷=新冻结 `configs/nltcs/all2way_issue53_v1.json` 480 格
+（SHA `5821fa4e…`，生成器 gen_plants_all2way_queries.py → `gen_all2way_queries.py`
+参数化双数据集，plants 逐字重建 SHA 不变）；测试 20 项新增全绿；报告
+`outputs/baseline_pgm_all2way_nltcs_v1/report.json` +
+`outputs/baseline_pgm_all2way_plants_feasibility_v1/report.json`。
+
+**nltcs 数字（normalized_l1_mean；PGM-all2way vs 旧 PGM-980 vs 引擎 polish）**：
+
+- measured 家族内：0.000357（锚点，考卷不同不直接比：旧 PGM 在 1001 卷 0.000550、
+  引擎 polish 在 1001 卷 0.000177）；
+- **heldout_combined：0.001431 vs 0.000762 vs 0.000575**（3way：0.001368 vs
+  0.000725 vs 0.000433；4way：0.001494 vs 0.000798 vs 0.000716）；
+- one-way：0.000185 vs 0.000467（改善，全一维喂饱的自然结果）；
+- 运行 18 秒 CPU（估计 2.5s+采样 15.5s），120 clique×4 格，单 2^16 clique 0.5MB。
+
+**plants 收据**：verdict=`baseline_infeasible_no_estimation_attempted`；2346 对
+全连图 K69→连接树单 69 列 clique=2^69 格=**4.504e15 MB**，超 4096MB 上限
+**1.1e12 倍**；对照：旧 980 考卷可行仅 1.06MB；预检 0.25 秒。
+
+**诚实边界**：引擎 polish 也吃过 1001 卷里的 522 道三维题，"两边都只吃纯二维"
+的苹果对苹果还没跑——排队中的 **nltcs 纯 all-2way 池引擎局成为决胜局**
+（考卷已冻结 5821fa4e…）：零阶引导外推 vs 最大熵外推，正面对决三维/四维 heldout。
+
+**下一步**：nltcs 纯二维池引擎局（决胜局，镜像 plants all2way runner）；可选
+GSD 无噪声横评；然后壳子阶段（加噪+选择测量+停止规则打包，用户明示到时候商量）。
+
+### 上一暂停点：半空间不可微查询能力线双数据集收官——H1-H4 四问全过（2026-09-06 傍晚）
 
 > 结论一句话：把冻结半空间考卷的 measured 档追加进各自演化池（plants
 > 9522+64=9586、nltcs 1033+40=1073），κ=1 配方逐位不变——**H1 硬阈值不可微
