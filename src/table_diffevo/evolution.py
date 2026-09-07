@@ -65,7 +65,10 @@ from table_diffevo.directional_diffusion import (
 )
 from table_diffevo.generator import init_synthetic_table
 from table_diffevo.pairwise_init import init_from_pairwise_maxent
-from table_diffevo.vectorized_eval import evaluate_vectorized
+from table_diffevo.vectorized_eval import (
+    ValueGainComputer,
+    evaluate_vectorized,
+)
 from table_diffevo.factorized_diffusion import (
     DEFAULT_LOGIT_CLIP,
     compile_mask_workload,
@@ -250,6 +253,9 @@ def run_evolution(
     eta_anneal_end: Optional[float] = None,
     eta_anneal_rounds: Optional[int] = None,
     eta_anneal_start_round: Optional[int] = None,
+    mu_anneal_end: Optional[float] = None,
+    mu_anneal_rounds: Optional[int] = None,
+    mu_anneal_start_round: Optional[int] = None,
     mw_query_weight_eta: Optional[float] = None,
     mw_signal_cap: Optional[float] = None,
     mw_weight_cap: Optional[float] = None,
@@ -273,6 +279,13 @@ def run_evolution(
     inner_early_stopping_patience_ticks: Optional[int] = None,
     fitness_only_mode: Optional[str] = None,
     lottery_first_donor_selection: bool = False,
+    block_score_tilt_strength: float = 0.0,
+    block_score_tilt_bounds: Optional[tuple] = (0.3, 0.7),
+    value_guidance_strength: float = 0.0,
+    value_guidance_warmup_start_round: Optional[int] = None,
+    value_guidance_warmup_rounds: Optional[int] = None,
+    value_guidance_drop_donor: bool = False,
+    value_guidance_adaptive_scale: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回合成表和诊断信息。
@@ -472,6 +485,22 @@ def run_evolution(
         eta 退火保温段轮数（需同时启用 eta_anneal_rounds；语义同
         rho_anneal_start_round）。进度按 ``min(1, max(0, (t - H_eta) /
         eta_anneal_rounds))`` 计算，只依赖绝对轮次。
+    mu_anneal_end : float or None, default None
+        时间驱动几何 mu（变异率）退火（盲噪声时间表，与 rho/eta 退火
+        完全同构）。启用时每轮变异率 ``mu_t = mu * (mu_anneal_end /
+        mu) ** progress``，仅替换变异掷币 ``rng.random(n) < mu`` 的
+        阈值，不改变随机数消费顺序，因此关闭/保温段与历史轨迹逐位一致。
+        不读取残差或候选评价。末期变异是账面平衡后的纯噪声源（随机重抽
+        值必然扰动已平的账），深潜段把 mu 退到极小可收窄平衡态涨落。
+        None 时 mu_t 恒等于 ``mu``。
+    mu_anneal_rounds : int or None, default None
+        mu 退火快降段轮数（需同时启用 mu_anneal_end；语义同
+        rho_anneal_rounds）。horizon_invariant / fitness-only 合同要求
+        启用 mu_anneal_end 时必须同时指定本参数（绝对轮数调度）。
+    mu_anneal_start_round : int or None, default None
+        mu 退火保温段轮数（需同时启用 mu_anneal_rounds；语义同
+        rho_anneal_start_round）。进度按 ``min(1, max(0, (t - H_mu) /
+        mu_anneal_rounds))`` 计算，只依赖绝对轮次。
     mw_query_weight_eta : float or None, default None
         乘性权重（MW）查询权重更新步长（v6 聚合机制）。四个 mw_* 参数
         必须全部提供或全部为 None；启用时仅允许
@@ -579,6 +608,56 @@ def run_evolution(
         factorized_gibbs_sweeps=0（fail-closed，违反即报错）。启用后供体
         诊断口径变为只统计中签行（donor_diagnostics_scope=
         "participants_only"），零中签轮记 None。
+    block_score_tilt_strength : float, default 0.0
+        分科倾斜复制（block-tilted copy）的无量纲强度。0 = 关闭（与历史
+        路径逐位一致）。>0 时：每轮评估顺手输出分科状态分 s_a(z)（行级
+        fitness 的按属性分解，纯状态量、零动作预演），选完供体后取逐
+        (行, 科) 分差 Δ = s_a(donor) − s_a(recipient)，除以首轮全表分差
+        RMS（开局标定一次、全程固定，强度因此跨数据集无量纲），再按
+        ``logit(p) = logit(η) + strength · Δ/scale`` 连续倾斜复制硬币。
+        分差为零精确保持 η；残差收敛 → 分差缩小 → 倾斜按科自动回归中性
+        （自退火）。要求 eval_method='vectorized'，且与
+        residual_directed_diffusion / gap_l1 / factorized_gibbs /
+        MW 权重 / eta 退火 / max_retries>0 / fitness_only_mode='equal'
+        全部互斥（fail-closed）；lottery_first_donor_selection 兼容
+        （子集口径，见 diagnostics_scope）。
+    block_score_tilt_bounds : tuple or None, default (0.3, 0.7)
+        倾斜后复制概率的硬夹带 (lo, hi)，须满足 0 ≤ lo ≤ η ≤ hi ≤ 1。
+        保证任何分差下都保留反方向概率，机制不会退化成确定性筛选。
+        仅 strength > 0 时生效；None = 不夹带（不推荐）。
+    value_guidance_strength : float, default 0.0
+        残差引导值分布核（value guidance kernel）的引导强度 λ_max。
+        0 = 关闭（与历史路径逐位一致）。>0 时整臂换核：参与行的每个属性
+        不再走"η 硬币二选一 + 独立变异事件"，而是从全值域按
+        ``p(v) ∝ base(v)·exp(λ_t·gain(v))`` 抽签。base 是旧核的分布化
+        改写（(1−μc)[η·δ_donor+(1−η)·δ_self] + μc·uniform，μc=μ/A），
+        gain 是把该格改成 v 对加权残差账本的一阶增益（与 fitness 同源，
+        每轮按当前表重算）。λ_t=0 时分布退化为 base，但随机流与旧核不同
+        ——整臂自洽，不承诺与关闭路径逐位一致。要求
+        eval_method='vectorized'，且全部查询为 ≤2-way 纯 == 合取、全部
+        属性 categorical（fail-closed）；与 block_score_tilt /
+        residual_directed_diffusion / gap_l1 / factorized_gibbs / MW 权重
+        / eta 退火 / max_retries>0 / fitness_only_mode='equal' 互斥；
+        lottery_first_donor_selection 兼容（参与行=中签行）。
+    value_guidance_warmup_start_round : int or None, default None
+        λ_t 线性升温的起始轮（绝对轮数，兼容 horizon_invariant）。该轮
+        之前 λ_t=0（新核照走、纯 base 抽样）。需要与 warmup_rounds 同时
+        提供；二者都缺省时 λ_t 恒等于 strength（全程恒定引导）。
+    value_guidance_warmup_rounds : int or None, default None
+        λ_t 从 0 线性升到 strength 所用轮数（≥1）。与 warmup_start_round
+        成对提供。
+    value_guidance_drop_donor : bool, default False
+        供体价值对照臂：True 时 base 去掉供体分量（η 质量并给自值，
+        base=(1−μc)·δ_self+μc·uniform），其余不变。仅 strength>0 时可用。
+    value_guidance_adaptive_scale : bool, default False
+        自适应引导尺度：每轮把 λ_t 除以当轮加权残差的典型尺度
+        scale_t = max(max(|wr_t|), 1e-12)（最欠账的账；与 gain 的 wr
+        严格同源，ValueGainComputer.wr_scale）。λ 恢复"照账倍数"语义
+        且 λ_eff·gain ≤ λ·每格覆盖账数（有界，不随账本变平发散）：
+        账欠得多时引导自动温柔，账快平时压强自动增大，跨数据集免调参。
+        lambda_history 仍记调度值 λ_t，实际传入转移核的是 λ_t/scale_t
+        （scale_history 诊断可复算）。仅 strength>0 时可用；关闭时逐位
+        零痕迹。
 
     Returns
     -------
@@ -689,6 +768,92 @@ def run_evolution(
             "lottery_first_donor_selection 必须是布尔值，"
             f"得到 {lottery_first_donor_selection!r}"
         )
+
+    if (
+        isinstance(block_score_tilt_strength, (bool, np.bool_))
+        or not isinstance(
+            block_score_tilt_strength,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(block_score_tilt_strength)
+        or block_score_tilt_strength < 0.0
+    ):
+        raise ValueError(
+            "block_score_tilt_strength 必须是非负有限数值，"
+            f"得到 {block_score_tilt_strength!r}"
+        )
+    block_score_tilt_strength = float(block_score_tilt_strength)
+    block_score_tilt_enabled = block_score_tilt_strength > 0.0
+    if block_score_tilt_enabled:
+        # fail-closed：分科倾斜只在"vectorized 评估 + 单一转移核 + 固定 η +
+        # 平凡查询权重"的组合下定义（分科分来自向量化扫描；η 变化会移动
+        # 夹带的中性点；MW 改 wr 会与分科分语义纠缠；其余实验核未验证）。
+        tilt_violations = []
+        if eval_method != "vectorized":
+            tilt_violations.append(
+                f"eval_method 必须为 'vectorized'，得到 {eval_method!r}"
+            )
+        if residual_directed_diffusion:
+            tilt_violations.append(
+                "residual_directed_diffusion 必须为 False（语义冲突：其"
+                "方向量预演编辑动作，分科倾斜只用状态分差）"
+            )
+        if gap_l1_sweeps != 0:
+            tilt_violations.append(
+                f"gap_l1_sweeps 必须为 0，得到 {gap_l1_sweeps}"
+            )
+        if factorized_gibbs_sweeps != 0:
+            tilt_violations.append(
+                f"factorized_gibbs_sweeps 必须为 0，"
+                f"得到 {factorized_gibbs_sweeps}"
+            )
+        if max_retries != 0:
+            tilt_violations.append(
+                f"max_retries 必须为 0，得到 {max_retries}"
+            )
+        if mw_query_weight_eta is not None:
+            tilt_violations.append("MW 查询权重必须关闭")
+        if eta_anneal_end is not None:
+            tilt_violations.append("eta 退火必须关闭（夹带中性点随 η 移动）")
+        if fitness_only_mode == "equal":
+            tilt_violations.append(
+                "fitness_only_mode='equal' 不允许（equal 臂禁用一切残差"
+                "信号，分科分正是残差信号）"
+            )
+        if tilt_violations:
+            raise ValueError(
+                "block_score_tilt_strength>0 与当前配置不兼容："
+                + "；".join(tilt_violations)
+            )
+        if block_score_tilt_bounds is not None:
+            if (
+                not isinstance(block_score_tilt_bounds, (tuple, list))
+                or len(block_score_tilt_bounds) != 2
+            ):
+                raise ValueError(
+                    "block_score_tilt_bounds 必须是 (lo, hi) 二元组或 None，"
+                    f"得到 {block_score_tilt_bounds!r}"
+                )
+            _tilt_lo, _tilt_hi = block_score_tilt_bounds
+            for _bname, _bval in (("lo", _tilt_lo), ("hi", _tilt_hi)):
+                if (
+                    isinstance(_bval, (bool, np.bool_))
+                    or not isinstance(
+                        _bval, (int, float, np.integer, np.floating)
+                    )
+                    or not np.isfinite(_bval)
+                ):
+                    raise ValueError(
+                        f"block_score_tilt_bounds 的 {_bname} 必须是"
+                        f"有限数值，得到 {_bval!r}"
+                    )
+            if not (0.0 <= float(_tilt_lo) <= eta <= float(_tilt_hi) <= 1.0):
+                raise ValueError(
+                    "block_score_tilt_bounds 必须满足 0 ≤ lo ≤ eta ≤ hi ≤ 1，"
+                    f"得到 lo={_tilt_lo}, hi={_tilt_hi}, eta={eta}"
+                )
+            block_score_tilt_bounds = (float(_tilt_lo), float(_tilt_hi))
+
     if lottery_first_donor_selection:
         # fail-closed：换位路径只在"每轮恰好一份参与签、供体表只被独立核
         # 消费"的结构下与原路径逐位一致。任何会重抽参与签（重试）或让非
@@ -717,6 +882,133 @@ def run_evolution(
                 "lottery_first_donor_selection=True 与当前配置不兼容："
                 + "；".join(lottery_violations)
             )
+
+    if (
+        isinstance(value_guidance_strength, (bool, np.bool_))
+        or not isinstance(
+            value_guidance_strength,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(value_guidance_strength)
+        or value_guidance_strength < 0.0
+    ):
+        raise ValueError(
+            "value_guidance_strength 必须是非负有限数值，"
+            f"得到 {value_guidance_strength!r}"
+        )
+    value_guidance_strength = float(value_guidance_strength)
+    value_guidance_enabled = value_guidance_strength > 0.0
+    if not isinstance(value_guidance_drop_donor, (bool, np.bool_)):
+        raise ValueError(
+            "value_guidance_drop_donor 必须是布尔值，"
+            f"得到 {value_guidance_drop_donor!r}"
+        )
+    value_guidance_drop_donor = bool(value_guidance_drop_donor)
+    if not isinstance(value_guidance_adaptive_scale, (bool, np.bool_)):
+        raise ValueError(
+            "value_guidance_adaptive_scale 必须是布尔值，"
+            f"得到 {value_guidance_adaptive_scale!r}"
+        )
+    value_guidance_adaptive_scale = bool(value_guidance_adaptive_scale)
+    if value_guidance_enabled:
+        # fail-closed：值引导核整轮替换"复制开关+变异事件"转移核，只在
+        # "vectorized 评估 + 单一转移核 + 固定 η + 平凡查询权重"组合下
+        # 定义（gain 与 fitness 同源要求 wr 平凡权重；η 进 base 分布，
+        # 退火会移动 base；其余实验核语义冲突）。lottery 兼容：参与行=
+        # 中签行，供体表用身份填充版，与新核逐属性抽签正交。
+        vg_violations = []
+        if eval_method != "vectorized":
+            vg_violations.append(
+                f"eval_method 必须为 'vectorized'，得到 {eval_method!r}"
+            )
+        if block_score_tilt_enabled:
+            vg_violations.append(
+                "block_score_tilt_strength 必须为 0（倾斜作用于复制开关，"
+                "新核已无复制开关）"
+            )
+        if residual_directed_diffusion:
+            vg_violations.append(
+                "residual_directed_diffusion 必须为 False（同为方向倾斜"
+                "复制开关的机制，与新核语义冲突）"
+            )
+        if gap_l1_sweeps != 0:
+            vg_violations.append(
+                f"gap_l1_sweeps 必须为 0，得到 {gap_l1_sweeps}"
+            )
+        if factorized_gibbs_sweeps != 0:
+            vg_violations.append(
+                f"factorized_gibbs_sweeps 必须为 0，"
+                f"得到 {factorized_gibbs_sweeps}"
+            )
+        if max_retries != 0:
+            vg_violations.append(
+                f"max_retries 必须为 0，得到 {max_retries}"
+            )
+        if mw_query_weight_eta is not None:
+            vg_violations.append("MW 查询权重必须关闭（gain 与 wr 同源）")
+        if eta_anneal_end is not None:
+            vg_violations.append("eta 退火必须关闭（η 进 base 分布）")
+        if fitness_only_mode == "equal":
+            vg_violations.append(
+                "fitness_only_mode='equal' 不允许（equal 臂禁用一切残差"
+                "信号，gain 正是残差信号）"
+            )
+        if vg_violations:
+            raise ValueError(
+                "value_guidance_strength>0 与当前配置不兼容："
+                + "；".join(vg_violations)
+            )
+    else:
+        if value_guidance_drop_donor:
+            raise ValueError(
+                "value_guidance_drop_donor=True 需要 value_guidance_strength>0"
+            )
+        if value_guidance_adaptive_scale:
+            raise ValueError(
+                "value_guidance_adaptive_scale=True 需要 "
+                "value_guidance_strength>0"
+            )
+    if value_guidance_warmup_start_round is not None:
+        if not value_guidance_enabled:
+            raise ValueError(
+                "value_guidance_warmup_start_round 需要 value_guidance_strength>0"
+            )
+        if (
+            isinstance(value_guidance_warmup_start_round, (bool, np.bool_))
+            or not isinstance(
+                value_guidance_warmup_start_round, (int, np.integer)
+            )
+            or value_guidance_warmup_start_round < 0
+        ):
+            raise ValueError(
+                "value_guidance_warmup_start_round 必须是非负整数或 None，"
+                f"得到 {value_guidance_warmup_start_round!r}"
+            )
+        value_guidance_warmup_start_round = int(
+            value_guidance_warmup_start_round
+        )
+    if value_guidance_warmup_rounds is not None:
+        if not value_guidance_enabled:
+            raise ValueError(
+                "value_guidance_warmup_rounds 需要 value_guidance_strength>0"
+            )
+        if (
+            isinstance(value_guidance_warmup_rounds, (bool, np.bool_))
+            or not isinstance(value_guidance_warmup_rounds, (int, np.integer))
+            or value_guidance_warmup_rounds < 1
+        ):
+            raise ValueError(
+                "value_guidance_warmup_rounds 必须是正整数或 None，"
+                f"得到 {value_guidance_warmup_rounds!r}"
+            )
+        value_guidance_warmup_rounds = int(value_guidance_warmup_rounds)
+    if (value_guidance_warmup_start_round is None) != (
+        value_guidance_warmup_rounds is None
+    ):
+        raise ValueError(
+            "value_guidance_warmup_start_round 与 value_guidance_warmup_rounds "
+            "必须成对提供（绝对轮数调度）或都缺省（λ 全程恒定）"
+        )
 
     if eval_method not in ('vectorized', 'legacy'):
         raise ValueError(
@@ -1013,6 +1305,51 @@ def run_evolution(
                 f"得到 {eta_anneal_start_round!r}"
             )
         eta_anneal_start_round = int(eta_anneal_start_round)
+    if mu_anneal_end is not None:
+        if (
+            isinstance(mu_anneal_end, (bool, np.bool_))
+            or not isinstance(
+                mu_anneal_end,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(mu_anneal_end)
+            or not 0.0 < mu_anneal_end <= mu
+        ):
+            raise ValueError(
+                "mu_anneal_end 必须位于 (0, mu] 或为 None，"
+                f"得到 {mu_anneal_end!r}（mu={mu}）"
+            )
+        mu_anneal_end = float(mu_anneal_end)
+    if mu_anneal_rounds is not None:
+        if mu_anneal_end is None:
+            raise ValueError(
+                "mu_anneal_rounds 需要同时启用 mu_anneal_end"
+            )
+        if (
+            isinstance(mu_anneal_rounds, (bool, np.bool_))
+            or not isinstance(mu_anneal_rounds, (int, np.integer))
+            or mu_anneal_rounds < 1
+        ):
+            raise ValueError(
+                "mu_anneal_rounds 必须是正整数或 None，"
+                f"得到 {mu_anneal_rounds!r}"
+            )
+        mu_anneal_rounds = int(mu_anneal_rounds)
+    if mu_anneal_start_round is not None:
+        if mu_anneal_rounds is None:
+            raise ValueError(
+                "mu_anneal_start_round 需要同时启用 mu_anneal_rounds"
+            )
+        if (
+            isinstance(mu_anneal_start_round, (bool, np.bool_))
+            or not isinstance(mu_anneal_start_round, (int, np.integer))
+            or mu_anneal_start_round < 0
+        ):
+            raise ValueError(
+                "mu_anneal_start_round 必须是非负整数或 None，"
+                f"得到 {mu_anneal_start_round!r}"
+            )
+        mu_anneal_start_round = int(mu_anneal_start_round)
     _mw_param_names = (
         "mw_query_weight_eta",
         "mw_signal_cap",
@@ -1383,6 +1720,12 @@ def run_evolution(
                 "退火进度依赖总轮数，破坏视界不变；必须改用绝对轮数调度"
                 "或关闭"
             )
+        if mu_anneal_end is not None and mu_anneal_rounds is None:
+            violations.append(
+                "启用 mu_anneal_end 而未指定 mu_anneal_rounds 的全程"
+                "退火进度依赖总轮数，破坏视界不变；必须改用绝对轮数调度"
+                "或关闭"
+            )
         if violations:
             raise ValueError(
                 "horizon_invariant 配置不合格：" + "；".join(violations)
@@ -1492,6 +1835,10 @@ def run_evolution(
 
         query_weights：MW 查询权重（None=平凡全 1，与历史行为逐位一致）；
         仅进入 fitness 聚合（F=Σ w_j·ε_j·(a_j−p_j)），不影响计数与残差。
+
+        返回四元组 (q, residual, fitness, block_scores)。block_scores 仅在
+        分科倾斜启用时非 None（(N, A) 分科状态分，与 fitness 同一批掩码
+        顺手算出）；其余路径恒为 None，不额外扫描。
         """
         if fitness_only_mode == "equal":
             # 归因对照仍计算 residual/loss 供离线观测，但它们不能进入任何
@@ -1504,9 +1851,19 @@ def run_evolution(
                 geometry=residual_geometry,
                 geometry_floor=residual_geometry_floor,
             )
-            return q_, r_, np.zeros(len(df), dtype=float)
+            return q_, r_, np.zeros(len(df), dtype=float), None
         if eval_method == 'vectorized':
-            return evaluate_vectorized(
+            if block_score_tilt_enabled:
+                return evaluate_vectorized(
+                    df, queries, schema, target=target, n_records=n_records,
+                    batch_size=batch_size, device=device, want_fitness=True,
+                    verbose=False,
+                    weights=query_weights,
+                    residual_geometry=residual_geometry,
+                    residual_geometry_floor=residual_geometry_floor,
+                    want_block_scores=True,
+                )
+            q_, r_, f_ = evaluate_vectorized(
                 df, queries, schema, target=target, n_records=n_records,
                 batch_size=batch_size, device=device, want_fitness=True,
                 verbose=False,
@@ -1514,6 +1871,7 @@ def run_evolution(
                 residual_geometry=residual_geometry,
                 residual_geometry_floor=residual_geometry_floor,
             )
+            return q_, r_, f_, None
         q_ = evaluate_table(df, queries)
         r_ = compute_residual(
             target, q_, n_records,
@@ -1521,7 +1879,7 @@ def run_evolution(
             geometry_floor=residual_geometry_floor,
         )
         f_ = compute_fitness(df, queries, r_, q_, weights=query_weights)
-        return q_, r_, f_
+        return q_, r_, f_, None
 
     # 初始表 S_0（不读源数据，只用 schema、已测量 target 与可选 1-way 边缘）
     if init_method == 'pairwise_maxent':
@@ -1566,6 +1924,7 @@ def run_evolution(
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
     eta_schedule_history: List[float] = []  # 每轮退火后的 eta_t（关闭时恒为 eta）
+    mu_schedule_history: List[float] = []  # 每轮退火后的 mu_t（关闭时恒为 mu）
     donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
     row_max_prob_mean_history: List[float] = []  # 逐行最大概率均值（每轮）
     row_max_prob_max_history: List[float] = []  # 逐行最大概率最大值（每轮）
@@ -1586,6 +1945,11 @@ def run_evolution(
     direction_reference_scale_history: List[Optional[float]] = []
     direction_logit_evaluated_count_history: List[int] = []
     direction_logit_clipped_count_history: List[int] = []
+    # 分科倾斜复制诊断（block_score_tilt_strength > 0 时逐轮填充）
+    block_tilt_reference_scale: Optional[float] = None
+    block_tilt_mean_abs_scaled_delta_history: List[float] = []
+    block_tilt_clip_lo_rate_history: List[float] = []
+    block_tilt_clip_hi_rate_history: List[float] = []
     raw_proposal_gain_history: List[List[float]] = []
     raw_proposal_linear_gain_history: List[List[float]] = []
     raw_proposal_quadratic_penalty_history: List[List[float]] = []
@@ -1652,6 +2016,28 @@ def run_evolution(
             time.perf_counter() - compile_start
         )
 
+    # 值引导核：查询结构解析一次（值域布局/基底掩码列/散射条目），逐轮只
+    # 重算掩码矩阵+重填 wr 散射。构造即 fail-closed（非 ==、>2-way、
+    # 非 categorical 属性直接报错）。
+    value_gain_computer = None
+    value_guidance_lambda_history: List[float] = []
+    value_guidance_scale_history: List[float] = []
+    value_guidance_gain_recompute_count = 0
+    value_guidance_structure_compile_elapsed_sec = 0.0
+    if value_guidance_enabled:
+        vg_compile_start = time.perf_counter()
+        value_gain_computer = ValueGainComputer(
+            queries,
+            schema,
+            weights=np.ones(len(queries), dtype=float),
+            target=np.asarray(target, dtype=float),
+            residual_geometry=residual_geometry,
+            residual_geometry_floor=residual_geometry_floor,
+        )
+        value_guidance_structure_compile_elapsed_sec = (
+            time.perf_counter() - vg_compile_start
+        )
+
     # 当前表 S 没变化时，答案/残差/适应度/loss/距离也完全不变。整代提案被拒后
     # 保留这些量，下一轮只按新的 alpha 重算抽样概率并重新抽 donor。提案被接受
     # 后统一失效，确保缓存永远和 S 对齐。
@@ -1664,7 +2050,9 @@ def run_evolution(
 
     # 直接完成第一轮需要的完整评价，同时据此初始化 best，避免先做一次 counts-only
     # 又在第一轮重复扫描同一张 S_0。
-    initial_q, initial_residual, initial_fitness = _eval_counts_resid_fitness(S)
+    initial_q, initial_residual, initial_fitness, initial_block_scores = (
+        _eval_counts_resid_fitness(S)
+    )
     initial_loss = compute_loss(target, initial_q)
     if (
         gap_l1_weighting
@@ -1683,7 +2071,8 @@ def run_evolution(
     self_cooling_factor = 1.0
     self_cooling_min_ratio = 1.0
     state_eval_cache = (
-        initial_q, initial_residual, initial_fitness, initial_loss
+        initial_q, initial_residual, initial_fitness,
+        initial_block_scores, initial_loss,
     )
     state_evaluation_count += 1
     best_S = S.copy()
@@ -1851,18 +2240,86 @@ def run_evolution(
             eta_t = eta
         eta_schedule_history.append(eta_t)
 
+        # 时间驱动几何 mu 退火（盲变异时间表）：与 rho/eta 退火完全同构，
+        # 只依赖轮次进度，不读取残差或候选评价。关闭时 mu_t 恒等于 mu，
+        # 逐轨迹等价于历史行为；mu_t 仅作为变异掷币阈值，不改变随机数
+        # 消费顺序。
+        if mu_anneal_end is not None:
+            if mu_anneal_rounds is not None:
+                mu_anneal_t = t - (
+                    mu_anneal_start_round
+                    if mu_anneal_start_round is not None
+                    else 0
+                )
+                mu_anneal_progress = min(
+                    1.0, max(0.0, mu_anneal_t / mu_anneal_rounds)
+                )
+            else:
+                mu_anneal_progress = progress
+            mu_t = mu * (mu_anneal_end / mu) ** mu_anneal_progress
+        else:
+            mu_t = mu
+        mu_schedule_history.append(mu_t)
+
+        # 值引导强度 λ_t：绝对轮数线性升温（warmup 前恒 0，warmup 后恒
+        # λ_max），未配 warmup 时全程恒定。只依赖轮次，不读残差。
+        if value_guidance_enabled:
+            if value_guidance_warmup_rounds is not None:
+                vg_progress = min(
+                    1.0,
+                    max(
+                        0.0,
+                        (t - value_guidance_warmup_start_round)
+                        / value_guidance_warmup_rounds,
+                    ),
+                )
+                value_guidance_lambda_t = (
+                    value_guidance_strength * vg_progress
+                )
+            else:
+                value_guidance_lambda_t = value_guidance_strength
+            value_guidance_lambda_history.append(value_guidance_lambda_t)
+        else:
+            value_guidance_lambda_t = 0.0
+
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
         if state_eval_cache is None:
-            q, residual, fitness = _eval_counts_resid_fitness(
+            q, residual, fitness, block_scores = _eval_counts_resid_fitness(
                 S, query_weights=mw_weights
             )
             loss = compute_loss(target, q)
-            state_eval_cache = (q, residual, fitness, loss)
+            state_eval_cache = (q, residual, fitness, block_scores, loss)
             state_evaluation_count += 1
         else:
-            q, residual, fitness, loss = state_eval_cache
+            q, residual, fitness, block_scores, loss = state_eval_cache
         loss_history.append(loss)
+
+        # 值引导逐格增益：按需回调——sample 抽完参与行后只算子集
+        # （gain 逐行独立，子集与全表对应行逐位一致）；参与行为空的轮
+        # 根本不调用，零成本。绑定当轮 S/q（默认参数，防晚绑定）。
+        value_gain_fn = None
+        value_guidance_lambda_effective_t = value_guidance_lambda_t
+        if value_guidance_enabled:
+            def value_gain_fn(rows, _df=S, _q=q):
+                nonlocal value_guidance_gain_recompute_count
+                value_guidance_gain_recompute_count += 1
+                return value_gain_computer.compute(
+                    _df, _q, n_records, rows=rows
+                )
+
+            # 自适应引导尺度：λ_eff = λ_t / max(|当轮 wr|)（与 gain 的
+            # wr 同源），λ 恢复"照账倍数"语义且 λ_eff·gain 有界。账全平
+            # 时 scale 落底 1e-12，但 gain 同时全 0，不产生倾斜
+            # （fail-safe）。
+            if value_guidance_adaptive_scale:
+                value_guidance_scale_t = value_gain_computer.wr_scale(
+                    q, n_records
+                )
+                value_guidance_scale_history.append(value_guidance_scale_t)
+                value_guidance_lambda_effective_t = (
+                    value_guidance_lambda_t / value_guidance_scale_t
+                )
 
         # 残差自冷却因子：与 loss_history 逐轮对齐记录；内在停止检查在达标
         # 检查之后执行。
@@ -2286,12 +2743,91 @@ def run_evolution(
         attempt_gap_l1_diagnostics: List[Dict[str, Any]] = []
         attempt_transition_clocks: List[Dict[str, Any]] = []
         count_residual = target - q
+        # 分科倾斜：供体已定，取逐 (行, 科) 状态分差，首轮标定 RMS 尺度。
+        # 纯状态量（两行现有分科分之差），不预演任何编辑动作。
+        block_tilt_kwargs: Dict[str, Any] = {}
+        if block_score_tilt_enabled:
+            if lottery_first_donor_selection:
+                # 换位口径：只有中签行有真实供体；非中签行不参与复制，
+                # 分差记 0（倾斜中性，且被 participate 掩码屏蔽）。
+                tilt_delta = np.zeros_like(block_scores)
+                if part_idx.size > 0:
+                    tilt_delta[part_idx] = (
+                        block_scores[donor_idx_sub]
+                        - block_scores[part_idx]
+                    )
+                    _tilt_calib_sample = tilt_delta[part_idx]
+                else:
+                    _tilt_calib_sample = None
+            else:
+                tilt_delta = block_scores[donor_idx] - block_scores
+                _tilt_calib_sample = tilt_delta
+            if (
+                block_tilt_reference_scale is None
+                and _tilt_calib_sample is not None
+            ):
+                # lottery 零中签轮无样本，标定顺延到首个有中签行的轮；
+                # 顺延期间分差恒零，除以 1.0 恒中性，不影响任何决策。
+                _tilt_rms = direction_rms_scale(_tilt_calib_sample)
+                # 全零分差时倾斜恒中性，任何尺度都等价；取 1.0 避免除零
+                block_tilt_reference_scale = (
+                    _tilt_rms if _tilt_rms > 0.0 else 1.0
+                )
+            tilt_scores = tilt_delta / (
+                block_tilt_reference_scale
+                if block_tilt_reference_scale is not None
+                else 1.0
+            )
+            block_tilt_kwargs = {
+                "copy_direction_scores": tilt_scores,
+                "copy_direction_strength": block_score_tilt_strength,
+            }
+            if block_score_tilt_bounds is not None:
+                block_tilt_kwargs["copy_probability_bounds"] = (
+                    block_score_tilt_bounds
+                )
+            # 诊断：夹带触发率（只出统计标量，不进决策）。lottery 模式下
+            # 口径为 participants_only（非中签行分差恒零会稀释比率），
+            # 零中签轮记 0.0。
+            if lottery_first_donor_selection:
+                _tilt_diag_scores = (
+                    tilt_scores[part_idx] if part_idx.size > 0 else None
+                )
+            else:
+                _tilt_diag_scores = tilt_scores
+            if _tilt_diag_scores is None:
+                block_tilt_mean_abs_scaled_delta_history.append(0.0)
+                if block_score_tilt_bounds is not None:
+                    block_tilt_clip_lo_rate_history.append(0.0)
+                    block_tilt_clip_hi_rate_history.append(0.0)
+            else:
+                _tilt_probs = tilted_copy_probabilities(
+                    eta_t, _tilt_diag_scores, block_score_tilt_strength
+                )
+                block_tilt_mean_abs_scaled_delta_history.append(
+                    float(np.mean(np.abs(_tilt_diag_scores)))
+                )
+                if block_score_tilt_bounds is not None:
+                    block_tilt_clip_lo_rate_history.append(
+                        float(
+                            np.mean(
+                                _tilt_probs < block_score_tilt_bounds[0]
+                            )
+                        )
+                    )
+                    block_tilt_clip_hi_rate_history.append(
+                        float(
+                            np.mean(
+                                _tilt_probs > block_score_tilt_bounds[1]
+                            )
+                        )
+                    )
         direction_kwargs = (
             {
                 "copy_direction_scores": copy_direction_scores,
                 "copy_direction_strength": effective_direction_strength,
             }
-            if residual_directed_diffusion else {}
+            if residual_directed_diffusion else block_tilt_kwargs
         )
         for attempt in range(max_retries + 1):
             attempt_rho = (
@@ -2307,7 +2843,7 @@ def run_evolution(
                     schema,
                     rho=attempt_rho,
                     eta=eta_t,
-                    mu=mu * self_cooling_factor,
+                    mu=mu_t * self_cooling_factor,
                     rng=rng,
                     copy_direction_scores=copy_direction_scores,
                     copy_direction_strength=effective_direction_strength,
@@ -2452,7 +2988,7 @@ def run_evolution(
                         residual,
                         rho=attempt_rho,
                         eta=eta_t,
-                        mu=mu * self_cooling_factor,
+                        mu=mu_t * self_cooling_factor,
                         copy_direction_scores=copy_direction_scores,
                         copy_direction_strength=effective_direction_strength,
                         n_sweeps=factorized_gibbs_sweeps,
@@ -2523,13 +3059,29 @@ def run_evolution(
                     independent_transition_kwargs["participate"] = (
                         lottery_participate
                     )
+                # 值引导核只在启用时加键（同 participate：不污染 legacy
+                # 调用面，既有桩测试不受影响）。λ_t=0 也传——warmup 前
+                # 走纯 base 抽样，整臂随机流自洽。
+                if value_guidance_enabled:
+                    independent_transition_kwargs["value_gains"] = (
+                        value_gain_fn
+                    )
+                    independent_transition_kwargs["value_domains"] = (
+                        value_gain_computer.domains
+                    )
+                    independent_transition_kwargs[
+                        "value_guidance_strength"
+                    ] = value_guidance_lambda_effective_t
+                    independent_transition_kwargs[
+                        "value_guidance_drop_donor"
+                    ] = value_guidance_drop_donor
                 independent_result = evolve_step(
                     S,
                     donors,
                     schema,
                     rho=attempt_rho,
                     eta=eta_t,
-                    mu=mu * self_cooling_factor,
+                    mu=mu_t * self_cooling_factor,
                     rng=rng,
                     **independent_transition_kwargs,
                 )
@@ -3091,6 +3643,7 @@ def run_evolution(
         "accepted_rho_history": accepted_rho_history,
         "rho_schedule_history": rho_schedule_history,
         "eta_schedule_history": eta_schedule_history,
+        "mu_schedule_history": mu_schedule_history,
         "donor_top_share_history": donor_top_share_history,
         "row_max_prob_mean_history": row_max_prob_mean_history,
         "row_max_prob_max_history": row_max_prob_max_history,
@@ -3159,6 +3712,42 @@ def run_evolution(
         "direction_evaluation_count": direction_evaluation_count,
         "direction_evaluation_elapsed_sec": direction_evaluation_elapsed_sec,
         "direction_reference_scale": direction_reference_scale,
+        "block_score_tilt": {
+            "enabled": block_score_tilt_enabled,
+            "strength": block_score_tilt_strength,
+            "bounds": (
+                tuple(block_score_tilt_bounds)
+                if (block_score_tilt_enabled
+                    and block_score_tilt_bounds is not None)
+                else None
+            ),
+            "reference_scale": block_tilt_reference_scale,
+            "diagnostics_scope": (
+                "participants_only"
+                if (block_score_tilt_enabled
+                    and lottery_first_donor_selection)
+                else "all_rows"
+            ),
+            "mean_abs_scaled_delta_history": (
+                block_tilt_mean_abs_scaled_delta_history
+            ),
+            "clip_lo_rate_history": block_tilt_clip_lo_rate_history,
+            "clip_hi_rate_history": block_tilt_clip_hi_rate_history,
+        },
+        "value_guidance": {
+            "enabled": value_guidance_enabled,
+            "strength": value_guidance_strength,
+            "warmup_start_round": value_guidance_warmup_start_round,
+            "warmup_rounds": value_guidance_warmup_rounds,
+            "drop_donor": value_guidance_drop_donor,
+            "adaptive_scale": value_guidance_adaptive_scale,
+            "lambda_history": value_guidance_lambda_history,
+            "scale_history": value_guidance_scale_history,
+            "gain_recompute_count": value_guidance_gain_recompute_count,
+            "structure_compile_elapsed_sec": (
+                value_guidance_structure_compile_elapsed_sec
+            ),
+        },
         "factorized_gibbs_factor_build_elapsed_sec": (
             factorized_gibbs_factor_build_elapsed_sec
         ),
@@ -3349,6 +3938,17 @@ def run_evolution(
                 int(eta_anneal_start_round)
                 if eta_anneal_start_round is not None else None
             ),
+            "mu_anneal_end": (
+                float(mu_anneal_end) if mu_anneal_end is not None else None
+            ),
+            "mu_anneal_rounds": (
+                int(mu_anneal_rounds)
+                if mu_anneal_rounds is not None else None
+            ),
+            "mu_anneal_start_round": (
+                int(mu_anneal_start_round)
+                if mu_anneal_start_round is not None else None
+            ),
             "mw_query_weight_eta": (
                 float(mw_query_weight_eta)
                 if mw_query_weight_eta is not None else None
@@ -3388,6 +3988,20 @@ def run_evolution(
             "lottery_first_donor_selection": bool(
                 lottery_first_donor_selection
             ),
+            "block_score_tilt_strength": block_score_tilt_strength,
+            "block_score_tilt_bounds": (
+                tuple(block_score_tilt_bounds)
+                if (block_score_tilt_enabled
+                    and block_score_tilt_bounds is not None)
+                else None
+            ),
+            "value_guidance_strength": value_guidance_strength,
+            "value_guidance_warmup_start_round": (
+                value_guidance_warmup_start_round
+            ),
+            "value_guidance_warmup_rounds": value_guidance_warmup_rounds,
+            "value_guidance_drop_donor": value_guidance_drop_donor,
+            "value_guidance_adaptive_scale": value_guidance_adaptive_scale,
             "donor_diagnostics_scope": (
                 "participants_only"
                 if lottery_first_donor_selection else "all_rows"
