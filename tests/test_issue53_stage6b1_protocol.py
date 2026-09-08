@@ -10,7 +10,26 @@ from scripts import issue53_stage6b1_protocol as protocol
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _missing_local_artifacts() -> list[str]:
+    bindings = [
+        *protocol.PARENT_STAGE6B1_SMOKE_ARTIFACTS.values(),
+        *protocol.SOURCE_ARTIFACTS["formal"].values(),
+        *protocol.SOURCE_ARTIFACTS["smoke"].values(),
+    ]
+    return sorted({
+        str(binding["path"])
+        for binding in bindings
+        if not (REPOSITORY_ROOT / binding["path"]).is_file()
+    })
+
+
 def test_frozen_document_manifest_and_source_artifacts_are_bound():
+    missing = _missing_local_artifacts()
+    if missing:
+        pytest.skip(
+            "缺少 gitignored 本地产物（仅在持有产物的机器上可复核）："
+            + ", ".join(missing)
+        )
     assert protocol.file_sha256(
         REPOSITORY_ROOT / protocol.PROTOCOL_DOC
     ) == protocol.PROTOCOL_DOC_SHA256

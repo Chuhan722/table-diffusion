@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from scripts import audit_issue53_stage6b1_arithmetic as independent
 from scripts import audit_issue53_stage6b1_structure as structural
@@ -273,6 +274,19 @@ def test_independent_stage1_resource_decision_matches_frozen_protocol():
 
 
 def test_smoke_source_bundle_filters_out_non_stage1_dataset():
+    missing = sorted({
+        str(binding["path"])
+        for binding in (
+            *protocol.PARENT_STAGE6B1_SMOKE_ARTIFACTS.values(),
+            *protocol.SOURCE_ARTIFACTS["smoke"].values(),
+        )
+        if not (REPOSITORY_ROOT / binding["path"]).is_file()
+    })
+    if missing:
+        pytest.skip(
+            "缺少 gitignored 本地产物（仅在持有产物的机器上可复核）："
+            + ", ".join(missing)
+        )
     bundle = common.load_source_bundle("smoke", REPOSITORY_ROOT)
     assert len(bundle.states) == len(protocol.STATE_GROUPS)
     assert {

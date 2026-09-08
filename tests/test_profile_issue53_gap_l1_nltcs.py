@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from scripts import profile_issue53_gap_l1_nltcs as profiler
@@ -82,6 +84,13 @@ def test_cuda_external_instrumentation_preserves_tiny_trajectory():
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA 不可用")
+    # 确定性 cuBLAS 要求进程级 workspace 配置（conftest.py 已 setdefault）；
+    # 外部注入了其他值时跳过而不是让 torch 抛 RuntimeError。
+    if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in (":4096:8", ":16:8"):
+        pytest.skip(
+            "CUBLAS_WORKSPACE_CONFIG 非确定性取值，无法满足 "
+            "torch.use_deterministic_algorithms(True) 的 cuBLAS 要求"
+        )
     previous = torch.are_deterministic_algorithms_enabled()
     torch.use_deterministic_algorithms(True)
     schema = Schema(
