@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import copy
 import json
 from pathlib import Path
@@ -40,14 +42,17 @@ def test_recovery_inventory_freezes_two_cases_and_eight_files():
 
 
 def test_recovery_protocol_identity_and_confirmation_gate():
-    assert (
+    # 收束线：恢复身份链传递到活树校验，预期失败关闭；确认门单独校验。
+    with pytest.raises(RuntimeError, match="漂移"):
         recovery_protocol.assert_frozen_recovery_identity(ROOT)
-        == recovery_protocol.FROZEN_RECOVERY_SHA256
-    )
     with pytest.raises(PermissionError, match="确认"):
         recovery_protocol.require_confirmation(None)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="冻结筛查脚本使用 zip(strict=True)（需 py3.10+）；收束线按字节冻结不回改",
+)
 def test_actual_two_cases_validate_without_quality_interpretation():
     root = _artifact_root()
     recovery._validate_staging_manifest(root)

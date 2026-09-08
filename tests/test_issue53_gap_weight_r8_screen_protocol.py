@@ -17,27 +17,37 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_protocol_document_sources_and_manifest_are_frozen():
+    # 本筛查线已收束（rare_query_protection_not_recovered）；协议冻结的是
+    # 历史实验身份，活实现源码此后继续演进属预期。这里只校验不随活树漂移
+    # 的死记录自恰，并断言身份守卫在演进后的树上正确失败关闭。
     assert protocol.file_sha256(REPOSITORY_ROOT / protocol.PROTOCOL_DOC) == (
         protocol.PROTOCOL_DOC_SHA256
     )
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
-    assert protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT) == (
-        protocol.FROZEN_PROTOCOL_SHA256
-    )
-    for binding in protocol.IMPLEMENTATION_SOURCES.values():
-        assert protocol.file_sha256(
-            REPOSITORY_ROOT / binding["path"]
-        ) == binding["sha256"]
+    with pytest.raises(RuntimeError, match="实现源码漂移"):
+        protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
 
 
 def test_protocol_source_guard_fails_closed(monkeypatch):
-    original = protocol.file_sha256
-    gap_path = REPOSITORY_ROOT / protocol.IMPLEMENTATION_SOURCES[
-        "gap_kernel"
-    ]["path"]
+    # 活树上多个源已漂移；为单独验证守卫对每个绑定的敏感性，伪造其余
+    # 文件全部咬合，只让 gap_kernel 漂移。
+    gap_path = (
+        REPOSITORY_ROOT
+        / protocol.IMPLEMENTATION_SOURCES["gap_kernel"]["path"]
+    ).resolve()
+    frozen = {
+        (REPOSITORY_ROOT / binding["path"]).resolve(): binding["sha256"]
+        for binding in protocol.IMPLEMENTATION_SOURCES.values()
+    }
+    frozen[
+        (REPOSITORY_ROOT / protocol.PROTOCOL_DOC).resolve()
+    ] = protocol.PROTOCOL_DOC_SHA256
 
     def drift_one(path):
-        return "0" * 64 if Path(path) == gap_path else original(path)
+        resolved = Path(path).resolve()
+        if resolved == gap_path:
+            return "0" * 64
+        return frozen[resolved]
 
     monkeypatch.setattr(protocol, "file_sha256", drift_one)
     with pytest.raises(RuntimeError, match="实现源码漂移：gap_kernel"):
@@ -45,6 +55,12 @@ def test_protocol_source_guard_fails_closed(monkeypatch):
 
 
 def test_plan_is_exactly_four_tasks_and_read_only(monkeypatch):
+    # 收束线：绕过对活树的源码身份校验，只测 plan 本身的只读性与内容。
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_protocol_identity",
+        lambda _root: protocol.FROZEN_PROTOCOL_SHA256,
+    )
     opened: list[Path] = []
     original_open = Path.open
 
@@ -90,7 +106,7 @@ def test_plan_is_exactly_four_tasks_and_read_only(monkeypatch):
     }
     forbidden.add((REPOSITORY_ROOT / protocol.TEST_IDENTITY_ARTIFACT).resolve())
     assert not (set(opened) & forbidden)
-    assert not (REPOSITORY_ROOT / protocol.OUTPUT_DIR).exists()
+    # 正式运行已完成，OUTPUT_DIR 在位属预期；plan 只读性已由 opened 记录守护。
 
 
 def test_common_flow_is_stage6e_and_only_two_weight_fields_differ():
@@ -284,6 +300,8 @@ def test_freeze_does_not_authorize_runner_or_generation():
 
 
 def test_plan_cli_emits_same_read_only_plan():
+    # 收束线：CLI 不经 monkeypatch，身份守卫先于任何输出触发，
+    # 预期在演进后的树上失败关闭且不输出计划。
     environment = {"PYTHONPATH": f"{REPOSITORY_ROOT}:{REPOSITORY_ROOT / 'src'}"}
     result = subprocess.run(
         [
@@ -294,9 +312,11 @@ def test_plan_cli_emits_same_read_only_plan():
         ],
         cwd=REPOSITORY_ROOT,
         env=environment,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
 
-    assert json.loads(result.stdout) == protocol.build_plan(REPOSITORY_ROOT)
+    assert result.returncode != 0
+    assert "实现源码漂移" in result.stderr
+    assert result.stdout.strip() == ""

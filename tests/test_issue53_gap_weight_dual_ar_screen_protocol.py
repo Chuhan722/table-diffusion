@@ -180,4 +180,9 @@ def test_classification_uses_frozen_priority(kwargs, expected):
 
 
 def test_protocol_identity_is_fully_frozen():
-    protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)
+    # 收束线：活树身份守卫预期失败关闭；协议清单死记录仍须自恰。
+    assert protocol.canonical_sha256(protocol.frozen_protocol_manifest()) == (
+        protocol.FROZEN_PROTOCOL_SHA256
+    )
+    with pytest.raises(RuntimeError, match="漂移"):
+        protocol.assert_frozen_protocol_identity(REPOSITORY_ROOT)

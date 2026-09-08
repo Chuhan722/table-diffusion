@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import copy
 import json
 from pathlib import Path
@@ -50,14 +52,22 @@ def test_recovery_inventory_freezes_four_cases_and_sixteen_files():
 
 
 def test_recovery_protocol_identity_and_confirmation_gate():
+    # 收束线：恢复身份链传递到科学协议对活树的源码校验，预期失败关闭；
+    # 死记录自恰与确认门单独校验。
     assert (
-        recovery_protocol.assert_frozen_recovery_identity(ROOT)
+        recovery_protocol.recovery_sha256()
         == recovery_protocol.FROZEN_RECOVERY_SHA256
     )
+    with pytest.raises(RuntimeError, match="漂移"):
+        recovery_protocol.assert_frozen_recovery_identity(ROOT)
     with pytest.raises(PermissionError, match="确认"):
         recovery_protocol.require_confirmation(None)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="冻结筛查脚本使用 zip(strict=True)（需 py3.10+）；收束线按字节冻结不回改",
+)
 def test_actual_frozen_four_cases_validate_without_quality_interpretation():
     root = _artifact_root()
     recovery._validate_staging_manifest(root)
@@ -102,6 +112,10 @@ def test_recovery_source_has_no_generation_or_quality_evaluation_entrypoints():
         assert forbidden not in source
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="冻结筛查脚本使用 zip(strict=True)（需 py3.10+）；收束线按字节冻结不回改",
+)
 def test_recovered_shard_report_discloses_monitoring_limit():
     rows = recovery._validate_case_matrix(_artifact_root())
     report = recovery._build_shard_report(
