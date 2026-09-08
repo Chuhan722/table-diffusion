@@ -2,6 +2,59 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #75 纯适应度形态 vs 方向场主线正式 A/B——nltcs 判定 pure_form_noninferior，plants 运行中（2026-09-08）
+
+> 预注册协议见 `scripts/probe_pure_form_nltcs_formal.py`（协议 SHA `1772f47fbb17ada1da4f3a5c650f5fe9c199f5d9c69edff717a71593650d3ce3`）
+> 与 `scripts/probe_pure_form_plants_formal.py`（`8cdeccdb146e006f2d52a07e3f36c8e6ef2225bee889481dce683623b0c930f8`），
+> 预注册评论 Issue #75 5582053282。本节只记录已审计事实；plants 侧尚未完成，不预判。
+
+正式身份与产物（nltcs）：
+
+```text
+执行 commit                      7ad235bd（分支 research/issue75-pure-form-ab，干净树，formal=True）
+产物                             docs/实验结果/formal_pure_form_nltcs_5seed_2000round.json（SHA cb21dfb7e0d30276…）
+独立审计                         scripts/audit_formal_json.py 统一验证入口整份通过，审计输出 SHA 42d5658207…
+设备/环境                        RTX 4090（与另一小型进程共享），torch 2.7.0+cu126，gsd；2026-09-08 16:48 → 18:12
+唯一变量                         residual_directed_diffusion：directed_ds2（ds=2.0 initial_rms）vs pure_ds0（关闭）
+共享冻结                         relative floor=8、si α≡16、rho0.01、marginal 初始化、tol=inf、η=0.5、μ=0.01、2000 轮、best-loss 表
+```
+
+主判定（measured L1，配对种子 400..404）：
+
+| seed | directed_ds2 | pure_ds0 | pure 更优 |
+|---|---:|---:|---|
+| 400 | 0.000307 | 0.000293 | 是 |
+| 401 | 0.000288 | 0.000251 | 是 |
+| 402 | 0.000281 | 0.000304 | 否（+8.2%） |
+| 403 | 0.000312 | 0.000340 | 否（+9.0%） |
+| 404 | 0.000298 | 0.000285 | 是 |
+| **均值** | **0.000297** | **0.000295** | **−0.9%** |
+
+```text
+pure 配对胜                       3/5
+pure 在 5% 带内的种子             3/5（阈值 ≥3）
+pure_mean ≤ directed_mean×1.05    成立
+优效条件（<×0.95 且 ≥4/5 胜）      不成立
+classification                   pure_form_noninferior
+```
+
+质量门（train 侧，pure 相对 directed）：unmeasured 3-way L1 0.000574 vs 0.000575（−0.2%）、4-way 0.000871 vs 0.000871（−0.02%）、
+分箱 TVD 0.2353 vs 0.2378（−1.0%），均未报警。
+
+观察项：directed 臂尾段 100 轮方向场复制概率 `p(copy|方向>0)=0.5007`、`p(copy|方向<0)=0.4996`（η=0.5）——五种子一致证实
+方向场倾斜在 2000 轮末段已衰减为零，与 dev 诊断（0.7535@r1 → 0.5005@r600）一致。两臂均低于 PGM nltcs 参考 0.000357
+（directed 0.83×、pure 0.83×）。
+
+结论与边界：
+
+- **nltcs 上纯适应度形态（残差只经行适应度进入 donor 选择，盲复制+变异，无门）相对现主线非劣**：均值几乎相同、
+  质量指标全部不劣、方向场在稳态下无作用。这支持把纯形态确立为主线的冻结配置（待 plants 结果与设计文档更新后另 PR 执行）。
+- 非劣而非优效：配对 3/5、两个种子 pure 差 8–9%，说明方向场作为早期加速器会改变轨迹并带来种子级差异，
+  但在固定 2000 轮预算下不改变平台水平。
+- plants（α24、rho0.005、16000 轮）正在运行（约 37h），是纯形态适用域的关键不确定性（69 属性盲复制）。
+- PGM nltcs 参考值披露：当前 `td_baseline_pgm` 环境重跑两次得 0.000374/0.000343（历史 0.000357），mbi 拟合/采样
+  不受脚本 `np.random.seed` 控制，进程间抖动约 ±5%；参考仅作位置，不进判定。
+
 ### 最新暂停点：Stage 5 同温度核比较完成正式闭环并收口（2026-08-27）
 
 > 本节覆盖下方“Stage 5 尚未实现或运行”的历史暂停描述。正式 collection（采集）、frozen evaluator
