@@ -3,12 +3,16 @@
 import math
 from pathlib import Path
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
-from mbi import Domain, Factor
 
-from scripts import run_baseline_pgm_nltcs_diagnostic as diagnostic
+# 基线环境可能未装 JAX/mbi：缺失时整文件 skip，不得在收集期崩溃。
+jax = pytest.importorskip("jax")
+pytest.importorskip("mbi")
+jnp = jax.numpy
+from mbi import Domain, Factor  # noqa: E402
+
+from scripts import run_baseline_pgm_nltcs_diagnostic as diagnostic  # noqa: E402
 
 
 def test_plan_is_frozen_and_result_blind(monkeypatch):
@@ -178,7 +182,10 @@ def test_comparison_reports_pgm_minus_each_arm():
 
 
 def test_v3_reference_extraction_pins_and_shapes():
-    reference = diagnostic._load_v3_reference(Path("."))
+    try:
+        reference = diagnostic._load_v3_reference(Path("."))
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     assert reference["sha256"] == diagnostic.INPUT_SHA256["v3_report"]
     assert set(reference["arms"]) == {"residual", "equal"}
     for arm_snapshot in reference["arms"].values():

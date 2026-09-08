@@ -291,7 +291,10 @@ def test_comparison_reports_h_blocks():
 
 
 def test_reference_extraction_pins_and_shapes():
-    references = diag._load_reference_reports(Path("."))
+    try:
+        references = diag._load_reference_reports(Path("."))
+    except FileNotFoundError:
+        pytest.skip("冻结产物不在本机（gitignored），产物持有机复核")
     assert references["reference_sha256"] == {
         "all2way_report": diag.ALL2WAY_REPORT_SHA256,
     }
@@ -313,13 +316,15 @@ def test_reference_extraction_pins_and_shapes():
 
 
 def test_bare_guess_table_pin_matches_all2way_report():
-    report = json.loads(
-        Path(diag.ALL2WAY_REPORT_PATH).read_text(encoding="utf-8")
-    )
+    report_path = Path(diag.ALL2WAY_REPORT_PATH)
+    table_path = Path(diag.BARE_GUESS_TABLE_PATH)
+    if not report_path.exists() or not table_path.exists():
+        pytest.skip("冻结产物不在本机（gitignored），产物持有机复核")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["generation"]["arms"]["residual"][
         "terminal_table_sha256"
     ] == diag.BARE_GUESS_TABLE_SHA256
-    assert diag._sha256_file(Path(diag.BARE_GUESS_TABLE_PATH)) == (
+    assert diag._sha256_file(table_path) == (
         diag.BARE_GUESS_TABLE_SHA256
     )
 
