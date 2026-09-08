@@ -73,10 +73,15 @@ def _synthetic_cases() -> tuple[list[dict], list[dict]]:
     return candidate, baseline
 
 
-def test_adapter_identity_plan_and_confirmation_gate():
-    assert (
+def test_adapter_identity_plan_and_confirmation_gate(monkeypatch):
+    # 收束线：适配身份链传递到科学协议对活树的校验，预期失败关闭；
+    # plan 的结果盲性在绕过身份校验后单独验证。
+    with pytest.raises(RuntimeError, match="漂移"):
         protocol.assert_frozen_adapter_identity(ROOT)
-        == protocol.FROZEN_ADAPTER_SHA256
+    monkeypatch.setattr(
+        protocol,
+        "assert_frozen_adapter_identity",
+        lambda _root: protocol.FROZEN_ADAPTER_SHA256,
     )
     plan = adapter.build_plan()
     assert plan["raw_reference_data_accessed"] is False

@@ -90,10 +90,9 @@ def _synthetic_inputs():
 
 
 def test_adapter_identity_and_confirmation_gate():
-    assert (
+    # 收束线：适配身份链传递到活树校验，预期失败关闭；确认门单独校验。
+    with pytest.raises(RuntimeError, match="漂移"):
         protocol.assert_frozen_adapter_identity(ROOT)
-        == protocol.FROZEN_ADAPTER_SHA256
-    )
     with pytest.raises(PermissionError, match="确认"):
         protocol.require_evaluation_confirmation(None, None)
 
