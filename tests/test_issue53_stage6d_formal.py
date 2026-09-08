@@ -410,6 +410,10 @@ def test_l1_arithmetic_rejects_non_count_vectors(target, answers, n_records):
         auditor._arithmetic(np.asarray(target), np.asarray(answers), n_records)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="冻结正式脚本使用 zip(strict=True)（需 py3.10+）；6D 冻结脚本按字节不回改",
+)
 def test_checkpoint_artifact_contains_fixed_and_actual_terminal_l1(monkeypatch):
     task = joint.JointTrajectoryTask(
         dataset="test_300x10",
@@ -583,6 +587,10 @@ def test_case_row_requires_one_candidate_for_every_applied_round():
         runner._validate_case_row(task, row)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="冻结正式脚本使用 zip(strict=True)（需 py3.10+）；6D 冻结脚本按字节不回改",
+)
 @pytest.mark.parametrize("arm", joint.ARM_ORDER)
 def test_real_artificial_generator_diagnostics_feed_formal_audits(arm, monkeypatch):
     schema = Schema(
