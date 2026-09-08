@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -373,6 +374,13 @@ def test_protocol_requires_both_datasets_and_both_baselines():
 
 
 def test_metrics_from_answers_reports_integer_sum_l1_and_gap_e():
+    # 6D 正式脚本被冻结协议按 SHA-256 绑定（issue53_stage6d_formal_protocol），
+    # 其内部 zip(strict=True) 是 Python 3.10+ 语法；为兼容 py3.9 修改源码会导致
+    # 协议身份漂移并使产物持有机的复核入口 fail closed。因此 py3.9 环境跳过本项
+    # 直连内部算术的测试；合法输入路径由 py3.11 基线覆盖，非法输入拒绝路径
+    # （下方参数化测试）在两个版本都在 zip 之前抛错、保持覆盖。
+    if sys.version_info < (3, 10):
+        pytest.skip("冻结正式脚本内部使用 zip(strict=True)，py3.9 不重放其合法输入路径")
     metrics = runner._metrics_from_answers(
         np.asarray([10.0, 2.0]),
         np.asarray([7.0, 4.0]),

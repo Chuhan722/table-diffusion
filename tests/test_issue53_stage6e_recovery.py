@@ -30,7 +30,10 @@ def _frozen_artifact_root() -> Path:
         return staging
     if recovered.is_dir():
         return recovered
-    raise FileNotFoundError("冻结 Stage 6E 暂存或恢复分片均不存在")
+    pytest.skip(
+        "冻结 Stage 6E 暂存或恢复分片均不存在（gitignored 本地产物，"
+        "仅在持有正式产物的机器上可复核；协议/入口只读契约测试不受影响）"
+    )
 
 
 def test_recovery_inventory_freezes_exact_single_shard_30_cases():
