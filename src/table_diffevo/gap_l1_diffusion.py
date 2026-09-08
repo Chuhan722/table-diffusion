@@ -4,9 +4,23 @@
 它没有候选接受、拒绝、重试、回滚或赢家选择；完成固定数量的微步后，最终
 开关表会被一次性物化成唯一复制表。
 
-目标函数是全部已测查询的相对绝对误差：
+默认目标函数是全部已测查询的历史相对绝对误差：
 
 ``E = mean_j(abs(target_j - count_j) / max(target_j, floor))``。
+
+研究模式可把分母改成 ``clip(target_j, 0, N) + smoothing``，其中
+``smoothing = max(floor, N / (R - 1))``。这样仍优先修复稀有查询，但任意
+两条有效计数查询之间的单位误差权重比不超过显式上限 ``R``。另一研究模式
+使用 ``sqrt(max(target_j, 1))``，在绝对计数误差与纯相对计数误差之间取固定
+的几何中点，不引入数据集专用比例。
+
+另一个研究模式同时计算全查询等权绝对计数误差率 A，以及只在
+正目标查询上归一化 ``1/target`` 权重的误差率 R，并使用
+``max(A, R)``。零目标查询只进入 A；该模式不使用分母下限。
+
+相对初始进度研究模式复用相同 A/R 通道，但分别除以第 1 轮前一次性冻结的
+``A_init``、``R_init`` 后再取最大值。初始尺度不按轮或候选重算；没有正目标
+查询时 R 通道结构性缺席，能量退化为 ``A/A_init``。
 
 每个条件微步精确维护同一行内多属性的合取作用，以及多行先求总查询计数再
 计算误差的共同作用。历史端点使用 NumPy 双精度浮点数；可选 CUDA 后端复用
@@ -37,6 +51,22 @@ DEFAULT_GAP_L1_ETA = 0.5
 DEFAULT_GAP_L1_STRENGTH = 2.0
 DEFAULT_GAP_L1_SWEEPS = 8
 DEFAULT_GAP_L1_LOGIT_CLIP = 30.0
+GAP_L1_WEIGHTING_LEGACY_RELATIVE = "legacy_relative"
+GAP_L1_WEIGHTING_BOUNDED_RELATIVE = "bounded_relative"
+GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE = "sqrt_target_relative"
+GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX = "dual_abs_relative_max"
+GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX = (
+    "dual_abs_relative_progress_max"
+)
+GAP_L1_WEIGHTING_MODES = (
+    GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+    GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+    GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+    GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+    GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+)
+DEFAULT_GAP_L1_WEIGHTING = GAP_L1_WEIGHTING_LEGACY_RELATIVE
+DEFAULT_GAP_L1_MAX_WEIGHT_RATIO = 8.0
 TRACE_FORMAT = "issue53_gap_l1_microstep_trace_le_v1"
 BATCH_EXECUTION_FORMAT = "issue53_gap_l1_batched_cuda_float64_v2"
 
@@ -62,6 +92,26 @@ class CompiledGapL1Workload:
     signature: Tuple[Any, ...]
 
 
+@dataclass(frozen=True)
+class GapL1ChannelReference:
+    """A/R 相对初始进度模式在完整运行内共享的冻结尺度。"""
+
+    absolute_initial: float
+    relative_initial: Optional[float]
+    source: str = "initial_current_before_round_1"
+
+
+@dataclass(frozen=True)
+class _GapL1WeightingSpec:
+    mode: str
+    max_weight_ratio: Optional[float]
+    smoothing_count: Optional[float]
+    actual_weight_ratio: float
+    positive_target_query_count: Optional[int] = None
+    relative_inverse_target_normalizer: Optional[float] = None
+    relative_positive_weight_ratio: Optional[float] = None
+
+
 @dataclass
 class _GapPlan:
     compiled: CompiledGapL1Workload
@@ -79,8 +129,13 @@ class _GapPlan:
     plan_counts: np.ndarray
     target: np.ndarray
     denominators: np.ndarray
+    weighting: _GapL1WeightingSpec
+    channel_reference: Optional[GapL1ChannelReference]
     error_terms: np.ndarray
     error_sum: float
+    relative_weights: Optional[np.ndarray]
+    relative_error_terms: Optional[np.ndarray]
+    relative_error_sum: Optional[float]
     mask: np.ndarray
 
 
@@ -96,6 +151,9 @@ class _GapInputStructure:
     counts: np.ndarray
     targets: np.ndarray
     denominators: np.ndarray
+    weighting: _GapL1WeightingSpec
+    channel_reference: Optional[GapL1ChannelReference]
+    relative_weights: Optional[np.ndarray]
 
 
 @dataclass
@@ -116,8 +174,13 @@ class _CudaGapPlan:
     plan_counts: Any
     target: Any
     denominators: Any
+    weighting: _GapL1WeightingSpec
+    channel_reference: Optional[GapL1ChannelReference]
     error_terms: Any
     error_sum: Any
+    relative_weights: Optional[Any]
+    relative_error_terms: Optional[Any]
+    relative_error_sum: Optional[Any]
     mask: Any
 
 
@@ -163,6 +226,314 @@ def _require_nonnegative_integer(value: Any, name: str) -> int:
     ):
         raise ValueError(f"{name} 必须是非负整数")
     return int(value)
+
+
+def _require_positive_integer(value: Any, name: str) -> int:
+    result = _require_nonnegative_integer(value, name)
+    if result == 0:
+        raise ValueError(f"{name} 必须是正整数")
+    return result
+
+
+def _is_dual_abs_relative_mode(mode: str) -> bool:
+    return mode in (
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+    )
+
+
+def validate_gap_l1_weighting(
+    weighting: Any,
+    max_weight_ratio: Any,
+) -> Tuple[str, Optional[float]]:
+    """验证缺口核查询权重模式，不读取数据或构造分母。"""
+
+    if weighting not in GAP_L1_WEIGHTING_MODES:
+        raise ValueError(
+            "gap_l1 weighting 必须是 "
+            f"{GAP_L1_WEIGHTING_MODES} 之一，得到 {weighting!r}"
+        )
+    mode = str(weighting)
+    if mode in (
+        GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+        GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+    ):
+        if max_weight_ratio is not None:
+            raise ValueError(
+                f"{mode} 不允许设置 max_weight_ratio"
+            )
+        return mode, None
+
+    ratio = _require_positive_finite(
+        max_weight_ratio, "max_weight_ratio"
+    )
+    if ratio <= 1.0:
+        raise ValueError("max_weight_ratio 必须大于 1")
+    return mode, ratio
+
+
+def _build_gap_l1_denominators(
+    targets: np.ndarray,
+    *,
+    floor: float,
+    weighting: str,
+    max_weight_ratio: Optional[float],
+    n_records: Optional[int],
+) -> Tuple[np.ndarray, _GapL1WeightingSpec]:
+    """一次性构造所有后端共享的 float64 查询误差分母。"""
+
+    floor_value = _require_positive_finite(floor, "floor")
+    mode, ratio = validate_gap_l1_weighting(
+        weighting, max_weight_ratio
+    )
+    positive_target_query_count = None
+    relative_inverse_target_normalizer = None
+    relative_positive_weight_ratio = None
+    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        denominators = np.maximum(targets, floor_value)
+        smoothing_count = None
+    elif mode == GAP_L1_WEIGHTING_BOUNDED_RELATIVE:
+        records = _require_positive_integer(n_records, "n_records")
+        bounded_targets = np.clip(targets, 0.0, float(records))
+        smoothing_count = float(max(
+            floor_value,
+            np.float64(records) / np.float64(ratio - 1.0),
+        ))
+        denominators = bounded_targets + smoothing_count
+    elif mode == GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE:
+        denominators = np.sqrt(np.maximum(targets, 1.0))
+        smoothing_count = None
+    elif _is_dual_abs_relative_mode(mode):
+        records = _require_positive_integer(n_records, "n_records")
+        if np.any(targets < 0.0):
+            raise ValueError(
+                f"{mode} 要求 target 为非负计数"
+            )
+        # 主误差项保持历史“项求和、最后除以 J”的存储形式：
+        # error_terms=e/N，所以 error_sum/J 正好是 A。floor 仅为 API
+        # 兼容而验证，不进入新模式算式。
+        denominators = np.full_like(targets, float(records))
+        positive = targets > 0.0
+        positive_target_query_count = int(np.sum(positive))
+        if positive_target_query_count:
+            inverse_targets = 1.0 / targets[positive]
+            relative_inverse_target_normalizer = float(
+                np.sum(inverse_targets, dtype=np.float64)
+            )
+            relative_positive_weight_ratio = float(
+                np.max(inverse_targets) / np.min(inverse_targets)
+            )
+            if (
+                not np.isfinite(relative_inverse_target_normalizer)
+                or relative_inverse_target_normalizer <= 0.0
+                or not np.isfinite(relative_positive_weight_ratio)
+            ):
+                raise ValueError(
+                    f"{mode} 的正 target 无法在 float64 "
+                    "中构造有限归一化权重"
+                )
+        else:
+            relative_inverse_target_normalizer = 0.0
+            relative_positive_weight_ratio = 1.0
+        smoothing_count = None
+    else:  # pragma: no cover - validate_gap_l1_weighting 已封闭模式集合
+        raise RuntimeError(f"未实现的 gap L1 weighting：{mode}")
+
+    denominators = np.asarray(denominators, dtype=np.float64)
+    if np.any(~np.isfinite(denominators)) or np.any(denominators <= 0.0):
+        raise ValueError("gap L1 分母必须是正有限数值")
+    actual_ratio = float(
+        np.max(denominators) / np.min(denominators)
+    )
+    if ratio is not None and actual_ratio > ratio * (1.0 + 1e-12):
+        raise RuntimeError("bounded_relative 实际权重比超过配置上限")
+    return denominators, _GapL1WeightingSpec(
+        mode=mode,
+        max_weight_ratio=ratio,
+        smoothing_count=smoothing_count,
+        actual_weight_ratio=actual_ratio,
+        positive_target_query_count=positive_target_query_count,
+        relative_inverse_target_normalizer=(
+            relative_inverse_target_normalizer
+        ),
+        relative_positive_weight_ratio=relative_positive_weight_ratio,
+    )
+
+
+def _build_dual_relative_weights(
+    targets: np.ndarray,
+    *,
+    n_records: int,
+    weighting: _GapL1WeightingSpec,
+) -> Optional[np.ndarray]:
+    """仅为 A/R 模式构造总和为 ``1/N`` 的正目标权重。"""
+
+    if not _is_dual_abs_relative_mode(weighting.mode):
+        return None
+    records = _require_positive_integer(n_records, "n_records")
+    weights = np.zeros_like(targets, dtype=np.float64)
+    positive = targets > 0.0
+    if np.any(positive):
+        normalizer = weighting.relative_inverse_target_normalizer
+        if normalizer is None or not np.isfinite(normalizer) or normalizer <= 0:
+            raise RuntimeError("A/R 双通道逆目标归一化常数非法")
+        weights[positive] = (
+            (1.0 / targets[positive]) / normalizer / float(records)
+        )
+    return weights
+
+
+def _validate_gap_l1_channel_reference(
+    reference: Any,
+    *,
+    weighting: _GapL1WeightingSpec,
+) -> Optional[GapL1ChannelReference]:
+    """按模式和正目标结构验证冻结 A/R 初始尺度。"""
+
+    if weighting.mode != GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX:
+        if reference is not None:
+            raise ValueError(
+                "gap_l1_channel_reference 只允许用于 "
+                f"{GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX}"
+            )
+        return None
+    if not isinstance(reference, GapL1ChannelReference):
+        raise ValueError(
+            "dual_abs_relative_progress_max 要求显式提供由 "
+            "build_gap_l1_channel_reference 创建的冻结参照"
+        )
+    absolute = _require_positive_finite(
+        reference.absolute_initial, "channel_reference.absolute_initial"
+    )
+    if reference.source != "initial_current_before_round_1":
+        raise ValueError(
+            "channel_reference.source 必须是 "
+            "'initial_current_before_round_1'"
+        )
+    positive_count = int(weighting.positive_target_query_count or 0)
+    if positive_count == 0:
+        if reference.relative_initial is not None:
+            raise ValueError("没有正 target 时 relative_initial 必须为 None")
+        relative = None
+    else:
+        relative = _require_positive_finite(
+            reference.relative_initial,
+            "channel_reference.relative_initial",
+        )
+    return GapL1ChannelReference(
+        absolute_initial=absolute,
+        relative_initial=relative,
+        source=reference.source,
+    )
+
+
+def build_gap_l1_channel_reference(
+    query_counts: Any,
+    target: Any,
+    *,
+    n_records: int,
+) -> GapL1ChannelReference:
+    """从第 1 轮前查询计数一次性构造 A/R 相对进度冻结尺度。"""
+
+    raw_counts = np.asarray(query_counts)
+    if raw_counts.ndim != 1 or raw_counts.dtype.kind not in "iuf":
+        raise ValueError("query_counts 必须是一维有限数值向量")
+    counts = raw_counts.astype(np.float64, copy=False)
+    if not np.all(np.isfinite(counts)):
+        raise ValueError("query_counts 必须是一维有限数值向量")
+    if len(counts) == 0:
+        raise ValueError("至少需要一个查询")
+    targets = _require_finite_vector(target, len(counts), "target")
+    records = _require_positive_integer(n_records, "n_records")
+    denominators, weighting = _build_gap_l1_denominators(
+        targets,
+        floor=DEFAULT_GAP_L1_FLOOR,
+        weighting=GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+        max_weight_ratio=None,
+        n_records=records,
+    )
+    errors = np.abs(targets - counts)
+    absolute = float(np.mean(errors / denominators, dtype=np.float64))
+    if not np.isfinite(absolute) or absolute <= 0.0:
+        raise ValueError(
+            "A_init 必须为正；A_init=0 表示初始表已精确命中全部查询，"
+            "无需进入缺口扫描"
+        )
+    relative = None
+    if int(weighting.positive_target_query_count or 0) > 0:
+        relative_weights = _build_dual_relative_weights(
+            targets, n_records=records, weighting=weighting
+        )
+        if relative_weights is None:
+            raise RuntimeError("A/R 双通道相对权重未构造")
+        relative = float(np.sum(
+            errors * relative_weights, dtype=np.float64
+        ))
+        if not np.isfinite(relative) or relative <= 0.0:
+            raise ValueError(
+                "正 target 存在时 R_init 必须为正；R_init=0 表示正目标"
+                "查询初始已全部精确，相对初始进度没有定义"
+            )
+    return GapL1ChannelReference(
+        absolute_initial=absolute,
+        relative_initial=relative,
+    )
+
+
+def _aggregate_dual_channels_numpy(
+    absolute: float,
+    relative: float,
+    *,
+    weighting: _GapL1WeightingSpec,
+    reference: Optional[GapL1ChannelReference],
+) -> Tuple[float, float, Optional[float]]:
+    """返回能量以及实际参与 max 比较的 A、R 通道值。"""
+
+    absolute_value = float(absolute)
+    relative_value = float(relative)
+    if weighting.mode == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX:
+        return max(absolute_value, relative_value), absolute_value, relative_value
+    if weighting.mode != GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX:
+        raise RuntimeError("非 A/R 模式不能调用双通道聚合")
+    if reference is None:
+        raise RuntimeError("A/R 相对初始进度参照未构造")
+    absolute_progress = absolute_value / reference.absolute_initial
+    if reference.relative_initial is None:
+        return absolute_progress, absolute_progress, None
+    relative_progress = relative_value / reference.relative_initial
+    return (
+        max(absolute_progress, relative_progress),
+        absolute_progress,
+        relative_progress,
+    )
+
+
+def _aggregate_dual_channels_cuda(
+    absolute: Any,
+    relative: Any,
+    *,
+    plan: _CudaGapPlan,
+) -> Tuple[Any, Any, Optional[Any]]:
+    """CUDA 版双通道聚合；冻结尺度以 float64 常量进入设备。"""
+
+    if plan.weighting.mode == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX:
+        return plan.torch.maximum(absolute, relative), absolute, relative
+    if plan.weighting.mode != GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX:
+        raise RuntimeError("非 A/R 模式不能调用双通道聚合")
+    reference = plan.channel_reference
+    if reference is None:
+        raise RuntimeError("A/R 相对初始进度参照未构造")
+    absolute_progress = absolute / reference.absolute_initial
+    if reference.relative_initial is None:
+        return absolute_progress, absolute_progress, None
+    relative_progress = relative / reference.relative_initial
+    return (
+        plan.torch.maximum(absolute_progress, relative_progress),
+        absolute_progress,
+        relative_progress,
+    )
 
 
 def _freeze_value(value: Any) -> Any:
@@ -297,10 +668,13 @@ def normalized_gap_l1_error(
     target: Any,
     *,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    n_records: Optional[int] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> float:
-    """计算协议定义的相对绝对查询误差。"""
+    """计算指定查询权重几何下的平均绝对查询误差。"""
 
-    floor_value = _require_positive_finite(floor, "floor")
     raw_counts = np.asarray(query_counts)
     raw_target = np.asarray(target)
     if raw_counts.ndim != 1 or raw_counts.dtype.kind not in "iuf":
@@ -311,10 +685,38 @@ def normalized_gap_l1_error(
         raise ValueError("query_counts 必须是一维有限数值向量")
     if len(counts) == 0:
         raise ValueError("至少需要一个查询")
-    denominators = np.maximum(targets, floor_value)
-    if np.any(denominators <= 0.0):
-        raise ValueError("max(target, floor) 必须为正")
-    return float(np.mean(np.abs(targets - counts) / denominators))
+    denominators, weighting_spec = _build_gap_l1_denominators(
+        targets,
+        floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=n_records,
+    )
+    validated_reference = _validate_gap_l1_channel_reference(
+        channel_reference, weighting=weighting_spec
+    )
+    absolute_terms = np.abs(targets - counts) / denominators
+    absolute_error = float(np.mean(absolute_terms))
+    if not _is_dual_abs_relative_mode(weighting_spec.mode):
+        return absolute_error
+    relative_weights = _build_dual_relative_weights(
+        targets,
+        n_records=_require_positive_integer(n_records, "n_records"),
+        weighting=weighting_spec,
+    )
+    if relative_weights is None:
+        raise RuntimeError("A/R 双通道相对权重未构造")
+    relative_error = float(np.sum(
+        np.abs(targets - counts) * relative_weights,
+        dtype=np.float64,
+    ))
+    energy, _, _ = _aggregate_dual_channels_numpy(
+        absolute_error,
+        relative_error,
+        weighting=weighting_spec,
+        reference=validated_reference,
+    )
+    return energy
 
 
 def _evaluate_conditions(
@@ -329,6 +731,101 @@ def _evaluate_conditions(
     return truth
 
 
+def _gap_l1_energy_numpy(plan: _GapPlan) -> float:
+    """返回当前标量能量；旧模式保持历史结合顺序。"""
+
+    absolute_or_legacy = plan.error_sum / plan.compiled.n_queries
+    if not _is_dual_abs_relative_mode(plan.weighting.mode):
+        return float(absolute_or_legacy)
+    if plan.relative_error_sum is None:
+        raise RuntimeError("A/R 双通道相对误差和未构造")
+    energy, _, _ = _aggregate_dual_channels_numpy(
+        float(absolute_or_legacy),
+        float(plan.relative_error_sum),
+        weighting=plan.weighting,
+        reference=plan.channel_reference,
+    )
+    return energy
+
+
+def _gap_l1_energy_cuda(plan: _CudaGapPlan) -> Any:
+    """显卡上返回当前标量能量。"""
+
+    absolute_or_legacy = plan.error_sum / plan.compiled.n_queries
+    if not _is_dual_abs_relative_mode(plan.weighting.mode):
+        return absolute_or_legacy
+    if plan.relative_error_sum is None:
+        raise RuntimeError("A/R 双通道相对误差和未构造")
+    energy, _, _ = _aggregate_dual_channels_cuda(
+        absolute_or_legacy, plan.relative_error_sum, plan=plan
+    )
+    return energy
+
+
+def _final_channel_values_numpy(plan: _GapPlan) -> Optional[Dict[str, Any]]:
+    if (
+        plan.weighting.mode
+        != GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+    ):
+        return None
+    if plan.relative_error_sum is None:
+        raise RuntimeError("A/R 双通道相对误差和未构造")
+    absolute_raw = float(plan.error_sum / plan.compiled.n_queries)
+    relative_raw = float(plan.relative_error_sum)
+    _, absolute_compared, relative_compared = _aggregate_dual_channels_numpy(
+        absolute_raw,
+        relative_raw,
+        weighting=plan.weighting,
+        reference=plan.channel_reference,
+    )
+    return _channel_snapshot(
+        absolute_raw=absolute_raw,
+        relative_raw=(
+            relative_raw
+            if plan.channel_reference is not None
+            and plan.channel_reference.relative_initial is not None
+            else None
+        ),
+        absolute_compared=absolute_compared,
+        relative_compared=relative_compared,
+    )
+
+
+def _final_channel_values_cuda(plan: _CudaGapPlan) -> Optional[Dict[str, Any]]:
+    if (
+        plan.weighting.mode
+        != GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+    ):
+        return None
+    if plan.relative_error_sum is None:
+        raise RuntimeError("A/R 双通道相对误差和未构造")
+    absolute_raw_t = plan.error_sum / plan.compiled.n_queries
+    relative_raw_t = plan.relative_error_sum
+    _, absolute_compared_t, relative_compared_t = (
+        _aggregate_dual_channels_cuda(
+            absolute_raw_t, relative_raw_t, plan=plan
+        )
+    )
+    relative_present = (
+        plan.channel_reference is not None
+        and plan.channel_reference.relative_initial is not None
+    )
+    return _channel_snapshot(
+        absolute_raw=float(absolute_raw_t.detach().cpu().item()),
+        relative_raw=(
+            float(relative_raw_t.detach().cpu().item())
+            if relative_present else None
+        ),
+        absolute_compared=float(
+            absolute_compared_t.detach().cpu().item()
+        ),
+        relative_compared=(
+            float(relative_compared_t.detach().cpu().item())
+            if relative_compared_t is not None else None
+        ),
+    )
+
+
 def _prepare_input_structure(
     current: pd.DataFrame,
     donors: pd.DataFrame,
@@ -341,6 +838,9 @@ def _prepare_input_structure(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> _GapInputStructure:
     """验证公共输入并构造与数值后端无关的稀疏活跃结构。"""
 
@@ -406,10 +906,19 @@ def _prepare_input_structure(
     if compiled.n_queries == 0:
         raise ValueError("至少需要一个查询")
     targets = _require_finite_vector(target, compiled.n_queries, "target")
-    floor_value = _require_positive_finite(floor, "floor")
-    denominators = np.maximum(targets, floor_value)
-    if np.any(denominators <= 0.0):
-        raise ValueError("max(target, floor) 必须为正")
+    denominators, weighting_spec = _build_gap_l1_denominators(
+        targets,
+        floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=n_rows,
+    )
+    validated_reference = _validate_gap_l1_channel_reference(
+        channel_reference, weighting=weighting_spec
+    )
+    relative_weights = _build_dual_relative_weights(
+        targets, n_records=n_rows, weighting=weighting_spec
+    )
     return _GapInputStructure(
         compiled=compiled,
         current=current_reset,
@@ -421,6 +930,9 @@ def _prepare_input_structure(
         counts=counts,
         targets=targets,
         denominators=denominators,
+        weighting=weighting_spec,
+        channel_reference=validated_reference,
+        relative_weights=relative_weights,
     )
 
 
@@ -436,6 +948,9 @@ def _prepare_plan(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> _GapPlan:
     structure = _prepare_input_structure(
         current,
@@ -448,6 +963,9 @@ def _prepare_plan(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     compiled = structure.compiled
     current_reset = structure.current
@@ -536,6 +1054,15 @@ def _prepare_plan(
         )
     error_terms = np.abs(targets - plan_counts) / denominators
     error_sum = float(np.sum(error_terms, dtype=np.float64))
+    relative_error_terms = None
+    relative_error_sum = None
+    if structure.relative_weights is not None:
+        relative_error_terms = (
+            np.abs(targets - plan_counts) * structure.relative_weights
+        )
+        relative_error_sum = float(np.sum(
+            relative_error_terms, dtype=np.float64
+        ))
     return _GapPlan(
         compiled=compiled,
         active_rows=active_rows,
@@ -552,8 +1079,13 @@ def _prepare_plan(
         plan_counts=plan_counts,
         target=targets,
         denominators=denominators,
+        weighting=structure.weighting,
+        channel_reference=structure.channel_reference,
         error_terms=error_terms,
         error_sum=error_sum,
+        relative_weights=structure.relative_weights,
+        relative_error_terms=relative_error_terms,
+        relative_error_sum=relative_error_sum,
         mask=mask,
     )
 
@@ -606,6 +1138,9 @@ def _prepare_cuda_plan(
     *,
     floor: float,
     compiled_workload: Optional[CompiledGapL1Workload],
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> _CudaGapPlan:
     """在 CUDA 上建立缺口条件状态，不调用 NumPy 条件算术。"""
 
@@ -621,6 +1156,9 @@ def _prepare_cuda_plan(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     compiled = structure.compiled
     n_active_rows = len(structure.active_rows)
@@ -737,6 +1275,18 @@ def _prepare_cuda_plan(
         torch.abs(target_t - plan_counts.to(torch.float64)) / denominators_t
     )
     error_sum = error_terms.sum(dtype=torch.float64)
+    relative_weights_t = None
+    relative_error_terms = None
+    relative_error_sum = None
+    if structure.relative_weights is not None:
+        relative_weights_t = torch.as_tensor(
+            structure.relative_weights, dtype=torch.float64, device=device
+        )
+        relative_error_terms = (
+            torch.abs(target_t - plan_counts.to(torch.float64))
+            * relative_weights_t
+        )
+        relative_error_sum = relative_error_terms.sum(dtype=torch.float64)
     torch.cuda.synchronize(device)
     return _CudaGapPlan(
         torch=torch,
@@ -755,8 +1305,13 @@ def _prepare_cuda_plan(
         plan_counts=plan_counts,
         target=target_t,
         denominators=denominators_t,
+        weighting=structure.weighting,
+        channel_reference=structure.channel_reference,
         error_terms=error_terms,
         error_sum=error_sum,
+        relative_weights=relative_weights_t,
+        relative_error_terms=relative_error_terms,
+        relative_error_sum=relative_error_sum,
         mask=mask,
     )
 
@@ -806,6 +1361,7 @@ def _condition_pair_cuda(
     attribute_index: int,
     *,
     local_row: Optional[int] = None,
+    channel_values_out: Optional[List[Tuple[Any, Optional[Any], Any, Optional[Any]]]] = None,
 ) -> Tuple[Any, Any, Any, Any, Any, Any, Optional[Any]]:
     """CUDA 版 E0/E1，只读评价当前完整临时组合。"""
 
@@ -822,7 +1378,23 @@ def _condition_pair_cuda(
         empty_indicators = torch.empty(
             0, dtype=torch.bool, device=plan.device
         )
-        value = plan.error_sum / plan.compiled.n_queries
+        value = _gap_l1_energy_cuda(plan)
+        if channel_values_out is not None and _is_dual_abs_relative_mode(
+            plan.weighting.mode
+        ):
+            if plan.relative_error_sum is None:
+                raise RuntimeError("A/R 双通道相对误差和未构造")
+            _, absolute_value, relative_value = _aggregate_dual_channels_cuda(
+                plan.error_sum / plan.compiled.n_queries,
+                plan.relative_error_sum,
+                plan=plan,
+            )
+            channel_values_out.append((
+                absolute_value,
+                relative_value,
+                absolute_value,
+                relative_value,
+            ))
         return (
             value,
             value,
@@ -877,6 +1449,48 @@ def _condition_pair_cuda(
         terms1,
         plan.compiled.n_queries,
     )
+    if _is_dual_abs_relative_mode(plan.weighting.mode):
+        if (
+            plan.relative_weights is None
+            or plan.relative_error_terms is None
+            or plan.relative_error_sum is None
+        ):
+            raise RuntimeError("A/R 双通道相对误差状态未构造")
+        relative_weights = plan.relative_weights[query_indices]
+        relative_terms0 = (
+            torch.abs(
+                plan.target[query_indices] - counts0.to(torch.float64)
+            )
+            * relative_weights
+        )
+        relative_terms1 = (
+            torch.abs(
+                plan.target[query_indices] - counts1.to(torch.float64)
+            )
+            * relative_weights
+        )
+        old_relative_terms = plan.relative_error_terms[query_indices]
+        relative_old_sum = old_relative_terms.sum(dtype=torch.float64)
+        relative_sum0 = (
+            plan.relative_error_sum
+            - relative_old_sum
+            + relative_terms0.sum(dtype=torch.float64)
+        )
+        relative_sum1 = (
+            plan.relative_error_sum
+            - relative_old_sum
+            + relative_terms1.sum(dtype=torch.float64)
+        )
+        e0, absolute0, relative0 = _aggregate_dual_channels_cuda(
+            e0, relative_sum0, plan=plan
+        )
+        e1, absolute1, relative1 = _aggregate_dual_channels_cuda(
+            e1, relative_sum1, plan=plan
+        )
+        if channel_values_out is not None:
+            channel_values_out.append((
+                absolute0, relative0, absolute1, relative1
+            ))
     return (
         e0,
         e1,
@@ -886,6 +1500,97 @@ def _condition_pair_cuda(
         indicators1,
         old_term_sum,
     )
+
+
+def _set_coordinate_cuda(
+    plan: _CudaGapPlan,
+    row_index: int,
+    attribute_index: int,
+    selected: Any,
+    failures0: Any,
+    failures1: Any,
+    indicators0: Any,
+    indicators1: Any,
+) -> None:
+    """显卡 eager 双通道状态提交；仅供新研究模式使用。"""
+
+    if not _is_dual_abs_relative_mode(plan.weighting.mode):
+        raise RuntimeError("CUDA eager 提交只允许 A/R 双通道模式")
+    if (
+        plan.relative_weights is None
+        or plan.relative_error_terms is None
+        or plan.relative_error_sum is None
+    ):
+        raise RuntimeError("A/R 双通道相对误差状态未构造")
+    torch = plan.torch
+    local_row = int(plan.row_lookup[row_index])
+    query_indices = plan.query_indices_by_attribute[attribute_index]
+    before = plan.mask[row_index, attribute_index]
+    changed = selected != before
+    if query_indices.numel():
+        old_indicators = plan.row_indicators[local_row, query_indices]
+        selected_failures = torch.where(selected, failures1, failures0)
+        selected_indicators = torch.where(selected, indicators1, indicators0)
+        selected_counts = (
+            plan.plan_counts[query_indices]
+            + selected_indicators.to(torch.int64)
+            - old_indicators.to(torch.int64)
+        )
+        selected_terms = (
+            torch.abs(
+                plan.target[query_indices]
+                - selected_counts.to(torch.float64)
+            )
+            / plan.denominators[query_indices]
+        )
+        old_terms = plan.error_terms[query_indices]
+        candidate_error_sum = (
+            plan.error_sum
+            - old_terms.sum(dtype=torch.float64)
+            + selected_terms.sum(dtype=torch.float64)
+        )
+        relative_weights = plan.relative_weights[query_indices]
+        selected_relative_terms = (
+            torch.abs(
+                plan.target[query_indices]
+                - selected_counts.to(torch.float64)
+            )
+            * relative_weights
+        )
+        old_relative_terms = plan.relative_error_terms[query_indices]
+        candidate_relative_error_sum = (
+            plan.relative_error_sum
+            - old_relative_terms.sum(dtype=torch.float64)
+            + selected_relative_terms.sum(dtype=torch.float64)
+        )
+        plan.plan_counts[query_indices] = torch.where(
+            changed, selected_counts, plan.plan_counts[query_indices]
+        )
+        plan.failure_counts[local_row, query_indices] = torch.where(
+            changed,
+            selected_failures,
+            plan.failure_counts[local_row, query_indices],
+        )
+        plan.row_indicators[local_row, query_indices] = torch.where(
+            changed,
+            selected_indicators,
+            plan.row_indicators[local_row, query_indices],
+        )
+        plan.error_terms[query_indices] = torch.where(
+            changed, selected_terms, old_terms
+        )
+        plan.relative_error_terms[query_indices] = torch.where(
+            changed, selected_relative_terms, old_relative_terms
+        )
+        plan.error_sum.copy_(torch.where(
+            changed, candidate_error_sum, plan.error_sum
+        ))
+        plan.relative_error_sum.copy_(torch.where(
+            changed,
+            candidate_relative_error_sum,
+            plan.relative_error_sum,
+        ))
+    plan.mask[row_index, attribute_index] = selected
 
 
 def _exact_cuda_candidate_error_sum(
@@ -987,6 +1692,14 @@ def _gap_l1_padded_batched_microstep_cuda(
     plan_counts: Any,
     error_terms: Any,
     error_sum: Any,
+    relative_weights: Any,
+    relative_error_terms: Any,
+    relative_error_sum: Any,
+    dual_abs_relative: bool,
+    relative_to_initial: bool,
+    absolute_initial: Any,
+    relative_initial: Any,
+    relative_channel_present: bool,
     masks: Any,
     current_failures: Any,
     donor_failures: Any,
@@ -1005,7 +1718,7 @@ def _gap_l1_padded_batched_microstep_cuda(
     local_rows: Any,
     rolls: Any,
     step_valid: Any,
-) -> Tuple[Any, Any]:
+) -> Tuple[Any, Any, Any]:
     """同时推进多个地址各自的一个严格有序微步。"""
 
     row_indices = coordinates[:, 0]
@@ -1080,6 +1793,60 @@ def _gap_l1_padded_batched_microstep_cuda(
     )
     e0 = sum0 / query_count
     e1 = sum1 / query_count
+    compared_absolute0 = e0
+    compared_absolute1 = e1
+    compared_relative0 = e0
+    compared_relative1 = e1
+    if dual_abs_relative:
+        relative_error_rows = relative_error_terms.gather(1, query_indices)
+        relative_weight_rows = relative_weights[query_indices]
+        relative_terms0 = (
+            torch.abs(target_rows - counts0.to(torch.float64))
+            * relative_weight_rows
+        )
+        relative_terms1 = (
+            torch.abs(target_rows - counts1.to(torch.float64))
+            * relative_weight_rows
+        )
+        old_relative_sum = torch.where(
+            query_valid, relative_error_rows, 0.0
+        ).sum(dim=1, dtype=torch.float64)
+        relative_sum0 = (
+            relative_error_sum
+            - old_relative_sum
+            + torch.where(query_valid, relative_terms0, 0.0).sum(
+                dim=1, dtype=torch.float64
+            )
+        )
+        relative_sum1 = (
+            relative_error_sum
+            - old_relative_sum
+            + torch.where(query_valid, relative_terms1, 0.0).sum(
+                dim=1, dtype=torch.float64
+            )
+        )
+        if relative_to_initial:
+            compared_absolute0 = e0 / absolute_initial
+            compared_absolute1 = e1 / absolute_initial
+            if relative_channel_present:
+                compared_relative0 = relative_sum0 / relative_initial
+                compared_relative1 = relative_sum1 / relative_initial
+                e0 = torch.maximum(
+                    compared_absolute0, compared_relative0
+                )
+                e1 = torch.maximum(
+                    compared_absolute1, compared_relative1
+                )
+            else:
+                compared_relative0 = compared_absolute0
+                compared_relative1 = compared_absolute1
+                e0 = compared_absolute0
+                e1 = compared_absolute1
+        else:
+            compared_relative0 = relative_sum0
+            compared_relative1 = relative_sum1
+            e0 = torch.maximum(e0, relative_sum0)
+            e1 = torch.maximum(e1, relative_sum1)
     score = e0 - e1
     normalized = score / scale
     raw_logit = base_logit + strength * normalized
@@ -1128,6 +1895,23 @@ def _gap_l1_padded_batched_microstep_cuda(
         torch.where(update, selected_terms, error_rows),
     )
     error_sum.copy_(torch.where(changed, selected_sum, error_sum))
+    if dual_abs_relative:
+        selected_relative_terms = torch.where(
+            selected.unsqueeze(1), relative_terms1, relative_terms0
+        )
+        selected_relative_sum = torch.where(
+            selected, relative_sum1, relative_sum0
+        )
+        relative_error_terms.scatter_(
+            1,
+            query_indices,
+            torch.where(
+                update, selected_relative_terms, relative_error_rows
+            ),
+        )
+        relative_error_sum.copy_(torch.where(
+            changed, selected_relative_sum, relative_error_sum
+        ))
     masks[batch_indices, row_indices, attribute_indices] = selected
 
     floats = torch.stack((
@@ -1146,7 +1930,16 @@ def _gap_l1_padded_batched_microstep_cuda(
         (old_selected, selected, clipped), dim=1
     )
     booleans &= step_valid.unsqueeze(1)
-    return floats, booleans
+    channels = torch.stack((
+        compared_absolute0,
+        compared_relative0,
+        compared_absolute1,
+        compared_relative1,
+    ), dim=1)
+    channels = torch.where(
+        step_valid.unsqueeze(1), channels, torch.zeros_like(channels)
+    )
+    return floats, booleans, channels
 
 
 def _attribute_failures(
@@ -1162,6 +1955,10 @@ def _condition_pair(
     plan: _GapPlan,
     row_index: int,
     attribute_index: int,
+    *,
+    channel_values_out: Optional[
+        List[Tuple[float, Optional[float], float, Optional[float]]]
+    ] = None,
 ) -> Tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """返回 E0/E1 及两侧局部状态，不改变计划。"""
 
@@ -1172,7 +1969,24 @@ def _condition_pair(
     if len(query_indices) == 0:
         empty_failures = np.zeros(0, dtype=np.int16)
         empty_indicators = np.zeros(0, dtype=bool)
-        value = plan.error_sum / plan.compiled.n_queries
+        value = _gap_l1_energy_numpy(plan)
+        if channel_values_out is not None and _is_dual_abs_relative_mode(
+            plan.weighting.mode
+        ):
+            if plan.relative_error_sum is None:
+                raise RuntimeError("A/R 双通道相对误差和未构造")
+            _, absolute_value, relative_value = _aggregate_dual_channels_numpy(
+                plan.error_sum / plan.compiled.n_queries,
+                plan.relative_error_sum,
+                weighting=plan.weighting,
+                reference=plan.channel_reference,
+            )
+            channel_values_out.append((
+                absolute_value,
+                relative_value,
+                absolute_value,
+                relative_value,
+            ))
         return (
             value,
             value,
@@ -1218,6 +2032,55 @@ def _condition_pair(
     old_terms = plan.error_terms[query_indices]
     sum0 = plan.error_sum - float(np.sum(old_terms)) + float(np.sum(terms0))
     sum1 = plan.error_sum - float(np.sum(old_terms)) + float(np.sum(terms1))
+    if _is_dual_abs_relative_mode(plan.weighting.mode):
+        if (
+            plan.relative_weights is None
+            or plan.relative_error_terms is None
+            or plan.relative_error_sum is None
+        ):
+            raise RuntimeError("A/R 双通道相对误差状态未构造")
+        relative_weights = plan.relative_weights[query_indices]
+        relative_terms0 = (
+            np.abs(plan.target[query_indices] - counts0) * relative_weights
+        )
+        relative_terms1 = (
+            np.abs(plan.target[query_indices] - counts1) * relative_weights
+        )
+        old_relative_terms = plan.relative_error_terms[query_indices]
+        relative_sum0 = (
+            plan.relative_error_sum
+            - float(np.sum(old_relative_terms))
+            + float(np.sum(relative_terms0))
+        )
+        relative_sum1 = (
+            plan.relative_error_sum
+            - float(np.sum(old_relative_terms))
+            + float(np.sum(relative_terms1))
+        )
+        e0, absolute0, relative0 = _aggregate_dual_channels_numpy(
+            sum0 / plan.compiled.n_queries,
+            relative_sum0,
+            weighting=plan.weighting,
+            reference=plan.channel_reference,
+        )
+        e1, absolute1, relative1 = _aggregate_dual_channels_numpy(
+            sum1 / plan.compiled.n_queries,
+            relative_sum1,
+            weighting=plan.weighting,
+            reference=plan.channel_reference,
+        )
+        if channel_values_out is not None:
+            channel_values_out.append((
+                absolute0, relative0, absolute1, relative1
+            ))
+        return (
+            e0,
+            e1,
+            failures0,
+            failures1,
+            indicators0,
+            indicators1,
+        )
     return (
         sum0 / plan.compiled.n_queries,
         sum1 / plan.compiled.n_queries,
@@ -1257,6 +2120,28 @@ def _set_coordinate(
             - np.sum(plan.error_terms[query_indices], dtype=np.float64)
         )
         plan.error_terms[query_indices] = new_terms
+        if _is_dual_abs_relative_mode(plan.weighting.mode):
+            if (
+                plan.relative_weights is None
+                or plan.relative_error_terms is None
+                or plan.relative_error_sum is None
+            ):
+                raise RuntimeError("A/R 双通道相对误差状态未构造")
+            new_relative_terms = (
+                np.abs(
+                    plan.target[query_indices]
+                    - plan.plan_counts[query_indices]
+                )
+                * plan.relative_weights[query_indices]
+            )
+            plan.relative_error_sum += float(
+                np.sum(new_relative_terms, dtype=np.float64)
+                - np.sum(
+                    plan.relative_error_terms[query_indices],
+                    dtype=np.float64,
+                )
+            )
+            plan.relative_error_terms[query_indices] = new_relative_terms
     plan.mask[row_index, attribute_index] = selected
 
 
@@ -1362,6 +2247,86 @@ def _distribution(values: Sequence[float]) -> Dict[str, Optional[float]]:
         "q75": float(np.quantile(array, 0.75)),
         "max": float(np.max(array)),
         "mean": float(np.mean(array)),
+    }
+
+
+def _empty_channel_dominance_counts() -> Dict[str, Dict[str, int]]:
+    return {
+        "candidate_0": {"absolute": 0, "relative": 0, "tie": 0},
+        "candidate_1": {"absolute": 0, "relative": 0, "tie": 0},
+        "pair": {
+            "both_absolute": 0,
+            "both_relative": 0,
+            "cross_channel": 0,
+            "tie_involved": 0,
+        },
+    }
+
+
+def _dominant_channel(
+    absolute: float,
+    relative: Optional[float],
+) -> str:
+    if relative is None:
+        return "absolute"
+    # 只用于诊断分类，不改变 maximum 的实际能量。把跨后端归约顺序造成的
+    # 数个 float64 ULP 尾差标成数值平局，避免伪造 A/R 主导切换。
+    if math.isclose(
+        absolute,
+        relative,
+        rel_tol=8.0 * np.finfo(np.float64).eps,
+        abs_tol=0.0,
+    ):
+        return "tie"
+    if absolute > relative:
+        return "absolute"
+    if relative > absolute:
+        return "relative"
+    return "tie"  # pragma: no cover - NaN 已在上游拒绝
+
+
+def _record_channel_dominance(
+    counts: Dict[str, Dict[str, int]],
+    channel_values: Tuple[
+        float, Optional[float], float, Optional[float]
+    ],
+) -> None:
+    absolute0, relative0, absolute1, relative1 = channel_values
+    side0 = _dominant_channel(absolute0, relative0)
+    side1 = _dominant_channel(absolute1, relative1)
+    counts["candidate_0"][side0] += 1
+    counts["candidate_1"][side1] += 1
+    if "tie" in (side0, side1):
+        pair = "tie_involved"
+    elif side0 == side1 == "absolute":
+        pair = "both_absolute"
+    elif side0 == side1 == "relative":
+        pair = "both_relative"
+    else:
+        pair = "cross_channel"
+    counts["pair"][pair] += 1
+
+
+def _channel_snapshot(
+    *,
+    absolute_raw: float,
+    relative_raw: Optional[float],
+    absolute_compared: float,
+    relative_compared: Optional[float],
+) -> Dict[str, Any]:
+    return {
+        "absolute_raw": float(absolute_raw),
+        "relative_raw": (
+            float(relative_raw) if relative_raw is not None else None
+        ),
+        "absolute_relative_to_initial": float(absolute_compared),
+        "relative_relative_to_initial": (
+            float(relative_compared) if relative_compared is not None else None
+        ),
+        "dominant_channel": _dominant_channel(
+            float(absolute_compared),
+            float(relative_compared) if relative_compared is not None else None,
+        ),
     }
 
 
@@ -1505,6 +2470,12 @@ def _build_scan_diagnostics(
     materialize_elapsed: float,
     recount_elapsed: float,
     total_elapsed: float,
+    weighting: Optional[_GapL1WeightingSpec] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
+    channel_dominance_counts: Optional[
+        Mapping[str, Mapping[str, int]]
+    ] = None,
+    final_channel_values: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     microsteps = sweeps * k
     minimum_outcome = (
@@ -1515,8 +2486,18 @@ def _build_scan_diagnostics(
     digest = trace.hexdigest()
     if microsteps == 0 and digest != hashlib.sha256(b"").hexdigest():
         raise RuntimeError("空扫描 trace 身份失败")
+    weighting_spec = weighting or _GapL1WeightingSpec(
+        mode=GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+        max_weight_ratio=None,
+        smoothing_count=None,
+        actual_weight_ratio=1.0,
+    )
     result = {
-        "kernel": "gap_l1_global_random_scan",
+        "kernel": (
+            "gap_l1_global_random_scan"
+            if weighting_spec.mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE
+            else f"gap_l1_global_random_scan_{weighting_spec.mode}"
+        ),
         "no_gate": True,
         "n_sweeps": sweeps,
         "active_switches_k": int(k),
@@ -1554,6 +2535,75 @@ def _build_scan_diagnostics(
     }
     if backend is not None:
         result["backend"] = backend
+    if weighting_spec.mode != GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        result.update({
+            "gap_l1_weighting": weighting_spec.mode,
+            "gap_l1_max_weight_ratio": weighting_spec.max_weight_ratio,
+            "gap_l1_smoothing_count": weighting_spec.smoothing_count,
+            "gap_l1_actual_weight_ratio": (
+                weighting_spec.actual_weight_ratio
+            ),
+        })
+        if (
+            weighting_spec.mode
+            == GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE
+        ):
+            result["gap_l1_target_count_quantum"] = 1.0
+        elif _is_dual_abs_relative_mode(weighting_spec.mode):
+            result.update({
+                "gap_l1_channel_aggregation": (
+                    "max_relative_to_initial"
+                    if weighting_spec.mode
+                    == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+                    else "max"
+                ),
+                "gap_l1_absolute_channel_query_weighting": "uniform",
+                "gap_l1_relative_channel_query_weighting": (
+                    "normalized_inverse_positive_target"
+                ),
+                "gap_l1_zero_target_policy": "absolute_channel_only",
+                "gap_l1_floor_applied": False,
+                "gap_l1_positive_target_query_count": (
+                    weighting_spec.positive_target_query_count
+                ),
+                "gap_l1_relative_inverse_target_normalizer": (
+                    weighting_spec.relative_inverse_target_normalizer
+                ),
+                "gap_l1_relative_positive_weight_ratio": (
+                    weighting_spec.relative_positive_weight_ratio
+                ),
+            })
+            if (
+                weighting_spec.mode
+                == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+            ):
+                if channel_reference is None:
+                    raise RuntimeError("A/R 相对初始进度诊断缺少冻结参照")
+                if channel_dominance_counts is None:
+                    raise RuntimeError("A/R 相对初始进度诊断缺少主导计数")
+                if final_channel_values is None:
+                    raise RuntimeError("A/R 相对初始进度诊断缺少最终通道值")
+                result.update({
+                    "gap_l1_channel_reference_source": (
+                        channel_reference.source
+                    ),
+                    "gap_l1_absolute_channel_initial_reference": float(
+                        channel_reference.absolute_initial
+                    ),
+                    "gap_l1_relative_channel_initial_reference": (
+                        float(channel_reference.relative_initial)
+                        if channel_reference.relative_initial is not None
+                        else None
+                    ),
+                    "gap_l1_channel_dominance_counts": {
+                        group: {
+                            name: int(value)
+                            for name, value in values.items()
+                        }
+                        for group, values in channel_dominance_counts.items()
+                    },
+                    "gap_l1_final_channels": dict(final_channel_values),
+                })
     return result
 
 
@@ -1562,6 +2612,10 @@ def _build_exact_zero_spec(
     floor: float,
     exact_target_numerators: Optional[Any],
     exact_target_denominator: Optional[int],
+    *,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    n_records: Optional[int] = None,
 ) -> Optional[Tuple[List[int], int, List[int], List[int]]]:
     if (exact_target_numerators is None) != (
         exact_target_denominator is None
@@ -1585,10 +2639,48 @@ def _build_exact_zero_spec(
         raise ValueError("精确目标必须是整数向量和正整数共同分母")
     numerator_values = [int(value) for value in raw_numerators]
     denominator_value = int(exact_target_denominator)
-    raw_denominators = [
-        max(numerator, int(floor) * denominator_value)
-        for numerator in numerator_values
-    ]
+    mode, ratio = validate_gap_l1_weighting(
+        weighting, max_weight_ratio
+    )
+    if mode in (
+        GAP_L1_WEIGHTING_SQRT_TARGET_RELATIVE,
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_MAX,
+        GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX,
+    ):
+        raise ValueError(
+            f"{mode} 不支持旧权重专用的整数公共分母"
+            "精确抵消；请省略 exact_target_numerators 与"
+            " exact_target_denominator"
+        )
+    if mode == GAP_L1_WEIGHTING_LEGACY_RELATIVE:
+        raw_denominators = [
+            max(numerator, int(floor) * denominator_value)
+            for numerator in numerator_values
+        ]
+    else:
+        records = _require_positive_integer(n_records, "n_records")
+        if not float(ratio).is_integer():
+            raise ValueError(
+                "精确目标零分数判定要求整数 max_weight_ratio"
+            )
+        ratio_integer = int(ratio)
+        bounded_numerators = [
+            min(max(numerator, 0), records * denominator_value)
+            for numerator in numerator_values
+        ]
+        if records >= int(floor) * (ratio_integer - 1):
+            # smoothing=N/(R-1)。误差项中共同的 (R-1) 因子不影响零判定。
+            raw_denominators = [
+                numerator * (ratio_integer - 1)
+                + records * denominator_value
+                for numerator in bounded_numerators
+            ]
+        else:
+            # floor 主导 smoothing；所有分母的共同整数尺度仍为 target 的尺度。
+            raw_denominators = [
+                numerator + int(floor) * denominator_value
+                for numerator in bounded_numerators
+            ]
     divisors = [
         math.gcd(
             math.gcd(abs(numerator), denominator_value), denominator
@@ -1650,6 +2742,9 @@ def _isolated_gap_l1_scores_cuda(
     compiled_workload: Optional[CompiledGapL1Workload],
     exact_target_numerators: Optional[Any],
     exact_target_denominator: Optional[int],
+    weighting: str,
+    max_weight_ratio: Optional[float],
+    channel_reference: Optional[GapL1ChannelReference],
 ) -> Dict[str, Any]:
     """显卡批量计算全零上下文中的全部孤立分数。"""
 
@@ -1665,12 +2760,18 @@ def _isolated_gap_l1_scores_cuda(
         np.zeros((len(current), len(attributes)), dtype=bool),
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     exact_zero_spec = _build_exact_zero_spec(
         queries,
         floor,
         exact_target_numerators,
         exact_target_denominator,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=len(current),
     )
     torch = plan.torch
     n_rows = len(current)
@@ -1722,10 +2823,46 @@ def _isolated_gap_l1_scores_cuda(
             )
             / plan.denominators.index_select(0, query_indices).unsqueeze(0)
         )
-        scores = (
-            old_terms.unsqueeze(0).sum(dim=1, dtype=torch.float64)
-            - terms1.sum(dim=1, dtype=torch.float64)
-        ) / plan.compiled.n_queries
+        if _is_dual_abs_relative_mode(plan.weighting.mode):
+            if (
+                plan.relative_weights is None
+                or plan.relative_error_terms is None
+                or plan.relative_error_sum is None
+            ):
+                raise RuntimeError("A/R 双通道相对误差状态未构造")
+            old_term_sum = old_terms.sum(dtype=torch.float64)
+            absolute1 = (
+                plan.error_sum
+                - old_term_sum
+                + terms1.sum(dim=1, dtype=torch.float64)
+            ) / plan.compiled.n_queries
+            old_relative_terms = plan.relative_error_terms.index_select(
+                0, query_indices
+            )
+            relative_weights = plan.relative_weights.index_select(
+                0, query_indices
+            ).unsqueeze(0)
+            relative_terms1 = (
+                torch.abs(
+                    plan.target.index_select(0, query_indices).unsqueeze(0)
+                    - counts1.to(torch.float64)
+                )
+                * relative_weights
+            )
+            relative1 = (
+                plan.relative_error_sum
+                - old_relative_terms.sum(dtype=torch.float64)
+                + relative_terms1.sum(dim=1, dtype=torch.float64)
+            )
+            candidate_energy, _, _ = _aggregate_dual_channels_cuda(
+                absolute1, relative1, plan=plan
+            )
+            scores = _gap_l1_energy_cuda(plan) - candidate_energy
+        else:
+            scores = (
+                old_terms.unsqueeze(0).sum(dim=1, dtype=torch.float64)
+                - terms1.sum(dim=1, dtype=torch.float64)
+            ) / plan.compiled.n_queries
         score_matrix[rows_t, attribute_index] = scores
         if exact_zero_spec is not None:
             exact_payloads.append((
@@ -1775,7 +2912,7 @@ def _isolated_gap_l1_scores_cuda(
         "coordinates": coordinates,
         "scores": scores_np,
         "current_error": float(
-            (plan.error_sum / plan.compiled.n_queries).detach().cpu().item()
+            _gap_l1_energy_cuda(plan).detach().cpu().item()
         ),
         "backend": "torch_cuda_float64",
     }
@@ -1793,6 +2930,9 @@ def isolated_gap_l1_scores(
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     exact_target_numerators: Optional[Any] = None,
     exact_target_denominator: Optional[int] = None,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
     device: str = "numpy",
 ) -> Dict[str, Any]:
     """计算其他开关全为 0 时所有不同值行—属性的孤立分数。
@@ -1814,6 +2954,9 @@ def isolated_gap_l1_scores(
             compiled_workload=compiled_workload,
             exact_target_numerators=exact_target_numerators,
             exact_target_denominator=exact_target_denominator,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
+            channel_reference=channel_reference,
         )
     if device != "numpy":
         raise ValueError("缺口孤立分数 device 只支持 'numpy' 或 'cuda'")
@@ -1829,12 +2972,18 @@ def isolated_gap_l1_scores(
         np.zeros((len(current), len(attributes)), dtype=bool),
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     exact_zero_spec = _build_exact_zero_spec(
         queries,
         floor,
         exact_target_numerators,
         exact_target_denominator,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        n_records=len(current),
     )
 
     coordinates: list[Tuple[int, int]] = []
@@ -1874,7 +3023,7 @@ def isolated_gap_l1_scores(
     return {
         "coordinates": np.asarray(coordinates, dtype=np.intp).reshape(-1, 2),
         "scores": np.asarray(scores, dtype=np.float64),
-        "current_error": float(plan.error_sum / plan.compiled.n_queries),
+        "current_error": _gap_l1_energy_numpy(plan),
     }
 
 
@@ -1894,6 +3043,9 @@ def evaluate_gap_l1_condition(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     device: str = "numpy",
@@ -1928,6 +3080,9 @@ def evaluate_gap_l1_condition(
         mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     coordinates = {tuple(map(int, pair)) for pair in plan.active_coordinates}
     coordinate = (int(row_index), int(attribute_index))
@@ -2069,6 +3224,9 @@ def _evolve_step_gap_l1_global_cuda(
     logit_clip: float,
     compiled_workload: Optional[CompiledGapL1Workload],
     verify_full_recount: bool,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]]:
     """CUDA 双精度后端；随机带仍由冻结的 NumPy 流形成。"""
 
@@ -2087,6 +3245,9 @@ def _evolve_step_gap_l1_global_cuda(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     (
         scale,
@@ -2105,7 +3266,13 @@ def _evolve_step_gap_l1_global_cuda(
         _cuda_dense_query_write_layout(plan)
     )
     torch = plan.torch
-    from table_diffevo import _gap_l1_triton as triton_gap
+    dual_abs_relative = _is_dual_abs_relative_mode(plan.weighting.mode)
+    progress_max = (
+        plan.weighting.mode
+        == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+    )
+    if not dual_abs_relative:
+        from table_diffevo import _gap_l1_triton as triton_gap
 
     torch.cuda.synchronize(plan.device)
     prepared_elapsed = time.perf_counter() - started
@@ -2144,6 +3311,12 @@ def _evolve_step_gap_l1_global_cuda(
     )
     after_values = torch.empty_like(before_values)
     clipped_values = torch.empty_like(before_values)
+    channel_values_t = (
+        torch.empty(
+            (microsteps, 4), dtype=torch.float64, device=plan.device
+        )
+        if progress_max else None
+    )
     maximum_query_width = max(
         (int(indices.numel()) for indices in plan.query_indices_by_attribute),
         default=0,
@@ -2179,7 +3352,68 @@ def _evolve_step_gap_l1_global_cuda(
         attribute_index = int(coordinate_tape[step, 1])
         local_row = int(local_row_tape[step])
         query_indices = plan.query_indices_by_attribute[attribute_index]
-        if query_indices.numel():
+        if dual_abs_relative:
+            channel_values_out = [] if progress_max else None
+            (
+                e0,
+                e1,
+                failures0,
+                failures1,
+                indicators0,
+                indicators1,
+                _,
+            ) = _condition_pair_cuda(
+                plan,
+                row_index,
+                attribute_index,
+                local_row=local_row,
+                channel_values_out=channel_values_out,
+            )
+            if progress_max:
+                if channel_values_out is None or len(channel_values_out) != 1:
+                    raise RuntimeError("A/R 相对初始进度微步缺少通道值")
+                absolute0, relative0, absolute1, relative1 = (
+                    channel_values_out[0]
+                )
+                channel_values_t[step] = torch.stack((
+                    absolute0,
+                    relative0 if relative0 is not None else absolute0,
+                    absolute1,
+                    relative1 if relative1 is not None else absolute1,
+                ))
+            before = plan.mask[row_index, attribute_index].clone()
+            score = e0 - e1
+            normalized = score / scale_t
+            probability, raw_logit, _, clipped = (
+                _conditional_probability_cuda(
+                    score,
+                    scale_t,
+                    base_logit_t,
+                    strength_t,
+                    clip_t,
+                )
+            )
+            after = random_rolls_t[step] < probability
+            _set_coordinate_cuda(
+                plan,
+                row_index,
+                attribute_index,
+                after,
+                failures0,
+                failures1,
+                indicators0,
+                indicators1,
+            )
+            e0_values[step] = e0
+            e1_values[step] = e1
+            score_values[step] = score
+            normalized_values[step] = normalized
+            raw_logit_values[step] = raw_logit
+            probability_values[step] = probability
+            before_values[step] = before
+            after_values[step] = after
+            clipped_values[step] = clipped
+        elif query_indices.numel():
             query_width = int(query_indices.numel())
             mask_row = plan.mask[row_index]
             triton_gap.launch_condition(
@@ -2338,12 +3572,19 @@ def _evolve_step_gap_l1_global_cuda(
         after_values,
         clipped_values,
     ), dim=1).detach().cpu().numpy()
+    channel_values = (
+        np.asarray(
+            channel_values_t.detach().cpu().numpy(), dtype=np.float64
+        )
+        if channel_values_t is not None else None
+    )
     final_query_counts = np.asarray(
         plan.plan_counts.detach().cpu().numpy(), dtype=np.int64
     )
     final_mask = np.asarray(
         plan.mask.detach().cpu().numpy(), dtype=bool
     )
+    final_channel_values = _final_channel_values_cuda(plan)
     torch.cuda.synchronize(plan.device)
 
     if not np.all(np.isfinite(float_values)):
@@ -2364,6 +3605,13 @@ def _evolve_step_gap_l1_global_cuda(
         "open_0p99_closed_0p999": 0,
         "open_0p999_1": 0,
     }
+    channel_dominance_counts = (
+        _empty_channel_dominance_counts() if progress_max else None
+    )
+    relative_present = (
+        plan.channel_reference is not None
+        and plan.channel_reference.relative_initial is not None
+    )
     for step in range(microsteps):
         row_index = int(coordinate_tape[step, 0])
         attribute_index = int(coordinate_tape[step, 1])
@@ -2388,6 +3636,19 @@ def _evolve_step_gap_l1_global_cuda(
             clipped=clipped,
         )
         probability_bins[_probability_bin(probability)] += 1
+        if channel_dominance_counts is not None:
+            if channel_values is None:
+                raise RuntimeError("A/R 相对初始进度微步缺少通道值")
+            values = tuple(map(float, channel_values[step]))
+            _record_channel_dominance(
+                channel_dominance_counts,
+                (
+                    values[0],
+                    values[1] if relative_present else None,
+                    values[2],
+                    values[3] if relative_present else None,
+                ),
+            )
     scan_elapsed = time.perf_counter() - scan_started
 
     materialize_started = time.perf_counter()
@@ -2423,6 +3684,10 @@ def _evolve_step_gap_l1_global_cuda(
         materialize_elapsed=materialize_elapsed,
         recount_elapsed=recount_elapsed,
         total_elapsed=time.perf_counter() - started,
+        weighting=plan.weighting,
+        channel_reference=plan.channel_reference,
+        channel_dominance_counts=channel_dominance_counts,
+        final_channel_values=final_channel_values,
     )
     return copy_table, final_mask.copy(), diagnostics
 
@@ -2446,6 +3711,9 @@ def _evolve_step_gap_l1_global_cuda_batched(
     logit_clip: float,
     compiled_workload: Optional[CompiledGapL1Workload],
     verify_full_recount: bool,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
 ) -> Tuple[
     Tuple[Tuple[pd.DataFrame, np.ndarray, Dict[str, Any]], ...],
     Dict[str, Any],
@@ -2474,12 +3742,20 @@ def _evolve_step_gap_l1_global_cuda_batched(
             initial_masks[index],
             floor=floor,
             compiled_workload=compiled,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
+            channel_reference=channel_reference,
         )
         for index in range(batch_size)
     ]
     first = plans[0]
     torch = first.torch
     device = first.device
+    dual_abs_relative = _is_dual_abs_relative_mode(first.weighting.mode)
+    progress_max = (
+        first.weighting.mode
+        == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+    )
     n_attributes = len(compiled.attribute_names)
     n_queries = compiled.n_queries
     active_row_counts = [len(plan.active_rows) for plan in plans]
@@ -2517,6 +3793,10 @@ def _evolve_step_gap_l1_global_cuda_batched(
         device=device,
     )
     error_sum = torch.stack([plan.error_sum for plan in plans], dim=0)
+    relative_error_terms = torch.zeros_like(error_terms)
+    relative_error_sum = torch.zeros(
+        batch_size, dtype=torch.float64, device=device
+    )
     masks = torch.stack([plan.mask for plan in plans], dim=0)
     current_failures = torch.zeros(
         (
@@ -2540,6 +3820,16 @@ def _evolve_step_gap_l1_global_cuda_batched(
             ] = plan.row_indicators
         plan_counts[batch_index, :n_queries] = plan.plan_counts
         error_terms[batch_index, :n_queries] = plan.error_terms
+        if dual_abs_relative:
+            if (
+                plan.relative_error_terms is None
+                or plan.relative_error_sum is None
+            ):
+                raise RuntimeError("A/R 双通道批量误差状态未构造")
+            relative_error_terms[
+                batch_index, :n_queries
+            ] = plan.relative_error_terms
+            relative_error_sum[batch_index] = plan.relative_error_sum
         for attribute_index, query_indices in enumerate(
             compiled.query_indices_by_attribute
         ):
@@ -2564,6 +3854,28 @@ def _evolve_step_gap_l1_global_cuda_batched(
     target_t[:n_queries] = first.target
     denominators_t = torch.ones_like(target_t)
     denominators_t[:n_queries] = first.denominators
+    relative_weights_t = torch.zeros_like(target_t)
+    if dual_abs_relative:
+        if first.relative_weights is None:
+            raise RuntimeError("A/R 双通道批量相对权重未构造")
+        relative_weights_t[:n_queries] = first.relative_weights
+    channel_reference_value = first.channel_reference
+    relative_channel_present = (
+        channel_reference_value is not None
+        and channel_reference_value.relative_initial is not None
+    )
+    absolute_initial_t = torch.tensor(
+        channel_reference_value.absolute_initial
+        if channel_reference_value is not None else 1.0,
+        dtype=torch.float64,
+        device=device,
+    )
+    relative_initial_t = torch.tensor(
+        channel_reference_value.relative_initial
+        if relative_channel_present else 1.0,
+        dtype=torch.float64,
+        device=device,
+    )
     (
         scale_value,
         scale_t,
@@ -2632,9 +3944,18 @@ def _evolve_step_gap_l1_global_cuda_batched(
         dtype=torch.bool,
         device=device,
     )
+    channel_values_t = (
+        torch.zeros(
+            (batch_size, maximum_microsteps, 4),
+            dtype=torch.float64,
+            device=device,
+        )
+        if progress_max else None
+    )
     batch_indices = torch.arange(
         batch_size, dtype=torch.long, device=device
     )
+    weighting_specs = [plan.weighting for plan in plans]
     del plan
     del first
     del plans
@@ -2643,12 +3964,20 @@ def _evolve_step_gap_l1_global_cuda_batched(
 
     scan_started = time.perf_counter()
     for step in range(maximum_microsteps):
-        floats, booleans = _gap_l1_padded_batched_microstep_cuda(
+        floats, booleans, channels = _gap_l1_padded_batched_microstep_cuda(
             failure_counts=failure_counts,
             row_indicators=row_indicators,
             plan_counts=plan_counts,
             error_terms=error_terms,
             error_sum=error_sum,
+            relative_weights=relative_weights_t,
+            relative_error_terms=relative_error_terms,
+            relative_error_sum=relative_error_sum,
+            dual_abs_relative=dual_abs_relative,
+            relative_to_initial=progress_max,
+            absolute_initial=absolute_initial_t,
+            relative_initial=relative_initial_t,
+            relative_channel_present=relative_channel_present,
             masks=masks,
             current_failures=current_failures,
             donor_failures=donor_failures,
@@ -2670,6 +3999,8 @@ def _evolve_step_gap_l1_global_cuda_batched(
         )
         float_values_t[:, step] = floats
         bool_values_t[:, step] = booleans
+        if channel_values_t is not None:
+            channel_values_t[:, step] = channels
 
     safe_probabilities_t = torch.where(
         valid_step_mask_t,
@@ -2694,6 +4025,18 @@ def _evolve_step_gap_l1_global_cuda_batched(
     )
     padded_entropy_values = np.asarray(
         entropy_values_t.detach().cpu().numpy(), dtype=np.float64
+    )
+    padded_channel_values = (
+        np.asarray(
+            channel_values_t.detach().cpu().numpy(), dtype=np.float64
+        )
+        if channel_values_t is not None else None
+    )
+    final_absolute_raw = np.asarray(
+        (error_sum / n_queries).detach().cpu().numpy(), dtype=np.float64
+    )
+    final_relative_raw = np.asarray(
+        relative_error_sum.detach().cpu().numpy(), dtype=np.float64
     )
     final_counts = np.asarray(
         plan_counts[:, :n_queries].detach().cpu().numpy(), dtype=np.int64
@@ -2726,6 +4069,8 @@ def _evolve_step_gap_l1_global_cuda_batched(
     rolls_by_address = []
     floats_by_address = []
     booleans_by_address = []
+    channel_dominance_by_address = []
+    final_channels_by_address = []
     for batch_index, microsteps in enumerate(microsteps_by_address):
         coordinates = coordinate_tapes[batch_index, :microsteps].copy()
         rolls = roll_tapes[batch_index, :microsteps].copy()
@@ -2742,6 +4087,9 @@ def _evolve_step_gap_l1_global_cuda_batched(
             "open_0p99_closed_0p999": 0,
             "open_0p999_1": 0,
         }
+        channel_dominance_counts = (
+            _empty_channel_dominance_counts() if progress_max else None
+        )
         for step in range(microsteps):
             row_index, attribute_index = map(int, coordinates[step])
             e0, e1, score, normalized, raw_logit, probability, roll = map(
@@ -2765,6 +4113,21 @@ def _evolve_step_gap_l1_global_cuda_batched(
                 clipped=clipped,
             )
             probability_bins[_probability_bin(probability)] += 1
+            if channel_dominance_counts is not None:
+                if padded_channel_values is None:
+                    raise RuntimeError("A/R 相对初始进度微步缺少通道值")
+                values = tuple(map(
+                    float, padded_channel_values[batch_index, step]
+                ))
+                _record_channel_dominance(
+                    channel_dominance_counts,
+                    (
+                        values[0],
+                        values[1] if relative_channel_present else None,
+                        values[2],
+                        values[3] if relative_channel_present else None,
+                    ),
+                )
 
         materialize_started = time.perf_counter()
         copy_table = _materialize_copy_table(
@@ -2801,6 +4164,30 @@ def _evolve_step_gap_l1_global_cuda_batched(
         rolls_by_address.append(rolls)
         floats_by_address.append(float_values)
         booleans_by_address.append(bool_values)
+        channel_dominance_by_address.append(channel_dominance_counts)
+        if progress_max:
+            if channel_reference_value is None:
+                raise RuntimeError("A/R 相对初始进度批量参照未构造")
+            absolute_compared = (
+                float(final_absolute_raw[batch_index])
+                / channel_reference_value.absolute_initial
+            )
+            relative_compared = (
+                float(final_relative_raw[batch_index])
+                / channel_reference_value.relative_initial
+                if relative_channel_present else None
+            )
+            final_channels_by_address.append(_channel_snapshot(
+                absolute_raw=float(final_absolute_raw[batch_index]),
+                relative_raw=(
+                    float(final_relative_raw[batch_index])
+                    if relative_channel_present else None
+                ),
+                absolute_compared=absolute_compared,
+                relative_compared=relative_compared,
+            ))
+        else:
+            final_channels_by_address.append(None)
     post_elapsed = time.perf_counter() - post_started
     total_elapsed = time.perf_counter() - started
     padding_microsteps = int(
@@ -2831,6 +4218,12 @@ def _evolve_step_gap_l1_global_cuda_batched(
             materialize_elapsed=row["materialize_elapsed"],
             recount_elapsed=row["recount_elapsed"],
             total_elapsed=total_elapsed,
+            weighting=weighting_specs[batch_index],
+            channel_reference=channel_reference_value,
+            channel_dominance_counts=(
+                channel_dominance_by_address[batch_index]
+            ),
+            final_channel_values=final_channels_by_address[batch_index],
         )
         diagnostics["batch_execution"] = {
             "format": BATCH_EXECUTION_FORMAT,
@@ -2891,6 +4284,9 @@ def evolve_step_gap_l1_global_batched(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     verify_full_recount: bool = True,
@@ -2920,6 +4316,9 @@ def evolve_step_gap_l1_global_batched(
         eta=eta,
         strength=strength,
         floor=floor,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
         logit_clip=logit_clip,
         compiled_workload=compiled_workload,
         verify_full_recount=verify_full_recount,
@@ -2943,6 +4342,9 @@ def evolve_step_gap_l1_global(
     eta: float = DEFAULT_GAP_L1_ETA,
     strength: float = DEFAULT_GAP_L1_STRENGTH,
     floor: float = DEFAULT_GAP_L1_FLOOR,
+    weighting: str = DEFAULT_GAP_L1_WEIGHTING,
+    max_weight_ratio: Optional[float] = None,
+    channel_reference: Optional[GapL1ChannelReference] = None,
     logit_clip: float = DEFAULT_GAP_L1_LOGIT_CLIP,
     compiled_workload: Optional[CompiledGapL1Workload] = None,
     verify_full_recount: bool = True,
@@ -2970,6 +4372,9 @@ def evolve_step_gap_l1_global(
             eta=eta,
             strength=strength,
             floor=floor,
+            weighting=weighting,
+            max_weight_ratio=max_weight_ratio,
+            channel_reference=channel_reference,
             logit_clip=logit_clip,
             compiled_workload=compiled_workload,
             verify_full_recount=verify_full_recount,
@@ -2993,6 +4398,9 @@ def evolve_step_gap_l1_global(
         initial_mask,
         floor=floor,
         compiled_workload=compiled_workload,
+        weighting=weighting,
+        max_weight_ratio=max_weight_ratio,
+        channel_reference=channel_reference,
     )
     prepared_elapsed = time.perf_counter() - started
     k = len(plan.active_coordinates)
@@ -3010,6 +4418,12 @@ def evolve_step_gap_l1_global(
         "open_0p999_1": 0,
     }
     clip_hits = 0
+    channel_dominance_counts = (
+        _empty_channel_dominance_counts()
+        if plan.weighting.mode
+        == GAP_L1_WEIGHTING_DUAL_ABS_RELATIVE_PROGRESS_MAX
+        else None
+    )
     trace = hashlib.sha256()
     scan_started = time.perf_counter()
     for step in range(microsteps):
@@ -3017,6 +4431,7 @@ def evolve_step_gap_l1_global(
         row_index = int(plan.active_coordinates[coordinate_index, 0])
         attribute_index = int(plan.active_coordinates[coordinate_index, 1])
         before = bool(plan.mask[row_index, attribute_index])
+        channel_values_out = [] if channel_dominance_counts is not None else None
         (
             e0,
             e1,
@@ -3024,7 +4439,18 @@ def evolve_step_gap_l1_global(
             failures1,
             indicators0,
             indicators1,
-        ) = _condition_pair(plan, row_index, attribute_index)
+        ) = _condition_pair(
+            plan,
+            row_index,
+            attribute_index,
+            channel_values_out=channel_values_out,
+        )
+        if channel_dominance_counts is not None:
+            if channel_values_out is None or len(channel_values_out) != 1:
+                raise RuntimeError("A/R 相对初始进度微步缺少通道值")
+            _record_channel_dominance(
+                channel_dominance_counts, channel_values_out[0]
+            )
         score = float(e0 - e1)
         normalized = float(score / scale)
         probability, raw_logit, _, clipped = gap_l1_conditional_probability(
@@ -3106,5 +4532,9 @@ def evolve_step_gap_l1_global(
         materialize_elapsed=materialize_elapsed,
         recount_elapsed=recount_elapsed,
         total_elapsed=time.perf_counter() - started,
+        weighting=plan.weighting,
+        channel_reference=plan.channel_reference,
+        channel_dominance_counts=channel_dominance_counts,
+        final_channel_values=_final_channel_values_numpy(plan),
     )
     return copy_table, plan.mask.copy(), diagnostics

@@ -68,6 +68,156 @@ PR #69 审查修复记录（对应审查阻塞项）：
 真正下一步：以上修复经用户过目批准后提交并回复 PR #69；值引导主线（V12 配对塑形设计）继续在
 PR #73 工作区推进。
 
+### 最新暂停点：Issue #53 问题一 A/R 双通道单种子筛查已评价，未通过（2026-09-02）
+
+> 用户已明确授权完成冻结的两条候选轨迹及质量评价。本轮已完成采集、结果盲
+> 勘误恢复和离线评价；未扩种子、未调参、未自动运行独立审计、未推送，也未
+> 操作 PR #69。
+
+候选仍是唯一研究臂 `gap_dual_abs_relative_max_s8`，开发种子 9908，数据集为
+`test_300x10` 与 NLTCS。源生成提交为
+`a3ba71fa2e84512fc6c8ba1bc818ba03e908cc71`，执行协议 SHA-256 为
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`。
+
+两条 GPU 轨迹均完整生成：
+
+```text
+dataset        applied rounds  termination    case elapsed
+test_300x10    1505            early_stopped  319.0563068520278 s
+NLTCS          2805            early_stopped  5762.858124156017 s
+```
+
+源采集器在两个 case 均写入 staging 后，因继承的 Stage 6E 发布校验错误要求
+`state_evaluation_count == applied_rounds+1` 而失败关闭；实际生成器契约为
+`state_evaluation_count == max(1,applied_rounds)`，与此前 R8/sqrt 已冻结的同类
+勘误一致。八个源 case 文件未改写、未删除，GPU 生成器未重跑。结果盲恢复协议
+只对旧校验器构造内存代理计数，其余旧护栏与 A/R 逐轮权重/`8*K` 护栏原样通过：
+
+```text
+recovery protocol SHA-256  2132a4392740114398064b62bfc604cb97b3226e4b758d654dbd6a71dcc8c4b3
+recovery commit            d51600e3f5b7b26261bf4ddca62318acbbfca1c0
+collection SHA-256         3b53fcac678924205a4bd1038ec15f404b5245b09894d2b065d28794e615a790
+```
+
+最终评价在干净提交 `1a6194fd43437751b4b117e5dc4c30090637f239` 上运行，
+复用已独立审计的 legacy/R8/sqrt 六条基线，不重跑旧臂；终表与所有已达到的
+固定检查点均评价，未使用历史最好或检查点选表：
+
+```text
+evaluation adapter SHA-256  ebb1d6726b99f0f486934cb3c8b7bff8c561d594d02895ede68ed711dc422cb4
+evaluation report SHA-256   df9c64430be28f45c0a354dff0861ba501b4c3e429e66a85956119961f5b5c56
+screen metrics CSV SHA-256  3517bb58884f9aab2533a807a7e3996745de0e5b03154871489a76fa9fb4680e
+candidate / baseline cases  2 / 6
+CSV rows                     123
+execution valid              true
+```
+
+冻结门的关键结果（越小越好）：
+
+| 门 | candidate | baseline | ratio | threshold | pass |
+|---|---:|---:|---:|---:|:---:|
+| NLTCS measured normalized L1 vs legacy | 0.0001487913 | 0.0002894331 | 0.5141 | `<1.0` | ✅ |
+| NLTCS 常见箱 mean error vs legacy | 2.7300771 | 6.3239075 | 0.4317 | `<1.0` | ✅ |
+| NLTCS 稀有箱 mean error vs legacy | 1.4705882 | 0.9411765 | 1.5625 | `<=1.25` | ❌ |
+| NLTCS 稀有箱 mean error vs sqrt | 1.4705882 | 1.5882353 | 0.9259 | `<1.0` | ✅ |
+| test measured normalized L1 vs legacy | 0.0010000 | 0.0008667 | 1.1538 | `<=1.05` | ❌ |
+| test one-way safety vs legacy | 0.0442667 | 0.0485333 | 0.9121 | `<=1.05` | ✅ |
+| NLTCS one-way safety vs legacy | 0.0000927013 | 0.0002549286 | 0.3636 | `<=1.05` | ✅ |
+
+冻结分类为 `rare_query_protection_not_recovered`，因为分类优先级先命中稀有箱
+失败；test 总 L1 同时也独立失败。结论是：A/R 的 A 通道确实大幅保住并改善了
+NLTCS 常见查询和总体误差，R 通道也使稀有箱优于 sqrt 约 7.4%，但仍比 legacy
+差 56.25%，未达到 25% 容忍线；同时 test 总 L1 比 legacy 差 15.38%。因此当前
+无参数 A/R `max` 设计不能作为问题一的合格解，也不得进入新种子确认。
+
+评价过程中有两次结果发布前失败关闭：第一次是适配器错用 sqrt 顶层审计字段名，
+第二次是把检查点历史字段 `gap_e` 误解释为 A/R C 能量。实际 `gap_e` 仍是
+legacy relative 诊断，A/R C 核身份在逐轮 transition audit 中。两次均未生成
+evaluation/CSV；修正、重冻结并通过 `13 passed` 后才执行上述正式评价。
+
+当前严格停在单种子开发筛查结论处。`automatic_followup_authorized=false`，下一步
+若继续问题一，应先讨论失败机制和新的结果前设计；不得自动调 A/R 比例、改门、
+扩种子或把本结果描述为成功。
+
+### 最新暂停点：Issue #53 问题一 A/R 双通道已通过开跑前预检，停在 collect 前（2026-09-02）
+
+> 用户授权的范围是完成真实 GPU 候选生成之前的设计、实现、测试、协议和预检；
+> 不授权启动两条候选轨迹、质量评价、新种子、调参、推送或操作 PR #69。
+
+新增显式研究模式 `dual_abs_relative_max`，公共默认仍为
+`legacy_relative`。冻结公式为：
+
+```text
+A = sum_all(|target-current|) / (N*J)
+R = sum_positive(|target-current|/target)
+    / [N*sum_positive(1/target)]
+E = max(A,R)
+```
+
+`target=0` 只进 A，不进 R，不另设 Z；无正目标时退化为 `E=A`。
+`floor` 不进入新公式，`max_weight_ratio` 必须为 null。微步在两侧分别先求
+`max(A_b,R_b)` 再取 `E0-E1`，切换点不加 epsilon、滞回或随机平局。
+
+实现只为新模式新增 R 通道的 float64 增量误差项/和；A 复用原误差状态。
+旧 legacy/bounded/sqrt 继续走原 NumPy/Triton 结合顺序；新模式有专用单任务
+CUDA eager 提交和逐微步批量 CUDA 分支。B 残差、`gap_l1_sweeps=8`、strength、
+孤立分数 RMS 定尺、概率、RNG、自动停止和 terminal-current 均未改。
+
+已通过：
+
+- 相关 CPU/主循环回归 `155 passed`；
+- 完整缺口核 CUDA 套件 `27 passed`；
+- 新模式包括零目标、全零目标、等误差校准、A/R 各自主导、切换点、
+  CPU 全量重算对拍、CPU/单 CUDA 逐微步对拍、单/批量 CUDA 轨迹哈希和 RNG 终点；
+- 旧三种模式的现有数值与冻结 CUDA 轨迹测试全部通过。
+
+全库试跑为 `2272 passed, 31 failed`。31 项集中于历史实验协议对
+`evolution.py` / `gap_l1_diffusion.py` 旧提交哈希的预期失败关闭，以及本工作树
+已存在/未复制的历史 outputs 前提；无 A/R 公式、增量状态、旧模式数值轨迹或
+CUDA 回归失败。不改写历史冻结协议去伪装旧提交未变。
+
+结果前科学协议：
+
+```text
+mode                         dual_abs_relative_max
+tasks                        test_300x10 / NLTCS, development seed 9908
+candidate arm                gap_dual_abs_relative_max_s8
+scientific protocol SHA-256  85016eb9b91364006537b4ccadd71bea8685b502a96aa05d88f73c700d75532d
+execution protocol SHA-256   4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386
+```
+
+目标权重审计只读两份 measured query JSON，逐条固定 1051 条查询的 A/R 权重；
+未导入核实现，未读参考表或任何候选结果。任务矩阵只新增两条轨迹，复用
+已独立审计的 legacy/R8/sqrt 基线，不重跑旧臂。执行入口已实现双层哈希和
+用户后续授权门。
+
+已在干净实现提交 `2e01f26a628635904717d29a17a191ea274978f5` 上执行只读
+`plan` 和 `preflight`：
+
+```text
+worktree clean including untracked   true
+protocol / source / input identity   pass
+GPU                                  linyao-system physical 1, RTX 4090 24 GiB
+CUDA_VISIBLE_DEVICES                 1 (process cuda:0)
+GPU preflight                        0% utilization, 18 MiB, no compute process
+software                             Python 3.11 / NumPy 2.4.6 / pandas 3.0.3
+                                     PyTorch 2.13.0+cu130 / CUDA 13.0
+runtime executables                  all executable
+ready_for_final_user_confirmation    true
+screen_generation_authorized         false
+generation_started                   false
+candidate output / shard output      absent / absent
+```
+
+干净提交后的最终相关套件为 `215 passed in 9.14s`。已有平方根轨迹的案例耗时是
+test 约 5.8 分钟、NLTCS 约 25.5 分钟；新模式单任务 CUDA 每微步需多维护一个
+通道，尚无正式轨迹实测。执行预留保守墙钟范围为约 45--120 分钟；该范围只是
+资源规划，不是质量或性能结论。
+
+当前严格停在真实 GPU `collect` 前。只有用户后续单独明确授权并确认执行协议
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`，才能运行已冻结的
+`collect` 命令。采集后仍必须先报告 collection SHA 并停止，不自动评价。
+
 ### 历史小结：第 6D 正式效果闭环 v1→v5（2026-08-27，五版均未产出正式结果，已由 Stage 6E 取代）
 
 第 6D 目标是两数据 × 三方法 × 五种子、固定 2500 轮的正式效果比较。五个版本相继冻结，

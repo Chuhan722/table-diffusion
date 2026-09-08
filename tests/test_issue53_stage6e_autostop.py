@@ -138,18 +138,21 @@ def test_protocol_restores_existing_p6_flow_and_only_kernel_switches():
     assert manifests["gap_l1_global_s8"]["gap_l1_sweeps"] == 8
 
 
-def test_frozen_protocol_and_implementation_source_identities_match():
+def test_frozen_protocol_identity_fails_closed_after_kernel_source_change():
     root = runner._repo_root()
-    assert (
-        protocol.assert_frozen_protocol_identity(root)
-        == protocol.FROZEN_PROTOCOL_SHA256
-    )
+    drifted_sources = [
+        name
+        for name, binding in protocol.IMPLEMENTATION_SOURCES.items()
+        if protocol.file_sha256(root / binding["path"]) != binding["sha256"]
+    ]
+
+    assert drifted_sources == ["full_generator", "gap_kernel"]
     assert protocol.protocol_sha256() == protocol.FROZEN_PROTOCOL_SHA256
     assert protocol.file_sha256(root / protocol.PROTOCOL_DOC) == (
         protocol.PROTOCOL_DOC_SHA256
     )
-    for binding in protocol.IMPLEMENTATION_SOURCES.values():
-        assert protocol.file_sha256(root / binding["path"]) == binding["sha256"]
+    with pytest.raises(RuntimeError, match="实现源码漂移：full_generator"):
+        protocol.assert_frozen_protocol_identity(root)
 
 
 def test_final_confirmation_guard_fails_before_collection(monkeypatch):
