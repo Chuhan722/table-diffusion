@@ -2,6 +2,58 @@
 
 ## 当前阶段
 
+### 最新暂停点：Issue #46 plants 无噪声收口对照正式结果 not_closed（2026-08-29 完成，2026-09-08 审计入库）
+
+> 预注册协议见 `scripts/probe_plants_closeout_formal.py`（协议 SHA `e633f8126bf5ae3c44adf1ab80ee76fe450f49748096409b611243774178dad3`，
+> 预注册评论 Issue #46 5449650341），运行前冻结判定与失败预登记；结果与预登记方向一致。本节只记录已审计事实，不改配置、不补种子。
+
+正式身份与产物：
+
+```text
+执行 commit                      2afae1d9（分支 research/issue46-plants-closeout，干净树，formal=True）
+产物                             docs/实验结果/formal_plants_closeout_5seed_16000round.json（SHA dadfd9dd9aeae6e1…）
+独立审计                         scripts/audit_formal_json.py 统一验证入口整份通过（结构/协议/身份/判定重算/初始状态重算），
+                                 审计输出 SHA 035042c595cdd75b…
+设备/环境                        RTX 4090，torch 2.7.0+cu126，gsd 环境；2026-08-28 15:21 → 08-29 10:00，单卡串行 5 种子
+配置                             relative floor=8 + scale-invariant donor α≡24 + rho0.005 + ds2.0 + marginal 初始化，
+                                 16000 轮固定预算，tol=inf，输出 best-loss 表（与 nltcs 正式协议同口径）
+PGM 判定靶                       0.00031410427713469947（master 冻结输入重跑，报告 SHA 21183f02…）
+```
+
+主判定（plants，measured workload L1，五种子 300..304）：
+
+| seed | 我方 L1 | best_loss | final_loss |
+|---|---:|---:|---:|
+| 300 | 0.000628 | 91062 | 171528 |
+| 301 | 0.000427 | 62582 | 65676 |
+| 302 | 0.000578 | 91992 | 138668 |
+| 303 | 0.000458 | 51872 | 90138 |
+| 304 | 0.000422 | 55149 | 68436 |
+| **均值** | **0.000503** | | |
+
+```text
+判定阈值（靶×1.03）              0.000323
+相对靶差距                       +60.0%
+阈值内种子                       0/5
+classification                   not_closed
+```
+
+质量门（train 侧，冻结抽样口径，相对 PGM 五表均值）：unmeasured 3-way L1 627.6 vs 268.3（**+134%，报警**）、
+unmeasured 4-way L1 417.6 vs 202.7（**+106%，报警**）、分箱 TVD 0.9691 vs 0.9657（+0.4%，未报警）。not_closed 下仅记录。
+
+结论与适用域：
+
+- **#46 第一层主判定在 plants 未达成**。nltcs 侧已收口（相对残差几何正式 0.000314 < PGM 0.000357，PR #59/#62）；
+  两数据集合并结论：无噪声收口**未达成**，适用域为 nltcs 型稀有查询谱，plants 型高计数 triple 谱未收口。
+- 与 dev 预登记一致（dev best 0.000476，正式均值 0.000503；差距 1.52×→1.60×），与 plants 攻坚四假说证否
+  （Issue #46 评论 5317102150）共同支持"局部随机搜索 vs 全局凸推断在高计数 triple 谱型上的固有差距"解释。
+- 五种子中 final_loss 普遍高于 best_loss（如 seed 300：171528 vs 91062），说明 16000 轮内存在正漂移；
+  本协议按预注册输出 best-loss 表，若改用 terminal-current 口径数字会更差，如实披露。
+- 3/4-way 质量门双报警说明在 plants 上我方不仅 measured 落后，未测量高阶结构也显著劣于 PGM 的 maxent 外推。
+
+下一步边界：本结果不授权调参重跑或更换 baseline；是否把无噪声收口标准改为"含 GSD 等零阶方法的分层对照"或
+转向有噪声赛道，由双方在 Issue #46/#53 讨论后另立协议。
+
 ### 最新暂停点：Stage 5 同温度核比较完成正式闭环并收口（2026-08-27）
 
 > 本节覆盖下方“Stage 5 尚未实现或运行”的历史暂停描述。正式 collection（采集）、frozen evaluator

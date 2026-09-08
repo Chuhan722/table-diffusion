@@ -1,0 +1,354 @@
+{
+  "artifact_schema_version": "plants-closeout-formal-artifact-v1",
+  "protocol": {
+    "arms": {
+      "closeout_relative_f8": {
+        "residual_geometry": "relative",
+        "residual_geometry_floor": 8.0
+      }
+    },
+    "datasets": {
+      "plants": {
+        "marginals": "configs/plants/init_marginals.json",
+        "n_records": 17412,
+        "queries": "configs/plants/measured_1000query.json",
+        "references": {
+          "train": "data/plants/plants.train.data"
+        },
+        "schema": "configs/plants/schema.yaml"
+      }
+    },
+    "expected_input_sha256": {
+      "plants": {
+        "marginals": "4e302b18e1e6e34871a2651378ec357b6fd35edcccfc42385a0b773b1d701535",
+        "queries": "f93c2d9717e2f4f87536e703019f5b48230657db227656d1af62a8640babf649",
+        "schema": "7eaf404bfe6d3a8824a5d29cebacac704a0fae5fc5cb2227a275a35a989e0a9b"
+      }
+    },
+    "expected_reference_sha256": {
+      "plants": {
+        "train": "1fb1219ff94068d12a563f9e81f8889a1885f41e867884cff608669300c6848f"
+      }
+    },
+    "frozen_min_spread": 0.001,
+    "frozen_rho": 0.005,
+    "frozen_si_alpha": 24.0,
+    "issue": 46,
+    "judgement_thresholds": {
+      "closeout_arm": "closeout_relative_f8",
+      "pgm_target_measured_l1_mean": 0.00031410427713469947,
+      "pgm_target_quality": {
+        "binned_joint_tvd": 0.9656673558465426,
+        "unmeasured_3way_l1": 268.3002501563477,
+        "unmeasured_4way_l1": 202.653775
+      },
+      "pgm_target_report_sha256": "21183f021969e1948232f88e5d0d750e70ebafb3dee8134ef61fdf9d76339b4f",
+      "pgm_target_seeds": [
+        100,
+        101,
+        102,
+        103,
+        104
+      ],
+      "quality_risk_rel": 0.05,
+      "tie_band": 0.03
+    },
+    "offline_sampling": {
+      "n_3way": 2000,
+      "n_4way": 2000,
+      "seed": 4646
+    },
+    "primary_dataset": "plants",
+    "rounds": 16000,
+    "seeds": [
+      300,
+      301,
+      302,
+      303,
+      304
+    ],
+    "shared_params": {
+      "alpha_max": 24.0,
+      "alpha_min": 24.0,
+      "beta": 1.0,
+      "delta": 0.05,
+      "diffusion_direction_normalization": "initial_rms",
+      "diffusion_direction_strength": 2.0,
+      "distance_mode": "geometric",
+      "eta": 0.5,
+      "exclude_self": true,
+      "h": 0.8,
+      "init_method": "marginal",
+      "lambda_param": 0.5,
+      "mu": 0.01,
+      "residual_directed_diffusion": true,
+      "rho": 0.005,
+      "selection_scale_invariant": true,
+      "selection_scale_invariant_min_spread": 0.001,
+      "tol": "inf",
+      "winsorize_quantiles": [
+        0.01,
+        0.99
+      ]
+    }
+  },
+  "run_config": {
+    "seeds": [
+      300,
+      301,
+      302,
+      303,
+      304
+    ],
+    "rounds": 16000,
+    "datasets": [
+      "plants"
+    ]
+  },
+  "provenance": {
+    "git_commit": "2afae1d949ea425c16562c7f53f350c00a3123df",
+    "git_dirty": false,
+    "protocol_sha256": "e633f8126bf5ae3c44adf1ab80ee76fe450f49748096409b611243774178dad3",
+    "protocol_match": true,
+    "formal": true,
+    "started_at": "2026-08-28T15:21:51.622114+08:00",
+    "environment": {
+      "python": "3.9.21",
+      "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+      "numpy": "1.26.4",
+      "pandas": "2.2.3",
+      "torch": "2.7.0+cu126",
+      "cuda_available": true,
+      "cuda_version": "12.6",
+      "gpu_name": "NVIDIA GeForce RTX 4090"
+    },
+    "input_sha256": {
+      "plants": {
+        "schema": "7eaf404bfe6d3a8824a5d29cebacac704a0fae5fc5cb2227a275a35a989e0a9b",
+        "queries": "f93c2d9717e2f4f87536e703019f5b48230657db227656d1af62a8640babf649",
+        "marginals": "4e302b18e1e6e34871a2651378ec357b6fd35edcccfc42385a0b773b1d701535"
+      }
+    },
+    "input_hash_mismatches": [],
+    "command": "scripts/probe_plants_closeout_formal.py",
+    "finished_at": "2026-08-29T10:00:42.727979+08:00"
+  },
+  "datasets": {
+    "plants": {
+      "initial_state": {
+        "measured_l1_mean": 0.08227076564602409,
+        "measured_l1_by_seed": {
+          "300": 0.08241050038209632,
+          "301": 0.0823179064871986,
+          "302": 0.08222097591621072,
+          "303": 0.08221488112819215,
+          "304": 0.08218956431642264
+        },
+        "loss_by_seed": {
+          "300": 1216851920.5,
+          "301": 1215131241.5,
+          "302": 1213148377.5,
+          "303": 1210802242.5,
+          "304": 1210189265.5
+        },
+        "note": "n_rounds=0 的 marginal 初始化状态（种子相关）"
+      },
+      "reference_sha256": {
+        "train": "1fb1219ff94068d12a563f9e81f8889a1885f41e867884cff608669300c6848f"
+      },
+      "runs": [
+        {
+          "dataset": "plants",
+          "arm": "closeout_relative_f8",
+          "seed": 300,
+          "rounds_run": 16000,
+          "candidate_evaluations": 16000,
+          "pre_final_proposal_loss": 171080.0,
+          "final_loss": 171527.5,
+          "final_table_measured_l1": 0.0006281733920308302,
+          "best_loss": 91062.0,
+          "rare_query_mean_abs_residual": 9.370642201834862,
+          "common_query_mean_abs_residual": 12.901149425287356,
+          "exact_match_queries": 46,
+          "row_max_prob_mean_final": 0.04208328202366829,
+          "effective_donors_mean_final": 2355.737060546875,
+          "tail_mean_pre_proposal_loss": 156976.49,
+          "final_table_sha256": "b9e262255a1f6aaa8c7d6dbc4d9807dc72558b0fbcb4ee9f5f72e5b27db7b97a",
+          "elapsed_sec": 13456.6,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 644.5846153846154,
+              "unmeasured_4way_l1": 424.8804375,
+              "raw_joint_tvd": 0.969216632207673,
+              "binned_joint_tvd": 0.969216632207673,
+              "raw_unique_states": 6049,
+              "raw_support_overlap": 107
+            }
+          }
+        },
+        {
+          "dataset": "plants",
+          "arm": "closeout_relative_f8",
+          "seed": 301,
+          "rounds_run": 16000,
+          "candidate_evaluations": 16000,
+          "pre_final_proposal_loss": 65882.0,
+          "final_loss": 65675.5,
+          "final_table_measured_l1": 0.0004270453874175446,
+          "best_loss": 62582.5,
+          "rare_query_mean_abs_residual": 6.752293577981652,
+          "common_query_mean_abs_residual": 8.291954022988506,
+          "exact_match_queries": 51,
+          "row_max_prob_mean_final": 0.02792523428797722,
+          "effective_donors_mean_final": 2284.56494140625,
+          "tail_mean_pre_proposal_loss": 69286.41,
+          "final_table_sha256": "4be4a43722b39de2e08997ca71059bb4cd2ea18bba3b5e42b91cb2cba722b16d",
+          "elapsed_sec": 13590.6,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 643.2176360225141,
+              "unmeasured_4way_l1": 431.4296875,
+              "raw_joint_tvd": 0.9550310130944175,
+              "binned_joint_tvd": 0.9550310130944175,
+              "raw_unique_states": 3790,
+              "raw_support_overlap": 77
+            }
+          }
+        },
+        {
+          "dataset": "plants",
+          "arm": "closeout_relative_f8",
+          "seed": 302,
+          "rounds_run": 16000,
+          "candidate_evaluations": 16000,
+          "pre_final_proposal_loss": 139318.5,
+          "final_loss": 138667.5,
+          "final_table_measured_l1": 0.0005780085983394047,
+          "best_loss": 91992.5,
+          "rare_query_mean_abs_residual": 8.812844036697248,
+          "common_query_mean_abs_residual": 11.632183908045977,
+          "exact_match_queries": 40,
+          "row_max_prob_mean_final": 0.04188862442970276,
+          "effective_donors_mean_final": 2677.908447265625,
+          "tail_mean_pre_proposal_loss": 141265.65,
+          "final_table_sha256": "de4e125a4b0c53955a4e324cd1ca15490946d517e227eeb9ced18cdd1819b947",
+          "elapsed_sec": 13366.5,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 608.5190118824265,
+              "unmeasured_4way_l1": 405.1161875,
+              "raw_joint_tvd": 0.972834826556398,
+              "binned_joint_tvd": 0.972834826556398,
+              "raw_unique_states": 5902,
+              "raw_support_overlap": 110
+            }
+          }
+        },
+        {
+          "dataset": "plants",
+          "arm": "closeout_relative_f8",
+          "seed": 303,
+          "rounds_run": 16000,
+          "candidate_evaluations": 16000,
+          "pre_final_proposal_loss": 90192.5,
+          "final_loss": 90138.0,
+          "final_table_measured_l1": 0.0004582811760127897,
+          "best_loss": 51872.0,
+          "rare_query_mean_abs_residual": 6.678899082568807,
+          "common_query_mean_abs_residual": 9.60919540229885,
+          "exact_match_queries": 62,
+          "row_max_prob_mean_final": 0.037477366626262665,
+          "effective_donors_mean_final": 2257.565185546875,
+          "tail_mean_pre_proposal_loss": 93118.15,
+          "final_table_sha256": "1862a3aad955579144af4e043ea638630ff5aad81dd960d1cfe9eea6a1307ae9",
+          "elapsed_sec": 13339.2,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 611.2376485303315,
+              "unmeasured_4way_l1": 408.3960625,
+              "raw_joint_tvd": 0.9751320928095565,
+              "binned_joint_tvd": 0.9751320928095565,
+              "raw_unique_states": 5680,
+              "raw_support_overlap": 109
+            }
+          }
+        },
+        {
+          "dataset": "plants",
+          "arm": "closeout_relative_f8",
+          "seed": 304,
+          "rounds_run": 16000,
+          "candidate_evaluations": 16000,
+          "pre_final_proposal_loss": 69104.5,
+          "final_loss": 68436.5,
+          "final_table_measured_l1": 0.0004215366367084394,
+          "best_loss": 55149.0,
+          "rare_query_mean_abs_residual": 6.332110091743119,
+          "common_query_mean_abs_residual": 8.602298850574712,
+          "exact_match_queries": 61,
+          "row_max_prob_mean_final": 0.033984873443841934,
+          "effective_donors_mean_final": 2506.122314453125,
+          "tail_mean_pre_proposal_loss": 72482.025,
+          "final_table_sha256": "29e100d5f1cd20d0534137c41e935d3e9595448579eec474db0909e47c6e8556",
+          "elapsed_sec": 13295.4,
+          "offline": {
+            "train": {
+              "unmeasured_3way_l1": 630.5686053783614,
+              "unmeasured_4way_l1": 418.29875,
+              "raw_joint_tvd": 0.9734665747760166,
+              "binned_joint_tvd": 0.9734665747760166,
+              "raw_unique_states": 4786,
+              "raw_support_overlap": 68
+            }
+          }
+        }
+      ],
+      "judgment": {
+        "metric": "final_table_measured_l1",
+        "closeout_arm": "closeout_relative_f8",
+        "candidate_l1_by_seed": {
+          "300": 0.0006281733920308302,
+          "301": 0.0004270453874175446,
+          "302": 0.0005780085983394047,
+          "303": 0.0004582811760127897,
+          "304": 0.0004215366367084394
+        },
+        "n_seeds": 5,
+        "candidate_mean": 0.0005026090381018018,
+        "pgm_target_mean": 0.00031410427713469947,
+        "pass_threshold": 0.00032352740544874044,
+        "relative_gap_vs_target": 0.6001343333706485,
+        "seeds_within_threshold": 0,
+        "primary_pass": false,
+        "quality_risks": {
+          "unmeasured_3way_l1": {
+            "pgm_target_mean": 268.3002501563477,
+            "candidate_mean": 627.6255034396498,
+            "relative_change": 1.3392654426297068,
+            "flagged": true
+          },
+          "unmeasured_4way_l1": {
+            "pgm_target_mean": 202.653775,
+            "candidate_mean": 417.624225,
+            "relative_change": 1.060776933466944,
+            "flagged": true
+          },
+          "binned_joint_tvd": {
+            "pgm_target_mean": 0.9656673558465426,
+            "candidate_mean": 0.9691362278888123,
+            "relative_change": 0.00359220182940604,
+            "flagged": false
+          }
+        },
+        "any_quality_risk": true,
+        "classification": "not_closed",
+        "thresholds": {
+          "pgm_target_measured_l1_mean": 0.00031410427713469947,
+          "pgm_target_report_sha256": "21183f021969e1948232f88e5d0d750e70ebafb3dee8134ef61fdf9d76339b4f",
+          "tie_band": 0.03,
+          "quality_risk_rel": 0.05
+        }
+      }
+    }
+  }
+}
