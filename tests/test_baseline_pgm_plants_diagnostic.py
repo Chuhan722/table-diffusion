@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from scripts import run_baseline_pgm_plants_diagnostic as diagnostic
+# 基线环境可能未装 JAX/mbi：缺失时整文件 skip，不得在收集期崩溃。
+pytest.importorskip("jax")
+pytest.importorskip("mbi")
+
+from scripts import run_baseline_pgm_plants_diagnostic as diagnostic  # noqa: E402
 
 
 def test_plan_is_frozen_and_result_blind(monkeypatch):
@@ -177,7 +181,10 @@ def test_comparison_reports_pgm_minus_each_arm():
 
 
 def test_reference_report_extraction_pins_and_shapes():
-    reference = diagnostic._load_reference_report(Path("."))
+    try:
+        reference = diagnostic._load_reference_report(Path("."))
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     assert reference["sha256"] == diagnostic.INPUT_SHA256["reference_report"]
     assert set(reference["arms"]) == {"residual", "equal"}
     for arm_snapshot in reference["arms"].values():

@@ -9,9 +9,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts import run_baseline_pgm_all2way_nltcs_diagnostic as diag
-from scripts import run_baseline_pgm_nltcs_diagnostic as pgm980
-from table_diffevo.quality import query_fingerprint
+# 基线环境可能未装 JAX/mbi：缺失时整文件 skip，不得在收集期崩溃。
+pytest.importorskip("jax")
+pytest.importorskip("mbi")
+
+from scripts import run_baseline_pgm_all2way_nltcs_diagnostic as diag  # noqa: E402
+from scripts import run_baseline_pgm_nltcs_diagnostic as pgm980  # noqa: E402
+from table_diffevo.quality import query_fingerprint  # noqa: E402
 
 
 def test_plan_is_frozen_and_result_blind(monkeypatch):
@@ -230,7 +234,10 @@ def test_comparison_restricted_to_comparable_groups():
 
 
 def test_reference_extraction_pins_and_shapes():
-    references = diag._load_references(Path("."))
+    try:
+        references = diag._load_references(Path("."))
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     polish = references["engine_polish_budget_residual"]
     old_pgm = references["old_pgm_980"]
     assert polish["sha256"] == diag.POLISH_REPORT_SHA256

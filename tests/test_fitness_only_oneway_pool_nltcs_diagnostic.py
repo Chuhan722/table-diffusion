@@ -172,7 +172,10 @@ def test_comparison_reports_all_reference_deltas():
 
 
 def test_frozen_reference_extraction_pins_and_shapes():
-    references = diag._load_frozen_references(Path("."))
+    try:
+        references = diag._load_frozen_references(Path("."))
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     assert references["frozen_report_sha256"] == (
         diag.INPUT_SHA256["frozen_report"]
     )

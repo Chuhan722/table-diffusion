@@ -5,10 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts import (
+# 基线环境可能未装 JAX/mbi：缺失时整文件 skip，不得在收集期崩溃。
+pytest.importorskip("jax")
+pytest.importorskip("mbi")
+
+from scripts import (  # noqa: E402
     run_baseline_pgm_all2way_plants_feasibility_diagnostic as diag,
 )
-from scripts import run_baseline_pgm_plants_diagnostic as pgm980
+from scripts import run_baseline_pgm_plants_diagnostic as pgm980  # noqa: E402
 
 
 def test_plan_is_frozen_and_result_blind(monkeypatch):
@@ -74,7 +78,10 @@ def test_precheck_reports_structural_infeasibility():
 
 
 def test_contrast_receipt_pins_old_feasible_report():
-    contrast = diag._verify_contrast_receipt(Path("."))
+    try:
+        contrast = diag._verify_contrast_receipt(Path("."))
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     assert contrast["sha256"] == diag.OLD_PGM_REPORT_SHA256
     assert contrast["old_exam_feasibility"]["feasible"] is True
     assert contrast["old_exam_feasibility"]["model_size_mb"] < 4096.0

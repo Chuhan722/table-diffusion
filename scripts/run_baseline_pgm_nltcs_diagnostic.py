@@ -31,9 +31,21 @@ import pandas as pd
 
 import jax
 
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_enable_compilation_cache", False)
-jax.config.update("jax_platforms", "cpu")
+# JAX 配置延迟到真正运行时（main/_run_pgm）执行：模块导入期不得改全局配置，
+# 否则不同 JAX 版本的环境（如审查环境）在 pytest 收集阶段即抛
+# AttributeError 并中止整个测试会话。
+_JAX_CONFIGURED = False
+
+
+def _configure_jax() -> None:
+    global _JAX_CONFIGURED
+    if _JAX_CONFIGURED:
+        return
+    jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_enable_compilation_cache", False)
+    jax.config.update("jax_platforms", "cpu")
+    _JAX_CONFIGURED = True
+
 
 from mbi import Domain, LinearMeasurement, estimation  # noqa: E402
 
@@ -446,6 +458,7 @@ def _run_pgm(
     domain: Domain,
     measurements: Sequence[LinearMeasurement],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    _configure_jax()
     started = time.perf_counter()
     model = estimation.MirrorDescent().estimate(
         domain,
@@ -794,6 +807,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    _configure_jax()
     arguments = _build_parser().parse_args()
     if arguments.command == "plan":
         print(json.dumps(build_plan(), ensure_ascii=False, indent=2))
