@@ -95,8 +95,11 @@ PR #73 工作区推进。
 
 > 结论一句话：`lottery_first_donor_selection` 开关实现并全量验证——同种子下
 > numpy/torch-cpu 与旧路径**逐位一致**（终表 sha、loss 轨迹、主 RNG 终态；
-> nltcs 16181 行全规模 numpy 3 轮复核通过）；CUDA 为**数值等价**（随机流
-> 终态逐位一致，loss 轨迹相对差 ≤4.4e-4，60 轮首分歧在第 36 轮）——float32
+> nltcs 16181 行全规模 numpy 3 轮复核通过）；CUDA 为**平行轨迹等价**（随机流
+> 终态、初始表、rho 时间表、逐轮中签行集合逐位一致；loss 轨迹自首分歧起
+> 按混沌动力学指数分离，**相对差随轮数增长无上界**——nltcs 60 轮实测
+> ≤4.4e-4 仅为该短视界下的观测值，外部审查 400 轮实测最大 1.57%，不构成
+> 阈值承诺）——float32
 > 行归约切块顺序随矩阵形状变化（(P,N) 子集 vs (N,N) 全表），属 Stage 6
 > "numpy 逐位 + cuda 数值等价"既有惯例，用户已拍板接受。**实测提速**（同
 > 计时脚本、正式 all2way-pool 配置、稳态 ρ=0.001、GPU 1）：稳态单轮
@@ -117,7 +120,9 @@ PR #73 工作区推进。
 - `fitness_only.py`：config 字段 + validate + kwargs 透传 + 审计（equal 臂
   None 容忍 + params 一致性检查）。
 - 测试：`tests/test_lottery_first_donor_selection.py` 12 项（numpy/cpu 逐位、
-  cuda 数值等价合同、零中签、守卫、口径、子集概率/均匀数/参与签单元）。
+  cuda 不变量合同【2026-09-09 审查修订：不再对 loss 差设阈值，改为初始表/
+  RNG 终态/rho 时间表/逐轮中签行集合四项逐位断言 + loss 有限性】、零中签、
+  守卫、口径、子集概率/均匀数/参与签单元）。
 - 守卫更新（用户批准，循 93ec152 先例）：stage6c/6d/6e 三个冻结指纹测试的
   预期漂移清单加入 `shared_update_plan`（update.py 合法演进）。
 - 相邻回归：sampling/update/evolution/fitness_only/退火/MW/守卫等 446 项全过；

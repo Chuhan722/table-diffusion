@@ -148,23 +148,59 @@ def test_cpu_torch_bit_identical():
 
 
 def test_cuda_numerically_equivalent():
-    """torch cuda 路径：数值等价合同（非逐位）。
+    """torch cuda 路径：不变量合同（不对 loss 差设阈值）。
 
     CUDA float32 的行归约（标准化均值/方差、softmax 求和、cumsum）切块
     方式随矩阵形状变化：(P, N) 子集与 (N, N) 全表的加法顺序不同，概率
-    在最后一位舍入上偶有差异，抽签恰好压中边界时个别行换供体。因此
-    CUDA 只承诺数值等价（分布语义相同的平行轨迹）：随机流终态与初始表
-    逐位一致，loss 轨迹逐轮相对差 < 1e-3（nltcs 全规模实测 4.4e-4，
-    见 PROJECT_STATUS.md）。numpy 路径才是逐位合同。
+    在最后一位舍入上偶有差异，抽签恰好压中边界时个别行换供体。此后两条
+    轨迹按混沌动力学指数分离——loss 逐轮相对差**随轮数增长无上界**（外部
+    审查在 nltcs 全规模 400 轮实测最大相对差 1.57%），因此任何 loss 阈值
+    合同都只在特定形状/轮数/GPU 上偶然成立，不可承诺。CUDA 合同只断言
+    可证明的不变量（分布语义相同的平行轨迹）：
+
+    1. 初始表逐位一致；
+    2. 主 RNG 终态逐位一致（随机流消耗的槽位序列相同）；
+    3. rho 退火时间表逐轮一致；
+    4. **每轮参与行（中签行）集合逐位一致**——中签由主随机流与 rho 决定，
+       与供体选择无关，两态必须逐位相同（经 sample_update_random_plan
+       的 participate 掩码逐轮 SHA 对账）；
+    5. loss 轨迹长度一致且逐轮有限。
+
+    numpy 路径才是逐位合同（见 test_numpy_bitwise_identical）。
     """
 
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA 不可用")
-    table_off, diag_off = _run(_config(device="cuda"))
-    table_on, diag_on = _run(_config(
-        device="cuda", lottery_first_donor_selection=True,
-    ))
+
+    from table_diffevo import update as update_module
+
+    original_plan = update_module.sample_update_random_plan
+
+    def _run_with_participation_trace(config):
+        trace = []
+
+        def spy(*args, **kwargs):
+            plan = original_plan(*args, **kwargs)
+            mask = np.asarray(plan.participate, dtype=bool)
+            trace.append(
+                hashlib.sha256(np.packbits(mask).tobytes()).hexdigest()
+            )
+            return plan
+
+        update_module.sample_update_random_plan = spy
+        try:
+            table, diag = _run(config)
+        finally:
+            update_module.sample_update_random_plan = original_plan
+        return table, diag, trace
+
+    table_off, diag_off, trace_off = _run_with_participation_trace(
+        _config(device="cuda")
+    )
+    table_on, diag_on, trace_on = _run_with_participation_trace(
+        _config(device="cuda", lottery_first_donor_selection=True)
+    )
     assert diag_on["initial_table_sha256"] == (
         diag_off["initial_table_sha256"]
     )
@@ -172,12 +208,13 @@ def test_cuda_numerically_equivalent():
         diag_off["primary_rng_state_sha256"]
     )
     assert diag_on["rho_schedule_history"] == diag_off["rho_schedule_history"]
+    assert len(trace_on) == len(trace_off) > 0
+    assert trace_on == trace_off
     assert len(diag_on["loss_history"]) == len(diag_off["loss_history"])
     for loss_off, loss_on in zip(
         diag_off["loss_history"], diag_on["loss_history"]
     ):
-        scale = max(abs(loss_off), 1.0)
-        assert abs(loss_on - loss_off) / scale < 1e-3
+        assert np.isfinite(loss_off) and np.isfinite(loss_on)
 
 
 def test_zero_participation_rounds_none_diagnostics_and_equivalence():
