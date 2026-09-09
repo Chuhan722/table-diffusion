@@ -7,6 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# GSD runner 链式 import PGM runner（顶层 import jax/mbi）：无 jax 环境
+# 必须在导入前整文件 skip，否则 pytest 收集阶段即炸（同 #71 E1 判例）。
+pytest.importorskip("jax")
+pytest.importorskip("mbi")
+
 from scripts import (
     run_baseline_gsd_all2way_nltcs_diagnostic as diag,
 )
@@ -158,7 +163,10 @@ def test_load_gsd_table_validates(tmp_path):
 
 
 def test_reference_extraction_pins_and_known_values():
-    references = diag._load_references(_repo_root())
+    try:
+        references = diag._load_references(_repo_root())
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
     engine = references["engine_all2way_pool"]
     assert engine["sha256"] == diag.ENGINE_REPORT_SHA256
     assert engine["family_480_direct"]["mean"] == pytest.approx(
@@ -178,7 +186,10 @@ def test_reference_extraction_pins_and_known_values():
 
 
 def test_comparison_shapes_and_deltas():
-    references = diag._load_references(_repo_root())
+    try:
+        references = diag._load_references(_repo_root())
+    except FileNotFoundError as exc:
+        pytest.skip(f"冻结产物不在本机（gitignored），产物持有机复核：{exc}")
 
     def _node(mean):
         return {
