@@ -60,8 +60,14 @@ ALL2WAY_SHA256 = (
     "9dc37994e912ce52c5859a122150144cad487c06d71de6bb0f8bd8a4a584409a"
 )
 
-GSD_REPO = Path("/home/chuhan/projects/private_gsd")
-GSD_PYTHON = GSD_REPO / ".venv/bin/python"
+# GSD 检出路径与解释器可经环境变量覆盖（审查 F3：去个人硬编码路径）；
+# 上游 commit 与补丁文件 SHA 对拍不变，路径可配不放松复现合同。
+GSD_REPO = Path(
+    os.environ.get("TD_GSD_REPO", "/home/chuhan/projects/private_gsd")
+)
+GSD_PYTHON = Path(
+    os.environ.get("TD_GSD_PYTHON", str(GSD_REPO / ".venv/bin/python"))
+)
 GSD_UPSTREAM_COMMIT = "f6150d7821b9675ce9158b456f1a5cff8bc3b3d6"
 GSD_PATCHED_FILES_SHA256 = {
     "src/genetic_sd/__init__.py": (

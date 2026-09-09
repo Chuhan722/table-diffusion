@@ -4012,18 +4012,32 @@ def run_evolution(
         },
     }
     if fitness_only_mode is not None:
+        # 合同据实（fail-closed）：值引导/分科倾斜让残差进入转移核本身，
+        # 此时核不再是"盲独立复制"，通道与核名必须如实声明——审计器
+        # 按请求配置重算期望并逐字段对拍，谎报即 failure。
+        contract_channels = (
+            ["fitness"] if fitness_only_mode == "residual" else []
+        )
+        if value_guidance_enabled:
+            contract_channels.append("value_guidance")
+        if block_score_tilt_enabled:
+            contract_channels.append("block_score_tilt")
         diagnostics["fitness_only_contract"] = {
             "enabled": True,
             "fitness_mode": fitness_only_mode,
-            "residual_driving_channels": (
-                ["fitness"] if fitness_only_mode == "residual" else []
-            ),
+            "residual_driving_channels": contract_channels,
             "donor_selection": (
                 "residual_fitness_and_structure"
                 if fitness_only_mode == "residual"
                 else "structure_only_equal_fitness"
             ),
-            "transition_kernel": "blind_independent",
+            "transition_kernel": (
+                "value_guided"
+                if value_guidance_enabled
+                else "block_score_tilted"
+                if block_score_tilt_enabled
+                else "blind_independent"
+            ),
             "proposal_transition": "unconditional",
             "termination_rule": (
                 "inner_early_stopping_a_b_c"

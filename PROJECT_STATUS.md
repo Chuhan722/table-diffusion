@@ -2,7 +2,39 @@
 
 ## 当前阶段
 
-### 最新暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
+### 最新暂停点：PR #73 审查回应——值引导核合同据实与审计防伪（2026-09-09 中午）
+
+PR #73（值引导核 + GSD 无噪声基线，base=master 全链视图）收到审查（CHANGES_REQUESTED），
+本节记录处置（HEAD 23fd211）：
+
+- **F1（合同伪造，审查复现属实）**：`value_guidance_strength>0` 让残差经逐格增益进入转移核
+  值分布，但产物合同仍硬编码 `transition_kernel='blind_independent'`、
+  `residual_driving_channels=['fitness']`，审计器照常放行——fail-closed 合同失真。修复：
+  - 合同生成据实（`evolution.py`）：λ>0 追加 `'value_guidance'` 通道、核名 `'value_guided'`；
+    块倾斜同族问题一并修（`block_score_tilt_strength>0` → `'block_score_tilt'` 通道、
+    核名 `'block_score_tilted'`）。
+  - 审计器（`fitness_only.py`）按请求配置重算期望合同逐字段对拍，伪造声明记 failure；
+    补 `value_guidance_strength` 的 params 对拍与 `value_guidance` 诊断段核验（此前缺失）。
+  - 引导核下 equal 对照臂无法定义（equal 禁用一切残差信号），单臂 equal 与配对归因入口
+    fail-closed 拒绝；模块 docstring 据实声明两类核边界。
+  - 新增 `tests/test_fitness_only_contract_guided.py` 10 项（据实合同/防伪/λ 谎报/诊断缺失/
+    adaptive_scale 与 tilt bounds 谎报/equal 与配对拒绝/λ=0 回归锚）。审计器另补值引导全参数
+    （adaptive_scale/drop_donor/warmup）与 tilt bounds 的 params+诊断段对拍——归一化方式是
+    V9 型运行的科学口径核心，谎报会让不同实验设定的产物不可分辨。历史正式产物全部 λ=0，
+    合同口径逐字段不变。
+- **定位声明**：值引导核**不是 fitness-only**，是"生成前分布塑形"路线——与"残差只经适应度
+  驱动选择"是两条不同假说，正式定位在 Issue #53 归档；PR 正文已加定位声明节。
+- **F2（基线环境 89 failed）**：审查测的旧 head 未含前置栈修复；当前 head 已 merge #71
+  最新并补齐漏网（#72 节），四态矩阵全绿，数字见 PR #73 回复。
+- **F3**：GSD runner 个人硬编码路径改 `TD_GSD_REPO`/`TD_GSD_PYTHON` 环境变量可配，
+  上游 commit 与补丁 SHA 对拍不变。
+- **科学定位（采纳）**："不可微/自定义查询差异化"对 GSD 零阶方法不成立（仅相对梯度系
+  maxent/图模型有效）；无门控设计剩余假说空间在 DP 加噪赛道；V9(max) 6.57e-5 为单种子
+  （9908）诊断值。正文对应改写。
+- **结构**：#73 与 #72 共享 head，历史交织不改写；按审查建议转 Draft 作为 GSD/值引导主题
+  审查窗口，前置栈 #69→#76→#70→#71→#72 合入后自动瘦身再转 Ready。
+
+### 上一暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
 
 > 本节把此前只存在于 PR #69 正文的 Stage 6E 正式结果与证据身份落入仓库文档（审查阻塞项 B4），
 > 记录本轮审查修复（B1--B5）的处置与理由，并声明剩余缺口核（gap_l1 B+C）研究线的最终定位：

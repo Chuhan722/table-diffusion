@@ -1,12 +1,24 @@
 """严格的 fitness-only 扩散演化入口。
 
-这个模块把研究主张变成 fail-closed 的可执行合同：动态 residual 只允许
-进入行适应度；donor 选定后使用盲独立复制核（``eta/mu`` 固定；``rho``
-恒定，或走预冻结的纯轮数驱动三段式时间表：保温 H 轮 → 几何降温 D 轮 →
-地板，公式不含总轮数、不读取残差）；每个 proposal 无条件成为下一状态；
-唯一停止条件是固定轮数；主返回恒为 terminal current。``equal`` 对照只把
-行适应度替换为常数，结构距离、时间表和全部随机机制保持不变，因此与
-``residual`` 臂之间只差适应度信号。
+这个模块把研究主张变成 fail-closed 的可执行合同。**默认合同**（
+``value_guidance_strength=0`` 且 ``block_score_tilt_strength=0``）：动态
+residual 只允许进入行适应度；donor 选定后使用盲独立复制核（``eta/mu``
+固定；``rho`` 恒定，或走预冻结的纯轮数驱动三段式时间表：保温 H 轮 →
+几何降温 D 轮 → 地板，公式不含总轮数、不读取残差）；每个 proposal 无
+条件成为下一状态；唯一停止条件是固定轮数；主返回恒为 terminal
+current。``equal`` 对照只把行适应度替换为常数，结构距离、时间表和全部
+随机机制保持不变，因此与 ``residual`` 臂之间只差适应度信号。
+
+**引导扩展核不是 fitness-only**：``value_guidance_strength>0``（残差
+逐格增益进值分布，``transition_kernel='value_guided'``）或
+``block_score_tilt_strength>0``（残差块分数倾斜复制开关，
+``transition_kernel='block_score_tilted'``）属于"生成前分布塑形"路线，
+残差经适应度之外的通道驱动转移核。此时产物合同据实声明
+``residual_driving_channels`` 追加对应通道、``transition_kernel`` 改为
+对应核名，审计器按请求配置重算期望并逐字段对拍——λ>0 的运行若携带
+``blind_independent`` 声明即审计 failure（fail-closed，防伪造）。引导核
+下 ``equal`` 对照臂无法定义（equal 臂禁用一切残差信号，而引导增益正是
+残差信号），单臂 equal 与配对归因均在入口 fail-closed 拒绝。
 """
 
 from dataclasses import dataclass
@@ -612,7 +624,23 @@ def _audit_fitness_only_run(
     """运行后再次核验合同，防止主循环未来改动后静默漂移。"""
 
     contract = diagnostics.get("fitness_only_contract")
+    value_guidance_on = config.value_guidance_strength > 0.0
+    block_tilt_on = config.block_score_tilt_strength > 0.0
+    # 与合同生成端同一逻辑重算期望（fail-closed）：λ>0 时残差经值引导
+    # 进入转移核，通道/核名必须据实；产物若仍声明 blind_independent
+    # 即为伪造，记 failure。
     expected_channels = ["fitness"] if fitness_mode == "residual" else []
+    if value_guidance_on:
+        expected_channels = expected_channels + ["value_guidance"]
+    if block_tilt_on:
+        expected_channels = expected_channels + ["block_score_tilt"]
+    expected_kernel = (
+        "value_guided"
+        if value_guidance_on
+        else "block_score_tilted"
+        if block_tilt_on
+        else "blind_independent"
+    )
     early_stopping_enabled = (
         config.inner_early_stopping_patience_ticks is not None
     )
@@ -678,7 +706,7 @@ def _audit_fitness_only_run(
     elif (
         contract.get("fitness_mode") != fitness_mode
         or contract.get("residual_driving_channels") != expected_channels
-        or contract.get("transition_kernel") != "blind_independent"
+        or contract.get("transition_kernel") != expected_kernel
         or contract.get("proposal_transition") != "unconditional"
         or contract.get("termination_rule") != (
             "inner_early_stopping_a_b_c"
@@ -709,6 +737,66 @@ def _audit_fitness_only_run(
             failures.append("分科倾斜已请求但诊断显示未启用")
         elif tilt_diag.get("reference_scale") is None:
             failures.append("分科倾斜启用但参考尺度未标定")
+        expected_bounds = tuple(
+            float(v) for v in config.block_score_tilt_bounds
+        )
+        actual_bounds = run_params.get("block_score_tilt_bounds")
+        if actual_bounds is None or tuple(
+            float(v) for v in actual_bounds
+        ) != expected_bounds:
+            failures.append("block_score_tilt_bounds 与请求配置不一致")
+    if float(
+        run_params.get("value_guidance_strength", 0.0)
+    ) != float(config.value_guidance_strength):
+        failures.append("value_guidance_strength 与请求配置不一致")
+    if value_guidance_on:
+        # V9 型运行的科学口径由归一化/去供体/warmup 共同定义，任一
+        # 谎报都会让不同实验设定的产物不可分辨——全参数对拍。
+        for key, expected in (
+            (
+                "value_guidance_adaptive_scale",
+                bool(config.value_guidance_adaptive_scale),
+            ),
+            (
+                "value_guidance_drop_donor",
+                bool(config.value_guidance_drop_donor),
+            ),
+            (
+                "value_guidance_warmup_start_round",
+                config.value_guidance_warmup_start_round,
+            ),
+            (
+                "value_guidance_warmup_rounds",
+                config.value_guidance_warmup_rounds,
+            ),
+        ):
+            if run_params.get(key) != expected:
+                failures.append(f"{key} 与请求配置不一致")
+        vg_diag = diagnostics.get("value_guidance")
+        if not isinstance(vg_diag, dict) or not vg_diag.get("enabled"):
+            failures.append("值引导已请求但诊断显示未启用")
+        else:
+            if float(vg_diag.get("strength", 0.0)) != float(
+                config.value_guidance_strength
+            ):
+                failures.append("值引导诊断 strength 与请求配置不一致")
+            if bool(vg_diag.get("adaptive_scale")) != bool(
+                config.value_guidance_adaptive_scale
+            ):
+                failures.append(
+                    "值引导诊断 adaptive_scale 与请求配置不一致"
+                )
+            if bool(vg_diag.get("drop_donor")) != bool(
+                config.value_guidance_drop_donor
+            ):
+                failures.append("值引导诊断 drop_donor 与请求配置不一致")
+            if (
+                vg_diag.get("warmup_start_round")
+                != config.value_guidance_warmup_start_round
+                or vg_diag.get("warmup_rounds")
+                != config.value_guidance_warmup_rounds
+            ):
+                failures.append("值引导诊断 warmup 参数与请求配置不一致")
     schedule_history = diagnostics.get("rho_schedule_history")
     expected_schedule_length = (
         rounds_run if early_stopping_enabled else config.n_rounds
@@ -873,6 +961,16 @@ def run_paired_fitness_only_attribution(
         raise ValueError(
             "配对归因合同要求两臂固定同长轨迹；"
             "inner early stopping 只允许单臂运行"
+        )
+    if (
+        config.value_guidance_strength > 0.0
+        or config.block_score_tilt_strength > 0.0
+    ):
+        # fail-closed：引导核让残差进入转移核，equal 臂（禁用一切残差
+        # 信号）无法定义，两臂归因失去"只差适应度信号"的合同前提。
+        raise ValueError(
+            "配对归因合同仅对盲独立复制核定义；"
+            "value_guidance_strength/block_score_tilt_strength 必须为 0"
         )
     runs = {
         mode: run_fitness_only_evolution(
