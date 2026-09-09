@@ -1055,6 +1055,328 @@ class TestFactorizedGibbsClosedLoop:
         assert diagnostics["factorized_gibbs_microsteps"] > 0
 
 
+class TestGapL1ClosedLoop:
+    @staticmethod
+    def _schema_queries_target():
+        return TestFactorizedGibbsClosedLoop._schema_queries_target()
+
+    @staticmethod
+    def _run_kwargs():
+        return {
+            **TestFactorizedGibbsClosedLoop._run_kwargs(),
+            "tol": float("inf"),
+        }
+
+    def test_zero_sweeps_preserves_existing_trajectory(self):
+        schema, queries, target = self._schema_queries_target()
+        implicit, implicit_diagnostics = run_evolution(
+            target, queries, schema, **self._run_kwargs()
+        )
+        explicit, explicit_diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=0,
+            **self._run_kwargs(),
+        )
+
+        pd.testing.assert_frame_equal(explicit, implicit)
+        for key in (
+            "loss_history",
+            "accept_history",
+            "raw_proposal_gain_history",
+            "primary_rng_state_sha256",
+        ):
+            assert explicit_diagnostics[key] == implicit_diagnostics[key]
+        assert explicit_diagnostics[
+            "gap_l1_attempt_diagnostics_history"
+        ] == [[] for _ in explicit_diagnostics["accept_history"]]
+        assert explicit_diagnostics["gap_l1_reference_scale"] is None
+        assert explicit_diagnostics["gap_l1_microsteps"] == 0
+
+    def test_gap_trajectory_is_reproducible_and_keeps_primary_rng_aligned(self):
+        schema, queries, target = self._schema_queries_target()
+        common = {**self._run_kwargs(), "n_rounds": 3}
+        _, baseline_diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=0,
+            **common,
+        )
+        candidate, candidate_diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            **common,
+        )
+        repeated, repeated_diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            **common,
+        )
+
+        pd.testing.assert_frame_equal(repeated, candidate)
+        assert (
+            candidate_diagnostics["loss_history"]
+            == repeated_diagnostics["loss_history"]
+        )
+        assert (
+            candidate_diagnostics["primary_rng_state_sha256"]
+            == baseline_diagnostics["primary_rng_state_sha256"]
+        )
+        assert candidate_diagnostics["gap_l1_reference_scale"] > 0.0
+        assert candidate_diagnostics["gap_l1_microsteps"] > 0
+        assert candidate_diagnostics["gap_l1_clip_hit_count"] == 0
+        assert "gap_l1_weighting" not in candidate_diagnostics["params"]
+        assert all(candidate_diagnostics["accept_history"])
+        attempts = candidate_diagnostics[
+            "gap_l1_attempt_diagnostics_history"
+        ]
+        repeated_attempts = repeated_diagnostics[
+            "gap_l1_attempt_diagnostics_history"
+        ]
+        assert len(attempts) == 3
+        assert all(len(per_round) == 1 for per_round in attempts)
+        assert len(candidate_diagnostics["gap_l1_calibration_history"]) == 3
+        assert len(
+            candidate_diagnostics["gap_l1_reference_scale_history"]
+        ) == 3
+        for observed, replayed in zip(attempts, repeated_attempts):
+            first = observed[0]
+            second = replayed[0]
+            assert first["no_gate"] is True
+            assert first["gap_l1_scan_applied"] is True
+            assert first["gibbs_microsteps"] == 8 * first[
+                "active_switches_k"
+            ]
+            for key in (
+                "reference_scale",
+                "scan_rng_seed_uint64",
+                "scan_rng_initial_state_sha256",
+                "scan_rng_endpoint_state_sha256",
+                "microstep_trace_sha256",
+                "final_query_counts",
+                "final_on_switches",
+            ):
+                assert first[key] == second[key]
+
+    def test_bounded_weighting_is_opt_in_and_recorded(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            gap_l1_weighting="bounded_relative",
+            gap_l1_max_weight_ratio=8.0,
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["params"]["gap_l1_weighting"] == (
+            "bounded_relative"
+        )
+        assert diagnostics["params"]["gap_l1_max_weight_ratio"] == 8.0
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["gap_l1_weighting"] == "bounded_relative"
+        assert attempt["gap_l1_max_weight_ratio"] == 8.0
+        assert attempt["gap_l1_actual_weight_ratio"] <= 8.0
+
+    def test_sqrt_target_weighting_is_opt_in_and_recorded(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            gap_l1_weighting="sqrt_target_relative",
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["params"]["gap_l1_weighting"] == (
+            "sqrt_target_relative"
+        )
+        assert diagnostics["params"]["gap_l1_max_weight_ratio"] is None
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["gap_l1_weighting"] == "sqrt_target_relative"
+        assert attempt["gap_l1_max_weight_ratio"] is None
+        assert attempt["gap_l1_smoothing_count"] is None
+        assert attempt["gap_l1_target_count_quantum"] == 1.0
+
+    def test_dual_abs_relative_max_weighting_is_opt_in_and_recorded(self):
+        schema, queries, target = self._schema_queries_target()
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            gap_l1_weighting="dual_abs_relative_max",
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["params"]["gap_l1_weighting"] == (
+            "dual_abs_relative_max"
+        )
+        assert diagnostics["params"]["gap_l1_max_weight_ratio"] is None
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["gap_l1_weighting"] == "dual_abs_relative_max"
+        assert attempt["gap_l1_max_weight_ratio"] is None
+        assert attempt["gap_l1_smoothing_count"] is None
+        assert attempt["gap_l1_channel_aggregation"] == "max"
+        assert attempt["gap_l1_zero_target_policy"] == (
+            "absolute_channel_only"
+        )
+        assert attempt["gap_l1_floor_applied"] is False
+
+    def test_missing_scale_uses_b_plan_without_starting_scan(
+        self, monkeypatch
+    ):
+        schema, queries, target = self._schema_queries_target()
+        monkeypatch.setattr(
+            evolution_module,
+            "isolated_gap_l1_scores",
+            lambda *args, **kwargs: {"scores": np.zeros(5)},
+        )
+
+        _, diagnostics = run_evolution(
+            target,
+            queries,
+            schema,
+            gap_l1_sweeps=8,
+            **{**self._run_kwargs(), "n_rounds": 1},
+        )
+
+        assert diagnostics["gap_l1_reference_scale"] is None
+        assert diagnostics["gap_l1_unscaled_round_count"] == 1
+        assert diagnostics["gap_l1_microsteps"] == 0
+        attempt = diagnostics["gap_l1_attempt_diagnostics_history"][0][0]
+        assert attempt["kernel"] == "independent_b_unscaled_gap_fallback"
+        assert attempt["gap_l1_scan_applied"] is False
+        assert attempt["scan_rng_seed_uint64"] is None
+
+    def test_worse_gap_proposal_is_still_applied_without_gate(
+        self, monkeypatch
+    ):
+        schema = Schema([
+            AttributeBlock(
+                name="x",
+                type="categorical",
+                description="x",
+                values=[0, 1],
+            )
+        ])
+        queries = [{
+            "conditions": [
+                {"attribute": "x", "operator": "==", "value": 1}
+            ]
+        }]
+        initial = pd.DataFrame({"x": [0, 0, 0, 0]})
+        monkeypatch.setattr(
+            evolution_module,
+            "init_synthetic_table",
+            lambda *args, **kwargs: initial.copy(),
+        )
+        monkeypatch.setattr(
+            evolution_module,
+            "isolated_gap_l1_scores",
+            lambda *args, **kwargs: {"scores": np.asarray([1.0])},
+        )
+
+        def fake_gap(*args, **kwargs):
+            return (
+                pd.DataFrame({"x": [1, 1, 1, 1]}),
+                np.zeros((4, 1), dtype=bool),
+                {
+                    "kernel": "fake_gap",
+                    "no_gate": True,
+                    "n_sweeps": 8,
+                    "active_switches_k": 0,
+                    "gibbs_microsteps": 0,
+                    "clip_hit_count": 0,
+                    "reference_scale": 1.0,
+                },
+            )
+
+        monkeypatch.setattr(
+            evolution_module, "evolve_step_gap_l1_global", fake_gap
+        )
+        result, diagnostics = run_evolution(
+            np.asarray([0.5]),
+            queries,
+            schema,
+            n_records=4,
+            n_rounds=1,
+            seed=9,
+            rho=1.0,
+            eta=0.5,
+            mu=0.0,
+            tol=float("inf"),
+            device="numpy",
+            distance_mode="geometric",
+            residual_directed_diffusion=True,
+            gap_l1_sweeps=8,
+            return_final_table=True,
+            log_every=100,
+        )
+
+        assert diagnostics["raw_proposal_gain_history"][0][0] < 0.0
+        assert diagnostics["accept_history"] == [True]
+        assert diagnostics["output_table_identity"] == "terminal_current"
+        assert result["x"].tolist() == [1, 1, 1, 1]
+        assert diagnostics["final_table"]["x"].tolist() == [1, 1, 1, 1]
+
+    @pytest.mark.parametrize(
+        "kwargs,message",
+        [
+            ({"gap_l1_sweeps": 1}, "0 或冻结的 8"),
+            ({"gap_l1_sweeps": True}, "0 或冻结的 8"),
+            (
+                {"gap_l1_weighting": "bounded_relative"},
+                "max_weight_ratio",
+            ),
+            (
+                {
+                    "gap_l1_weighting": "bounded_relative",
+                    "gap_l1_max_weight_ratio": 1.0,
+                },
+                "大于 1",
+            ),
+            (
+                {
+                    "gap_l1_weighting": "legacy_relative",
+                    "gap_l1_max_weight_ratio": 8.0,
+                },
+                "不允许",
+            ),
+            (
+                {
+                    "gap_l1_sweeps": 0,
+                    "gap_l1_weighting": "bounded_relative",
+                    "gap_l1_max_weight_ratio": 8.0,
+                },
+                "只允许与 gap_l1_sweeps=8",
+            ),
+            ({"residual_directed_diffusion": False}, "B 初始开关"),
+            ({"tol": 0.0}, "tol=\\+inf"),
+            ({"max_retries": 1}, "max_retries=0"),
+            ({"eta": 0.0}, "eta"),
+            ({"seed": None}, "seed"),
+            ({"factorized_gibbs_sweeps": 1}, "不能与 factorized"),
+        ],
+    )
+    def test_rejects_nonfrozen_or_gated_configuration(
+        self, kwargs, message
+    ):
+        schema, queries, target = self._schema_queries_target()
+        parameters = {**self._run_kwargs(), "gap_l1_sweeps": 8}
+        parameters.update(kwargs)
+        with pytest.raises(ValueError, match=message):
+            run_evolution(target, queries, schema, **parameters)
+
+
 class TestExcludeSelf:
     """对角线屏蔽在主循环层面的行为 + 自身抽样率诊断字段"""
 

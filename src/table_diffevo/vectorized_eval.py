@@ -30,6 +30,10 @@ eval_query_mask / eval_condition / compute_fitness 全部保留：
 - 什么都不做 → 新算子自动走慢路径，结果一定正确（只是不加速）
 - 想让它也快 → 把算子加进白名单 + 补一段向量化实现，其余不用动
 
+半空间查询（type == "halfspace"，见 queries.eval_halfspace_mask）不是合取
+条件结构，整条固定走回退组，由旧 eval_query_mask 精确评价（计数与 fitness
+贡献都对）。若将来成为性能瓶颈，可按同一机制补向量化（本质一次矩阵乘）。
+
 ## 权重与噪声接口（照原样保留）
 
 - fitness 的查询权重 w_j：通过 weights 参数传入，默认全 1。
@@ -159,6 +163,9 @@ def _compile_queries(
     fast_orig_idx: List[int] = []
 
     for qi in range(n):
+        if queries[qi].get("type") == "halfspace":
+            # 半空间查询不是合取条件结构，整条进回退组（旧 eval_query_mask 精确评价）
+            continue
         conds = queries[qi]["conditions"]
         # 判断整条查询是否全部条件都可向量化
         all_ops_ok = all(c["operator"] in VECTORIZED_OPS for c in conds)
@@ -310,6 +317,133 @@ def _batch_masks_torch(X_t, cols_t, ops_t, lo_t, hi_t, valid_t, torch):
     return mask
 
 
+def evaluate_conditions_vectorized(
+    df: pd.DataFrame,
+    conditions: List[Dict[str, Any]],
+    schema: Schema,
+    *,
+    device: Literal["numpy", "cuda", "cpu"] = "numpy",
+    return_tensor: bool = False,
+    float64: bool = False,
+):
+    """一次评价一组独立条件，供增量查询后端复用。
+
+    与 :func:`evaluate_vectorized` 不同，这里每一列是一个条件而不是一条
+    合取查询。表编码和条件编码完全复用本模块的现有规则；CUDA 路径不会在
+    设备不可用时静默回退，便于结果前协议严格绑定运行设备。
+    """
+
+    if device not in ("numpy", "cuda", "cpu"):
+        raise ValueError("device 必须是 'numpy'、'cuda' 或 'cpu'")
+    if not isinstance(return_tensor, bool) or not isinstance(float64, bool):
+        raise ValueError("return_tensor 和 float64 必须是布尔值")
+
+    X, col_index, cat_maps = _encode_table(df, schema)
+    cols = []
+    ops = []
+    lo = []
+    hi = []
+    for index, condition in enumerate(conditions):
+        if not isinstance(condition, dict):
+            raise ValueError(f"conditions[{index}] 必须是字典")
+        attribute = condition.get("attribute")
+        operator = condition.get("operator")
+        if attribute not in col_index or operator not in VECTORIZED_OPS:
+            raise ValueError(f"不支持的独立条件：{condition!r}")
+        cols.append(col_index[attribute])
+        ops.append(_OP_CODE[operator])
+        if operator == "between":
+            if "lower" not in condition or "upper" not in condition:
+                raise ValueError("between 条件缺少 lower/upper")
+            lo.append(float(condition["lower"]))
+            hi.append(float(condition["upper"]))
+        elif operator == ">=":
+            if "value" not in condition:
+                raise ValueError(">= 条件缺少 value")
+            lo.append(float(condition["value"]))
+            hi.append(0.0)
+        else:
+            if "value" not in condition:
+                raise ValueError("== 条件缺少 value")
+            lo.append(_encode_eq_value(attribute, condition["value"], cat_maps))
+            hi.append(0.0)
+
+    cols_np = np.asarray(cols, dtype=np.intp)
+    ops_np = np.asarray(ops, dtype=np.intp)
+    lo_np = np.asarray(lo, dtype=np.float64)
+    hi_np = np.asarray(hi, dtype=np.float64)
+    if device == "numpy":
+        values = X[:, cols_np]
+        result = np.where(
+            ops_np[None, :] == _OP_EQ,
+            values == lo_np[None, :],
+            np.where(
+                ops_np[None, :] == _OP_GE,
+                values >= lo_np[None, :],
+                (values >= lo_np[None, :]) & (values <= hi_np[None, :]),
+            ),
+        )
+        return result if return_tensor else np.asarray(result, dtype=bool)
+
+    try:
+        import torch
+    except ImportError as error:
+        raise RuntimeError("条件 CUDA 路径需要 PyTorch") from error
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("请求 CUDA 条件评价但 CUDA 不可用")
+    target_device = torch.device(device)
+    dtype = torch.float64 if float64 else torch.float32
+    X_t = torch.as_tensor(X, dtype=dtype, device=target_device)
+    cols_t = torch.as_tensor(cols_np, dtype=torch.long, device=target_device)
+    ops_t = torch.as_tensor(ops_np, dtype=torch.long, device=target_device)
+    lo_t = torch.as_tensor(lo_np, dtype=dtype, device=target_device)
+    hi_t = torch.as_tensor(hi_np, dtype=dtype, device=target_device)
+    values = X_t[:, cols_t]
+    result_t = torch.where(
+        (ops_t == _OP_EQ).unsqueeze(0),
+        values == lo_t.unsqueeze(0),
+        torch.where(
+            (ops_t == _OP_GE).unsqueeze(0),
+            values >= lo_t.unsqueeze(0),
+            (values >= lo_t.unsqueeze(0)) & (values <= hi_t.unsqueeze(0)),
+        ),
+    )
+    if return_tensor:
+        return result_t
+    return result_t.cpu().numpy().astype(bool, copy=False)
+
+
+def _query_attribute_matrix(
+    queries: List[Dict[str, Any]],
+    attr_names: List[str],
+) -> np.ndarray:
+    """查询→属性归属矩阵 E，shape (m, A)，float。
+
+    E[j, a] = 1 当且仅当查询 j 涉及属性 a：合取查询取 conditions 里出现的
+    属性集合（2-way 查询同时归属两科）；halfspace 查询取
+    ``query["halfspace"]["attributes"]``。未知属性 fail-closed 抛错。
+    """
+    attr_index = {name: i for i, name in enumerate(attr_names)}
+    E = np.zeros((len(queries), len(attr_names)), dtype=float)
+    for j, query in enumerate(queries):
+        if query.get("type") == "halfspace":
+            spec = query.get("halfspace")
+            if not isinstance(spec, dict) or "attributes" not in spec:
+                raise ValueError(
+                    f"查询 {j} 是 halfspace 但缺少 halfspace.attributes 字段"
+                )
+            involved = spec["attributes"]
+        else:
+            involved = {c["attribute"] for c in query["conditions"]}
+        for name in involved:
+            if name not in attr_index:
+                raise ValueError(
+                    f"查询 {j} 涉及未知属性 {name!r}（不在 schema 属性表中）"
+                )
+            E[j, attr_index[name]] = 1.0
+    return E
+
+
 def evaluate_vectorized(
     df: pd.DataFrame,
     queries: List[Dict[str, Any]],
@@ -325,7 +459,8 @@ def evaluate_vectorized(
     verbose: bool = True,
     residual_geometry: str = "absolute",
     residual_geometry_floor: float = 8.0,
-) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    want_block_scores: bool = False,
+) -> Tuple[np.ndarray, ...]:
     """
     向量化 + 分块评价：一次掩码扫描同时拿到计数 q、残差 ε 和 fitness。
 
@@ -371,6 +506,10 @@ def evaluate_vectorized(
     residual_geometry_floor : float, default 8.0
         sqrt_relative/relative 几何的分母下限，透传给
         objective.compute_residual。
+    want_block_scores : bool, default False
+        是否同时输出分科状态分（block scores）。True 要求 want_fitness=True，
+        返回值变为四元组 ``(q, residual, fitness, block_scores)``；False 保持
+        历史三元组，所有旧调用点不受影响。
 
     Returns
     -------
@@ -380,6 +519,10 @@ def evaluate_vectorized(
         比例残差 ε（want_fitness=False 时为 None）。与 compute_residual 一致。
     fitness : np.ndarray, shape (N,), float 或 None
         每条记录的适应度（want_fitness=False 时为 None）。
+    block_scores : np.ndarray, shape (N, A), float（仅 want_block_scores=True）
+        分科状态分 s_a(z) = Σ_{j 涉及属性 a} wr_j·(M[z,j] − p_j)。
+        行 fitness 的按属性分解（2-way 查询同时计入两科，故
+        Σ_a s_a ≠ fitness）。纯状态量：只用当前表的掩码与残差，不预演编辑。
 
     Notes
     -----
@@ -387,13 +530,22 @@ def evaluate_vectorized(
     **残差**：内部调用 objective.compute_residual（σ/κ 语义完全一致）。
     **fitness 公式**：fitness = M @ wr − (wr·p)，p = q/N，wr = w*residual。
     与旧 compute_fitness 的逐查询累加数学等价（numpy 路径逐位一致）。
+    **分科分公式**：block_scores = M @ (wr ⊙ E) − (wr⊙p) @ E，E 为查询→属性
+    归属矩阵（_query_attribute_matrix），与 fitness 同一批掩码顺手算出。
     **回退组**：含未向量化算子的查询走旧 evaluate_table，计数按原顺序填回；
-    这些查询的 fitness 贡献也用旧掩码逻辑补上（见实现）。
+    这些查询的 fitness / 分科分贡献也用旧掩码逻辑补上（见实现）。
     """
     m = len(queries)
     N = len(df)
     if n_records is None:
         n_records = N
+
+    if not isinstance(want_block_scores, (bool, np.bool_)):
+        raise ValueError("want_block_scores 必须是布尔值")
+    if want_block_scores and not want_fitness:
+        raise ValueError(
+            "want_block_scores=True 需要 want_fitness=True（分科分依赖加权残差）"
+        )
 
     if want_fitness:
         if target is None:
@@ -415,14 +567,16 @@ def evaluate_vectorized(
     fast_set = set(fast_orig)
     fallback_idx = [qi for qi in range(m) if qi not in fast_set]
     if fallback_idx and verbose:
-        bad_ops = sorted({
+        reasons = sorted({
             c["operator"]
             for qi in fallback_idx
-            for c in queries[qi]["conditions"]
+            for c in queries[qi].get("conditions", [])
             if c["operator"] not in VECTORIZED_OPS
         })
+        if any(queries[qi].get("type") == "halfspace" for qi in fallback_idx):
+            reasons.append("type=halfspace")
         print(
-            f"提示：{len(fallback_idx)} 个查询含未向量化算子 {bad_ops}，"
+            f"提示：{len(fallback_idx)} 个查询含未向量化算子/类型 {reasons}，"
             f"已走慢路径（旧 evaluate_table）。如需加速请补向量化实现。"
         )
 
@@ -430,6 +584,14 @@ def evaluate_vectorized(
     # 全量 wr（加权残差）在扫描中逐批填入；扫描后用它算 fitness 常数项
     wr_full = np.zeros(m, dtype=float) if want_fitness else None
     fitness_accum = np.zeros(N, dtype=float) if want_fitness else None
+    # 分科分：E (m, A) 归属矩阵 + (N, A) 累加器（M @ (wr ⊙ E) 逐批累加）
+    if want_block_scores:
+        attr_names = schema.attribute_names()
+        query_attr_matrix = _query_attribute_matrix(queries, attr_names)
+        block_accum = np.zeros((N, len(attr_names)), dtype=float)
+    else:
+        query_attr_matrix = None
+        block_accum = None
 
     # 每批算残差用的闭包：counts 完整 → residual 只依赖自身 count，可在批内算
     def _batch_wr(orig):
@@ -445,11 +607,13 @@ def evaluate_vectorized(
         _run_batches_torch(
             X, fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig,
             q, wr_full, fitness_accum, batch_size, device, want_fitness, _batch_wr,
+            query_attr_matrix=query_attr_matrix, block_accum=block_accum,
         )
     else:
         _run_batches_numpy(
             X, fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig,
             q, wr_full, fitness_accum, batch_size, want_fitness, _batch_wr,
+            query_attr_matrix=query_attr_matrix, block_accum=block_accum,
         )
 
     # 回退组：用旧 evaluate_table 逐查询算，计数填回原位置；fitness 贡献用旧掩码补
@@ -458,9 +622,11 @@ def evaluate_vectorized(
             df, queries, fallback_idx, q, wr_full, fitness_accum,
             want_fitness, N, n_records, target, weights, sigma, kappa,
             residual_geometry, residual_geometry_floor,
+            query_attr_matrix=query_attr_matrix, block_accum=block_accum,
         )
 
     residual = fitness = None
+    block_scores = None
     if want_fitness:
         # fitness = M @ wr − (wr·p)，常数项对所有记录相同
         p = q / N
@@ -472,8 +638,243 @@ def evaluate_vectorized(
             np.asarray(target), q, n_records, sigma=sig, kappa=kappa,
             geometry=residual_geometry, geometry_floor=residual_geometry_floor,
         )
+        if want_block_scores:
+            # 分科常数项：每科减去 Σ_{j∋a} wr_j·p_j（按归属矩阵散射）
+            block_scores = block_accum - (wr_full * p) @ query_attr_matrix
 
+    if want_block_scores:
+        return q, residual, fitness, block_scores
     return q, residual, fitness
+
+
+class ValueGainComputer:
+    """残差引导值分布核（value guidance）的逐格增益计算器。
+
+    对每条记录 i、每个属性 a、每个候选值 v，计算"把 i 的 a 改成 v"
+    对加权残差账本的一阶增益（只保留随 v 变化的部分）：
+
+        gain_a[i, v] = Σ_{j ∈ J_a, u_j = v} wr_j · M_other_j(i)
+
+    其中 J_a = 涉及属性 a 的合取查询集合；u_j = 查询 j 对 a 要求的值；
+    M_other_j(i) = 查询 j 除 a 外其余条件在记录 i 上的合取掩码
+    （1-way 查询为全 1）；wr_j = 加权残差（与 fitness 完全同源：
+    weights ⊙ compute_residual，欠账为正 → gain 越大越该补）。
+
+    实现（矩阵分解，避免逐查询扫描）：
+    - 1-way 查询 (a==u)：other 掩码 = 全 1 列；
+    - 2-way 查询 (a==u ∧ b==w)：other 掩码 = 单条件掩码 (X_b==w)。
+    于是全属性拼接的增益矩阵 G (N, D) = B @ W：
+    - B (N, K+1)：K 个去重单条件掩码列 + 1 列常量 1；
+    - W (K+1, D)：散射矩阵，W[k, dest] += wr_j，每轮按当前 wr 重填；
+    - D = Σ_a |V_a|（全属性值域拼接宽度）。
+    查询结构（基底列注册、散射条目、值域布局）在构造时解析一次；
+    每轮 compute() 只需重编码表 + 重算 B + 重填 W + 一次矩阵乘。
+
+    fail-closed 限制（构造时抛错，不静默降级）：
+    - 只支持全 == 条件的合取查询，且条件数 ≤ 2（考卷为 1-way/2-way）；
+    - halfspace 查询不支持；
+    - 全部属性必须是 categorical 且 values 非空（数值属性无有限值域）；
+    - 查询里出现的值必须在对应属性的 schema 值域内。
+
+    注意：字符串类别列的编码映射（cat_maps）按表内出现顺序建立、
+    跨轮不稳定，所以条件值在每轮 compute() 里用当轮映射重新编码，
+    与 evaluate_vectorized 的掩码语义逐位同源。
+    """
+
+    _CONST = -1  # 基底条目哨兵：表示 other 掩码 = 全 1 列
+
+    def __init__(
+        self,
+        queries: List[Dict[str, Any]],
+        schema: Schema,
+        weights: np.ndarray,
+        target: np.ndarray,
+        *,
+        sigma: Optional[np.ndarray] = None,
+        kappa: float = 1.0,
+        residual_geometry: str = "absolute",
+        residual_geometry_floor: float = 8.0,
+    ):
+        self._schema = schema
+        self._weights = np.asarray(weights, dtype=float)
+        self._target = np.asarray(target, dtype=float)
+        self._sigma = None if sigma is None else np.asarray(sigma, dtype=float)
+        self._kappa = kappa
+        self._geometry = residual_geometry
+        self._geometry_floor = residual_geometry_floor
+
+        if len(self._weights) != len(queries) or len(self._target) != len(queries):
+            raise ValueError(
+                f"weights/target 长度须等于查询数：weights={len(self._weights)} "
+                f"target={len(self._target)} queries={len(queries)}"
+            )
+
+        # —— 值域布局：全属性 categorical，值域拼接成 D 列 ——
+        attr_names = schema.attribute_names()
+        self._domains: Dict[str, list] = {}
+        self._dest_offset: Dict[str, int] = {}
+        value_pos: Dict[str, Dict[str, int]] = {}
+        offset = 0
+        for name in attr_names:
+            block = schema.get_block(name)
+            if not block.is_categorical() or not block.values:
+                raise ValueError(
+                    f"value guidance 只支持有限值域的 categorical 属性，"
+                    f"属性 {name!r} type={block.type!r} values={block.values!r}"
+                )
+            self._domains[name] = list(block.values)
+            self._dest_offset[name] = offset
+            # 值匹配按 str 对齐（与 _encode_eq_value 的 str(value) 语义一致）
+            value_pos[name] = {str(v): k for k, v in enumerate(block.values)}
+            offset += len(block.values)
+        self._d_total = offset
+
+        # —— 解析查询：注册基底掩码列 + 散射条目 ——
+        basis_index: Dict[Tuple[str, str], int] = {}
+        self._basis_conds: List[Tuple[str, Any]] = []  # (attr, 原始值)，每轮重编码
+        entry_query: List[int] = []
+        entry_basis: List[int] = []
+        entry_dest: List[int] = []
+        for j, query in enumerate(queries):
+            if query.get("type") == "halfspace" or "halfspace" in query:
+                raise ValueError(f"查询 {j} 是 halfspace，value guidance 不支持")
+            conds = query.get("conditions")
+            if not conds:
+                raise ValueError(f"查询 {j} 缺少 conditions")
+            if len(conds) > 2:
+                raise ValueError(
+                    f"查询 {j} 有 {len(conds)} 个条件，value guidance 首版只支持 ≤2-way"
+                )
+            for c in conds:
+                if c.get("operator") != "==":
+                    raise ValueError(
+                        f"查询 {j} 含非 == 算子 {c.get('operator')!r}，value guidance 不支持"
+                    )
+                if c["attribute"] not in self._domains:
+                    raise ValueError(f"查询 {j} 涉及未知属性 {c['attribute']!r}")
+            # 每个条件轮流当"目标属性"，其余条件构成 other 掩码
+            for pos, c in enumerate(conds):
+                a, u = c["attribute"], c["value"]
+                if str(u) not in value_pos[a]:
+                    raise ValueError(
+                        f"查询 {j} 条件值 {u!r} 不在属性 {a!r} 的 schema 值域 "
+                        f"{self._domains[a]!r} 内"
+                    )
+                dest = self._dest_offset[a] + value_pos[a][str(u)]
+                if len(conds) == 1:
+                    basis = self._CONST
+                else:
+                    other = conds[1 - pos]
+                    key = (other["attribute"], str(other["value"]))
+                    if key not in basis_index:
+                        basis_index[key] = len(self._basis_conds)
+                        self._basis_conds.append(
+                            (other["attribute"], other["value"])
+                        )
+                    basis = basis_index[key]
+                entry_query.append(j)
+                entry_basis.append(basis)
+                entry_dest.append(dest)
+
+        k = len(self._basis_conds)
+        eb = np.asarray(entry_basis, dtype=np.int64)
+        eb[eb == self._CONST] = k  # 常量列排在末尾
+        self._entry_query = np.asarray(entry_query, dtype=np.int64)
+        self._entry_basis = eb
+        self._entry_dest = np.asarray(entry_dest, dtype=np.int64)
+        self._n_basis = k
+
+    @property
+    def domains(self) -> Dict[str, list]:
+        """属性 → 候选值列表（schema 原始值，抽样后直接写回表）。"""
+        return self._domains
+
+    def wr_scale(
+        self,
+        q: np.ndarray,
+        n_records: int,
+        *,
+        percentile: float = 100.0,
+        scale_floor: float = 1e-12,
+    ) -> float:
+        """当轮加权残差的典型尺度（自适应 λ 的归一化分母）。
+
+        scale = max(p{percentile}(|wr|), scale_floor)，默认 percentile=100
+        即 max(|wr|)（最欠账的账）。用 max 保证 λ_eff·gain 有界：
+        gain ≤ max|wr|·每格覆盖账数，故 λ_eff·gain ≤ λ·覆盖数（~16），
+        不会随账本变平发散（p90 会：末期九成账全平 → 分母坍缩 →
+        λ_eff 爆炸 → 引导退化成确定性贪心，实测比无引导还差）。
+        wr 与 compute() 填 W 用的加权残差完全同源（同几何/同 floor/
+        同 weights）。账全平时 |wr| 全 0 → 返回 scale_floor（此时
+        gain 也全 0，λ/scale 再大也不产生倾斜，fail-safe）。
+        """
+        r = compute_residual(
+            self._target, np.asarray(q), n_records,
+            sigma=self._sigma, kappa=self._kappa,
+            geometry=self._geometry, geometry_floor=self._geometry_floor,
+        )
+        wr = self._weights * r
+        return max(float(np.percentile(np.abs(wr), percentile)), scale_floor)
+
+    def compute(
+        self,
+        df: pd.DataFrame,
+        q: np.ndarray,
+        n_records: int,
+        rows: Optional[np.ndarray] = None,
+    ) -> Dict[str, np.ndarray]:
+        """按当前表与当前计数账本算逐格增益。
+
+        Parameters
+        ----------
+        df : 当前合成表（掩码按它重算）
+        q : (m,) 当前查询计数（与 evaluate_vectorized 返回的 q 同源）
+        n_records : 残差比例口径的分母 N
+        rows : (K,) 行下标或 None
+            非 None 时只算这些行的增益（gain 逐行独立，子集结果与全表
+            结果的对应行逐位一致）；None 时算全表。残差 wr 只依赖 q，
+            与行子集无关。
+
+        Returns
+        -------
+        gains : Dict[attr, np.ndarray (K, V_a)]
+            每属性的逐行逐候选值增益（K=len(rows) 或全表 N）；
+            欠账方向为正。
+
+        注意：rows 子集编码使用子集自建的 cat_maps（按子集内出现顺序），
+        与全表映射可能不同，但掩码语义只要求行编码与条件编码同映射，
+        子集内自洽即语义正确。
+        """
+        if rows is not None:
+            rows = np.asarray(rows)
+            df = df.iloc[rows]
+        X, col_index, cat_maps = _encode_table(df, self._schema)
+        n = X.shape[0]
+
+        # 基底掩码矩阵 B (N, K+1)：条件值用当轮 cat_maps 编码（映射跨轮不稳定）
+        B = np.empty((n, self._n_basis + 1), dtype=float)
+        for k, (attr, value) in enumerate(self._basis_conds):
+            code = _encode_eq_value(attr, value, cat_maps)
+            B[:, k] = X[:, col_index[attr]] == code
+        B[:, self._n_basis] = 1.0
+
+        # 加权残差（与 evaluate_vectorized 的 _batch_wr 同源）
+        r = compute_residual(
+            self._target, np.asarray(q), n_records,
+            sigma=self._sigma, kappa=self._kappa,
+            geometry=self._geometry, geometry_floor=self._geometry_floor,
+        )
+        wr = self._weights * r
+
+        # 散射矩阵 W (K+1, D) 重填 + 一次矩阵乘
+        W = np.zeros((self._n_basis + 1, self._d_total), dtype=float)
+        np.add.at(W, (self._entry_basis, self._entry_dest), wr[self._entry_query])
+        G = B @ W
+
+        return {
+            name: G[:, off:off + len(self._domains[name])]
+            for name, off in self._dest_offset.items()
+        }
 
 
 def evaluate_directional_potential(
@@ -544,14 +945,16 @@ def evaluate_directional_potential(
     fast_set = set(fast_orig)
     fallback_idx = [qi for qi in range(m) if qi not in fast_set]
     if fallback_idx and verbose:
-        bad_ops = sorted({
+        reasons = sorted({
             c["operator"]
             for qi in fallback_idx
-            for c in queries[qi]["conditions"]
+            for c in queries[qi].get("conditions", [])
             if c["operator"] not in VECTORIZED_OPS
         })
+        if any(queries[qi].get("type") == "halfspace" for qi in fallback_idx):
+            reasons.append("type=halfspace")
         print(
-            f"提示：{len(fallback_idx)} 个方向查询含未向量化算子 {bad_ops}，"
+            f"提示：{len(fallback_idx)} 个方向查询含未向量化算子/类型 {reasons}，"
             "已走慢路径。"
         )
 
@@ -656,8 +1059,13 @@ def _directional_potential_torch(
 def _run_batches_numpy(
     X, fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig,
     q, wr_full, fitness_accum, batch_size, want_fitness, batch_wr,
+    query_attr_matrix=None, block_accum=None,
 ):
-    """NumPy：对快路径组分块算掩码，边算边派生计数、残差与 fitness 第一项。"""
+    """NumPy：对快路径组分块算掩码，边算边派生计数、残差与 fitness 第一项。
+
+    query_attr_matrix / block_accum 非 None 时同批顺手累加分科分第一项
+    M @ (wr ⊙ E)（见 evaluate_vectorized 的分科分公式）。
+    """
     F = fast_cols.shape[0]
     fast_orig_arr = np.asarray(fast_orig, dtype=np.intp)
     for start in range(0, F, batch_size):
@@ -674,17 +1082,26 @@ def _run_batches_numpy(
         if want_fitness:
             wr_b = batch_wr(orig)
             wr_full[orig] = wr_b
-            fitness_accum += mask.astype(float) @ wr_b
+            mask_f = mask.astype(float)
+            fitness_accum += mask_f @ wr_b
+            if block_accum is not None:
+                # (N, b) @ (b, A)：这批查询的加权残差按属性归属散射
+                block_accum += mask_f @ (
+                    wr_b[:, None] * query_attr_matrix[orig]
+                )
 
 
 def _run_batches_torch(
     X, fast_cols, fast_ops, fast_lo, fast_hi, fast_valid, fast_orig,
     q, wr_full, fitness_accum, batch_size, device, want_fitness, batch_wr,
+    query_attr_matrix=None, block_accum=None,
 ):
     """PyTorch：对快路径组分块算掩码，计数与 fitness 在设备上算，只回传小结果。
 
     残差在批内算：先把这批计数搬回 CPU 填 q，用 batch_wr 算加权残差（numpy），
     再把 wr 搬到设备做 M @ wr。计数是整数、精确；残差用 compute_residual 保证语义一致。
+    query_attr_matrix / block_accum 非 None 时分科分第一项也在设备上累加，
+    最后一次性搬回。
     """
     try:
         import torch
@@ -707,6 +1124,16 @@ def _run_batches_torch(
         torch.zeros(X_t.shape[0], dtype=torch.float32, device=dev)
         if want_fitness else None
     )
+    if block_accum is not None:
+        attr_matrix_t = torch.as_tensor(
+            query_attr_matrix, dtype=torch.float32, device=dev
+        )
+        block_accum_t = torch.zeros(
+            (X_t.shape[0], attr_matrix_t.shape[1]),
+            dtype=torch.float32, device=dev,
+        )
+    else:
+        attr_matrix_t = block_accum_t = None
 
     F = fast_cols.shape[0]
     fast_orig_arr = np.asarray(fast_orig, dtype=np.intp)
@@ -725,23 +1152,33 @@ def _run_batches_torch(
             wr_b = batch_wr(orig)                       # numpy，依赖已填的 q[orig]
             wr_full[orig] = wr_b
             wr_bt = torch.as_tensor(wr_b, dtype=torch.float32, device=dev)
-            fitness_accum_t += mask.float() @ wr_bt
+            mask_f = mask.float()
+            fitness_accum_t += mask_f @ wr_bt
+            if block_accum_t is not None:
+                orig_t = torch.as_tensor(orig, dtype=torch.long, device=dev)
+                block_accum_t += mask_f @ (
+                    wr_bt[:, None] * attr_matrix_t[orig_t]
+                )
 
     if want_fitness:
         # 只把 (N,) 的 fitness 累加项搬回 CPU
         fitness_accum += fitness_accum_t.cpu().numpy().astype(float)
+        if block_accum_t is not None:
+            block_accum += block_accum_t.cpu().numpy().astype(float)
 
 
 def _handle_fallback(
     df, queries, fallback_idx, q, wr_full, fitness_accum,
     want_fitness, N, n_records, target, weights, sigma, kappa,
     residual_geometry="absolute", residual_geometry_floor=8.0,
+    query_attr_matrix=None, block_accum=None,
 ):
     """
     回退组：用旧 evaluate_table 逐查询算（保证正确），计数填回原位置。
 
     fitness 的第一项 M @ wr 也要包含回退组的贡献，用旧 eval_query_mask 补上。
     残差用 compute_residual 逐查询算（σ/κ 语义一致）。
+    block_accum 非 None 时分科分第一项同样按归属散射补上。
     """
     from table_diffevo.queries import eval_query_mask
 
@@ -758,4 +1195,9 @@ def _handle_fallback(
             )[0]
             wr_qi = float(np.asarray(weights)[qi]) * r
             wr_full[qi] = wr_qi
-            fitness_accum += mask.astype(float) * wr_qi
+            mask_f = mask.astype(float)
+            fitness_accum += mask_f * wr_qi
+            if block_accum is not None:
+                block_accum += np.outer(
+                    mask_f, wr_qi * query_attr_matrix[qi]
+                )
