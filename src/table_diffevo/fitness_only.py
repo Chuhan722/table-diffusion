@@ -1,12 +1,24 @@
 """严格的 fitness-only 扩散演化入口。
 
-这个模块把研究主张变成 fail-closed 的可执行合同：动态 residual 只允许
-进入行适应度；donor 选定后使用盲独立复制核（``eta/mu`` 固定；``rho``
-恒定，或走预冻结的纯轮数驱动三段式时间表：保温 H 轮 → 几何降温 D 轮 →
-地板，公式不含总轮数、不读取残差）；每个 proposal 无条件成为下一状态；
-唯一停止条件是固定轮数；主返回恒为 terminal current。``equal`` 对照只把
-行适应度替换为常数，结构距离、时间表和全部随机机制保持不变，因此与
-``residual`` 臂之间只差适应度信号。
+这个模块把研究主张变成 fail-closed 的可执行合同。**默认合同**（
+``value_guidance_strength=0`` 且 ``block_score_tilt_strength=0``）：动态
+residual 只允许进入行适应度；donor 选定后使用盲独立复制核（``eta/mu``
+固定；``rho`` 恒定，或走预冻结的纯轮数驱动三段式时间表：保温 H 轮 →
+几何降温 D 轮 → 地板，公式不含总轮数、不读取残差）；每个 proposal 无
+条件成为下一状态；唯一停止条件是固定轮数；主返回恒为 terminal
+current。``equal`` 对照只把行适应度替换为常数，结构距离、时间表和全部
+随机机制保持不变，因此与 ``residual`` 臂之间只差适应度信号。
+
+**引导扩展核不是 fitness-only**：``value_guidance_strength>0``（残差
+逐格增益进值分布，``transition_kernel='value_guided'``）或
+``block_score_tilt_strength>0``（残差块分数倾斜复制开关，
+``transition_kernel='block_score_tilted'``）属于"生成前分布塑形"路线，
+残差经适应度之外的通道驱动转移核。此时产物合同据实声明
+``residual_driving_channels`` 追加对应通道、``transition_kernel`` 改为
+对应核名，审计器按请求配置重算期望并逐字段对拍——λ>0 的运行若携带
+``blind_independent`` 声明即审计 failure（fail-closed，防伪造）。引导核
+下 ``equal`` 对照臂无法定义（equal 臂禁用一切残差信号，而引导增益正是
+残差信号），单臂 equal 与配对归因均在入口 fail-closed 拒绝。
 """
 
 from dataclasses import dataclass
@@ -50,6 +62,9 @@ class FitnessOnlyConfig:
     eta_anneal_start_round: Optional[int] = None
     eta_anneal_rounds: Optional[int] = None
     eta_anneal_end: Optional[float] = None
+    mu_anneal_start_round: Optional[int] = None
+    mu_anneal_rounds: Optional[int] = None
+    mu_anneal_end: Optional[float] = None
     mw_query_weight_eta: Optional[float] = None
     mw_signal_cap: Optional[float] = None
     mw_weight_cap: Optional[float] = None
@@ -64,6 +79,14 @@ class FitnessOnlyConfig:
     ] = "relative"
     residual_geometry_floor: float = 8.0
     exclude_self: bool = True
+    lottery_first_donor_selection: bool = False
+    block_score_tilt_strength: float = 0.0
+    block_score_tilt_bounds: Tuple[float, float] = (0.3, 0.7)
+    value_guidance_strength: float = 0.0
+    value_guidance_warmup_start_round: Optional[int] = None
+    value_guidance_warmup_rounds: Optional[int] = None
+    value_guidance_drop_donor: bool = False
+    value_guidance_adaptive_scale: bool = False
     record_transition_clocks: bool = False
     inner_early_stopping_patience_ticks: Optional[int] = None
 
@@ -191,6 +214,45 @@ class FitnessOnlyConfig:
             ):
                 errors.append("eta_anneal_end 必须位于 (0, eta]")
 
+        mu_schedule_values = (
+            self.mu_anneal_start_round,
+            self.mu_anneal_rounds,
+            self.mu_anneal_end,
+        )
+        mu_schedule_flags = [
+            value is not None for value in mu_schedule_values
+        ]
+        if any(mu_schedule_flags) and not all(mu_schedule_flags):
+            errors.append(
+                "mu 三段式时间表必须同时提供 mu_anneal_start_round、"
+                "mu_anneal_rounds、mu_anneal_end，或三者全为 None"
+            )
+        elif all(mu_schedule_flags):
+            if (
+                isinstance(self.mu_anneal_start_round, (bool, np.bool_))
+                or not isinstance(
+                    self.mu_anneal_start_round, (int, np.integer)
+                )
+                or self.mu_anneal_start_round < 0
+            ):
+                errors.append("mu_anneal_start_round 必须是非负整数")
+            if (
+                isinstance(self.mu_anneal_rounds, (bool, np.bool_))
+                or not isinstance(
+                    self.mu_anneal_rounds, (int, np.integer)
+                )
+                or self.mu_anneal_rounds < 1
+            ):
+                errors.append("mu_anneal_rounds 必须是正整数")
+            if (
+                not _is_finite_number(self.mu_anneal_end)
+                or not (
+                    _is_finite_number(self.mu)
+                    and 0.0 < self.mu_anneal_end <= self.mu
+                )
+            ):
+                errors.append("mu_anneal_end 必须位于 (0, mu]")
+
         mw_values = (
             self.mw_query_weight_eta,
             self.mw_signal_cap,
@@ -274,6 +336,120 @@ class FitnessOnlyConfig:
             errors.append("residual_geometry_floor 必须是正有限数")
         if not isinstance(self.exclude_self, (bool, np.bool_)):
             errors.append("exclude_self 必须是布尔值")
+        if not isinstance(
+            self.lottery_first_donor_selection, (bool, np.bool_)
+        ):
+            errors.append("lottery_first_donor_selection 必须是布尔值")
+        if (
+            not _is_finite_number(self.block_score_tilt_strength)
+            or self.block_score_tilt_strength < 0.0
+        ):
+            errors.append("block_score_tilt_strength 必须是非负有限数值")
+        elif self.block_score_tilt_strength > 0.0:
+            # fail-closed：分科倾斜的组合边界与主循环校验一致（见
+            # evolution.run_evolution），在配置层提前拒绝。
+            if self.eval_method != "vectorized":
+                errors.append(
+                    "block_score_tilt_strength>0 要求 eval_method='vectorized'"
+                )
+            if self.mw_query_weight_eta is not None:
+                errors.append(
+                    "block_score_tilt_strength>0 与 MW 查询权重互斥"
+                )
+            if self.eta_anneal_end is not None:
+                errors.append("block_score_tilt_strength>0 与 eta 退火互斥")
+            if (
+                not isinstance(self.block_score_tilt_bounds, (tuple, list))
+                or len(self.block_score_tilt_bounds) != 2
+                or not all(
+                    _is_finite_number(v)
+                    for v in self.block_score_tilt_bounds
+                )
+            ):
+                errors.append(
+                    "block_score_tilt_bounds 必须是有限数值 (lo, hi) 二元组"
+                )
+            elif not (
+                0.0
+                <= float(self.block_score_tilt_bounds[0])
+                <= float(self.eta)
+                <= float(self.block_score_tilt_bounds[1])
+                <= 1.0
+            ):
+                errors.append(
+                    "block_score_tilt_bounds 必须满足 0 ≤ lo ≤ eta ≤ hi ≤ 1"
+                )
+        if (
+            not _is_finite_number(self.value_guidance_strength)
+            or self.value_guidance_strength < 0.0
+        ):
+            errors.append("value_guidance_strength 必须是非负有限数值")
+        elif self.value_guidance_strength > 0.0:
+            # fail-closed：值引导核的组合边界与主循环校验一致（见
+            # evolution.run_evolution），在配置层提前拒绝。
+            if self.eval_method != "vectorized":
+                errors.append(
+                    "value_guidance_strength>0 要求 eval_method='vectorized'"
+                )
+            if self.mw_query_weight_eta is not None:
+                errors.append(
+                    "value_guidance_strength>0 与 MW 查询权重互斥"
+                )
+            if self.eta_anneal_end is not None:
+                errors.append("value_guidance_strength>0 与 eta 退火互斥")
+            if self.block_score_tilt_strength > 0.0:
+                errors.append("value_guidance_strength>0 与分科倾斜互斥")
+        else:
+            if self.value_guidance_drop_donor:
+                errors.append(
+                    "value_guidance_drop_donor=True 需要 "
+                    "value_guidance_strength>0"
+                )
+            if self.value_guidance_adaptive_scale:
+                errors.append(
+                    "value_guidance_adaptive_scale=True 需要 "
+                    "value_guidance_strength>0"
+                )
+            if (
+                self.value_guidance_warmup_start_round is not None
+                or self.value_guidance_warmup_rounds is not None
+            ):
+                errors.append(
+                    "value_guidance warmup 参数需要 value_guidance_strength>0"
+                )
+        if not isinstance(self.value_guidance_drop_donor, (bool, np.bool_)):
+            errors.append("value_guidance_drop_donor 必须是布尔值")
+        if not isinstance(
+            self.value_guidance_adaptive_scale, (bool, np.bool_)
+        ):
+            errors.append("value_guidance_adaptive_scale 必须是布尔值")
+        if self.value_guidance_warmup_start_round is not None and (
+            isinstance(
+                self.value_guidance_warmup_start_round, (bool, np.bool_)
+            )
+            or not isinstance(
+                self.value_guidance_warmup_start_round, (int, np.integer)
+            )
+            or self.value_guidance_warmup_start_round < 0
+        ):
+            errors.append(
+                "value_guidance_warmup_start_round 必须是非负整数或 None"
+            )
+        if self.value_guidance_warmup_rounds is not None and (
+            isinstance(self.value_guidance_warmup_rounds, (bool, np.bool_))
+            or not isinstance(
+                self.value_guidance_warmup_rounds, (int, np.integer)
+            )
+            or self.value_guidance_warmup_rounds < 1
+        ):
+            errors.append("value_guidance_warmup_rounds 必须是正整数或 None")
+        if (self.value_guidance_warmup_start_round is None) != (
+            self.value_guidance_warmup_rounds is None
+        ):
+            errors.append(
+                "value_guidance_warmup_start_round 与 "
+                "value_guidance_warmup_rounds 必须成对提供或都为 None"
+            )
         if not isinstance(self.record_transition_clocks, (bool, np.bool_)):
             errors.append("record_transition_clocks 必须是布尔值")
         if self.inner_early_stopping_patience_ticks is not None and (
@@ -329,6 +505,28 @@ def build_fitness_only_kwargs(
         "delta": float(config.delta),
         "winsorize_quantiles": tuple(config.winsorize_quantiles),
         "exclude_self": bool(config.exclude_self),
+        "lottery_first_donor_selection": bool(
+            config.lottery_first_donor_selection
+        ),
+        "block_score_tilt_strength": float(config.block_score_tilt_strength),
+        "block_score_tilt_bounds": (
+            tuple(float(v) for v in config.block_score_tilt_bounds)
+            if config.block_score_tilt_strength > 0.0 else None
+        ),
+        "value_guidance_strength": float(config.value_guidance_strength),
+        "value_guidance_warmup_start_round": (
+            int(config.value_guidance_warmup_start_round)
+            if config.value_guidance_warmup_start_round is not None
+            else None
+        ),
+        "value_guidance_warmup_rounds": (
+            int(config.value_guidance_warmup_rounds)
+            if config.value_guidance_warmup_rounds is not None else None
+        ),
+        "value_guidance_drop_donor": bool(config.value_guidance_drop_donor),
+        "value_guidance_adaptive_scale": bool(
+            config.value_guidance_adaptive_scale
+        ),
         "max_retries": 0,
         "residual_directed_diffusion": False,
         "diffusion_direction_strength": 0.0,
@@ -363,6 +561,18 @@ def build_fitness_only_kwargs(
         "eta_anneal_start_round": (
             int(config.eta_anneal_start_round)
             if config.eta_anneal_start_round is not None else None
+        ),
+        "mu_anneal_end": (
+            float(config.mu_anneal_end)
+            if config.mu_anneal_end is not None else None
+        ),
+        "mu_anneal_rounds": (
+            int(config.mu_anneal_rounds)
+            if config.mu_anneal_rounds is not None else None
+        ),
+        "mu_anneal_start_round": (
+            int(config.mu_anneal_start_round)
+            if config.mu_anneal_start_round is not None else None
         ),
         "mw_query_weight_eta": (
             float(config.mw_query_weight_eta)
@@ -414,7 +624,23 @@ def _audit_fitness_only_run(
     """运行后再次核验合同，防止主循环未来改动后静默漂移。"""
 
     contract = diagnostics.get("fitness_only_contract")
+    value_guidance_on = config.value_guidance_strength > 0.0
+    block_tilt_on = config.block_score_tilt_strength > 0.0
+    # 与合同生成端同一逻辑重算期望（fail-closed）：λ>0 时残差经值引导
+    # 进入转移核，通道/核名必须据实；产物若仍声明 blind_independent
+    # 即为伪造，记 failure。
     expected_channels = ["fitness"] if fitness_mode == "residual" else []
+    if value_guidance_on:
+        expected_channels = expected_channels + ["value_guidance"]
+    if block_tilt_on:
+        expected_channels = expected_channels + ["block_score_tilt"]
+    expected_kernel = (
+        "value_guided"
+        if value_guidance_on
+        else "block_score_tilted"
+        if block_tilt_on
+        else "blind_independent"
+    )
     early_stopping_enabled = (
         config.inner_early_stopping_patience_ticks is not None
     )
@@ -480,7 +706,7 @@ def _audit_fitness_only_run(
     elif (
         contract.get("fitness_mode") != fitness_mode
         or contract.get("residual_driving_channels") != expected_channels
-        or contract.get("transition_kernel") != "blind_independent"
+        or contract.get("transition_kernel") != expected_kernel
         or contract.get("proposal_transition") != "unconditional"
         or contract.get("termination_rule") != (
             "inner_early_stopping_a_b_c"
@@ -491,10 +717,86 @@ def _audit_fitness_only_run(
     ):
         failures.append("fitness-only 合同诊断与请求不一致")
     if fitness_mode == "equal" and any(
-        value != 0.0
+        value is not None and value != 0.0
         for value in diagnostics.get("donor_fitness_history", [])
     ):
+        # lottery 换位口径下零中签轮记 None，不属于非零 fitness 违约。
         failures.append("equal 对照出现了非零 donor fitness")
+    run_params = diagnostics.get("params", {})
+    if bool(run_params.get("lottery_first_donor_selection")) != bool(
+        config.lottery_first_donor_selection
+    ):
+        failures.append("lottery_first_donor_selection 与请求配置不一致")
+    if float(
+        run_params.get("block_score_tilt_strength", 0.0)
+    ) != float(config.block_score_tilt_strength):
+        failures.append("block_score_tilt_strength 与请求配置不一致")
+    if config.block_score_tilt_strength > 0.0:
+        tilt_diag = diagnostics.get("block_score_tilt")
+        if not isinstance(tilt_diag, dict) or not tilt_diag.get("enabled"):
+            failures.append("分科倾斜已请求但诊断显示未启用")
+        elif tilt_diag.get("reference_scale") is None:
+            failures.append("分科倾斜启用但参考尺度未标定")
+        expected_bounds = tuple(
+            float(v) for v in config.block_score_tilt_bounds
+        )
+        actual_bounds = run_params.get("block_score_tilt_bounds")
+        if actual_bounds is None or tuple(
+            float(v) for v in actual_bounds
+        ) != expected_bounds:
+            failures.append("block_score_tilt_bounds 与请求配置不一致")
+    if float(
+        run_params.get("value_guidance_strength", 0.0)
+    ) != float(config.value_guidance_strength):
+        failures.append("value_guidance_strength 与请求配置不一致")
+    if value_guidance_on:
+        # V9 型运行的科学口径由归一化/去供体/warmup 共同定义，任一
+        # 谎报都会让不同实验设定的产物不可分辨——全参数对拍。
+        for key, expected in (
+            (
+                "value_guidance_adaptive_scale",
+                bool(config.value_guidance_adaptive_scale),
+            ),
+            (
+                "value_guidance_drop_donor",
+                bool(config.value_guidance_drop_donor),
+            ),
+            (
+                "value_guidance_warmup_start_round",
+                config.value_guidance_warmup_start_round,
+            ),
+            (
+                "value_guidance_warmup_rounds",
+                config.value_guidance_warmup_rounds,
+            ),
+        ):
+            if run_params.get(key) != expected:
+                failures.append(f"{key} 与请求配置不一致")
+        vg_diag = diagnostics.get("value_guidance")
+        if not isinstance(vg_diag, dict) or not vg_diag.get("enabled"):
+            failures.append("值引导已请求但诊断显示未启用")
+        else:
+            if float(vg_diag.get("strength", 0.0)) != float(
+                config.value_guidance_strength
+            ):
+                failures.append("值引导诊断 strength 与请求配置不一致")
+            if bool(vg_diag.get("adaptive_scale")) != bool(
+                config.value_guidance_adaptive_scale
+            ):
+                failures.append(
+                    "值引导诊断 adaptive_scale 与请求配置不一致"
+                )
+            if bool(vg_diag.get("drop_donor")) != bool(
+                config.value_guidance_drop_donor
+            ):
+                failures.append("值引导诊断 drop_donor 与请求配置不一致")
+            if (
+                vg_diag.get("warmup_start_round")
+                != config.value_guidance_warmup_start_round
+                or vg_diag.get("warmup_rounds")
+                != config.value_guidance_warmup_rounds
+            ):
+                failures.append("值引导诊断 warmup 参数与请求配置不一致")
     schedule_history = diagnostics.get("rho_schedule_history")
     expected_schedule_length = (
         rounds_run if early_stopping_enabled else config.n_rounds
@@ -523,6 +825,92 @@ def _audit_fitness_only_run(
                     f"rho_schedule_history 第 {t} 轮与预冻结时间表公式不一致"
                 )
                 break
+    mu_history = diagnostics.get("mu_schedule_history")
+    if (
+        not isinstance(mu_history, list)
+        or len(mu_history) != expected_schedule_length
+    ):
+        failures.append("mu_schedule_history 缺失或长度不等于实际轮数")
+    else:
+        mu0 = float(config.mu)
+        for t, actual in enumerate(mu_history):
+            if config.mu_anneal_end is not None:
+                mu_anneal_t = t - int(config.mu_anneal_start_round)
+                mu_anneal_progress = min(
+                    1.0,
+                    max(0.0, mu_anneal_t / int(config.mu_anneal_rounds)),
+                )
+                expected = mu0 * (
+                    float(config.mu_anneal_end) / mu0
+                ) ** mu_anneal_progress
+            else:
+                expected = mu0
+            if actual != expected:
+                failures.append(
+                    f"mu_schedule_history 第 {t} 轮与预冻结时间表公式不一致"
+                )
+                break
+    if float(config.value_guidance_strength) > 0.0:
+        vg_block = diagnostics.get("value_guidance")
+        vg_history = (
+            vg_block.get("lambda_history")
+            if isinstance(vg_block, dict) else None
+        )
+        if (
+            not isinstance(vg_history, list)
+            or len(vg_history) != expected_schedule_length
+        ):
+            failures.append(
+                "value_guidance.lambda_history 缺失或长度不等于实际轮数"
+            )
+        else:
+            lam_max = float(config.value_guidance_strength)
+            for t, actual in enumerate(vg_history):
+                if config.value_guidance_warmup_rounds is not None:
+                    vg_progress = min(
+                        1.0,
+                        max(
+                            0.0,
+                            (
+                                t
+                                - int(
+                                    config.value_guidance_warmup_start_round
+                                )
+                            )
+                            / int(config.value_guidance_warmup_rounds),
+                        ),
+                    )
+                    expected = lam_max * vg_progress
+                else:
+                    expected = lam_max
+                if actual != expected:
+                    failures.append(
+                        f"value_guidance.lambda_history 第 {t} 轮与预冻结"
+                        "时间表公式不一致"
+                    )
+                    break
+        if bool(config.value_guidance_adaptive_scale):
+            vg_scales = (
+                vg_block.get("scale_history")
+                if isinstance(vg_block, dict) else None
+            )
+            if (
+                not isinstance(vg_scales, list)
+                or len(vg_scales) != expected_schedule_length
+            ):
+                failures.append(
+                    "value_guidance.scale_history 缺失或长度不等于实际轮数"
+                    "（adaptive_scale=True 时逐轮必录）"
+                )
+            elif not all(
+                isinstance(s, (int, float))
+                and np.isfinite(s)
+                and s > 0.0
+                for s in vg_scales
+            ):
+                failures.append(
+                    "value_guidance.scale_history 含非有限或非正尺度"
+                )
     if failures:
         raise RuntimeError("fitness-only 运行后审计失败：" + "；".join(failures))
 
@@ -574,6 +962,16 @@ def run_paired_fitness_only_attribution(
             "配对归因合同要求两臂固定同长轨迹；"
             "inner early stopping 只允许单臂运行"
         )
+    if (
+        config.value_guidance_strength > 0.0
+        or config.block_score_tilt_strength > 0.0
+    ):
+        # fail-closed：引导核让残差进入转移核，equal 臂（禁用一切残差
+        # 信号）无法定义，两臂归因失去"只差适应度信号"的合同前提。
+        raise ValueError(
+            "配对归因合同仅对盲独立复制核定义；"
+            "value_guidance_strength/block_score_tilt_strength 必须为 0"
+        )
     runs = {
         mode: run_fitness_only_evolution(
             target,
@@ -616,6 +1014,11 @@ def run_paired_fitness_only_attribution(
             "rho_anneal_start_round": config.rho_anneal_start_round,
             "rho_anneal_rounds": config.rho_anneal_rounds,
             "rho_anneal_end": config.rho_anneal_end,
+        },
+        "shared_mu_schedule": {
+            "mu_anneal_start_round": config.mu_anneal_start_round,
+            "mu_anneal_rounds": config.mu_anneal_rounds,
+            "mu_anneal_end": config.mu_anneal_end,
         },
         "shared_initial_table_sha256": residual_diag["initial_table_sha256"],
         "shared_primary_rng_endpoint_sha256": residual_diag[

@@ -46,18 +46,20 @@ from typing import Optional, Literal
 import numpy as np
 
 
-def _exclude_self_numpy(probs):
-    """把对角线概率置 0 并按行重归一化（numpy）。
+def _exclude_self_numpy(probs, self_cols=None):
+    """把自身条目概率置 0 并按行重归一化（numpy）。
 
-    等价于抽样前将对角 logit 设为 -inf：softmax 后归一化仅在非自身候选上进行。
-    要求 probs 为方阵（N==K），调用方已校验。
+    等价于抽样前将自身 logit 设为 -inf：softmax 后归一化仅在非自身候选上进行。
+    self_cols=None（默认）取对角线，要求 probs 为方阵（N==K），调用方已校验；
+    行子集路径传入每行自身所在的列索引（shape (N,)），语义与对角线一致。
     行内除自身外全为 0 的极端情形（不会在 δ>0 的 geometric/含距离模式发生）
     会导致除零，此处不额外兜底——若真发生应上抛而非静默。
     """
     probs = probs.copy()
     n = probs.shape[0]
-    idx = np.arange(n)
-    probs[idx, idx] = 0.0
+    rows = np.arange(n)
+    cols = rows if self_cols is None else self_cols
+    probs[rows, cols] = 0.0
     probs = probs / probs.sum(axis=1, keepdims=True)
     return probs
 
@@ -77,6 +79,7 @@ def compute_sampling_probs(
     exclude_self: bool = False,
     scale_invariant: bool = False,
     scale_invariant_min_spread: float = 1e-3,
+    self_indices=None,
 ):
     """
     计算每条当前记录对所有候选记录的抽样概率（softmax）。
@@ -162,6 +165,16 @@ def compute_sampling_probs(
         当行内离散度低于该值时选择强度随离散度线性平滑衰减（离散度趋零
         时退化为均匀），避免把纯噪声级微小差异放大成极端选择偏好。必须
         为正有限数。
+    self_indices : np.ndarray or None, default None
+        行子集模式下每行"自身"在候选池中的列索引（shape (N,)，N 为
+        distances 的行数）。仅与 ``exclude_self=True`` 联用：distances
+        可为长方形（N 行子集 × K 全候选池），第 j 行的自身条目是
+        ``[j, self_indices[j]]``。行内全部运算（标准化统计、-inf 屏蔽、
+        清零重归一化）逐行独立，因此子集行的概率向量与全表计算等价：
+        numpy 路径逐位一致；torch/cuda 路径为数值等价——float32 行归约
+        （均值/方差/softmax 求和）的切块顺序随矩阵形状变化，(N,K) 子集
+        与 (K,K) 全表在最后一位舍入上可有差异。
+        None（默认）保持历史行为：exclude_self 取对角线并要求方阵。
 
     Returns
     -------
@@ -227,7 +240,29 @@ def compute_sampling_probs(
 
     # exclude_self 只在候选池=全表（方阵，行 i 与列 i 同一条记录）时有意义。
     # 共享参考池（K≠N）里没有"自己"，盲目屏蔽第 i 列会误伤真实候选，故此处拦截。
-    if exclude_self:
+    # 行子集模式（self_indices 显式给出每行自身列号）允许长方形。
+    if self_indices is not None:
+        if not exclude_self:
+            raise ValueError("self_indices 仅与 exclude_self=True 联用")
+        self_indices = np.asarray(self_indices)
+        dshape = getattr(distances, 'shape', None)
+        if dshape is None or len(dshape) != 2:
+            raise ValueError(f"distances 必须是 2 维，得到 shape {dshape}")
+        if (
+            self_indices.ndim != 1
+            or self_indices.dtype.kind not in 'iu'
+            or self_indices.shape[0] != dshape[0]
+        ):
+            raise ValueError(
+                "self_indices 必须是与 distances 行数等长的整数向量，"
+                f"得到 shape {self_indices.shape}，distances shape {dshape}"
+            )
+        if self_indices.size and (
+            self_indices.min() < 0 or self_indices.max() >= dshape[1]
+        ):
+            raise ValueError("self_indices 取值必须在 [0, K) 内")
+        self_indices = self_indices.astype(np.intp)
+    elif exclude_self:
         dshape = getattr(distances, 'shape', None)
         if dshape is None or len(dshape) != 2 or dshape[0] != dshape[1]:
             raise ValueError(
@@ -240,7 +275,7 @@ def compute_sampling_probs(
         return _compute_sampling_probs_torch(
             fitness, distances, beta, h, device, distance_mode, p,
             lambda_param, alpha, delta, winsorize_quantiles, exclude_self,
-            scale_invariant, scale_invariant_min_spread,
+            scale_invariant, scale_invariant_min_spread, self_indices,
         )
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
@@ -295,7 +330,7 @@ def compute_sampling_probs(
         probs = unnormalized / unnormalized.sum(axis=1, keepdims=True)
 
         if exclude_self:
-            probs = _exclude_self_numpy(probs)
+            probs = _exclude_self_numpy(probs, self_cols=self_indices)
         return probs  # 提前返回，跳过下面的 softmax
     elif distance_mode == 'geometric':
         # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
@@ -335,8 +370,10 @@ def compute_sampling_probs(
         # 减行均值本身被 softmax 平移不变性吸收，保留是为了标准分语义自解释。
         if scale_invariant:
             if exclude_self:
-                idx = np.arange(K)
-                diag = log_A[idx, idx]
+                n_rows = log_A.shape[0]
+                rows = np.arange(n_rows)
+                self_cols = rows if self_indices is None else self_indices
+                diag = log_A[rows, self_cols]
                 k_eff = K - 1
                 row_sum = log_A.sum(axis=1) - diag
                 row_mean = (row_sum / k_eff)[:, None]
@@ -354,7 +391,7 @@ def compute_sampling_probs(
                 # logit 差可超过 float 下溢阈），其余合法 donor 概率全部
                 # 下溢为 0，事后清零自身再归一化就是 0/0 → NaN。前置
                 # -inf 与"softmax 后清零重归一化"在不下溢时数学等价。
-                logits[idx, idx] = -np.inf
+                logits[rows, self_cols] = -np.inf
         else:
             logits = alpha * log_A  # (N, K)
 
@@ -364,7 +401,7 @@ def compute_sampling_probs(
         probs = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
         if exclude_self:
-            probs = _exclude_self_numpy(probs)
+            probs = _exclude_self_numpy(probs, self_cols=self_indices)
         return probs  # 提前返回
 
     logits = fitness_term[None, :] - distance_penalty  # (N, K)
@@ -375,14 +412,14 @@ def compute_sampling_probs(
     probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
 
     if exclude_self:
-        probs = _exclude_self_numpy(probs)
+        probs = _exclude_self_numpy(probs, self_cols=self_indices)
     return probs
 
 
 def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_mode, p,
                                   lambda_param, alpha, delta, winsorize_quantiles,
                                   exclude_self=False, scale_invariant=False,
-                                  scale_invariant_min_spread=1e-3):
+                                  scale_invariant_min_spread=1e-3, self_indices=None):
     """
     PyTorch 实现：softmax 在设备上算。与 numpy 版数学公式逐行对应。
 
@@ -454,7 +491,7 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         probs = unnormalized / unnormalized.sum(dim=1, keepdim=True)
 
         if exclude_self:
-            probs = _exclude_self_torch(probs)
+            probs = _exclude_self_torch(probs, self_cols=self_indices)
         return probs  # 提前返回，跳过下面的 softmax
     elif distance_mode == 'geometric':
         # 几何平均联合抽样：稳健归一化 + 几何平均 + 动态锐度
@@ -488,7 +525,17 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         # scale_invariant_min_spread 使放大倍数有界、低离散度平滑退化均匀。
         if scale_invariant:
             if exclude_self:
-                diag = torch.diagonal(log_A)
+                n_rows = log_A.shape[0]
+                rows_idx = torch.arange(n_rows, device=log_A.device)
+                if self_indices is None:
+                    cols_idx = rows_idx
+                else:
+                    cols_idx = torch.as_tensor(
+                        np.asarray(self_indices),
+                        dtype=torch.long,
+                        device=log_A.device,
+                    )
+                diag = log_A[rows_idx, cols_idx]
                 k_eff = K - 1
                 row_sum = log_A.sum(dim=1) - diag
                 mean_off = row_sum / k_eff
@@ -506,9 +553,7 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
             if exclude_self:
                 # NaN 漏洞修复（第二轮审查意见 1）：softmax 前置 -inf，
                 # 语义与 numpy 路径一致（防自身占优时其余 donor 全下溢）。
-                n_rows = logits.shape[0]
-                eye_idx = torch.arange(n_rows, device=logits.device)
-                logits[eye_idx, eye_idx] = float("-inf")
+                logits[rows_idx, cols_idx] = float("-inf")
         else:
             logits = alpha * log_A  # (N, K)
 
@@ -516,7 +561,7 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
         probs = torch.softmax(logits, dim=1)
 
         if exclude_self:
-            probs = _exclude_self_torch(probs)
+            probs = _exclude_self_torch(probs, self_cols=self_indices)
         return probs  # 提前返回
 
     logits = fitness_term_broadcast(fitness_t, beta) - distance_penalty  # (N, K)
@@ -527,17 +572,28 @@ def _compute_sampling_probs_torch(fitness, distances, beta, h, device, distance_
     probs = exp_logits / exp_logits.sum(dim=1, keepdim=True)
 
     if exclude_self:
-        probs = _exclude_self_torch(probs)
+        probs = _exclude_self_torch(probs, self_cols=self_indices)
     return probs
 
 
-def _exclude_self_torch(probs):
-    """把对角线概率置 0 并按行重归一化（torch）。numpy 版 _exclude_self_numpy 的对应实现。"""
+def _exclude_self_torch(probs, self_cols=None):
+    """把自身条目概率置 0 并按行重归一化（torch）。numpy 版 _exclude_self_numpy 的对应实现。
+
+    self_cols=None（默认）取对角线（方阵）；行子集路径传入每行自身列索引。
+    """
     import torch
     n = probs.shape[0]
-    idx = torch.arange(n, device=probs.device)
+    rows = torch.arange(n, device=probs.device)
+    if self_cols is None:
+        cols = rows
+    elif isinstance(self_cols, torch.Tensor):
+        cols = self_cols.to(device=probs.device, dtype=torch.long)
+    else:
+        cols = torch.as_tensor(
+            np.asarray(self_cols), dtype=torch.long, device=probs.device
+        )
     probs = probs.clone()
-    probs[idx, idx] = 0.0
+    probs[rows, cols] = 0.0
     probs = probs / probs.sum(dim=1, keepdim=True)
     return probs
 
@@ -551,6 +607,7 @@ def sample_donors(
     probs,
     rng: Optional[np.random.Generator] = None,
     device: Literal['cuda', 'cpu', 'numpy'] = 'numpy',
+    uniforms: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     对每条当前记录，按概率分布抽取一个参考记录索引。
@@ -570,6 +627,13 @@ def sample_donors(
           留在设备上的 torch.Tensor（来自 compute_sampling_probs 的 torch 路径）。
           **随机数仍用 numpy 的 rng.uniform 抽**（保证与 numpy 路径消耗相同的
           随机状态、同种子可复现），只把 N 个索引搬回 CPU 返回。
+    uniforms : np.ndarray or None, default None
+        预抽好的均匀数（shape (N,)，值域 [0,1)）。提供时本函数**不消耗任何
+        随机数**（rng 被忽略），第 i 行用 uniforms[i] 做 cumsum 反查。用于
+        "先抽签后选供体"路径：调用方先在原随机流槽位一次性抽全表均匀数，
+        再只对中签行构造概率并传入对应子集，随机数消费与全表路径逐位对齐
+        （概率本身的等价档位见 compute_sampling_probs 的 self_indices 说明）。
+        None（默认）保持历史行为：内部 rng.uniform(size=N) 现场抽。
 
     Returns
     -------
@@ -612,7 +676,7 @@ def sample_donors(
     """
     # torch 路径：cumsum 在设备上算，随机数仍用 numpy rng（保可复现）
     if device in ('cuda', 'cpu'):
-        return _sample_donors_torch(probs, rng, device)
+        return _sample_donors_torch(probs, rng, device, uniforms=uniforms)
     elif device != 'numpy':
         raise ValueError(f"Unknown device: {device}. Choose from 'cuda', 'cpu', 'numpy'.")
 
@@ -639,19 +703,35 @@ def sample_donors(
     # 对每行按 Categorical 分布抽样
     # numpy 没有直接的多行 categorical，用累积概率 + searchsorted
     cumprobs = probs.cumsum(axis=1)
-    u = rng.uniform(size=N)[:, None]  # (N, 1)
+    if uniforms is None:
+        u = rng.uniform(size=N)[:, None]  # (N, 1)
+    else:
+        u = _validate_uniforms(uniforms, N)[:, None]
     indices = (u < cumprobs).argmax(axis=1)  # 找第一个 cumprob >= u 的位置
 
     return indices.astype(np.intp)
 
 
-def _sample_donors_torch(probs, rng, device):
+def _validate_uniforms(uniforms, n_rows: int) -> np.ndarray:
+    """校验预抽均匀数：一维、长度匹配、值域 [0,1)。"""
+    u = np.asarray(uniforms, dtype=float)
+    if u.ndim != 1 or u.shape[0] != n_rows:
+        raise ValueError(
+            f"uniforms 必须是长度 {n_rows} 的一维数组，得到 shape {u.shape}"
+        )
+    if u.size and (u.min() < 0.0 or u.max() >= 1.0):
+        raise ValueError("uniforms 取值必须在 [0, 1) 内")
+    return u
+
+
+def _sample_donors_torch(probs, rng, device, uniforms=None):
     """
     PyTorch 实现：cumsum 在设备上算，抽样逻辑与 numpy 版逐行对应。
 
     **可复现关键：** 随机数仍用 numpy 的 rng.uniform(size=N) 抽——与 numpy
     路径消耗完全相同的随机状态，同种子 → 同随机数 → 同索引。GPU 只负责
     确定性的 cumsum 和 (u < cumprobs).argmax 比较，不掺和随机。
+    uniforms 提供时不消耗随机数（语义见 sample_donors 文档）。
 
     只把最终 N 个索引搬回 CPU 返回（约 N×8 字节，极小），
     避免把 (N,K) 概率矩阵搬回 CPU。
@@ -690,8 +770,12 @@ def _sample_donors_torch(probs, rng, device):
     if rng is None:
         rng = np.random.default_rng()
 
-    # 随机数仍在 CPU 用 numpy 抽（保可复现），再搬到设备做比较
-    u = rng.uniform(size=N)
+    # 随机数仍在 CPU 用 numpy 抽（保可复现），再搬到设备做比较；
+    # uniforms 提供时用预抽值，不消耗随机数。
+    if uniforms is None:
+        u = rng.uniform(size=N)
+    else:
+        u = _validate_uniforms(uniforms, N)
     u_t = torch.as_tensor(u, dtype=torch.float32, device=dev).unsqueeze(1)  # (N, 1)
 
     # 与 numpy 版一致：cumsum → 第一个 (u < cumprob) 的位置

@@ -2,7 +2,39 @@
 
 ## 当前阶段
 
-### 最新暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
+### 最新暂停点：PR #73 审查回应——值引导核合同据实与审计防伪（2026-09-09 中午）
+
+PR #73（值引导核 + GSD 无噪声基线，base=master 全链视图）收到审查（CHANGES_REQUESTED），
+本节记录处置（HEAD 23fd211）：
+
+- **F1（合同伪造，审查复现属实）**：`value_guidance_strength>0` 让残差经逐格增益进入转移核
+  值分布，但产物合同仍硬编码 `transition_kernel='blind_independent'`、
+  `residual_driving_channels=['fitness']`，审计器照常放行——fail-closed 合同失真。修复：
+  - 合同生成据实（`evolution.py`）：λ>0 追加 `'value_guidance'` 通道、核名 `'value_guided'`；
+    块倾斜同族问题一并修（`block_score_tilt_strength>0` → `'block_score_tilt'` 通道、
+    核名 `'block_score_tilted'`）。
+  - 审计器（`fitness_only.py`）按请求配置重算期望合同逐字段对拍，伪造声明记 failure；
+    补 `value_guidance_strength` 的 params 对拍与 `value_guidance` 诊断段核验（此前缺失）。
+  - 引导核下 equal 对照臂无法定义（equal 禁用一切残差信号），单臂 equal 与配对归因入口
+    fail-closed 拒绝；模块 docstring 据实声明两类核边界。
+  - 新增 `tests/test_fitness_only_contract_guided.py` 10 项（据实合同/防伪/λ 谎报/诊断缺失/
+    adaptive_scale 与 tilt bounds 谎报/equal 与配对拒绝/λ=0 回归锚）。审计器另补值引导全参数
+    （adaptive_scale/drop_donor/warmup）与 tilt bounds 的 params+诊断段对拍——归一化方式是
+    V9 型运行的科学口径核心，谎报会让不同实验设定的产物不可分辨。历史正式产物全部 λ=0，
+    合同口径逐字段不变。
+- **定位声明**：值引导核**不是 fitness-only**，是"生成前分布塑形"路线——与"残差只经适应度
+  驱动选择"是两条不同假说，正式定位在 Issue #53 归档；PR 正文已加定位声明节。
+- **F2（基线环境 89 failed）**：审查测的旧 head 未含前置栈修复；当前 head 已 merge #71
+  最新并补齐漏网（#72 节），四态矩阵全绿，数字见 PR #73 回复。
+- **F3**：GSD runner 个人硬编码路径改 `TD_GSD_REPO`/`TD_GSD_PYTHON` 环境变量可配，
+  上游 commit 与补丁 SHA 对拍不变。
+- **科学定位（采纳）**："不可微/自定义查询差异化"对 GSD 零阶方法不成立（仅相对梯度系
+  maxent/图模型有效）；无门控设计剩余假说空间在 DP 加噪赛道；V9(max) 6.57e-5 为单种子
+  （9908）诊断值。正文对应改写。
+- **结构**：#73 与 #72 共享 head，历史交织不改写；按审查建议转 Draft 作为 GSD/值引导主题
+  审查窗口，前置栈 #69→#76→#70→#71→#72 合入后自动瘦身再转 Ready。
+
+### 上一暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
 
 > 本节把此前只存在于 PR #69 正文的 Stage 6E 正式结果与证据身份落入仓库文档（审查阻塞项 B4），
 > 记录本轮审查修复（B1--B5）的处置与理由，并声明剩余缺口核（gap_l1 B+C）研究线的最终定位：
@@ -70,7 +102,146 @@ PR #73 工作区推进。
 
 ---
 
-### 最新暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
+
+### 上一暂停点：距离编码向量化落地——稳态单轮 42ms→24.9ms（累计 8.2×），全设备逐位一致（2026-09-06 晚9）
+
+> 结论一句话：`_pairwise_distance_torch` 类别块编码由"每轮 Python set/dict
+> 逐元素映射（16 属性 × 16181 行 ≈ 26 万次字典查询，实测 17.9ms，占距离段
+> 92%）"改为 `pd.factorize` 向量化（C 哈希表）。整数标签仅参与 `!=` 比较，
+> 任何单射编码结果相同 → **新旧实现逐位一致**（git HEAD 旧实现 vs 新实现，
+> cpu/cuda/numpy 三设备 × 子集 (16,16181) / legacy 全表 (2000,2000) 两形状
+> 全部 `torch.equal`/`array_equal` 为 True；numpy 路径本次未改动）。方案由
+> 用户拍板（原计划"编码缓存+增量更新"实测 2.4ms 反而慢于无状态 factorize
+> 1.8ms 且复杂得多，故弃用）。**实测提速**（同计时脚本、正式 all2way-pool
+> 配置、稳态 ρ=0.001、GPU 1）：距离段 19.1ms → 2.2ms，稳态单轮 42ms →
+> **24.9ms**，相对最初 204ms 累计 **8.2×**。7000 轮正式跑预计 ~3 分钟。
+> 剩余大头：Python/pandas 杂项 13.2ms（53%）、查询评估 6.3ms（25%）。
+
+**实现**：
+- `distance.py`：torch 路径类别块 set/dict Python 循环 → `pd.factorize`
+  （约 10 行，无状态、无缓存、不依赖 schema values、任意值可编码）。
+- 验证：距离/lottery 相关 29 项 + 相邻回归 574 项全过（含 lottery 12 项
+  等价合同）；HEAD 8 个历史遗留守卫失败与本次无关。
+
+### 上一暂停点：先抽签后选供体落地——稳态单轮 204ms→42ms（4.9×），numpy 逐位 / CUDA 数值等价（2026-09-06 晚8）
+
+> 结论一句话：`lottery_first_donor_selection` 开关实现并全量验证——同种子下
+> numpy/torch-cpu 与旧路径**逐位一致**（终表 sha、loss 轨迹、主 RNG 终态；
+> nltcs 16181 行全规模 numpy 3 轮复核通过）；CUDA 为**平行轨迹等价**（随机流
+> 终态、初始表、rho 时间表、逐轮中签行集合逐位一致；loss 轨迹自首分歧起
+> 按混沌动力学指数分离，**相对差随轮数增长无上界**——nltcs 60 轮实测
+> ≤4.4e-4 仅为该短视界下的观测值，外部审查 400 轮实测最大 1.57%，不构成
+> 阈值承诺）——float32
+> 行归约切块顺序随矩阵形状变化（(P,N) 子集 vs (N,N) 全表），属 Stage 6
+> "numpy 逐位 + cuda 数值等价"既有惯例，用户已拍板接受。**实测提速**（同
+> 计时脚本、正式 all2way-pool 配置、稳态 ρ=0.001、GPU 1）：稳态单轮
+> 204ms → 42ms（4.9×），供体机制 171ms → 20ms；剩余大头是长方形距离的
+> 全表 one-hot 编码（19ms）与 Python/pandas 杂项（13ms）。7000 轮正式跑
+> 预计 22 分钟 → **~5 分钟**。
+
+**实现**：
+- `sampling.py`：`compute_sampling_probs` 加 `self_indices`（长方形子集 +
+  显式自身列屏蔽）；`sample_donors` 加 `uniforms`（预抽均匀数，不耗随机流）。
+- `update.py`：`sample_update_random_plan`/`evolve_step` 加可选 `participate`
+  （外部参与签，调用方须同流同槽位抽取）。
+- `evolution.py`：`run_evolution` 加 `lottery_first_donor_selection`
+  （fail-closed：要求 max_retries=0、无方向倾斜、gap/gibbs 均 0）；主循环
+  新分支按原槽位先抽 u_donor、参与签，再只对中签行算距离/概率/供体，
+  非中签行填身份供体；诊断口径 participants_only（`params` 带
+  `donor_diagnostics_scope` 标记），零中签轮记 None。
+- `fitness_only.py`：config 字段 + validate + kwargs 透传 + 审计（equal 臂
+  None 容忍 + params 一致性检查）。
+- 测试：`tests/test_lottery_first_donor_selection.py` 12 项（numpy/cpu 逐位、
+  cuda 不变量合同【2026-09-09 审查修订：不再对 loss 差设阈值，改为初始表/
+  RNG 终态/rho 时间表/逐轮中签行集合四项逐位断言 + loss 有限性】、零中签、
+  守卫、口径、子集概率/均匀数/参与签单元）。
+- 守卫更新（用户批准，循 93ec152 先例）：stage6c/6d/6e 三个冻结指纹测试的
+  预期漂移清单加入 `shared_update_plan`（update.py 合法演进）。
+- 相邻回归：sampling/update/evolution/fitness_only/退火/MW/守卫等 446 项全过；
+  HEAD 上另有 8 个守卫失败为历史遗留（r8 screen + stage6e recovery），与本次无关。
+
+**下一步（等用户指令）**：正式跑是否切换 lottery 模式重跑基线（CUDA 数值
+等价意味着新轨迹是"平行世界"，不可与旧 report 逐位比对，只能整跑替换）；
+以及是否继续压缩剩余 42ms（全表 one-hot 编码缓存是下一个候选）。
+
+### 上一暂停点：单轮分段计时实测——供体机制占 84%，"先抽签后选供体"预期 ~7×（2026-09-06 晚7）
+
+> 结论一句话：用计时脚本（`scripts/profile_round_segments.py`，
+> monkeypatch 同步计时、不改主代码）按正式 all2way-pool 配置（nltcs 16181 行、
+> 512 池查询、cuda、rho=稳态地板 0.001）实测 60 轮：**稳态单轮 ≈ 205ms**
+> （与正式跑 1332s/7000 轮 ≈ 190ms/轮吻合）。**供体机制合计 171ms（84%）**：
+> N×N 距离 126ms + softmax 36ms + 抽样 9ms；查询评估仅 7ms（3%，7 月向量化
+> 已解决）；其他 Python/诊断 24ms（12%，含 N×N 逐行熵诊断与 donors 行收集）。
+
+**优化方案（用户提出，已确认方向、尚未实现）**：把"先给全表选供体、再抽
+ρ 签"换位成"先抽 ρ 签、只给中签行选供体"。ρ 抽签与供体身份独立，联合分布
+不变；随机数流按原顺序照抽可保逐位一致。稳态 ρ=0.001 → 每轮仅 ~16 行参与，
+供体机制从 N×N 降到 ρN×N（÷1000），预期单轮 205ms → ~25-30ms，
+全程 22 分钟 → **~3 分钟（~7×）**。
+
+**已拍板**：donor 诊断历史（donor_fitness/distance/self_rate、逐行熵等）
+直接改口径为"只统计中签行"，报告注明新旧曲线不可直接对比。
+
+**下一步**：实现换位核 + 逐位等价验证（随机数流顺序不变）+ 用同一计时
+脚本复测分段耗时。
+
+### 上一暂停点：GSD plants 局收官——16.5 分钟吃完 PGM 吃不下的饭，拟合+外推双赢引擎（2026-09-06 晚6）
+
+> 结论一句话：GSD 官方内核在 plants all-2way 全家族 9522 格（PGM 结构性
+> 缺席的那顿饭，零噪声同餐）上 **991 秒早停收工**——家族内 **1.4e-05
+> （92× 碾压引擎 0.001292）**、一维精确归零、heldout **0.003514 比引擎
+> 0.006171 好 43%**。nltcs 上的"外推平手"在 plants 上变成明显败退，
+> "GSD 只强在小数据"的候补解释被推翻。**无噪声零阶赛道 GSD 是全面强者**
+> ——诚实记录。引擎剩余硬差异化：半空间等不可微/自定义查询（GSD 官方
+> 统计模块只有 marginal 系）+ 正式赛道是加噪 DP 场景（GSD 有自家 DP 壳，
+> 同壳对比才算数）。
+>
+> 出席对决：GSD ✓（16.5 分钟）、引擎 ✓（23 分钟）、PGM ✗（2^69 收据）。
+
+**协议与产物**：生成脚本 `scripts/gsd_generate_all2way_noisefree_plants.py`
+（SHA `304beeee…`）；runner `scripts/run_baseline_gsd_all2way_plants_diagnostic.py`
+（协议 SHA `46c1459a…`；引擎报告 `82d85b85…`+PGM 收据 `9e2a5b0d…`+补丁+
+upstream 全钉死）；测试 13 项新增全绿+相邻回归 43 项全绿；报告
+`outputs/baseline_gsd_all2way_plants_v1/report.json`。
+
+**P1-P6 对账**：P1 出席 ✓；P2 fit 991.2s（~200 万代早停）；P3 家族内
+GSD 1.4e-05 vs 引擎 0.001292；P4 heldout 3way 0.003360 vs 0.005712、
+4way 0.003669 vs 0.006630、comb 0.003514 vs 0.006171；P5 一维 GSD 精确
+0 vs 0.000257；P6 零噪声断言 0.0、9522 格、SHA 链全过。
+
+**下一步候选**：(a) halfspace 出席对决（GSD 官方模块吃不了半空间=缺席
+收据局）；(b) 直接进壳子阶段；(c) 请示提交推送 GSD 两局。
+
+### 上一暂停点：GSD 无噪声横评 nltcs 局收官——61 秒早停，拟合碾压、外推追平引擎（2026-09-06 晚4）
+
+> 结论一句话：官方 private_gsd（ICML'23 遗传搜索）吃与引擎/PGM 完全同餐的
+> 512 格（480 二维 + 32 一维，零噪声 rho=inf 逐格断言 diff=0），官方默认
+> 零调参（5000 万代上限+早停 1e-4），**61 秒早停收工**——家族内拟合
+> **1.03e-06 碾压**（引擎 0.000135 的 131×、PGM 0.000357 的 347×）、一维
+> **精确归零**；heldout 同餐对决 **GSD 0.001858 险胜引擎 0.001894（2%）**，
+> PGM 0.001431 仍是外推王。**冒烟剧透被推翻**（冒烟 0.00246 最差是因为
+> 没喂一维+没跑到早停）。三方故事正式版：拟合力 GSD≫引擎>PGM，外推力
+> PGM > GSD ≈ 引擎——nltcs 纯二维同餐考不出引擎"什么都能吃"的能力面，
+> 诚实记录不占优。
+
+**协议与产物**：生成脚本 `scripts/gsd_generate_all2way_noisefree.py`
+（SHA `331c446b…`，GSD venv subprocess 执行，零噪声断言 fail-closed）；
+runner `scripts/run_baseline_gsd_all2way_nltcs_diagnostic.py`（协议 SHA
+`ca51218c…`；GSD upstream `f6150d7`+两补丁文件 SHA+生成脚本 SHA+两对照
+报告 SHA 全钉死）；测试 11 项新增全绿+相邻回归共 34 项全绿；报告
+`outputs/baseline_gsd_all2way_nltcs_v1/report.json`。
+
+**G1-G5 对账**：G1 61.4s 早停（~13-16 万代量级，5000 万上限摆设）；
+G2 家族内 480 格 GSD 1.03e-06 vs 引擎 0.000135 vs PGM 0.000357；
+G3 heldout：3way PGM 0.001368 < 引擎 0.001638 < GSD 0.001806，4way
+PGM 0.001494 < GSD 0.001909 < 引擎 0.002151，comb PGM 0.001431 <
+GSD 0.001858 < 引擎 0.001894；G4 一维 GSD 0.000000 精确；G5 审计全过。
+注意：manifest 未记实际停代数（plants 局生成脚本可补记）。
+
+**下一步**：plants GSD 局（9384 格 69 列——PGM 结构性吃不下的那格，真正的
+能力面对决）→ 对账 → 请示提交推送；然后壳子阶段。
+
+### 上一暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
 
 > 结论一句话：引擎与 PGM 吃完全同一份饭（480 格 all-2way + 32 格一维，真答案）
 > 在冻结三维/四维 heldout 上正面对决——**PGM 高阶外推略强 ~30-40%**
