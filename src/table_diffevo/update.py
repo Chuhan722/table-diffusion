@@ -48,6 +48,7 @@
   （从候选池按抽样索引取 donor 的逻辑在上游，见 sampling.sample_donors）
 - ρ、η、μ 随轮次的衰减调度由主循环负责，本函数只接收当前轮的标量值
 """
+from dataclasses import dataclass
 from typing import Any, Optional
 import numpy as np
 import pandas as pd
@@ -57,6 +58,232 @@ from table_diffevo.directional_diffusion import (
     tilted_copy_probabilities,
     validate_direction_logit_clip,
 )
+
+
+@dataclass(frozen=True)
+class MutationEvent:
+    """一次已经抽好的行—属性变异。"""
+
+    row_index: int
+    attribute: str
+    value: Any
+
+
+@dataclass(frozen=True)
+class UpdateRandomPlan:
+    """一次更新中与最终复制核无关的共同随机方案。
+
+    ``initial_copy_mask`` 是现行独立 B 核抽出的初始复制开关。调用方可以
+    原样应用它，也可以让另一个无门控复制核软调这些开关后，把最终开关传给
+    :func:`apply_update_random_plan`。突变事件已经在这里抽好，因此更换复制核
+    不会改变主随机流或复制后的突变。
+    """
+
+    participate: np.ndarray
+    initial_copy_mask: np.ndarray
+    mutation_events: tuple[MutationEvent, ...]
+
+
+def sample_update_random_plan(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    rho: float = 0.1,
+    eta: float = 0.5,
+    mu: float = 0.01,
+    rng: Optional[np.random.Generator] = None,
+    copy_direction_scores: Optional[np.ndarray] = None,
+    copy_direction_strength: float = 0.0,
+    direction_logit_clip: Optional[float] = DEFAULT_DIRECTION_LOGIT_CLIP,
+) -> UpdateRandomPlan:
+    """按现行顺序抽取参与行、初始复制开关和突变事件。
+
+    本函数只抽取随机方案，不生成下一张表。随机数消费顺序严格保持为：参与
+    行、逐属性复制开关、突变行、逐突变行的属性和值。
+    """
+
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError(f"rho 必须在 [0, 1]，得到 {rho}")
+    if not (0.0 <= eta <= 1.0):
+        raise ValueError(f"eta 必须在 [0, 1]，得到 {eta}")
+    if not (0.0 <= mu <= 1.0):
+        raise ValueError(f"mu 必须在 [0, 1]，得到 {mu}")
+
+    if len(current) != len(donors):
+        raise ValueError(
+            f"current 行数 ({len(current)}) 与 donors 行数 "
+            f"({len(donors)}) 不一致"
+        )
+
+    if (
+        isinstance(copy_direction_strength, (bool, np.bool_))
+        or not isinstance(
+            copy_direction_strength,
+            (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(copy_direction_strength)
+        or copy_direction_strength < 0.0
+    ):
+        raise ValueError(
+            "copy_direction_strength 必须是非负有限数值，"
+            f"得到 {copy_direction_strength!r}"
+        )
+    copy_direction_strength = float(copy_direction_strength)
+    direction_logit_clip = validate_direction_logit_clip(
+        direction_logit_clip
+    )
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    n_records = len(current)
+    attr_names = schema.attribute_names()
+    if copy_direction_scores is None:
+        if copy_direction_strength != 0.0:
+            raise ValueError(
+                "copy_direction_strength 非零时必须提供 copy_direction_scores"
+            )
+        direction_scores = None
+    else:
+        direction_scores = np.asarray(copy_direction_scores)
+        expected_shape = (n_records, len(attr_names))
+        if direction_scores.shape != expected_shape:
+            raise ValueError(
+                "copy_direction_scores 必须是 shape (N, A) 的二维数组，"
+                f"得到 {direction_scores.shape}，期望 {expected_shape}"
+            )
+        if direction_scores.dtype.kind not in "iuf":
+            raise ValueError("copy_direction_scores 必须是数值数组")
+        direction_scores = direction_scores.astype(float, copy=False)
+        if not np.all(np.isfinite(direction_scores)):
+            raise ValueError("copy_direction_scores 必须全部为有限数值")
+
+    current_reset = current.reset_index(drop=True)
+    donors_reset = donors.reset_index(drop=True)
+
+    # 保持历史随机数表达式和消费顺序，不按参与行数量缩短随机带。
+    participate = rng.random(n_records) < rho
+    initial_copy_mask = np.zeros(
+        (n_records, len(attr_names)), dtype=bool
+    )
+    for attr_idx, attr in enumerate(attr_names):
+        current_values = current_reset[attr].to_numpy()
+        donor_values = donors_reset[attr].to_numpy()
+        differ = current_values != donor_values
+        if direction_scores is None or copy_direction_strength == 0.0:
+            copy_roll = rng.random(n_records) < eta
+        else:
+            copy_probability = tilted_copy_probabilities(
+                eta,
+                direction_scores[:, attr_idx],
+                copy_direction_strength,
+                logit_clip=direction_logit_clip,
+            )
+            copy_roll = rng.random(n_records) < copy_probability
+        initial_copy_mask[:, attr_idx] = participate & differ & copy_roll
+
+    mutate_mask = participate & (rng.random(n_records) < mu)
+    mutation_events = []
+    for row_index in np.nonzero(mutate_mask)[0]:
+        attribute = _sample_mutation_block(schema, rng)
+        value = _sample_legal_value(schema.get_block(attribute), rng)
+        mutation_events.append(
+            MutationEvent(int(row_index), attribute, value)
+        )
+
+    return UpdateRandomPlan(
+        participate=participate,
+        initial_copy_mask=initial_copy_mask,
+        mutation_events=tuple(mutation_events),
+    )
+
+
+def apply_update_random_plan(
+    current: pd.DataFrame,
+    donors: pd.DataFrame,
+    schema: Schema,
+    plan: UpdateRandomPlan,
+    *,
+    final_copy_mask: Optional[np.ndarray] = None,
+) -> pd.DataFrame:
+    """应用已抽好的复制开关与突变，生成唯一下一张表。"""
+
+    if not isinstance(plan, UpdateRandomPlan):
+        raise ValueError("plan 必须是 UpdateRandomPlan")
+    if len(current) != len(donors):
+        raise ValueError(
+            f"current 行数 ({len(current)}) 与 donors 行数 "
+            f"({len(donors)}) 不一致"
+        )
+
+    n_records = len(current)
+    attr_names = schema.attribute_names()
+    expected_shape = (n_records, len(attr_names))
+    participate = np.asarray(plan.participate)
+    if participate.shape != (n_records,) or participate.dtype.kind != "b":
+        raise ValueError(
+            "plan.participate 必须是与 current 行数一致的布尔向量"
+        )
+    selected_mask = np.asarray(
+        plan.initial_copy_mask
+        if final_copy_mask is None
+        else final_copy_mask
+    )
+    if selected_mask.shape != expected_shape or selected_mask.dtype.kind != "b":
+        raise ValueError(
+            "复制开关必须是 shape (N, A) 的布尔数组，"
+            f"得到 shape {selected_mask.shape}"
+        )
+    if np.any(selected_mask & ~participate[:, None]):
+        raise ValueError("最终复制开关不能启用未参与行")
+
+    current_reset = current.reset_index(drop=True)
+    donors_reset = donors.reset_index(drop=True)
+    next_table = current_reset.copy()
+    for attr_idx, attr in enumerate(attr_names):
+        copy_mask = selected_mask[:, attr_idx]
+        if copy_mask.any():
+            donor_values = donors_reset[attr].to_numpy()
+            new_values = next_table[attr].to_numpy().copy()
+            new_values[copy_mask] = donor_values[copy_mask]
+            next_table[attr] = new_values
+
+    _apply_planned_mutations_in_place(next_table, attr_names, plan)
+    return next_table
+
+
+def apply_planned_mutations(
+    copy_table: pd.DataFrame,
+    schema: Schema,
+    plan: UpdateRandomPlan,
+) -> pd.DataFrame:
+    """在已经物化的复制表上应用同一份预抽突变。"""
+
+    if not isinstance(plan, UpdateRandomPlan):
+        raise ValueError("plan 必须是 UpdateRandomPlan")
+    next_table = copy_table.reset_index(drop=True).copy()
+    _apply_planned_mutations_in_place(
+        next_table, schema.attribute_names(), plan
+    )
+    return next_table
+
+
+def _apply_planned_mutations_in_place(
+    next_table: pd.DataFrame,
+    attr_names: list[str],
+    plan: UpdateRandomPlan,
+) -> None:
+    """验证并原位应用突变；只由已复制输入的公开包装函数调用。"""
+
+    n_records = len(next_table)
+    for event in plan.mutation_events:
+        if not isinstance(event, MutationEvent):
+            raise ValueError("plan.mutation_events 必须只包含 MutationEvent")
+        if not 0 <= event.row_index < n_records:
+            raise ValueError("变异事件的行号超出 current 范围")
+        if event.attribute not in attr_names:
+            raise ValueError("变异事件包含 schema 之外的属性")
+        next_table.at[event.row_index, event.attribute] = event.value
 
 
 def evolve_step(
@@ -133,105 +360,26 @@ def evolve_step(
     >>> donors = current.iloc[donor_idx].reset_index(drop=True)
     >>> next_table = evolve_step(current, donors, schema, rng=rng)
     """
-    if not (0.0 <= rho <= 1.0):
-        raise ValueError(f"rho 必须在 [0, 1]，得到 {rho}")
-    if not (0.0 <= eta <= 1.0):
-        raise ValueError(f"eta 必须在 [0, 1]，得到 {eta}")
-    if not (0.0 <= mu <= 1.0):
-        raise ValueError(f"mu 必须在 [0, 1]，得到 {mu}")
-
-    if len(current) != len(donors):
-        raise ValueError(
-            f"current 行数 ({len(current)}) 与 donors 行数 ({len(donors)}) 不一致"
-        )
-
-    if (
-        isinstance(copy_direction_strength, (bool, np.bool_))
-        or not isinstance(
-            copy_direction_strength,
-            (int, float, np.integer, np.floating),
-        )
-        or not np.isfinite(copy_direction_strength)
-        or copy_direction_strength < 0.0
-    ):
-        raise ValueError(
-            "copy_direction_strength 必须是非负有限数值，"
-            f"得到 {copy_direction_strength!r}"
-        )
-    copy_direction_strength = float(copy_direction_strength)
-    direction_logit_clip = validate_direction_logit_clip(
-        direction_logit_clip
-    )
-
-    if rng is None:
-        rng = np.random.default_rng()
     if not isinstance(return_diagnostics, (bool, np.bool_)):
         raise ValueError("return_diagnostics 必须是布尔值")
-
-    N = len(current)
-    attr_names = schema.attribute_names()
-
-    if copy_direction_scores is None:
-        if copy_direction_strength != 0.0:
-            raise ValueError(
-                "copy_direction_strength 非零时必须提供 copy_direction_scores"
-            )
-        direction_scores = None
-    else:
-        direction_scores = np.asarray(copy_direction_scores)
-        expected_shape = (N, len(attr_names))
-        if direction_scores.shape != expected_shape:
-            raise ValueError(
-                "copy_direction_scores 必须是 shape (N, A) 的二维数组，"
-                f"得到 {direction_scores.shape}，期望 {expected_shape}"
-            )
-        if direction_scores.dtype.kind not in "iuf":
-            raise ValueError("copy_direction_scores 必须是数值数组")
-        direction_scores = direction_scores.astype(float, copy=False)
-        if not np.all(np.isfinite(direction_scores)):
-            raise ValueError("copy_direction_scores 必须全部为有限数值")
-
-    # 以当前表为基础构造下一代（新对象，索引对齐 0..N-1）
-    next_table = current.reset_index(drop=True).copy()
-    donors = donors.reset_index(drop=True)
-
-    # 7.2 记录参与：U_i ~ Bernoulli(rho)
-    participate = rng.random(N) < rho  # (N,) 布尔
-
-    # 7.3 属性块复制：对每个块，参与且与参考不同的记录以概率 eta 复制
-    for attr_idx, attr in enumerate(attr_names):
-        cur_col = current[attr].reset_index(drop=True).to_numpy()
-        donor_col = donors[attr].to_numpy()
-        differ = cur_col != donor_col  # (N,) 与参考记录不同的位置
-        if direction_scores is None or copy_direction_strength == 0.0:
-            # 默认和 strength=0 端点严格复用历史表达式与随机数消耗。
-            copy_roll = rng.random(N) < eta
-        else:
-            copy_probability = tilted_copy_probabilities(
-                eta,
-                direction_scores[:, attr_idx],
-                copy_direction_strength,
-                logit_clip=direction_logit_clip,
-            )
-            copy_roll = rng.random(N) < copy_probability
-        copy_mask = participate & differ & copy_roll
-        if copy_mask.any():
-            new_col = next_table[attr].to_numpy().copy()
-            new_col[copy_mask] = donor_col[copy_mask]
-            next_table[attr] = new_col
-
-    # 7.4 变异：参与更新的记录以概率 mu 变异一个块
-    mutate_mask = participate & (rng.random(N) < mu)  # (N,)
-    mutate_rows = np.nonzero(mutate_mask)[0]
-    for i in mutate_rows:
-        block = _sample_mutation_block(schema, rng)
-        new_value = _sample_legal_value(schema.get_block(block), rng)
-        next_table.at[i, block] = new_value
+    plan = sample_update_random_plan(
+        current,
+        donors,
+        schema,
+        rho=rho,
+        eta=eta,
+        mu=mu,
+        rng=rng,
+        copy_direction_scores=copy_direction_scores,
+        copy_direction_strength=copy_direction_strength,
+        direction_logit_clip=direction_logit_clip,
+    )
+    next_table = apply_update_random_plan(current, donors, schema, plan)
 
     if return_diagnostics:
         return next_table, {
-            "participating_rows": int(participate.sum()),
-            "mutated_rows": int(len(mutate_rows)),
+            "participating_rows": int(plan.participate.sum()),
+            "mutated_rows": int(len(plan.mutation_events)),
         }
     return next_table
 
