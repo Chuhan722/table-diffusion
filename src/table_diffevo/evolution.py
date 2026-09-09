@@ -104,6 +104,9 @@ from table_diffevo.stall_escape_alpha import (
 )
 
 
+FITNESS_ONLY_MODES = ("residual", "equal")
+
+
 def _self_cooling_factor(
     residual_l1: float,
     initial_residual_l1: float,
@@ -243,6 +246,14 @@ def run_evolution(
     self_cooling_stop_ratio: Optional[float] = None,
     rho_anneal_end: Optional[float] = None,
     rho_anneal_rounds: Optional[int] = None,
+    rho_anneal_start_round: Optional[int] = None,
+    eta_anneal_end: Optional[float] = None,
+    eta_anneal_rounds: Optional[int] = None,
+    eta_anneal_start_round: Optional[int] = None,
+    mw_query_weight_eta: Optional[float] = None,
+    mw_signal_cap: Optional[float] = None,
+    mw_weight_cap: Optional[float] = None,
+    mw_start_round: Optional[int] = None,
     selection_scale_invariant: bool = False,
     selection_scale_invariant_min_spread: float = 1e-3,
     residual_geometry: str = "absolute",
@@ -260,6 +271,7 @@ def run_evolution(
     stop_on_exact_residual: bool = True,
     horizon_invariant: bool = False,
     inner_early_stopping_patience_ticks: Optional[int] = None,
+    fitness_only_mode: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回合成表和诊断信息。
@@ -435,6 +447,53 @@ def run_evolution(
         退火进度铺满全程 ``n_rounds``。动机：无门恒定动力学的噪声地板随
         rho 近似线性抬升，而到达高温地板只需少量轮数——快降段之后把预算
         留给低温深潜。仍是纯时间驱动的盲调度，不读取残差或候选评价。
+    rho_anneal_start_round : int or None, default None
+        三段式调度的保温段轮数 H（需同时启用 rho_anneal_rounds）。指定时
+        退火进度按 ``min(1, max(0, (t - H) / rho_anneal_rounds))`` 计算：
+        前 H 轮恒为 ``rho``（保温），随后 ``rho_anneal_rounds`` 轮几何
+        降温到 ``rho_anneal_end``，之后恒定在地板深潜。调度只依赖绝对
+        轮次 t，公式不含总轮数 ``n_rounds``，因此视界不变且与未来的早停
+        终止规则兼容；仍不读取残差或候选评价。None 时保持既有两段式行为
+        （等价于 H=0）。
+    eta_anneal_end : float or None, default None
+        时间驱动几何 eta 退火的终点（盲复制强度时间表，与 rho 退火完全
+        同构）。启用时每轮复制概率 ``eta_t = eta * (eta_anneal_end /
+        eta) ** progress``，仅替换独立复制核 ``rng.random(n) < eta`` 的
+        阈值，不改变随机数消费顺序，因此关闭/保温段与历史轨迹逐位一致。
+        不读取残差或候选评价；与 residual_directed_diffusion 互斥
+        （方向倾斜核的基准概率退火语义未冻结，fail-closed 拒绝）。
+        None 时 eta_t 恒等于 ``eta``。
+    eta_anneal_rounds : int or None, default None
+        eta 退火快降段轮数（需同时启用 eta_anneal_end；语义同
+        rho_anneal_rounds）。horizon_invariant / fitness-only 合同要求
+        启用 eta_anneal_end 时必须同时指定本参数（绝对轮数调度）。
+    eta_anneal_start_round : int or None, default None
+        eta 退火保温段轮数（需同时启用 eta_anneal_rounds；语义同
+        rho_anneal_start_round）。进度按 ``min(1, max(0, (t - H_eta) /
+        eta_anneal_rounds))`` 计算，只依赖绝对轮次。
+    mw_query_weight_eta : float or None, default None
+        乘性权重（MW）查询权重更新步长（v6 聚合机制）。四个 mw_* 参数
+        必须全部提供或全部为 None；启用时仅允许
+        ``fitness_only_mode='residual'``（equal 臂 fitness 恒 0，权重
+        无意义；非 fitness-only 路径的评价缓存与权重状态不同步）。
+        轮末更新：``rel=|ε|/mean|ε|``、``s=min(rel, mw_signal_cap)``、
+        ``w ← clip(w·exp(eta_mw·s)/mean(·), 1/cap, cap)``。更新只读当轮
+        measured 残差（禁止 loss 方向/接受历史/held-out），纯确定性
+        numpy 计算不消耗 RNG；权重只经 fitness 聚合的 weights 口生效
+        （F=Σ w_j·ε_j·(a_j−p_j)），不进入 rho/eta/mu/核概率。评价的是
+        查询状态（欠账），不评价任何候选动作——非门控。
+    mw_signal_cap : float or None, default None
+        MW 更新信号封顶：``s_j = min(|ε_j|/mean|ε|, mw_signal_cap)``，
+        防止重尾欠账（v3 查账 max≈30 倍）单轮暴涨。
+    mw_weight_cap : float or None, default None
+        MW 权重活动围栏 ``[1/cap, cap]``：上限防单查询独裁，下限防
+        达标查询彻底失守。clip 后 mean(w) 允许偏离 1——fitness-only
+        强制 selection_scale_invariant，整体缩放不影响 donor 选择；
+        下一轮归一化重新锚定，偏差不累积。
+    mw_start_round : int or None, default None
+        MW 开启轮（绝对轮数，视界不变）。t < mw_start_round 时权重保持
+        平凡（None，评价路径与关闭状态逐位一致）；t == mw_start_round
+        的轮末执行首次更新，下一轮评价首次使用非平凡权重。
     selection_scale_invariant : bool, default False
         尺度不变选择（仅 distance_mode='geometric'；Issue #44 机制迭代）。
         True 时 donor 选择 logits 先做行内标准化再乘 alpha：选择压力的
@@ -502,12 +561,20 @@ def run_evolution(
         启用后主返回与 ``final_table`` 都是触发时 terminal current，不返回 best。
         该模式要求 ``tol=+inf``、``max_retries=0``，以保证 proposal 无门控地成为
         current。当前 development 候选使用 P=6；该数值可配置且不是收敛结论。
+    fitness_only_mode : {None, 'residual', 'equal'}, default None
+        显式的 fitness-only 演化合同。None 保持全部历史行为；``residual``
+        让当前残差只通过行适应度影响 donor 选择；``equal`` 把所有行适应度
+        固定为 0，作为保留同一结构距离的无目标引导对照。两种模式都要求：
+        尺度不变 geometric donor、固定 alpha、盲独立复制核、固定轮数、无
+        接受门/重试/残差冷却/退火/结果相关早停，并强制主返回 terminal current。
+        违反任一条件都会在运行前失败，不会静默退回 legacy 行为。
 
     Returns
     -------
     output_S : pd.DataFrame, shape (n_records, n_attributes)
-        legacy 路径返回演化中 loss 最小的合成表；启用 inner early stopping
-        或剩余缺口核时返回 terminal current 表，禁止从历史状态中挑赢家。
+        legacy 路径返回演化中 loss 最小的合成表；启用 fitness-only、inner
+        early stopping 或剩余缺口核时返回 terminal current 表，禁止从历史
+        状态中挑赢家。
     diagnostics : dict
         诊断信息：
         - loss_history: List[float]，每轮开始时当前表的 loss
@@ -595,6 +662,15 @@ def run_evolution(
     if len(target) != m:
         raise ValueError(
             f"target 长度 ({len(target)}) 与查询数 ({m}) 不一致"
+        )
+
+    if fitness_only_mode is not None and (
+        not isinstance(fitness_only_mode, str)
+        or fitness_only_mode not in FITNESS_ONLY_MODES
+    ):
+        raise ValueError(
+            "fitness_only_mode 必须是 None、'residual' 或 'equal'，"
+            f"得到 {fitness_only_mode!r}"
         )
 
     if eval_method not in ('vectorized', 'legacy'):
@@ -827,6 +903,157 @@ def run_evolution(
                 f"得到 {rho_anneal_rounds!r}"
             )
         rho_anneal_rounds = int(rho_anneal_rounds)
+    if rho_anneal_start_round is not None:
+        if rho_anneal_rounds is None:
+            raise ValueError(
+                "rho_anneal_start_round 需要同时启用 rho_anneal_rounds"
+            )
+        if (
+            isinstance(rho_anneal_start_round, (bool, np.bool_))
+            or not isinstance(rho_anneal_start_round, (int, np.integer))
+            or rho_anneal_start_round < 0
+        ):
+            raise ValueError(
+                "rho_anneal_start_round 必须是非负整数或 None，"
+                f"得到 {rho_anneal_start_round!r}"
+            )
+        rho_anneal_start_round = int(rho_anneal_start_round)
+    if eta_anneal_end is not None:
+        if (
+            isinstance(eta_anneal_end, (bool, np.bool_))
+            or not isinstance(
+                eta_anneal_end,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(eta_anneal_end)
+            or not 0.0 < eta_anneal_end <= eta
+        ):
+            raise ValueError(
+                "eta_anneal_end 必须位于 (0, eta] 或为 None，"
+                f"得到 {eta_anneal_end!r}（eta={eta}）"
+            )
+        eta_anneal_end = float(eta_anneal_end)
+        if residual_directed_diffusion:
+            raise ValueError(
+                "eta_anneal_end 与 residual_directed_diffusion 不允许"
+                "同时启用：方向倾斜复制核的基准概率退火语义未冻结"
+            )
+    if eta_anneal_rounds is not None:
+        if eta_anneal_end is None:
+            raise ValueError(
+                "eta_anneal_rounds 需要同时启用 eta_anneal_end"
+            )
+        if (
+            isinstance(eta_anneal_rounds, (bool, np.bool_))
+            or not isinstance(eta_anneal_rounds, (int, np.integer))
+            or eta_anneal_rounds < 1
+        ):
+            raise ValueError(
+                "eta_anneal_rounds 必须是正整数或 None，"
+                f"得到 {eta_anneal_rounds!r}"
+            )
+        eta_anneal_rounds = int(eta_anneal_rounds)
+    if eta_anneal_start_round is not None:
+        if eta_anneal_rounds is None:
+            raise ValueError(
+                "eta_anneal_start_round 需要同时启用 eta_anneal_rounds"
+            )
+        if (
+            isinstance(eta_anneal_start_round, (bool, np.bool_))
+            or not isinstance(eta_anneal_start_round, (int, np.integer))
+            or eta_anneal_start_round < 0
+        ):
+            raise ValueError(
+                "eta_anneal_start_round 必须是非负整数或 None，"
+                f"得到 {eta_anneal_start_round!r}"
+            )
+        eta_anneal_start_round = int(eta_anneal_start_round)
+    _mw_param_names = (
+        "mw_query_weight_eta",
+        "mw_signal_cap",
+        "mw_weight_cap",
+        "mw_start_round",
+    )
+    _mw_param_values = (
+        mw_query_weight_eta,
+        mw_signal_cap,
+        mw_weight_cap,
+        mw_start_round,
+    )
+    _mw_provided = [
+        name
+        for name, value in zip(_mw_param_names, _mw_param_values)
+        if value is not None
+    ]
+    if _mw_provided and len(_mw_provided) != len(_mw_param_names):
+        raise ValueError(
+            "MW 查询权重参数必须全部提供或全部为 None（fail-closed），"
+            f"当前只提供了 {_mw_provided}"
+        )
+    if mw_query_weight_eta is not None:
+        if fitness_only_mode != "residual":
+            raise ValueError(
+                "MW 查询权重仅允许 fitness_only_mode='residual'：equal 臂"
+                " fitness 恒 0 权重无意义，非 fitness-only 路径的评价缓存"
+                f"与权重状态不同步；得到 {fitness_only_mode!r}"
+            )
+        if residual_directed_diffusion:
+            raise ValueError(
+                "MW 查询权重与 residual_directed_diffusion 不允许同时"
+                "启用：方向场下的权重语义未冻结"
+            )
+        if (
+            isinstance(mw_query_weight_eta, (bool, np.bool_))
+            or not isinstance(
+                mw_query_weight_eta,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(mw_query_weight_eta)
+            or mw_query_weight_eta <= 0
+        ):
+            raise ValueError(
+                "mw_query_weight_eta 必须是正有限数或 None，"
+                f"得到 {mw_query_weight_eta!r}"
+            )
+        mw_query_weight_eta = float(mw_query_weight_eta)
+        if (
+            isinstance(mw_signal_cap, (bool, np.bool_))
+            or not isinstance(
+                mw_signal_cap,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(mw_signal_cap)
+            or mw_signal_cap <= 0
+        ):
+            raise ValueError(
+                "mw_signal_cap 必须是正有限数或 None，"
+                f"得到 {mw_signal_cap!r}"
+            )
+        mw_signal_cap = float(mw_signal_cap)
+        if (
+            isinstance(mw_weight_cap, (bool, np.bool_))
+            or not isinstance(
+                mw_weight_cap,
+                (int, float, np.integer, np.floating),
+            )
+            or not np.isfinite(mw_weight_cap)
+            or mw_weight_cap <= 1.0
+        ):
+            raise ValueError(
+                "mw_weight_cap 必须是大于 1 的有限数或 None，"
+                f"得到 {mw_weight_cap!r}"
+            )
+        mw_weight_cap = float(mw_weight_cap)
+        if (
+            isinstance(mw_start_round, (bool, np.bool_))
+            or not isinstance(mw_start_round, (int, np.integer))
+            or mw_start_round < 0
+        ):
+            raise ValueError(
+                "mw_start_round 必须是非负整数或 None，"
+                f"得到 {mw_start_round!r}"
+            )
+        mw_start_round = int(mw_start_round)
     if not isinstance(selection_scale_invariant, (bool, np.bool_)):
         raise ValueError(
             "selection_scale_invariant 必须是布尔值，"
@@ -1099,11 +1326,77 @@ def run_evolution(
             violations.append("max_retries 必须为0")
         if residual_self_cooling is not None:
             violations.append("residual_self_cooling 必须关闭")
-        if rho_anneal_end is not None:
-            violations.append("rho_anneal_end 必须关闭")
+        if rho_anneal_end is not None and rho_anneal_rounds is None:
+            violations.append(
+                "启用 rho_anneal_end 而未指定 rho_anneal_rounds 的全程"
+                "退火进度依赖总轮数，破坏视界不变；必须改用绝对轮数调度"
+                "或关闭"
+            )
+        if eta_anneal_end is not None and eta_anneal_rounds is None:
+            violations.append(
+                "启用 eta_anneal_end 而未指定 eta_anneal_rounds 的全程"
+                "退火进度依赖总轮数，破坏视界不变；必须改用绝对轮数调度"
+                "或关闭"
+            )
         if violations:
             raise ValueError(
                 "horizon_invariant 配置不合格：" + "；".join(violations)
+            )
+
+    if fitness_only_mode is not None:
+        violations = []
+        if not horizon_invariant:
+            violations.append("horizon_invariant 必须开启")
+        if distance_mode != "geometric":
+            violations.append("distance_mode 必须是 geometric")
+        if not selection_scale_invariant:
+            violations.append("selection_scale_invariant 必须开启")
+        if alpha_schedule_mode != "fixed":
+            violations.append("alpha_schedule_mode 必须是 fixed")
+        if residual_directed_diffusion:
+            violations.append("residual_directed_diffusion 必须关闭")
+        if factorized_gibbs_sweeps != 0:
+            violations.append("factorized_gibbs_sweeps 必须为 0")
+        if gap_l1_sweeps != 0:
+            violations.append("gap_l1_sweeps 必须为 0")
+        if (
+            isinstance(tol, (bool, np.bool_))
+            or not isinstance(
+                tol, (int, float, np.integer, np.floating)
+            )
+            or not np.isposinf(tol)
+        ):
+            violations.append("tol 必须是正无穷")
+        if max_retries != 0:
+            violations.append("max_retries 必须为 0")
+        if residual_self_cooling is not None:
+            violations.append("residual_self_cooling 必须关闭")
+        if self_cooling_stop_ratio is not None:
+            violations.append("self_cooling_stop_ratio 必须关闭")
+        if rho_anneal_end is not None and rho_anneal_rounds is None:
+            violations.append(
+                "fitness-only 只允许绝对轮数的纯时间驱动时间表：启用 "
+                "rho_anneal_end 必须同时指定 rho_anneal_rounds"
+            )
+        if eta_anneal_end is not None and eta_anneal_rounds is None:
+            violations.append(
+                "fitness-only 只允许绝对轮数的纯时间驱动时间表：启用 "
+                "eta_anneal_end 必须同时指定 eta_anneal_rounds"
+            )
+        if stop_on_exact_residual:
+            violations.append("stop_on_exact_residual 必须关闭")
+        if inner_early_stopping_enabled:
+            violations.append("inner early stopping 必须关闭")
+        if candidate_budget is not None:
+            violations.append("candidate_budget 必须为 None，仅使用固定 n_rounds")
+        if init_method == "pairwise_maxent":
+            violations.append(
+                "pairwise_maxent 会直接读取 target，fitness-only 只允许 "
+                "random 或冻结 marginal 初始化"
+            )
+        if violations:
+            raise ValueError(
+                "fitness-only 配置不合格：" + "；".join(violations)
             )
 
     inner_early_stopper = (
@@ -1143,19 +1436,35 @@ def run_evolution(
             return q_
         return evaluate_table(df, queries)
 
-    def _eval_counts_resid_fitness(df):
+    def _eval_counts_resid_fitness(df, query_weights=None):
         """
         一次同时算计数 q、残差、fitness（用于当前表 S，消除重复评价）。
 
         vectorized：一次掩码扫描三样都出（计数、残差、fitness）。
         legacy：原路径 evaluate_table → compute_residual → compute_fitness。
         两条路径结果一致（numpy 逐位相同）。
+
+        query_weights：MW 查询权重（None=平凡全 1，与历史行为逐位一致）；
+        仅进入 fitness 聚合（F=Σ w_j·ε_j·(a_j−p_j)），不影响计数与残差。
         """
+        if fitness_only_mode == "equal":
+            # 归因对照仍计算 residual/loss 供离线观测，但它们不能进入任何
+            # 生成决策。fitness 恒为 0 后，donor 分布只由同一结构距离决定。
+            q_ = _eval_counts(df)
+            r_ = compute_residual(
+                target,
+                q_,
+                n_records,
+                geometry=residual_geometry,
+                geometry_floor=residual_geometry_floor,
+            )
+            return q_, r_, np.zeros(len(df), dtype=float)
         if eval_method == 'vectorized':
             return evaluate_vectorized(
                 df, queries, schema, target=target, n_records=n_records,
                 batch_size=batch_size, device=device, want_fitness=True,
                 verbose=False,
+                weights=query_weights,
                 residual_geometry=residual_geometry,
                 residual_geometry_floor=residual_geometry_floor,
             )
@@ -1165,7 +1474,7 @@ def run_evolution(
             geometry=residual_geometry,
             geometry_floor=residual_geometry_floor,
         )
-        f_ = compute_fitness(df, queries, r_, q_)
+        f_ = compute_fitness(df, queries, r_, q_, weights=query_weights)
         return q_, r_, f_
 
     # 初始表 S_0（不读源数据，只用 schema、已测量 target 与可选 1-way 边缘）
@@ -1190,6 +1499,7 @@ def run_evolution(
         _table_sha256(S)
         if (
             residual_directed_diffusion
+            or fitness_only_mode is not None
             or record_stationarity_trace
             or record_natural_work_snapshots
         )
@@ -1209,6 +1519,7 @@ def run_evolution(
     accepted_attempt_history: List[int] = []     # 接受的尝试序号（1-based）；0=全部拒绝
     accepted_rho_history: List[Optional[float]] = []  # 接受时使用的 rho；全拒绝为 None
     rho_schedule_history: List[float] = []  # 每轮退火后的 rho_t（关闭时恒为 rho）
+    eta_schedule_history: List[float] = []  # 每轮退火后的 eta_t（关闭时恒为 eta）
     donor_top_share_history: List[float] = []  # 尺度不变选择时的集中度监控
     row_max_prob_mean_history: List[float] = []  # 逐行最大概率均值（每轮）
     row_max_prob_max_history: List[float] = []  # 逐行最大概率最大值（每轮）
@@ -1242,6 +1553,9 @@ def run_evolution(
     gap_l1_attempt_diagnostics_history: List[List[Dict[str, Any]]] = []
     gap_l1_reference_scale_history: List[Optional[float]] = []
     gap_l1_calibration_history: List[Dict[str, Any]] = []
+    mw_weights: Optional[np.ndarray] = None
+    mw_weight_stats_history: List[Dict[str, Any]] = []
+    mw_weight_snapshot_history: List[Dict[str, Any]] = []
     termination_reason: Optional[str] = None
     inner_early_stopping_decision = None
     stopped_early = False
@@ -1451,10 +1765,18 @@ def run_evolution(
 
         # 时间驱动几何 rho 退火（盲噪声时间表）：只依赖轮次进度，不读取残差
         # 或候选评价。关闭时 rho_t 恒等于 rho，逐轨迹等价于历史行为。
-        # rho_anneal_rounds 指定时为两段式：前 K 轮快降，其后恒定深潜。
+        # rho_anneal_rounds 指定时为绝对轮数调度：可选保温 H 轮
+        # （rho_anneal_start_round），随后 D 轮几何降温，其后恒定深潜。
         if rho_anneal_end is not None:
             if rho_anneal_rounds is not None:
-                anneal_progress = min(1.0, t / rho_anneal_rounds)
+                anneal_t = t - (
+                    rho_anneal_start_round
+                    if rho_anneal_start_round is not None
+                    else 0
+                )
+                anneal_progress = min(
+                    1.0, max(0.0, anneal_t / rho_anneal_rounds)
+                )
             else:
                 anneal_progress = progress
             rho_t = rho * (rho_anneal_end / rho) ** anneal_progress
@@ -1462,10 +1784,33 @@ def run_evolution(
             rho_t = rho
         rho_schedule_history.append(rho_t)
 
+        # 时间驱动几何 eta 退火（盲复制强度时间表）：与 rho 退火完全同构，
+        # 只依赖轮次进度，不读取残差或候选评价。关闭时 eta_t 恒等于 eta，
+        # 逐轨迹等价于历史行为；eta_t 仅作为复制开关阈值，不改变随机数
+        # 消费顺序。
+        if eta_anneal_end is not None:
+            if eta_anneal_rounds is not None:
+                eta_anneal_t = t - (
+                    eta_anneal_start_round
+                    if eta_anneal_start_round is not None
+                    else 0
+                )
+                eta_anneal_progress = min(
+                    1.0, max(0.0, eta_anneal_t / eta_anneal_rounds)
+                )
+            else:
+                eta_anneal_progress = progress
+            eta_t = eta * (eta_anneal_end / eta) ** eta_anneal_progress
+        else:
+            eta_t = eta
+        eta_schedule_history.append(eta_t)
+
         # 1-2-4. 当前答案、残差、适应度。只有接受提案、S 真正更新后才重算；
         # 拒绝后的下一轮复用上一轮结果。
         if state_eval_cache is None:
-            q, residual, fitness = _eval_counts_resid_fitness(S)
+            q, residual, fitness = _eval_counts_resid_fitness(
+                S, query_weights=mw_weights
+            )
             loss = compute_loss(target, q)
             state_eval_cache = (q, residual, fitness, loss)
             state_evaluation_count += 1
@@ -1757,9 +2102,13 @@ def run_evolution(
             negative_direction_copy_probability_history.append(None)
             positive_direction_copy_probability_history.append(None)
             copy_probability_entropy_history.append(
-                float(bernoulli_entropy(np.asarray([eta]))[0])
+                float(bernoulli_entropy(np.asarray([eta_t]))[0])
             )
-            copy_probability_kl_history.append(0.0)
+            copy_probability_kl_history.append(
+                0.0 if eta_t == eta else float(
+                    bernoulli_kl(np.asarray([eta_t]), eta)[0]
+                )
+            )
             additive_copy_drift_improvement_history.append(None)
             available_additive_copy_drift_improvement_history.append(None)
             additive_copy_drift_utilization_history.append(None)
@@ -1804,7 +2153,7 @@ def run_evolution(
                     donors,
                     schema,
                     rho=attempt_rho,
-                    eta=eta,
+                    eta=eta_t,
                     mu=mu * self_cooling_factor,
                     rng=rng,
                     copy_direction_scores=copy_direction_scores,
@@ -1896,7 +2245,7 @@ def run_evolution(
                             reference_scale=gap_l1_reference_scale,
                             rng=gap_rng,
                             n_sweeps=gap_l1_sweeps,
-                            eta=eta,
+                            eta=eta_t,
                             strength=DEFAULT_GAP_L1_STRENGTH,
                             floor=DEFAULT_GAP_L1_FLOOR,
                             weighting=gap_l1_weighting,
@@ -1949,7 +2298,7 @@ def run_evolution(
                         queries,
                         residual,
                         rho=attempt_rho,
-                        eta=eta,
+                        eta=eta_t,
                         mu=mu * self_cooling_factor,
                         copy_direction_scores=copy_direction_scores,
                         copy_direction_strength=effective_direction_strength,
@@ -2020,7 +2369,7 @@ def run_evolution(
                     donors,
                     schema,
                     rho=attempt_rho,
-                    eta=eta,
+                    eta=eta_t,
                     mu=mu * self_cooling_factor,
                     rng=rng,
                     **independent_transition_kwargs,
@@ -2106,13 +2455,17 @@ def run_evolution(
                     and candidate_evaluation_count >= candidate_budget):
                 candidate_budget_exhausted = True
 
-            # 缺口核是结构上的无门控路径：查询评价只作状态更新和诊断，不能
-            # 决定是否采用。其他历史路径继续使用原整代检查。
-            if gap_l1_sweeps > 0 and not np.isfinite(proposal_loss):
-                raise RuntimeError("剩余缺口核生成了非有限查询损失")
+            # fitness-only 与缺口核都是结构上的无门控路径：查询评价只为
+            # 下一轮 residual/fitness 和只读诊断服务，绝不参与是否接续的
+            # 决策。显式分支避免用 ``loss <= loss + inf`` 伪装无门控。
+            unconditional_transition = (
+                fitness_only_mode is not None or gap_l1_sweeps > 0
+            )
+            if unconditional_transition and not np.isfinite(proposal_loss):
+                raise RuntimeError("无门控路径生成了非有限查询损失")
             apply_proposal = (
                 True
-                if gap_l1_sweeps > 0
+                if unconditional_transition
                 else proposal_loss <= loss + tol
             )
             if apply_proposal:
@@ -2267,6 +2620,54 @@ def run_evolution(
             distance_cache = None
             del distances
 
+        # MW 查询权重轮末更新（v6 聚合机制）：只读当轮 measured 残差
+        # （评价当轮状态得到的 ε，不读 loss 方向/接受历史/held-out），
+        # 纯确定性 numpy 计算，不消耗任何 RNG，不改变随机数消费顺序。
+        # t < mw_start_round 时 mw_weights 保持 None——评价路径收到
+        # query_weights=None，与关闭状态逐位一致（保温段等价合同）。
+        if mw_query_weight_eta is not None:
+            if t >= mw_start_round:
+                mw_abs_residual = np.abs(np.asarray(residual, dtype=float))
+                mw_mean_abs = float(mw_abs_residual.mean())
+                if mw_mean_abs > 0.0:
+                    mw_signal = np.minimum(
+                        mw_abs_residual / mw_mean_abs, mw_signal_cap
+                    )
+                    mw_base = (
+                        mw_weights
+                        if mw_weights is not None
+                        else np.ones(mw_signal.shape[0], dtype=float)
+                    )
+                    mw_updated = mw_base * np.exp(
+                        mw_query_weight_eta * mw_signal
+                    )
+                    mw_updated = mw_updated / mw_updated.mean()
+                    mw_weights = np.clip(
+                        mw_updated, 1.0 / mw_weight_cap, mw_weight_cap
+                    )
+            mw_current = (
+                mw_weights
+                if mw_weights is not None
+                else np.ones(len(residual), dtype=float)
+            )
+            mw_weight_stats_history.append({
+                "round": int(t),
+                "max": float(mw_current.max()),
+                "min": float(mw_current.min()),
+                "mean": float(mw_current.mean()),
+                "at_upper_cap": int(
+                    (mw_current >= mw_weight_cap).sum()
+                ),
+                "at_lower_cap": int(
+                    (mw_current <= 1.0 / mw_weight_cap).sum()
+                ),
+            })
+            if t % 100 == 0 or t == n_rounds - 1:
+                mw_weight_snapshot_history.append({
+                    "round": int(t),
+                    "weights": mw_current.tolist(),
+                })
+
         # 逐轮进度：单行输出 loss + 接受状态（受 log_every 控制）
         if do_log:
             budget_info = ""
@@ -2419,7 +2820,9 @@ def run_evolution(
         np.mean(best_abs_errors) / n_records
     )
     terminal_output = (
-        inner_early_stopper is not None or gap_l1_sweeps > 0
+        fitness_only_mode is not None
+        or inner_early_stopper is not None
+        or gap_l1_sweeps > 0
     )
     output_S = S if terminal_output else best_S
     output_q = (
@@ -2528,6 +2931,7 @@ def run_evolution(
         "accepted_attempt_history": accepted_attempt_history,
         "accepted_rho_history": accepted_rho_history,
         "rho_schedule_history": rho_schedule_history,
+        "eta_schedule_history": eta_schedule_history,
         "donor_top_share_history": donor_top_share_history,
         "row_max_prob_mean_history": row_max_prob_mean_history,
         "row_max_prob_max_history": row_max_prob_max_history,
@@ -2585,6 +2989,8 @@ def run_evolution(
         "gap_l1_reference_scale_history": (
             gap_l1_reference_scale_history
         ),
+        "mw_weight_stats_history": mw_weight_stats_history,
+        "mw_weight_snapshot_history": mw_weight_snapshot_history,
         "state_evaluation_count": state_evaluation_count,
         "candidate_evaluation_count": candidate_evaluation_count,
         "candidate_budget_exhausted": candidate_budget_exhausted,
@@ -2769,6 +3175,37 @@ def run_evolution(
                 int(rho_anneal_rounds)
                 if rho_anneal_rounds is not None else None
             ),
+            "rho_anneal_start_round": (
+                int(rho_anneal_start_round)
+                if rho_anneal_start_round is not None else None
+            ),
+            "eta_anneal_end": (
+                float(eta_anneal_end) if eta_anneal_end is not None else None
+            ),
+            "eta_anneal_rounds": (
+                int(eta_anneal_rounds)
+                if eta_anneal_rounds is not None else None
+            ),
+            "eta_anneal_start_round": (
+                int(eta_anneal_start_round)
+                if eta_anneal_start_round is not None else None
+            ),
+            "mw_query_weight_eta": (
+                float(mw_query_weight_eta)
+                if mw_query_weight_eta is not None else None
+            ),
+            "mw_signal_cap": (
+                float(mw_signal_cap)
+                if mw_signal_cap is not None else None
+            ),
+            "mw_weight_cap": (
+                float(mw_weight_cap)
+                if mw_weight_cap is not None else None
+            ),
+            "mw_start_round": (
+                int(mw_start_round)
+                if mw_start_round is not None else None
+            ),
             "selection_scale_invariant": bool(selection_scale_invariant),
             "selection_scale_invariant_min_spread": (
                 float(selection_scale_invariant_min_spread)
@@ -2789,8 +3226,28 @@ def run_evolution(
                 inner_early_stopping_patience_ticks
             ),
             "horizon_invariant": horizon_invariant,
+            **({
+                "fitness_only_mode": fitness_only_mode,
+            } if fitness_only_mode is not None else {}),
         },
     }
+    if fitness_only_mode is not None:
+        diagnostics["fitness_only_contract"] = {
+            "enabled": True,
+            "fitness_mode": fitness_only_mode,
+            "residual_driving_channels": (
+                ["fitness"] if fitness_only_mode == "residual" else []
+            ),
+            "donor_selection": (
+                "residual_fitness_and_structure"
+                if fitness_only_mode == "residual"
+                else "structure_only_equal_fitness"
+            ),
+            "transition_kernel": "blind_independent",
+            "proposal_transition": "unconditional",
+            "termination_rule": "fixed_n_rounds",
+            "output_identity": "terminal_current",
+        }
     if record_stationarity_trace:
         diagnostics["stationarity_trace"] = StationarityTrace(
             n_records=int(n_records),

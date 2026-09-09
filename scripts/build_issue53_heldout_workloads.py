@@ -40,6 +40,13 @@ DATASETS = {
         "source": Path("data/nltcs/nltcs.csv"),
         "output": Path("configs/nltcs/heldout_issue53_v1.json"),
     },
+    "plants": {
+        "schema": Path("configs/plants/schema.yaml"),
+        "marginals": Path("configs/plants/init_marginals.json"),
+        "measured": Path("configs/plants/measured_1000query.json"),
+        "source": Path("data/plants/plants.csv"),
+        "output": Path("configs/plants/heldout_issue53_v1.json"),
+    },
 }
 
 

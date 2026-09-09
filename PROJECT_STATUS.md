@@ -75,6 +75,445 @@ PR #69 审查修复记录（对应审查阻塞项）：
 真正下一步：以上修复经用户过目批准后提交并回复 PR #69；值引导主线（V12 配对塑形设计）继续在
 PR #73 工作区推进。
 
+---
+
+### 最新暂停点：plants 中等规模真实基准诊断已运行——复现覆盖受限画像且预算截断（2026-09-05）
+
+> 用户方向：小数据（test_300x10）不进最终对比，转向未用过的 plants
+> （17412×69 二值，"twenty datasets" 基准）。用户授权 GPU 运行。
+> 权重路线同日已由用户关闭（残差已是相对域，再按残差调权重属重复）。
+
+准备工作（全部入库）：
+- `configs/plants/heldout_issue53_v1.json`：冻结构造器新增 plants 条目
+  生成（512×3way + 512×4way，哈希排序确定性选择，与 measured 无交集），
+  SHA `d65401761bade19ad40d9588eaa57609de0bdbc3c26835a5343ab8cc332eca85`；
+  nltcs/test 旧文件 `--verify-existing` 逐字节可重建（构造器改动零漂移）。
+- `scripts/run_fitness_only_plants_diagnostic.py`：单数据集诊断 runner，
+  v3 冻结配置原样（6000 轮、rho 0.01→0.001@900+600、eta 0.5、alpha 16、
+  relative/floor 8、seed 9908、residual/equal 配对、cuda），
+  协议 SHA `67d6a5b0128caa7536c4aa91736eb6b5332dc1ed871ca0a0dfc75115ba6f9861`，
+  diagnostic_only / formal_claim_allowed=false / fail-closed 输出。
+- 测试：test_plants_workload + test_issue53_heldout_workloads 13/13 过。
+
+结果（`outputs/fitness_only_plants_diagnostic_seed9908_v1/report.json`，
+GPU1 11:26-13:47，单臂 70 分钟，rho 审计通过，6000 轮走满）：
+
+```text
+measured   R 0.005249 vs E 0.068868（差值 -0.0636，优 13×）✓
+heldout3   R 0.039262 vs E 0.033184（+0.0061 ✗）均值劣、中位数持平
+heldout4   R 0.027691 vs E 0.022497（+0.0052 ✗）中位数 R 反而优（0.0103 vs 0.0126）
+one-way    R 0.040966 vs E 0.040378（+0.0006 ≈中性）
+           但分布迥异：R 中位 173 行/max 5613；E 中位 732/max 902（重尾 vs 均庸）
+drift      1.0004（nltcs 的 1.16 回摆现象完全缺席）
+形态       6000 轮仍在下降（last best @5990，732M→7.4M 未收敛）——预算截断
+```
+
+**两个新事实：**
+1. **覆盖受限画像不是小数据伪影**：plants 复现 test_300x10 模式
+   （measured 大胜、heldout 均值劣）。根因量化——workload 覆盖密度：
+   nltcs 2-way 100%/3-way 64%；plants 2-way 4.9%/3-way 0.5%；
+   test_300x10 同为稀疏。nltcs 是例外（密覆盖），不是规律。
+   均值劣由重尾驱动（p90：R 0.089 vs E 0.077），中位数不输。
+2. **v3 预算是按 nltcs 尺度标定的**：plants 6000 轮远未收敛
+   （残差臂终点 loss 7.4M，仍在最速下降段尾部）。规模每上一档，
+   固定 6000 轮就截断一次——预算需按数据集尺度重标定（这不是
+   v3 truncation 判定的推翻：nltcs 上 v3 结论不变）。
+
+下一步候选（等用户拍板）：
+  a. plants 加预算重跑（如 24000 轮，~4.7h/臂）看收敛后画像
+  b. 覆盖补全方向（对 plants 补 one-way + 加密 2-way 进 fitness）
+  c. 两者结合的结果前协议
+（本诊断单 seed、diagnostic_only，不作正式声明。）
+
+---
+
+### 上一暂停点：v6 MW 乘性权重聚合已运行，护栏双爆——聚合路线关闭，等权聚合定稿（2026-09-04）
+
+> 用户授权在本机 4090（GPU1）运行。23:24-23:52（nltcs 生成 1182.3s，
+> test 76.0s），6000 轮走满，rho/eta 时间表 v3 原样逐轮匹配，**前缀
+> 审计通过**（前 1501 轮 loss/rho/state metrics/初表/RNG 五项与 v3
+> residual 臂逐位一致；保温段权重恒全 1）——MW 实现无扰动，分叉
+> 纯粹是机制效果。单臂设计：equal 臂复用 v3 冻结产物（frame SHA
+> 链闭合）。协议 manifest SHA b3cc455ca19b4e3f…f0da8717。
+
+结果（`outputs/fitness_only_mw_dev_seed9908_v6/report.json`）：
+
+```text
+护栏1：nltcs held-out 配对差 -0.061138/-0.037092 ≤ -0.050/-0.030 ✓（优势保住）
+护栏2：nltcs L1 0.000466 ≤ 0.000197 ✗（2.60×v3——严重恶化）
+        test  L1 0.003800 ≤ 0.002640 ✗（1.58×v3——严重恶化）
+主判据：test held-out 配对差 3way +0.003288（v3 +0.003340，持平）
+        4way +0.001107（v3 +0.000996，反恶化 11%）——即便无护栏也是 rejected
+drift ：nltcs 5.1717（v3 1.1639——爆炸 4.4 倍）；test 2.7872（v3 2.2400）
+best  ：nltcs 11126.5@r1474——MW 开启（r1500）前 26 轮，开启后 4500 轮零改进
+判定  ：quality_regression_under_mw
+```
+
+**退化机理（只读权重轨迹诊断，协议 §7 预绑定动作）**：
+
+```text
+r1500 开启 → r1800 已 26 个顶格(8×) → r2000-2500 雪崩：沉底 0→535
+→ 终态稳定极化：37 顶格 / 637 沉底（63.7% 查询只剩 1/8 权重）
+loss 分段：[1500,2500) 2.84×v3 → [3000,4000) 7.38×v3（开启即恶化，单调加深）
+```
+
+死账户独裁死锁：nltcs 重尾欠账（目标计数 13-42 的稀有查询）是**量子化
+不可修**的——差半行就是大相对残差，注意力再多也修不平。乘性复利
+（exp(0.002×8)≈1.6%/轮）让这些死账 200 轮内顶格；归一化跷跷板把 62%
+正常查询压到地板 → 大盘失守（L1 恶化 2.6×）；fitness 被 40 个修不平的
+目标主导 → 系统反复搬行追死账 → drift 爆炸。**MW 的隐含假设"多注意=
+能修好"对量子化死账不成立**，机制退化为把资源永久锁死在不可修目标上。
+
+**科学结论（聚合路线关闭）**：等权聚合定稿（v3 配置）。fitness 聚合
+缺口（test held-out 配对差为正）如实报告为方法局限/future work——
+MW 记录为已排除方向。按协议 §8：不做剂量下探（cap/eta/start 修订=
+新协议，且机理性死锁不是剂量问题）。
+
+六代记录并列（全部结果前冻结、前缀审计通过、不重跑）：
+v2 unsupported / v3 rejected(truncation) / v4 quality_regression(floor) /
+v5 quality_regression(eta) / v6 quality_regression(MW)。
+**v3 配置 = 实证质量最优点**，温度路线与聚合路线双关闭。
+
+下一步（§7 预绑定）：回 v3 配置；5-seed 确认屏（v3 配置）成为下一个
+待议协议。
+
+> **2026-09-05 上午修正**：用户判断权重路线仍可行，5-seed 暂缓。
+> 只读深挖已完成（三层死因：相对域记账 vs 绝对域结算的货币错位 /
+> 量子化死账零改善 / 零和跷跷板株连占恶化 82%；nltcs 尚有 291 个
+> >3 行可修大账户，test 已到本底无钱可赚）。待议：纸面模拟 v7
+> 结构手术（信号换绝对域+量子化免记+去零和），详见工作笔记
+> 2026-09-05 接续点。
+
+---
+
+### 上一暂停点：v5 eta 降温已运行，质量门失败且 drift 恶化——"降温"全路线关闭（2026-09-04）
+
+> 用户授权运行。GPU1，19:25-20:30（nltcs 生成 3614.7s），9000 轮走满，
+> 双时间表审计逐轮匹配，**前缀审计通过**（前 1501 轮与 v3 四条轨迹
+> 逐位一致——eta 退火实现未扰动随机流，等价性合同在真实规模上成立）。
+
+结果（`outputs/fitness_only_eta_cooling_dev_seed9908_v5/report.json`）：
+
+```text
+质量门：nltcs L1 0.000193 ≤ 0.000197 ✓（v3 0.000179，略差）
+        test  L1 0.003267 ≤ 0.002640 ✗（v3 0.002400，倒退 36%，比 v4 更糟）
+drift ：nltcs 1.3664（v3 1.1639、v4 1.1754——不降反升 17%！）
+        test 1.9787（观察项，反而比 v3 2.24 略窄）
+形态  ：非 descending；best 7553@r3970 后横盘于 ~9200-10900 带
+        （震荡带中心上移且更宽：v3 稳态带 ~8000-8600）
+判定  ：quality_regression_under_eta_cooling
+held-out：nltcs 配对优势保持（-0.061458/-0.037278，与 v3 持平）
+```
+
+**核心科学结论（v3+v4+v5 机制排除三部曲完成）**：
+
+eta 不只控制"单步跳多大"，同时控制"修复多快"——两者不可分。降 eta
+后单步修复量减半，而破坏源（mu 突变、随机漂移）强度不变，稳态
+修复-破坏平衡点上移：损失带从 ~8300 抬到 ~10300，带宽反而变宽。
+
+三部曲总结（全部结果前冻结、前缀审计通过、记录并列）：
+1. v3 预算加倍 → rejected：drift≈1.16 是稳态本底，非预算问题
+2. v4 频率减半（rho 0.001→0.0005）→ quality_regression：本底未收窄
+   （1.1639→1.1754）+ 小表冻伤
+3. v5 幅度减半（eta 0.5→0.25）→ quality_regression：平衡点恶化，
+   drift 反升至 1.3664 + 小表更伤
+
+**结论：任何形式的"降温"都损伤修复-破坏平衡。v3 配置（rho 三段式
+H900/D600/floor0.001、eta 恒 0.5）是实证的质量最优点；drift 本底
+~1.16 是无门控终态输出在该最优点的固有代价。**
+
+按 v5 协议 §7：quality_regression → 停下，不进任何后续屏，不做
+eta=0.1 下探。B 路线（接受本底、修订叙事）已由三重预注册实验钉死，
+从"选择"升级为"结论"。
+
+下一步（等用户决定）：
+- B 叙事定稿：方法=v3 配置；drift 如实报告；v3/v4/v5 作为机制排除
+  证据链写入论文（预注册+可证伪审计是方法学卖点）
+- 之后：5-seed 确认屏协议（v3 配置）或 fitness 聚合缺口优先级讨论
+
+v2 unsupported / v3 rejected / v4 quality_regression /
+v5 quality_regression 四条记录并列保留，均不得重跑。
+
+### 上一暂停点：v5 eta 降温执行器与核心机制已就绪，等待运行授权（2026-09-04）
+
+> v5 协议获用户批准后完成实现。**本屏含核心代码改动**（v2-v4 均为纯
+> 配置 delta）：evolution.py + fitness_only.py 新增 eta 三段式退火
+> （eta_anneal_start_round / eta_anneal_rounds / eta_anneal_end），与
+> rho 退火完全同构、纯轮数驱动、只改复制开关阈值不动随机流；与
+> residual_directed_diffusion 组合被 fail-closed 拒绝。
+
+- 协议：docs/设计/FitnessOnly地板段Eta降温v5结果前协议.md
+- 执行器：scripts/run_fitness_only_eta_cooling_v5.py（SHA 钉死
+  05863ca27710fe52794a6106c74b341962b170b1edb964312d09571dc8e6fe27）
+- 配置 delta（相对 v3，非 v4）：eta 时间表 H=1500/D=600/end=0.25 +
+  n_rounds=9000；rho 时间表 v3 原样（floor 0.001）
+- 等价性合同：tests/test_eta_anneal_equivalence.py 7 项——关闭 vs 全程
+  保温逐位一致（loss/rho 历史、终表、RNG 终态）、中途降温保温段前缀
+  逐位一致+降温后分叉（v5 前缀审计依赖的性质）、公式逐轮匹配、
+  fail-closed 合同
+- 专项测试：tests/test_fitness_only_eta_cooling_v5_runner.py 19 项
+  （plan 只读、身份 fail-closed、不覆盖、config delta 仅 4 键、双时间
+  表边界与篡改拒绝、1501 轮前缀审计伪造拒绝、四标签+边界阈值、v4 记录
+  字面值核对）
+- 全量回归：319 项通过（v1-v5 runner + fitness_only + schedule +
+  等价性 + evolution + directional_diffusion），零回归
+- plan 只读验证通过：rho floor 0.001 / eta 0.5→0.25 / prefix 1501 /
+  T=9000 / generation_started=False
+
+待办：用户授权后正式运行（nvidia-smi 选空闲卡，预计 65-70 分钟）。
+判定四标签结果前冻结；v2 unsupported / v3 rejected /
+v4 quality_regression 记录并列保留。
+
+### 上一暂停点：v4 更低地板已运行，质量门失败（quality_regression_under_lower_floor），温度路线关闭（2026-09-04）
+
+> 用户授权运行。GPU1，nltcs 生成 3561.4s / test 227s，固定 9000 轮
+> 走满，时间表审计逐轮匹配，**前缀审计通过**（前 901 轮与 v3 四条
+> 轨迹逐位一致）。未做任何结果后调参。
+
+结果（`outputs/fitness_only_floor00005_dev_seed9908_v4/report.json`，
+residual 臂，判据结果前冻结于 v4 协议）：
+
+```text
+质量门（fail-closed，先于 drift 判据）：
+  nltcs L1 0.000165 ≤ 0.000197 ✓（v3 0.000179，再改善 8%）
+  test  L1 0.002733 ≤ 0.002640 ✗（v3 0.002400，倒退 14%）
+主判据 drift（被质量门盖住，记录用）：
+  nltcs 1.1754 > 1.100（v3 1.1639——降地板后本底不降反微升）
+  test  3.1364（v3 2.2400，量子化加剧，观察项）
+形态：非 descending（best 7033@r7422，尾窗 8022 > 前窗 7832，
+  链again 稳态横盘）
+判定：quality_regression_under_lower_floor
+```
+
+两条关键科学结论（v3+v4 配对证据链）：
+
+1. **nltcs 漂移本底对地板温度不敏感**：参与行减半（16→8 行/轮），
+   本底 1.1639→1.1754 未收窄。说明带宽由"单行重采样量子跳变"
+   主导，不由每轮扰动行数主导。温度路线对 drift 无效。
+2. **test 小表被冻伤**：0.15 行/轮（约 7 轮动 1 行）修复能力不足，
+   measured L1 显著倒退。地板不可再降（协议 §7 亦禁止下探）。
+
+综合 v2/v3/v4：**floor=0.001（v3 配置）是质量最优点**（nltcs L1
+0.000179 / test L1 0.002400 双优、held-out 配对优势保持）。
+按 v4 协议 §7：quality_regression → 停下诊断，不进入后续屏。
+
+下一步（等用户决定）：走 B 路线定稿——方法配置定为三段式
+H=900/D=600/floor=0.001，叙事如实报告 drift 本底 ~1.16 为无门控
+终态输出的固有代价，并以 v3（预算加倍）与 v4（地板减半）两次
+冻结实验作为"本底与预算、更低温度无关"的对照证据；随后讨论
+5-seed 确认屏协议与 fitness 聚合缺口优先级。
+
+v2 unsupported / v3 rejected / v4 quality_regression 三条记录并列
+保留，均不得重跑。
+
+### 上一暂停点：v4 更低地板（0.0005）执行器与测试已就绪，等待运行授权（2026-09-04）
+
+> 用户批准 v4 协议草稿后授权实现。已完成 v4 delta 执行器与专项测试
+> （17 项全过，v1-v4 相关合计 69 项全过），plan 只读验证通过。
+> **尚未运行**——正式运行需用户单独授权；运行前 nvidia-smi 选空闲
+> GPU（CUDA_VISIBLE_DEVICES 注入，不改协议）。
+
+结果前协议：`docs/设计/FitnessOnly地板0.0005降温v4结果前协议.md`。
+执行器 `scripts/run_fitness_only_floor00005_v4.py` 继承 v3 链，变更 =
+rho_anneal_end 0.001→0.0005 + n_rounds 9000（H=900/D=600 不变）。
+v4 协议清单 SHA-256：
+
+```text
+3002afe55683f08c9b87ac5e8a59b0f45ca938406cc09e8287d1ddfb31d84cd2
+```
+
+新增审计与判定（全部结果前冻结）：
+
+```text
+前缀一致审计：v4 各臂前 901 轮（t∈[0,900]，两时间表逐点相同段）
+  与 v3 逐位相等 + 初始表/初始化后 RNG 哈希相等（v3 参照产物
+  5 文件 SHA-256 生成前 fail-closed 核对）；失败 →
+  schedule_blindness_violated，运行无效、产物保留、不开 held-out。
+判据：nltcs drift ≤1.100（不放宽）；质量门 nltcs L1 ≤0.000197、
+  test L1 ≤0.002640（各 1.10×v3）。
+形态：descending = 尾窗[8000,9000)均值 < 前窗[7000,8000)均值
+  AND running-best 最后刷新 ≥8000。
+四互斥标签：quality_regression_under_lower_floor /
+  lower_floor_supported / lower_floor_budget_insufficient /
+  lower_floor_rejected（→停止下探回 B 叙事）。
+输出：outputs/fitness_only_floor00005_dev_seed9908_v4/（不覆盖）。
+```
+
+v2 unsupported / v3 rejected 记录保留不变。成本 ≈65-70 分钟
+（nltcs ≈59 分钟两臂、test ≈4 分钟两臂、评价照旧）。
+
+### 上一暂停点：v3 T=6000 已运行，截断假说被拒绝（truncation_hypothesis_rejected），产物已冻结（2026-09-04）
+
+> 用户授权运行。GPU1，nltcs 生成 2366.5s / test 151.0s，固定 6000 轮
+> 走满，时间表审计逐轮匹配，**前缀审计通过**（v3 前 3000 轮与 v2 四条
+> 轨迹逐位一致 + 初始表/初始化后 RNG 哈希一致——horizon_invariant
+> 承诺首次经受可证伪检验并成立）。未做任何结果后调参。
+
+结果（`outputs/fitness_only_schedule_T6000_dev_seed9908_v3/report.json`，
+residual 臂，判据结果前冻结于 v3 协议）：
+
+```text
+质量门（两条全过）：
+  nltcs L1 0.000179 ≤ 0.000200 ✓（v2 0.000182，还在改善）
+  test  L1 0.002400 ≤ 0.002786 ✓（v2 0.002533，改善 5%）
+主判据 drift：
+  nltcs 1.1639 ≤ 1.100 ✗（v2 1.2063，有改善但未达标）
+形态判定（非 descending）：
+  地板段分段均值 11382→9978→9640→9146→8713→7998→8231→8558→8221
+  best 7146.5@r4432（<5000），尾窗[5000,6000)均值 8389 >
+  前窗[4000,5000)均值 8115 → 链已于 ~r4400 进入稳态震荡
+判定：truncation_hypothesis_rejected
+```
+
+含义：v2 的"链仍在降"是真的——再给 3000 轮后 best 又降 15%
+（8409→7146.5）且两数据集 L1 双改善；但链在 ~r4400 到达稳态，
+之后 1600 轮横盘。**drift ≈1.16 是地板温度（rho=0.001）下 nltcs 的
+波动本底**，不是预算不足。加任何轮数都不会达成 ≤1.100。
+
+观察项：test drift 2.2400（v2 1.7949，小表量子化波动，无硬门）；
+held-out nltcs 优势原样保持（3way -0.0615 / 4way -0.0373）；
+test held-out delta 略增（+0.0033/+0.0010，仍远小于 v1 的 +0.0056）。
+
+按 v3 协议 §7 绑定动作：回 B/C 路线——
+B = 接受本底修订方法叙事（时间表收益 test 漂移收窄 66%、两数据集
+L1 全面改善、nltcs 漂移=本底 ~1.16 并如实报告）；
+C = 另立地板修订协议（更低地板/终点邻域平均/DP 兼容早停输出规则，
+任何一项都需新的结果前协议）。等待用户选择。
+
+v2 unsupported 与 v3 rejected 两条记录并列保留，均不得重跑。
+
+### 上一暂停点：T=6000 截断假说 v3 执行器与测试已就绪，等待运行授权（2026-09-04）
+
+> 用户授权范围：批准 v3 协议草稿后"继续"（实现阶段）。已完成 v3
+> delta 执行器与专项测试（16 项全过，v1/v2/时间表相关 52 项全过），
+> plan 只读验证通过。**尚未运行**——正式运行需用户单独授权；运行前
+> 用 nvidia-smi 选空闲 GPU（CUDA_VISIBLE_DEVICES 注入，不改协议）。
+
+结果前协议：`docs/设计/FitnessOnly时间表T6000截断假说v3结果前协议.md`。
+执行器 `scripts/run_fitness_only_schedule_v3_t6000.py` 继承 v2 全部科学
+内容，唯一变更 n_rounds 3000→6000（时间表三常数逐字不变，公式不含 T）。
+v3 协议清单 SHA-256：
+
+```text
+cd834439b90d6ffa7e7789c583019b92d07b3a763a4cf0a6357f30a0df8553b9
+```
+
+新增审计与判定（全部结果前冻结）：
+
+```text
+前缀一致审计：v3 各臂 loss/rho history[:3000] 与 v2 逐位相等 +
+  初始表哈希、初始化后 RNG 哈希相等（v2 参照产物 5 个文件 SHA-256
+  运行前 fail-closed 核对）；失败 → horizon_invariance_violated，
+  运行无效、不打开 held-out、产物保留供架构诊断。
+判据：nltcs drift ≤1.100（不放宽）；质量门 nltcs L1 ≤0.000200、
+  test L1 ≤0.002786（各 1.10×v2）。
+形态：descending = 尾窗[5000,6000)均值 < 前窗[4000,5000)均值
+  AND running-best 最后刷新 ≥5000。
+四互斥标签：quality_regression_under_extended_budget /
+  truncation_hypothesis_supported / budget_still_insufficient /
+  truncation_hypothesis_rejected。
+输出：outputs/fitness_only_schedule_T6000_dev_seed9908_v3/（不覆盖）。
+```
+
+v2 的 unsupported 记录保留不变——v3 检验新假说（截断），不是重考。
+成本 ≈45 分钟（nltcs cuda ≈2×20 分钟、test numpy ≈2×75 秒）。
+
+### 上一暂停点：三段式 rho 时间表 v2 开发屏已运行并判定 unsupported，产物已冻结（2026-09-04）
+
+> 用户授权范围："继续"（实现后接运行 v2）。已完成 v2 runner、其专项
+> 测试与正式运行；按结果前冻结判据判定 `schedule_dev_unsupported`；
+> 未做任何结果后调参或重跑，产物保留，promotion gate 保持关闭。
+
+执行方式：新建 delta 执行器 `scripts/run_fitness_only_schedule_v2.py`，
+继承 v1 模块全部科学内容（数据集、冻结输入哈希、seed 9908、T=3000、
+配对两臂、评价管线、相位边界），唯一变更 = 预冻结三段式时间表
+（H=900、D=600、地板 0.001）。v1 runner 仅加 `config_factory` 注入点
+（默认行为不变）。v2 协议清单 SHA-256：
+
+```text
+bb7d19cb806a501a4cce6b139166a53cf8fe27f73140d951c15e4c3bb05a1531
+```
+
+runner 专项测试 9 项全过（plan 只读、身份 fail-closed、误确认先拒、
+不覆盖输出、generation_config 与 v1 逐键一致仅差时间表三键、config
+delta 唯一、三段边界、篡改历史拒绝、判据阈值逻辑）。
+
+运行结果（`outputs/fitness_only_schedule_dev_seed9908_v2/report.json`，
+生成 test 75.6s / nltcs 1177.7s，时间表审计 4 条轨迹逐轮匹配公式，
+配对与源码不变审计全过，固定轮数走满）：
+
+```text
+判据一 漂移超额减半（residual 臂 drift = output/best）：
+  test  : 1.7949 ≤ 2.167 ✓（v1 3.333，超额 2.333→0.795，收窄 66%）
+  nltcs : 1.2063 ≤ 1.100 ✗（v1 1.2002，超额几乎不变）
+判据二 measured L1 不倒退（≤1.10×v1）：
+  test  : 0.002533 ≤ 0.003520 ✓（比 v1 0.003200 改善 21%）
+  nltcs : 0.000182 ≤ 0.000287 ✓（比 v1 0.000261 改善 30%）
+整体判定：schedule_dev_unsupported（判据一 nltcs 未达成）
+```
+
+观察项（无硬门，记录用）：
+
+```text
+test held-out 配对差值大幅收窄：3-way +0.005632→+0.002813，
+  4-way +0.001875→+0.000566；one-way safety +0.038933→+0.017200
+nltcs 绝对水平全面改善：best 14870→8409，terminal 17847.5→10143.5
+nltcs held-out 配对优势保持（3-way −0.0615、4-way −0.0374）
+equal 臂降温后 loss 轨迹冻结平稳（对照行为正常）
+```
+
+失败机理解读（记录，不构成新协议）：test 的漂移是高温末端重采样破坏，
+时间表有效（超额 −66%）；nltcs 的 ~20% 相对漂移在绝对 loss 下降 43%
+后等比例保留，更像当前地板温度下的稳态波动本底，非同一机理。若要
+进一步压 nltcs 漂移（更低地板/更长降温），按协议 §7-§8 必须另立新
+版本协议，本次产物保留为对照。
+
+下一步（待用户决策）：按协议 §8 走"不支持"分支——回到调度设计
+讨论（候选：地板比修订版协议、或接受 nltcs 漂移本底转向 fitness
+聚合/覆盖缺口），或先讨论本结果对创新点叙事的影响。
+
+### 最新暂停点：fitness-only 三段式 rho 时间表已实现并通过测试，v2 实验未运行（2026-09-04）
+
+> 用户授权范围：按已批准的 v2 结果前协议实现代码与测试，跑实验前停止。
+> 未运行任何 v2 生成实验，未修改 v1 冻结产物，promotion gate 保持关闭。
+
+背景：v1 fitness-only 配对归因（seed 9908）机制成立但存在终点漂移
+（output/best 漂移比 test 3.333、nltcs 1.2002），根因是恒定 rho 下末端仍以
+固定强度重采样。依据
+`docs/设计/FitnessOnly三段式rho时间表v2开发屏结果前协议.md` 实现预冻结
+三段式盲时间表：保温 H=900 轮恒 rho=0.01 → D=600 轮几何降温 → 地板
+rho/10=0.001（开口段，由总预算截断，将来由早停决定）；常数为归一化单位
+（9 次/行 ×safety、一个数量级坡、地板比 0.1），全数据集通用、禁止按
+数据集调；公式不含总轮数，视界不变保持成立。
+
+本轮改动（均已完成，实验未跑）：
+
+- `src/table_diffevo/evolution.py`：新参数 `rho_anneal_start_round`
+  （默认 None 完全向后兼容，需与 `rho_anneal_rounds` 同时启用）；调度
+  进度 `min(1, max(0, (t-H)/D))`；horizon_invariant 与 fitness-only 两道
+  合同放行绝对轮数时间表、继续拒绝全程式退火；params 诊断新增该字段。
+- `src/table_diffevo/fitness_only.py`：配置新增三个时间表字段
+  （all-or-none 验证，end ∈ (0, rho]）；kwargs 传递；运行后审计逐轮核对
+  `rho_schedule_history` 与预冻结公式一致（不一致即 RuntimeError）；
+  配对核对字段加入 `rho_schedule_history`；pairing 记录
+  `shared_rho_schedule`。
+- `tests/test_fitness_only_schedule.py`：新增 19 项专项测试（三段边界
+  逐轮核对、纯时间驱动非门控、两臂共享时间表、start=0 与 legacy 逐位
+  一致、合同放行与 fail-closed 拒绝、运行后审计防篡改）。
+- `docs/设计/FitnessOnly残差适应度扩散演化接线.md`：§3 合同同步并追加
+  2026-09-04 修订节。
+
+测试：时间表专项 19 + fitness-only 19 + rho 退火 23 = 61 全通过；全仓
+`--continue-on-collection-errors` 下 2121 通过 / 43 失败（40 个为本分支
+已知的协议哈希护栏 fail-closed——evolution.py 携带未提交 fitness-only
+接线属预期；3 个为 venv 缺 scipy 的既有环境问题），无新增回归。
+
+下一步（需用户单独授权）：运行 v2 配对归因（seed 9908，两数据集，
+输出 `outputs/fitness_only_schedule_dev_seed9908_v2/`，不覆盖 v1）。
+判据按协议 §5：漂移超额减半（drift_ratio test ≤2.167、nltcs ≤1.100）
+且 measured L1 ≤1.10×v1（test ≤0.003520、nltcs ≤0.000287）；held-out
+为观察项；失败记 `schedule_dev_unsupported`。
+
 ### 最新暂停点：Issue #53 问题一 A/R 双通道单种子筛查已评价，未通过（2026-09-02）
 
 > 用户已明确授权完成冻结的两条候选轨迹及质量评价。本轮已完成采集、结果盲
