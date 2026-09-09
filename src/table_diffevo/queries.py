@@ -154,6 +154,84 @@ def eval_condition(df: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
         raise ValueError(f"不支持的操作符: {op}")
 
 
+def eval_halfspace_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
+    """
+    评价单个半空间查询（w·x ≥ θ），返回布尔掩码（不求和）。
+
+    半空间查询是不可微查询的代表：硬阈值阶跃使梯度方法必须用有偏松弛，
+    而本引擎只需要行级布尔掩码，可以精确处理。row-sum（权重全 1）是特例。
+
+    查询格式（与合取查询的 conditions 结构不同，用独立的 halfspace 字段）::
+
+        {
+          "id": "HS0001",
+          "type": "halfspace",
+          "halfspace": {
+            "attributes": ["attr_1", "attr_5"],   # 参与属性，不允许重复
+            "weights": [1, -1],                    # 与 attributes 等长
+            "theta": 3                             # 阈值，w·x >= theta 计数
+          },
+          "result": 1234
+        }
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        数据表（参与属性必须是数值列）
+    query : dict
+        查询定义，type 必须是 "halfspace" 且包含 halfspace 字段
+
+    Returns
+    -------
+    np.ndarray (bool), shape (N,)
+        布尔掩码，True 表示该行满足 w·x ≥ θ
+
+    Notes
+    -----
+    投影用 float64 累加。整数权重 × 整数数据（如二值 0/1 列）在
+    float64 下精确（远小于 2^53），掩码结果与整数运算逐位一致。
+    校验 fail-closed：字段缺失、长度不一致、重复属性、非数值列、
+    非有限数值一律 ValueError。
+    """
+    spec = query.get("halfspace")
+    if not isinstance(spec, dict):
+        raise ValueError("halfspace 查询必须包含 halfspace 字典字段")
+    attrs = spec.get("attributes")
+    weights = spec.get("weights")
+    theta = spec.get("theta")
+    if not isinstance(attrs, list) or not attrs:
+        raise ValueError("halfspace.attributes 必须是非空列表")
+    if not isinstance(weights, list) or len(weights) != len(attrs):
+        raise ValueError("halfspace.weights 必须是与 attributes 等长的列表")
+    if len(set(attrs)) != len(attrs):
+        raise ValueError("halfspace.attributes 不允许重复属性")
+    if (
+        isinstance(theta, bool)
+        or not isinstance(theta, (int, float))
+        or not np.isfinite(theta)
+    ):
+        raise ValueError("halfspace.theta 必须是有限数值")
+
+    projection = np.zeros(len(df), dtype=float)
+    for attr, weight in zip(attrs, weights):
+        if (
+            isinstance(weight, bool)
+            or not isinstance(weight, (int, float))
+            or not np.isfinite(weight)
+        ):
+            raise ValueError(
+                f"halfspace 权重必须是有限数值，属性 {attr!r} 的权重为 {weight!r}"
+            )
+        if attr not in df.columns:
+            raise ValueError(f"halfspace 属性 {attr!r} 不在表中")
+        column = df[attr]
+        if not pd.api.types.is_numeric_dtype(column):
+            raise ValueError(f"halfspace 只支持数值列，属性 {attr!r} 不是数值列")
+        projection += float(weight) * column.to_numpy(dtype=float)
+
+    return projection >= float(theta)
+
+
 def eval_query_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
     """
     评价单个查询，返回布尔掩码（不求和）。
@@ -163,7 +241,8 @@ def eval_query_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
     df : pd.DataFrame
         数据表
     query : dict
-        查询定义，包含 conditions 列表
+        查询定义。合取查询包含 conditions 列表；type == "halfspace" 的
+        半空间查询包含 halfspace 字段（见 eval_halfspace_mask）。
 
     Returns
     -------
@@ -177,6 +256,8 @@ def eval_query_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
     - fitness.py 调用它来计算适应度（逐查询累加，不存矩阵）
 
     通过统一的底层函数，确保计数和适应度基于同一套掩码逻辑，永远一致。
+    半空间查询在此分派到 eval_halfspace_mask，因此 fitness 与计数对
+    半空间查询同样天然一致，无需任何机制改动。
 
     Examples
     --------
@@ -184,6 +265,10 @@ def eval_query_mask(df: pd.DataFrame, query: Dict[str, Any]) -> np.ndarray:
     >>> mask.sum()  # 满足该查询的记录数
     >>> mask.astype(float)  # 转成 0/1 用于适应度计算
     """
+    # 半空间查询：独立结构，分派到专用掩码函数
+    if query.get("type") == "halfspace":
+        return eval_halfspace_mask(df, query)
+
     # 初始掩码：全为 True
     mask = pd.Series([True] * len(df), index=df.index)
 

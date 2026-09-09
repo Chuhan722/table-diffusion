@@ -272,3 +272,128 @@ def test_invalid_fitness_mode_rejected(bad):
             config=config,
             fitness_mode=bad,
         )
+
+
+@pytest.mark.parametrize("bad", [True, 0, -1, 1.5])
+def test_early_stopping_patience_validation_rejects_bad_values(bad):
+    with pytest.raises(ValueError, match="inner_early_stopping"):
+        _config(inner_early_stopping_patience_ticks=bad).validate()
+
+
+def test_early_stopping_kwargs_threading():
+    off = build_fitness_only_kwargs(
+        _config(n_rounds=2),
+        fitness_mode="residual",
+    )
+    assert off["stop_on_exact_residual"] is False
+    assert off["inner_early_stopping_patience_ticks"] is None
+
+    on = build_fitness_only_kwargs(
+        _config(n_rounds=2, inner_early_stopping_patience_ticks=6),
+        fitness_mode="residual",
+    )
+    assert on["stop_on_exact_residual"] is True
+    assert on["inner_early_stopping_patience_ticks"] == 6
+
+
+def test_paired_attribution_rejects_early_stopping():
+    schema, queries, target = _problem()
+    config = _config(inner_early_stopping_patience_ticks=6)
+    with pytest.raises(ValueError, match="只允许单臂"):
+        run_paired_fitness_only_attribution(
+            target,
+            queries,
+            schema,
+            12,
+            config=config,
+        )
+
+
+def test_early_stopping_run_contract_and_audit():
+    """启用早停的单臂运行必须通过修订后的合同自审计。"""
+
+    schema, queries, target = _problem()
+    config = _config(
+        n_rounds=60,
+        inner_early_stopping_patience_ticks=1,
+    )
+
+    table, diagnostics = run_fitness_only_evolution(
+        target,
+        queries,
+        schema,
+        12,
+        config=config,
+        fitness_mode="residual",
+    )
+
+    contract = diagnostics["fitness_only_contract"]
+    assert contract["termination_rule"] == "inner_early_stopping_a_b_c"
+    assert contract["output_identity"] == "terminal_current"
+    assert diagnostics["output_table_identity"] == "terminal_current"
+    reason = diagnostics["termination_reason"]
+    assert reason in {
+        "fit_target_reached",
+        "early_stopped",
+        "resource_cap_reached",
+    }
+    rounds_run = diagnostics["rounds_run"]
+    assert 1 <= rounds_run <= config.n_rounds
+    assert diagnostics["candidate_evaluation_count"] == rounds_run
+    assert diagnostics["stopped_early"] == (
+        reason in {"fit_target_reached", "early_stopped"}
+    )
+    assert len(diagnostics["rho_schedule_history"]) == rounds_run
+    assert diagnostics["accept_history"] == [True] * rounds_run
+    inner = diagnostics["inner_early_stopping"]
+    assert inner["enabled"] is True
+    assert inner["patience_ticks"] == 1
+    # patience=1 且轨迹足够长时，B 态应实际触发提前停止。
+    assert reason == "early_stopped"
+    assert rounds_run < config.n_rounds
+    assert len(table) == 12
+
+
+def test_early_stopping_enabled_cap_hit_is_resource_cap_reached():
+    """开早停但耐心值极大：跑满上限必须以 resource_cap_reached 收尾。"""
+
+    schema, queries, target = _problem()
+    config = _config(
+        n_rounds=7,
+        inner_early_stopping_patience_ticks=10_000,
+    )
+
+    table, diagnostics = run_fitness_only_evolution(
+        target,
+        queries,
+        schema,
+        12,
+        config=config,
+        fitness_mode="residual",
+    )
+
+    assert diagnostics["termination_reason"] == "resource_cap_reached"
+    assert diagnostics["stopped_early"] is False
+    assert diagnostics["rounds_run"] == config.n_rounds
+    assert diagnostics["candidate_evaluation_count"] == config.n_rounds
+    assert len(diagnostics["rho_schedule_history"]) == config.n_rounds
+    contract = diagnostics["fitness_only_contract"]
+    assert contract["termination_rule"] == "inner_early_stopping_a_b_c"
+    assert len(table) == 12
+
+
+def test_early_stopping_off_keeps_frozen_contract_semantics():
+    schema, queries, target = _problem()
+    config = _config(n_rounds=7)
+    _, diagnostics = run_fitness_only_evolution(
+        target,
+        queries,
+        schema,
+        12,
+        config=config,
+        fitness_mode="residual",
+    )
+    contract = diagnostics["fitness_only_contract"]
+    assert contract["termination_rule"] == "fixed_n_rounds"
+    assert diagnostics["params"]["stop_on_exact_residual"] is False
+    assert diagnostics["rounds_run"] == 7
