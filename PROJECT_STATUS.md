@@ -2,7 +2,45 @@
 
 ## 当前阶段
 
-### 最新暂停点：V10/V11 负结果归档——η 退火翻车 + exact_gain 精确增益翻车，设施保留（2026-09-16 入库，实验完成于 2026-09-08）
+### 最新暂停点：V9 五种子正式化——"破 1e-4"稳定成立，正式口径 8.90e-5（2026-09-16）
+
+#73 正文注明"V9(max) 6.57e-5 为单种子（9908）诊断值"，本节以冻结五种子 353–357 正式化该口径：
+
+- **执行环境**：远端 A6000（Cardiff_VM_6，RTX A6000 46GB，CUDA_VISIBLE_DEVICES=0，
+  torch 2.14.0+cu130 / numpy 2.4.6），代码=本侧分支（摸底脚本本次新增 `--seed` 参数），
+  配置与 seed9908 诊断跑完全一致仅换种子；两万轮 resource_cap 跑满，单种子约 455s。
+  跨环境逐位等价未对本路径重验，A6000 结果作为独立执行环境组如实标注，不与 4090 数字混排。
+- **结果**（nltcs，fam480 = all-2way 480 查询家族 normalized L1）：
+
+```text
+seed   final_loss   fam480 mean    fam480 max
+353    1065         9.038e-5       6.180e-4
+354     809         8.755e-5       3.708e-4
+355    1092         9.141e-5       6.798e-4
+356    1186         9.734e-5       6.180e-4
+357     734         7.854e-5       3.708e-4
+五种子均值 8.904e-5（区间 7.854e-5–9.734e-5）；loss 均值 977（734–1186）
+```
+
+- **结论①（升级）**：五种子全员 fam480 mean < 1e-4（最差 9.73e-5）——"值引导核破 1e-4"
+  从单种子观察升级为冻结五种子稳定结论，可正式引用。
+- **结论②（降级）**：正式口径改为 **8.90e-5（五种子均值）**；9908 的 6.57e-5 为幸运种子
+  （优于五种子最好者 16%、均值 26%），降级保留为诊断值。vs GSD（≈1.03e-6）差距按正式
+  口径约 87×（原单种子口径 64×）。
+- **归因边界**：本轮未跑同种子无引导对照（L1），"值引导相对无引导的提升幅度"维持单种子
+  诊断口径，不升格为正式结论。
+- **证据身份**（正式输出位于 gitignored `outputs/`，SHA-256 绑定）：
+
+```text
+89bd45cf1a8da9a35c0193fbd8b273695c65a7c70e3aec71ed44f3ace13f0c20  tmp_block_tilt_probe_nltcs_seed353/V9.json
+e79070eee556f51463a933d06d71e6333278db31b7b4dc2dc1f47dcdc6c15cf0  tmp_block_tilt_probe_nltcs_seed354/V9.json
+3c8ebf3ec15e87dc019284a8648bdde8d989410c9a1e92ced57fc44cfd114532  tmp_block_tilt_probe_nltcs_seed355/V9.json
+0660bff5b5c4cbcc1a66e0b0f9ac64c0e474b46fbac222cf43a403286cc04561  tmp_block_tilt_probe_nltcs_seed356/V9.json
+4661a90bd5ab853aaba2d629bfc0732048889cbce9df1937a121cbe1cfc0e6d2  tmp_block_tilt_probe_nltcs_seed357/V9.json
+5d313f4a81d2479d97466af912508046b89fd74acbe18eb528bb06f1c70b48a5  v9_five_seeds.log
+```
+
+### 上一暂停点：V10/V11 负结果归档——η 退火翻车 + exact_gain 精确增益翻车，设施保留（2026-09-16 入库，实验完成于 2026-09-08）
 
 值引导核现役 V9（nltcs seed9908 loss 505 / fam480 mean 6.57e-5）之上的两个改进臂均为负结果。
 本节把已验证的基础设施代码与摸底脚本归档入库（侧分支 `research/issue53-v10v11-exact-gain-archive`，

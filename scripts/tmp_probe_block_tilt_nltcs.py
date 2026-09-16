@@ -32,9 +32,8 @@ from table_diffevo.schema import load_schema
 from table_diffevo.vectorized_eval import evaluate_vectorized
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_DIR = ROOT / "outputs" / "tmp_block_tilt_probe_nltcs_seed9908"
 
-SEED = 9908
+DEFAULT_SEED = 9908
 N_RECORDS = 16181
 N_ROUNDS = 7000
 
@@ -202,15 +201,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arm", choices=sorted(ARMS), required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
     arm = ARMS[args.arm]
+    out_dir = ROOT / "outputs" / f"tmp_block_tilt_probe_nltcs_seed{args.seed}"
 
     schema = load_schema(str(ROOT / "configs/nltcs/schema.yaml"))
     queries, targets, marginals = build_pool()
 
     base_fields = dict(
         n_rounds=N_ROUNDS,
-        seed=SEED,
+        seed=args.seed,
         device=args.device,
         eval_method="vectorized",
         batch_size=256,
@@ -312,7 +313,7 @@ def main() -> None:
             k: (list(v) if isinstance(v, tuple) else v)
             for k, v in arm.items()
         },
-        "seed": SEED,
+        "seed": args.seed,
         "device": args.device,
         "rounds_run": diagnostics.get("rounds_run"),
         "termination_reason": diagnostics.get("termination_reason"),
@@ -350,8 +351,8 @@ def main() -> None:
         },
     }
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"{args.arm}.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{args.arm}.json"
     out_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     )
