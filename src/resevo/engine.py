@@ -230,7 +230,7 @@ class EvolveResult:
 
 
 def evolve(
-    workload: Workload,
+    workload: Workload | None,
     state_ids,
     num_rounds: int,
     rng: np.random.Generator,
@@ -239,18 +239,40 @@ def evolve(
     alpha: float = 0.5,
     damping: float = 1.0,
     max_expected_rows: float | None = None,
+    support_provider=None,
+    max_frozen_retries: int = 0,
 ) -> EvolveResult:
-    """多轮循环，轮内共享旧残差，轮间才更新残差，冻结即停。
+    """多轮循环，轮内共享旧残差，轮间才更新残差。
 
+    两种候选模式，固定 supports 一份用到底，或者传 support_provider，
+    每轮把当前表与轮号交给提供器，返回本轮的负载与菜单，
+    提供器模式下负载允许只增不改地扩状态，旧编号贡献行必须保持前缀一致。
+    冻结不再必然立即停，随机菜单本轮无正增益不是全局证书，
+    连续冻结超过 max_frozen_retries 次才停，0 保持旧行为冻结即停。
     最简占位，停止只区分冻结与轮数上限，数值不确定等状态留待后续版本。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
-    current = check_state_ids(workload, state_ids)
+    if support_provider is not None and supports is not None:
+        raise ValueError("固定候选与候选提供器只能二选一")
+    if support_provider is None and workload is None:
+        raise ValueError("固定候选模式必须给定负载")
+    if max_frozen_retries < 0:
+        raise ValueError("冻结重试次数不能为负")
+    if support_provider is None:
+        current = check_state_ids(workload, state_ids)
+    else:
+        current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    frozen_streak = 0
     for k in range(num_rounds):
+        if support_provider is not None:
+            round_workload, round_supports = support_provider(current, k)
+        else:
+            round_workload, round_supports = workload, supports
         result = build_kernel(
-            workload, current, supports, stay_probability, alpha, damping, max_expected_rows
+            round_workload, current, round_supports,
+            stay_probability, alpha, damping, max_expected_rows,
         )
         records.append(
             RoundRecord(
@@ -259,6 +281,10 @@ def evolve(
             )
         )
         if result.status == "no_positive_direction":
-            return EvolveResult(current, records, "no_positive_direction")
+            frozen_streak += 1
+            if frozen_streak > max_frozen_retries:
+                return EvolveResult(current, records, "no_positive_direction")
+            continue  # 冻结轮整表保持不动，提供器下一轮刷新菜单再试
+        frozen_streak = 0
         current = sample_next(result, current, rng)
     return EvolveResult(current, records, "round_limit")

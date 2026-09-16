@@ -175,3 +175,98 @@ def test_tuples_from_ids_roundtrip(real_setup):
     schema, rows, specs, registry = real_setup
     ids = registry.register_table(rows[:5])
     assert tuples_from_ids(registry, ids) == rows[:5]
+
+
+def test_edit_provider_descends_on_toy_table():
+    """编辑候选加提供器端到端，无死角玩具问题损失必须精确到零。"""
+    from resevo.editspace import make_edit_provider
+    from resevo.engine import evolve
+    from resevo.state import table_loss
+
+    # 只留 A B 两个单字段查询，任何状态都有单行下降路径，无补偿死角
+    schema = TableSchema(("A", "B"), (("0", "1"), ("0", "1")))
+    specs = [
+        QuerySpec("qa", ({"attribute": "A", "operator": "==", "value": "1"},), 1.0),
+        QuerySpec("qb", ({"attribute": "B", "operator": "==", "value": "1"},), 1.0),
+    ]
+    registry = StateRegistry(schema, specs)
+    table = [("0", "0"), ("0", "0")]
+    ids = registry.register_table(table)
+    y = np.array([1.0, 1.0])
+    w = np.array([2.0, 2.0])
+    provider = make_edit_provider(
+        registry, y, w, np.random.default_rng(2026), joint_field_sets=[(0, 1)]
+    )
+    out = evolve(
+        None, ids, 60, np.random.default_rng(7),
+        support_provider=provider, max_frozen_retries=10,
+    )
+    final_workload = registry.build_workload(y, w)
+    initial_workload_loss = table_loss(final_workload, ids)
+    final_loss = table_loss(final_workload, out.state_ids)
+    assert final_loss < initial_workload_loss
+    assert final_loss == 0.0  # 无死角玩具问题可精确解出
+
+
+def test_compensation_deadlock_reported_as_frozen():
+    """文档的补偿例子，单行菜单在死角必须明确报告冻结，不许伪装收敛。
+
+    表 11 加 00 在查询 A B 与 A 且 B 下所有单行动作增益全负，
+    这正是配对板块存在的理由，第一版单行菜单应停在冻结状态。
+    """
+    from resevo.editspace import make_edit_provider
+    from resevo.engine import evolve
+    from resevo.state import table_loss
+
+    schema, specs = toy_schema()
+    registry = StateRegistry(schema, specs)
+    table = [("1", "1"), ("0", "0")]
+    ids = registry.register_table(table)
+    y = np.array([1.0, 1.0, 0.0])
+    w = np.array([2.0, 2.0, 1.0])
+    provider = make_edit_provider(
+        registry, y, w, np.random.default_rng(9), joint_field_sets=[(0, 1)]
+    )
+    out = evolve(
+        None, ids, 30, np.random.default_rng(3),
+        support_provider=provider, max_frozen_retries=5,
+    )
+    wl = registry.build_workload(y, w)
+    assert out.stop_reason == "no_positive_direction"
+    assert table_loss(wl, out.state_ids) == 0.5  # 死角损失原样保留
+    np.testing.assert_array_equal(out.state_ids, ids)  # 表一步都没动
+
+
+def test_edit_provider_descends_on_real_slice():
+    """真实数据前 60 行切片，编辑候选多轮演化损失显著下降。"""
+    from resevo.dataset import target_from_specs
+    from resevo.editspace import make_edit_provider
+    from resevo.engine import evolve
+    from resevo.state import table_loss
+
+    schema, rows = load_table("data/test_300x10/test_300x10.csv")
+    specs = load_queries("data/test_300x10/measured_50query.json")
+    registry = StateRegistry(schema, specs)
+    # 目标按 60/300 缩放，避免小切片追整表计数
+    y = target_from_specs(specs) * (60 / 300)
+    w = np.ones(len(specs))
+    field_sets = [fs for fs in query_field_sets(specs, schema) if len(fs) >= 2]
+    menu_rng = np.random.default_rng(11)
+    init_rng = np.random.default_rng(5)
+    init_rows = [
+        tuple(schema.domains[j][int(init_rng.integers(len(schema.domains[j])))]
+              for j in range(schema.num_fields))
+        for _ in range(60)
+    ]
+    ids = registry.register_table(init_rows)
+    provider = make_edit_provider(
+        registry, y, w, menu_rng, joint_field_sets=field_sets
+    )
+    out = evolve(
+        None, ids, 40, np.random.default_rng(17),
+        support_provider=provider, max_frozen_retries=10,
+    )
+    wl = registry.build_workload(y, w)
+    initial = table_loss(wl, ids)
+    final = table_loss(wl, out.state_ids)
+    assert final < 0.5 * initial  # 四十轮至少砍半，宽松界防随机波动

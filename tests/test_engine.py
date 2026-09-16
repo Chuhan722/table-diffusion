@@ -235,3 +235,114 @@ def test_evolve_smoke(four_record):
     assert final_loss >= 0.0
     if out.stop_reason == "no_positive_direction":
         assert out.records[-1].status == "no_positive_direction"
+
+
+def _pure_stay_supports(n):
+    """空路径菜单，规范化后纯保持，必然冻结。"""
+    return [BlockSupport((i,), ()) for i in range(n)]
+
+
+def test_provider_mode_matches_fixed_supports(four_record):
+    """固定菜单提供器与旧接口逐轮一致，接口改动不改变任何数学。"""
+    workload, ids = four_record
+    supports = None  # 全集由 build_kernel 内部构造，这里提供器显式给出同样的全集
+    from resevo.candidates import full_single_row_supports
+
+    fixed = full_single_row_supports(len(ids), workload.num_states)
+    calls = []
+
+    def provider(state_ids, round_index):
+        calls.append(round_index)
+        return workload, fixed
+
+    out_a = evolve(workload, ids, 5, np.random.default_rng(99), supports=fixed)
+    out_b = evolve(
+        None, ids, 5, np.random.default_rng(99), support_provider=provider
+    )
+    assert calls == list(range(len(out_b.records)))
+    assert out_a.stop_reason == out_b.stop_reason
+    assert len(out_a.records) == len(out_b.records)
+    for ra, rb in zip(out_a.records, out_b.records):
+        assert ra.old_loss == rb.old_loss
+        assert ra.beta == rb.beta
+        assert ra.step == rb.step
+        assert ra.status == rb.status
+    np.testing.assert_array_equal(out_a.state_ids, out_b.state_ids)
+
+
+def test_provider_and_supports_mutually_exclusive(four_record):
+    workload, ids = four_record
+    from resevo.candidates import full_single_row_supports
+
+    fixed = full_single_row_supports(len(ids), workload.num_states)
+    with pytest.raises(ValueError):
+        evolve(
+            workload, ids, 2, np.random.default_rng(0),
+            supports=fixed, support_provider=lambda s, k: (workload, fixed),
+        )
+    with pytest.raises(ValueError):
+        evolve(None, ids, 2, np.random.default_rng(0))
+
+
+def test_frozen_retry_then_recover(four_record):
+    """前两轮无增益菜单不停机，第三轮好菜单继续下降，重试预算内恢复。"""
+    workload, ids = four_record
+    from resevo.candidates import full_single_row_supports
+
+    good = full_single_row_supports(len(ids), workload.num_states)
+
+    def provider(state_ids, round_index):
+        if round_index < 2:
+            return workload, _pure_stay_supports(len(state_ids))
+        return workload, good
+
+    out = evolve(
+        None, ids, 6, np.random.default_rng(5),
+        support_provider=provider, max_frozen_retries=3,
+    )
+    assert [r.status for r in out.records[:2]] == ["no_positive_direction"] * 2
+    assert out.records[2].status == "ok"
+    assert out.records[2].old_loss == out.records[0].old_loss  # 冻结轮表没动
+    assert table_loss(workload, out.state_ids) <= out.records[0].old_loss
+
+
+def test_frozen_streak_exhausts_retries(four_record):
+    """连续冻结超过重试预算即停，且停止原因明确报告。"""
+    workload, ids = four_record
+
+    def provider(state_ids, round_index):
+        return workload, _pure_stay_supports(len(state_ids))
+
+    out = evolve(
+        None, ids, 50, np.random.default_rng(1),
+        support_provider=provider, max_frozen_retries=2,
+    )
+    assert out.stop_reason == "no_positive_direction"
+    assert len(out.records) == 3  # 首次冻结加两次重试
+    np.testing.assert_array_equal(out.state_ids, ids)
+    out_default = evolve(
+        None, ids, 50, np.random.default_rng(1), support_provider=provider
+    )
+    assert len(out_default.records) == 1  # 默认零重试保持旧行为
+
+
+def test_frozen_streak_resets_after_progress(four_record):
+    """冻结计数在成功轮清零，间歇冻结不会被累计成停止条件。"""
+    workload, ids = four_record
+    from resevo.candidates import full_single_row_supports
+
+    good = full_single_row_supports(len(ids), workload.num_states)
+
+    def provider(state_ids, round_index):
+        if round_index % 2 == 0:
+            return workload, _pure_stay_supports(len(state_ids))
+        return workload, good
+
+    out = evolve(
+        None, ids, 8, np.random.default_rng(3),
+        support_provider=provider, max_frozen_retries=1,
+    )
+    # 奇数轮都是好菜单，冻结从未连续两次，应跑满或提前把损失打到零
+    assert out.stop_reason in ("round_limit", "no_positive_direction")
+    if out.stop_reason == "no_positive_direction":
+        assert [r.status for r in out.records[-2:]] == ["no_positive_direction"] * 2

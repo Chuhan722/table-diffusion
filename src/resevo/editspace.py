@@ -179,3 +179,28 @@ def generate_edit_supports(
 def tuples_from_ids(registry: StateRegistry, state_ids) -> list[tuple[str, ...]]:
     """把状态编号向量还原成字段值元组表，供体复制与菜单刷新用。"""
     return [registry.state_tuple(int(s)) for s in state_ids]
+
+
+def make_edit_provider(
+    registry: StateRegistry,
+    target,
+    weights,
+    menu_rng: np.random.Generator,
+    budget: EditBudget | None = None,
+    joint_field_sets: list[tuple[int, ...]] | None = None,
+):
+    """打包成 evolve 的候选提供器，菜单随机数与抽样随机数分开。
+
+    顺序要点，先生成菜单把新状态注册进注册表，再构造本轮负载，
+    这样负载的贡献矩阵才包含本轮全部候选状态。
+    """
+
+    def provider(state_ids, round_index: int):
+        table = tuples_from_ids(registry, state_ids)
+        supports = generate_edit_supports(
+            table, registry.schema, registry, menu_rng, budget, joint_field_sets
+        )
+        workload = registry.build_workload(target, weights)
+        return workload, supports
+
+    return provider
