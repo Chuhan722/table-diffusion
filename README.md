@@ -21,16 +21,30 @@
 - src/resevo/gain.py 查询增量与转移增益
 - src/resevo/tilt.py 熵校准，二分求共享 beta，方向分布 P
 - src/resevo/stepsize.py 整代矩 b v D C 与解析步长 h
-- src/resevo/engine.py 引擎组装，核构造、一次性抽样、多轮循环
+- src/resevo/engine.py 引擎组装，核构造、一次性抽样、多轮循环、候选提供器
+- src/resevo/dataset.py 真实表格与谓词计数查询加载，惰性状态注册表
+- src/resevo/editspace.py 有限编辑候选生成器，规模化第一版菜单
+- data/test_300x10/ 300 行 10 字段测试数据与 50 个计数查询，复制自旧仓数据文件
 - tests/ 与模块一一对应的锚点断言测试
 - tests/reference/ 复制来的参考实现，对拍用
 - docs/锚点数据.md 文档四条记录小表例子的全部纸面演算值
-- scripts/ 端到端对账与冒烟脚本
+- scripts/ 端到端对账、冒烟与真实数据实验脚本
+
+## 有限编辑候选，规模化第一版
+
+按补充设计文档的预算表，每行每轮至多 32 条非保持路径，
+单字段修改至多 8 字段乘 2 替代值，供体复制至多 8，联合修改至多 4，支持探索至多 4。
+生成器签名不接收残差与目标，菜单随机性对固定菜单的下降保证取平均后仍成立。
+菜单每轮刷新，本轮冻结不停机，连续冻结超过重试上限才停。
+
+test_300x10 实测，初始损失 19673.5，约 60 轮压到 2.0，初始比万分之一，
+每轮约半秒，剩余误差是四个查询各差正负一的交错结构，
+单行菜单六十次刷新无正增益，这正是配对板块要解决的补偿死角，留作下一板块动机。
 
 ## 运行
 
 ```bash
-# 全部测试，67 项锚点断言与对拍
+# 全部测试，锚点断言、对拍、编辑候选与提供器
 ./.venv/bin/python -m pytest tests/ -q
 
 # 四条记录端到端逐数字对账报告，30 项
@@ -38,6 +52,9 @@
 
 # 随机小表多轮演化冒烟，验证期望下降与蒙特卡洛一致性
 ./.venv/bin/python scripts/smoke_descent.py
+
+# test 数据端到端实验，编辑候选加候选提供器，输出逐轮损失曲线
+./.venv/bin/python scripts/run_test300.py --rounds 400 --retries 60 --out results/test300_curve.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。
