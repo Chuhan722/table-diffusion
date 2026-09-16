@@ -41,11 +41,20 @@ def block_drifts(
 def cross_interaction(
     drifts: list[NDArray[np.float64]],
     weights: NDArray[np.float64],
+    multiplicities=None,
 ) -> float:
-    """跨行交互 C，快公式，不遍历块对，可为负。"""
+    """跨行交互 C，快公式，不遍历块对，可为负。
+
+    multiplicities 给出每块重数 c，等价于把每块展开成 c 份相同块，
+    总漂移为 sum c*v，块自交叉扣除项为 sum c*||v||_W^2，None 走原路径逐位不变。
+    """
     v = np.stack(drifts)
-    total = v.sum(axis=0)
-    return float((np.dot(total * weights, total) - np.sum(v * v * weights)) / 2)
+    if multiplicities is None:
+        total = v.sum(axis=0)
+        return float((np.dot(total * weights, total) - np.sum(v * v * weights)) / 2)
+    c = np.asarray(multiplicities, dtype=np.float64)[:, None]
+    total = (c * v).sum(axis=0)
+    return float((np.dot(total * weights, total) - np.sum(c * v * v * weights)) / 2)
 
 
 def cross_interaction_slow(
@@ -79,17 +88,27 @@ def analytic_step(
 def expected_changed_rows_at_unit_step(
     rates: list[NDArray[np.float64]],
     outcomes: list[tuple[tuple[int, ...], ...]],
+    multiplicities=None,
 ) -> float:
     """单位步长下的期望改变行数 H=sum_B sum_u r_B(u) c_B(u)。
 
     c_B(u) 为后继元组里与源元组不同的真实行数，源元组固定在索引 0。
+    multiplicities 给出每块重数，重数份相同块的期望改行数按重数累加。
     """
     total = 0.0
-    for r, outs in zip(rates, outcomes):
+    for idx, (r, outs) in enumerate(zip(rates, outcomes)):
         source = outs[0]
+        if multiplicities is None:
+            # 原路径逐项累加，运算顺序保持逐位不变
+            for k in range(1, len(outs)):
+                changed = sum(1 for a, b in zip(outs[k], source) if a != b)
+                total += float(r[k]) * changed
+            continue
+        block_total = 0.0
         for k in range(1, len(outs)):
             changed = sum(1 for a, b in zip(outs[k], source) if a != b)
-            total += float(r[k]) * changed
+            block_total += float(r[k]) * changed
+        total += float(multiplicities[idx]) * block_total
     return total
 
 

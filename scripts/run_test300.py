@@ -26,6 +26,7 @@ from resevo.dataset import (  # noqa: E402
 )
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
+from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.pairing import make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -49,6 +50,10 @@ def main() -> None:
         "--pairing", action="store_true",
         help="启用配对板块，冻结重试轮把互补行绑成双行块",
     )
+    parser.add_argument(
+        "--grouped", action="store_true",
+        help="启用重复记录压缩，相同状态的行共享菜单增益概率并按多项分布抽样",
+    )
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
@@ -69,21 +74,37 @@ def main() -> None:
     ids = registry.register_table(init_rows)
 
     factory = make_paired_provider if args.pairing else make_edit_provider
-    provider = factory(
-        registry, y, w,
-        np.random.default_rng(args.menu_seed),
-        joint_field_sets=field_sets,
-    )
+    if args.grouped:
+        provider = make_grouped_provider(
+            registry, y, w,
+            np.random.default_rng(args.menu_seed),
+            joint_field_sets=field_sets,
+            pairing=args.pairing,
+        )
+    else:
+        provider = factory(
+            registry, y, w,
+            np.random.default_rng(args.menu_seed),
+            joint_field_sets=field_sets,
+        )
     initial_loss = table_loss(registry.build_workload(y, w), ids)
     print(f"行数 {len(ids)}，查询数 {len(specs)}，初始损失 {initial_loss:.6f}")
 
     t0 = time.perf_counter()
-    out = evolve(
-        None, ids, args.rounds,
-        np.random.default_rng(args.sample_seed),
-        support_provider=provider,
-        max_frozen_retries=args.retries,
-    )
+    if args.grouped:
+        out = evolve_grouped(
+            ids, args.rounds,
+            np.random.default_rng(args.sample_seed),
+            provider,
+            max_frozen_retries=args.retries,
+        )
+    else:
+        out = evolve(
+            None, ids, args.rounds,
+            np.random.default_rng(args.sample_seed),
+            support_provider=provider,
+            max_frozen_retries=args.retries,
+        )
     elapsed = time.perf_counter() - t0
 
     final_workload = registry.build_workload(y, w)

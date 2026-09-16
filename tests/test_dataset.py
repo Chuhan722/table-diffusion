@@ -144,3 +144,48 @@ def test_workload_view_is_readonly_and_stable_after_growth(loaded):
     np.testing.assert_array_equal(old.features, snapshot)
     new = registry.build_workload(y, w)
     np.testing.assert_array_equal(new.features[:4], snapshot)
+
+
+def test_register_edit_matches_full_register_bitwise(loaded):
+    """增量注册与全量注册的贡献行逐位一致，随机编辑两百例交叉对拍。
+
+    两个独立注册表灌同一批编辑，一个走 register_edit 增量路径，
+    一个走 register 全量求值，特征矩阵与编号序列必须完全相同。
+    """
+    schema, rows, specs = loaded
+    rng = np.random.default_rng(20260916)
+    reg_inc = StateRegistry(schema, specs)
+    reg_full = StateRegistry(schema, specs)
+    base_inc = reg_inc.register_table(rows[:40])
+    base_full = reg_full.register_table(rows[:40])
+    np.testing.assert_array_equal(base_inc, base_full)
+    for _ in range(200):
+        b = int(rng.integers(reg_inc.num_states))
+        source = reg_inc.state_tuple(b)
+        k = int(rng.integers(1, 4))
+        fields = rng.permutation(schema.num_fields)[:k]
+        edited = list(source)
+        for j in fields:
+            j = int(j)
+            alternatives = [v for v in schema.domains[j] if v != edited[j]]
+            if alternatives:
+                edited[j] = alternatives[int(rng.integers(len(alternatives)))]
+        got_inc = reg_inc.register_edit(b, tuple(edited))
+        got_full = reg_full.register(tuple(edited))
+        assert got_inc == got_full
+    assert reg_inc.num_states == reg_full.num_states
+    view_inc = reg_inc.build_workload(
+        target_from_specs(specs), np.ones(len(specs))
+    ).features
+    view_full = reg_full.build_workload(
+        target_from_specs(specs), np.ones(len(specs))
+    ).features
+    np.testing.assert_array_equal(view_inc, view_full)
+
+
+def test_register_edit_rejects_bad_base(loaded):
+    schema, rows, specs = loaded
+    registry = StateRegistry(schema, specs)
+    registry.register_table(rows[:3])
+    with pytest.raises(ValueError):
+        registry.register_edit(99, rows[0])

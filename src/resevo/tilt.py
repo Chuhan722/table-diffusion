@@ -33,16 +33,24 @@ def tilted_distributions(
     gains: list[NDArray[np.float64]],
     references: list[NDArray[np.float64]],
     beta: float,
+    multiplicities=None,
 ) -> tuple[list[NDArray[np.float64]], float]:
-    """给定 beta 的各块指数倾斜分布与平均增益，log-sum-exp 归一化。"""
+    """给定 beta 的各块指数倾斜分布与平均增益，log-sum-exp 归一化。
+
+    multiplicities 给出每个块的重数，c 个相同块共享同一份 P，
+    平均增益按重数加权 D=sum_g c_g*(P_g@g_g)，None 走原逐块路径逐位不变。
+    """
     ps = []
     total = 0.0
-    for g, R in zip(gains, references):
+    for idx, (g, R) in enumerate(zip(gains, references)):
         # 先减去块内最大增益再乘 beta，避免正向上溢，运算顺序与参考一致
         logits = np.log(R) + beta * (g - np.max(g))
         P = np.exp(logits - logsumexp(logits))
         ps.append(P)
-        total += float(P @ g)
+        if multiplicities is None:
+            total += float(P @ g)
+        else:
+            total += float(multiplicities[idx]) * float(P @ g)
     return ps, total
 
 
@@ -52,17 +60,28 @@ def calibrate_beta(
     old_loss: float,
     alpha: float = 0.5,
     numerical_tol: float = 1e-12,
+    multiplicities=None,
 ) -> TiltResult:
     """求共享 beta 与方向分布。
 
     old_loss 只用来给冻结判据定尺度，判据与参考实现一致，
     M 不超过 numerical_tol*max(1,old_loss) 时视为没有正方向，返回冻结结果。
+    multiplicities 给出每个块的重数，M 与 D 都按重数加权，
+    等价于把每块展开成重数份相同块，None 走原路径逐位不变。
     """
     if not (0 < alpha < 1):
         raise ValueError("alpha 必须落在 (0,1)")
     if not np.isfinite(numerical_tol) or numerical_tol < 0:
         raise ValueError("numerical_tol 必须有限且非负")
-    max_gain_sum = float(sum(max(float(np.max(g)), 0.0) for g in gains))
+    if multiplicities is not None:
+        mult = np.asarray(multiplicities, dtype=np.float64)
+        if mult.shape != (len(gains),) or np.any(mult < 1) or not np.isfinite(mult).all():
+            raise ValueError("multiplicities 必须与块数等长且每项至少为 1")
+        max_gain_sum = float(
+            sum(float(c) * max(float(np.max(g)), 0.0) for c, g in zip(mult, gains))
+        )
+    else:
+        max_gain_sum = float(sum(max(float(np.max(g)), 0.0) for g in gains))
     requirement = alpha * max_gain_sum
     scale = max(1.0, old_loss)
 
@@ -75,14 +94,14 @@ def calibrate_beta(
             frozen_ps.append(P)
         return TiltResult(0.0, frozen_ps, 0.0, max_gain_sum, requirement, True)
 
-    ps, D = tilted_distributions(gains, references, 0.0)
+    ps, D = tilted_distributions(gains, references, 0.0, multiplicities)
     if D >= requirement:
         beta = 0.0
     else:
         lo = 0.0
         hi = 1.0 / max(max_gain_sum, 1e-300)
         for _ in range(100):
-            ps, D = tilted_distributions(gains, references, hi)
+            ps, D = tilted_distributions(gains, references, hi, multiplicities)
             if D >= requirement:
                 break
             hi *= 2.0
@@ -90,13 +109,13 @@ def calibrate_beta(
             raise FloatingPointError("无法括住 beta 根，检查数值条件")
         for _ in range(80):
             mid = (lo + hi) / 2.0
-            _, D_mid = tilted_distributions(gains, references, mid)
+            _, D_mid = tilted_distributions(gains, references, mid, multiplicities)
             if D_mid >= requirement:
                 hi = mid
             else:
                 lo = mid
         beta = hi  # 取满足约束的上端点
-        ps, D = tilted_distributions(gains, references, beta)
+        ps, D = tilted_distributions(gains, references, beta, multiplicities)
     if D <= 0:
         raise FloatingPointError("方向增益必须严格为正")
     return TiltResult(beta, ps, D, max_gain_sum, requirement, False)

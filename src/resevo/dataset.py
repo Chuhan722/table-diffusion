@@ -121,6 +121,15 @@ class StateRegistry:
         self._tuples: list[tuple[str, ...]] = []
         self._count = 0
         self._features = np.empty((0, len(specs)), dtype=np.float64)
+        # 字段到受影响查询列的依赖索引，编辑增量求值只碰这些列
+        field_sets = query_field_sets(specs, schema)
+        buckets: list[list[int]] = [[] for _ in range(schema.num_fields)]
+        for q, fields in enumerate(field_sets):
+            for j in fields:
+                buckets[j].append(q)
+        self._field_queries = tuple(
+            np.array(qs, dtype=np.int64) for qs in buckets
+        )
 
     @property
     def num_states(self) -> int:
@@ -136,6 +145,17 @@ class StateRegistry:
         grown[: self._count] = self._features[: self._count]
         self._features = grown
 
+    def _insert(self, key: tuple[str, ...], feats: np.ndarray) -> int:
+        """把校验完的状态行写入注册表并发号，register 与 register_edit 共用。"""
+        if self._count == self._features.shape[0]:
+            self._grow()
+        state_id = self._count
+        self._features[state_id] = feats
+        self._count += 1
+        self._index[key] = state_id
+        self._tuples.append(key)
+        return state_id
+
     def register(self, row: tuple[str, ...]) -> int:
         """注册一个状态元组，已存在直接返回编号，新状态求值全部查询。"""
         key = tuple(row)
@@ -150,18 +170,43 @@ class StateRegistry:
         )
         if not np.isfinite(feats).all():
             raise ValueError("查询贡献必须全部有限")
-        if self._count == self._features.shape[0]:
-            self._grow()
-        state_id = self._count
-        self._features[state_id] = feats
-        self._count += 1
-        self._index[key] = state_id
-        self._tuples.append(key)
-        return state_id
+        return self._insert(key, feats)
 
     def register_table(self, rows: list[tuple[str, ...]]) -> np.ndarray:
         """注册整张表并返回状态编号向量。"""
         return np.array([self.register(r) for r in rows], dtype=np.int64)
+
+    def register_edit(self, base_id: int, row: tuple[str, ...]) -> int:
+        """注册一个由已注册状态编辑而来的状态，按依赖索引增量求值。
+
+        与 register 的结果逐位一致，只是省去结构上不受影响的查询，
+        没改的字段不涉及的查询列直接从来源行复制，
+        受影响列重新求值，两条路径的贡献都是同一 evaluate_query 的精确输出。
+        """
+        if base_id < 0 or base_id >= self._count:
+            raise ValueError("编辑来源状态编号越界")
+        key = tuple(row)
+        found = self._index.get(key)
+        if found is not None:
+            return found
+        if len(key) != self.schema.num_fields:
+            raise ValueError("状态元组字段数与 schema 不一致")
+        base = self._tuples[base_id]
+        changed = [j for j in range(self.schema.num_fields) if key[j] != base[j]]
+        if not changed:
+            raise AssertionError("元组与来源相同却不在索引里，注册表内部不一致")
+        if len(changed) == 1:
+            affected = self._field_queries[changed[0]]
+        else:
+            affected = np.unique(
+                np.concatenate([self._field_queries[j] for j in changed])
+            )
+        feats = self._features[base_id].copy()
+        for q in affected:
+            feats[q] = evaluate_query(self.specs[int(q)], key, self.schema)
+        if not np.isfinite(feats[affected]).all():
+            raise ValueError("查询贡献必须全部有限")
+        return self._insert(key, feats)
 
     def build_workload(self, target, weights) -> Workload:
         """用已注册状态贡献矩阵的前段只读视图构造负载，不拷贝。
