@@ -133,6 +133,30 @@ ARMS = {
         **_DEEP_ANNEAL, **_VALUE_GUIDANCE,
         "value_guidance_adaptive_scale": True,
     },
+    # V10：V9 + η 退火交接（0.5→0.01，与 ρ/μ 同窗）。治"无辜格子"：
+    # 参与行 16 格仅 1-2 格欠账，其余 gain≈0 的格子被 η=0.5 硬币抄供体
+    # 搅动（修账手与砸账手打平）。末期 η_t→0.01 后无辜格以
+    # (1−η_t)(1−μc)≈99% 保持自值，欠账格由 λ_eff（末期自动 ~1e5 量级）
+    # 的指数倾斜翻转——复制职责向引导交接，非断粮（早中期供体照常搬块）。
+    "V10": {
+        "lottery_first_donor_selection": True,
+        **_DEEP_ANNEAL, **_VALUE_GUIDANCE,
+        "value_guidance_adaptive_scale": True,
+        "eta_anneal_start_round": 1050,
+        "eta_anneal_rounds": 2000,
+        "eta_anneal_end": 0.01,
+    },
+    # V11：V9 + 精确边际增益（exact_gain）。治"无辜格子"的根修：gain 从
+    # 一阶（平账 wr=0 → 引导对砸账失明）升级为逐账精确差分
+    # cost(q)−cost(q±1)。修欠账正分、砸平账负分、保持恒 0 分——η=0.5
+    # 底分不动（修账杠杆保留，V10 拆杠杆教训），λ_eff 末期自动增压把
+    # 砸账概率指数压低。对照 V9 看 mean 能否突破 6.57e-5。
+    "V11": {
+        "lottery_first_donor_selection": True,
+        **_DEEP_ANNEAL, **_VALUE_GUIDANCE,
+        "value_guidance_adaptive_scale": True,
+        "value_guidance_exact_gain": True,
+    },
 }
 
 
