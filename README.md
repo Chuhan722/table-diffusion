@@ -30,7 +30,14 @@
 ## 运行
 
 ```bash
+# 全部测试，67 项锚点断言与对拍
 ./.venv/bin/python -m pytest tests/ -q
+
+# 四条记录端到端逐数字对账报告，30 项
+./.venv/bin/python scripts/run_anchor_audit.py
+
+# 随机小表多轮演化冒烟，验证期望下降与蒙特卡洛一致性
+./.venv/bin/python scripts/smoke_descent.py
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。
