@@ -8,6 +8,7 @@ from resevo.dataset import QuerySpec, TableSchema, load_queries, load_table
 from resevo.metrics import (
     aim_workload_error,
     assert_disjoint_workloads,
+    composite_score,
     gsd_query_errors,
     load_heldout_queries,
     marginal_l1_error,
@@ -113,3 +114,47 @@ def test_gsd_hand_anchor():
     synth = [("1",), ("0",)]
     report = gsd_query_errors([spec], synth, schema, 4)
     assert report.per_query[0] == pytest.approx(0.25)
+
+
+def test_composite_zero_on_identical(real_data):
+    """真实表自评综合分恒为零。"""
+    schema, rows, measured, heldout = real_data
+    report = composite_score(
+        gsd_query_errors(measured, rows, schema, 300),
+        gsd_query_errors(heldout, rows, schema, 300),
+        aim_workload_error(rows, rows, schema, 2),
+        aim_workload_error(rows, rows, schema, 3),
+    )
+    assert report.score == 0.0
+
+
+def test_composite_hand_anchor(real_data):
+    """手工构造四组数字，综合分等于均值且 TVD 归一正确。"""
+    from resevo.metrics import AimReport, GsdReport
+
+    gm = GsdReport(1, 0.2, 0.2, (0.2,))
+    gh = GsdReport(1, 0.1, 0.1, (0.1,))
+    a2 = AimReport(2, 0.8, 0.8, (0.8,), ((0, 1),))
+    a3 = AimReport(3, 0.4, 0.4, (0.4,), ((0, 1, 2),))
+    report = composite_score(gm, gh, a2, a3)
+    assert report.tvd_2way == pytest.approx(0.4)
+    assert report.tvd_3way == pytest.approx(0.2)
+    assert report.score == pytest.approx((0.2 + 0.1 + 0.4 + 0.2) / 4)
+    bad = AimReport(2, 2.5, 2.5, (2.5,), ((0, 1),))
+    with pytest.raises(ValueError):
+        composite_score(gm, gh, bad, a3)
+
+
+def test_composite_monotone(real_data):
+    """任一组变差综合分必须变大，越小越好方向一致。"""
+    schema, rows, measured, heldout = real_data
+    good = [rows[i] for i in range(300)]
+    bad = rows[:150] * 2
+    def full(synth):
+        return composite_score(
+            gsd_query_errors(measured, synth, schema, 300),
+            gsd_query_errors(heldout, synth, schema, 300),
+            aim_workload_error(rows, synth, schema, 2),
+            aim_workload_error(rows, synth, schema, 3),
+        )
+    assert full(bad).score > full(good).score == 0.0

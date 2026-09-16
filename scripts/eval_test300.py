@@ -19,6 +19,7 @@ from resevo.dataset import load_queries, load_table  # noqa: E402
 from resevo.metrics import (  # noqa: E402
     aim_workload_error,
     assert_disjoint_workloads,
+    composite_score,
     gsd_query_errors,
     load_heldout_queries,
 )
@@ -37,7 +38,13 @@ def evaluate_one(name, synth_rows, real_rows, schema, measured, heldout):
     print(f"GSD 式 heldout 1024  平均 {gh.average_error:.6f}  最大 {gh.max_error:.6f}")
     print(f"AIM 式 全部二阶边缘 45   平均 {a2.average_error:.6f}  最大 {a2.max_error:.6f}")
     print(f"AIM 式 全部三阶边缘 120  平均 {a3.average_error:.6f}  最大 {a3.max_error:.6f}")
-    return gm, gh, a2, a3
+    comp = composite_score(gm, gh, a2, a3)
+    print(
+        f"综合误差分 {comp.score:.6f}，四组 "
+        f"measured {comp.measured_error:.6f}，heldout {comp.heldout_error:.6f}，"
+        f"二阶 TVD {comp.tvd_2way:.6f}，三阶 TVD {comp.tvd_3way:.6f}"
+    )
+    return gm, gh, a2, a3, comp
 
 
 def random_table(schema, n, rng):
@@ -78,6 +85,8 @@ def main() -> None:
         for k, label in enumerate(labels):
             vals = [b[k].average_error for b in baselines]
             print(f"{label}  {np.mean(vals):.6f} ± {np.std(vals):.6f}")
+        comp_vals = [b[4].score for b in baselines]
+        print(f"综合误差分  {np.mean(comp_vals):.6f} ± {np.std(comp_vals):.6f}")
 
     for path in args.tables:
         _, synth_rows = load_table(path)

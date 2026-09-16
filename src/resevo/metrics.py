@@ -134,3 +134,37 @@ def assert_disjoint_workloads(
     overlap = m & h
     if overlap:
         raise ValueError(f"保留查询与生成查询语义重叠 {len(overlap)} 条")
+
+
+@dataclass(frozen=True)
+class CompositeReport:
+    """综合误差分，四组子指标统一到 0 到 1 后等权平均，越小越好。
+
+    统一口径，GSD 式比例误差本身落在 0 到 1，
+    AIM 式边缘 L1 除以行数再除以 2 恰为总变差距离 TVD，也落在 0 到 1，
+    四组等权，measured 拟合，heldout 泛化，二阶与三阶边缘结构各占四分之一。
+    """
+
+    score: float
+    measured_error: float
+    heldout_error: float
+    tvd_2way: float
+    tvd_3way: float
+
+
+def composite_score(
+    measured_report: GsdReport,
+    heldout_report: GsdReport,
+    aim2_report: AimReport,
+    aim3_report: AimReport,
+) -> CompositeReport:
+    """四组子指标合成一个综合误差分。"""
+    parts = (
+        measured_report.average_error,
+        heldout_report.average_error,
+        aim2_report.average_error / 2,
+        aim3_report.average_error / 2,
+    )
+    if any(not (0.0 <= p <= 1.0) for p in parts):
+        raise ValueError("子指标越界，检查归一化口径")
+    return CompositeReport(float(np.mean(parts)), *parts)
