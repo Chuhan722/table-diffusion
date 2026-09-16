@@ -87,6 +87,7 @@ class FitnessOnlyConfig:
     value_guidance_warmup_rounds: Optional[int] = None
     value_guidance_drop_donor: bool = False
     value_guidance_adaptive_scale: bool = False
+    value_guidance_exact_gain: bool = False
     record_transition_clocks: bool = False
     inner_early_stopping_patience_ticks: Optional[int] = None
 
@@ -395,8 +396,8 @@ class FitnessOnlyConfig:
                 errors.append(
                     "value_guidance_strength>0 与 MW 查询权重互斥"
                 )
-            if self.eta_anneal_end is not None:
-                errors.append("value_guidance_strength>0 与 eta 退火互斥")
+            # eta 退火与值引导兼容（η_t 进 base 分布，末期复制职责向
+            # 引导交接）；见 evolution.run_evolution 同段论证。
             if self.block_score_tilt_strength > 0.0:
                 errors.append("value_guidance_strength>0 与分科倾斜互斥")
         else:
@@ -408,6 +409,11 @@ class FitnessOnlyConfig:
             if self.value_guidance_adaptive_scale:
                 errors.append(
                     "value_guidance_adaptive_scale=True 需要 "
+                    "value_guidance_strength>0"
+                )
+            if self.value_guidance_exact_gain:
+                errors.append(
+                    "value_guidance_exact_gain=True 需要 "
                     "value_guidance_strength>0"
                 )
             if (
@@ -423,6 +429,10 @@ class FitnessOnlyConfig:
             self.value_guidance_adaptive_scale, (bool, np.bool_)
         ):
             errors.append("value_guidance_adaptive_scale 必须是布尔值")
+        if not isinstance(
+            self.value_guidance_exact_gain, (bool, np.bool_)
+        ):
+            errors.append("value_guidance_exact_gain 必须是布尔值")
         if self.value_guidance_warmup_start_round is not None and (
             isinstance(
                 self.value_guidance_warmup_start_round, (bool, np.bool_)
@@ -527,6 +537,7 @@ def build_fitness_only_kwargs(
         "value_guidance_adaptive_scale": bool(
             config.value_guidance_adaptive_scale
         ),
+        "value_guidance_exact_gain": bool(config.value_guidance_exact_gain),
         "max_retries": 0,
         "residual_directed_diffusion": False,
         "diffusion_direction_strength": 0.0,
@@ -911,6 +922,12 @@ def _audit_fitness_only_run(
                 failures.append(
                     "value_guidance.scale_history 含非有限或非正尺度"
                 )
+        if isinstance(vg_block, dict) and vg_block.get("exact_gain") != bool(
+            config.value_guidance_exact_gain
+        ):
+            failures.append(
+                "value_guidance.exact_gain 诊断回显与配置不一致"
+            )
     if failures:
         raise RuntimeError("fitness-only 运行后审计失败：" + "；".join(failures))
 

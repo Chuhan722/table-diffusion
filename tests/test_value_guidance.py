@@ -13,9 +13,9 @@ gain 是把该格改成 v 对加权残差账本的一阶增益（与 fitness 同
    （解析断言，不跑采样）；λ>0 向 gain 大的值倾斜且行和恒 1。
 3. drop_donor：供体质量并给自值（供体价值对照臂）。
 4. fail-closed：非 == / >2-way / halfspace / 数值属性 / 值域外取值在
-   构造时抛错；与 tilt / directed / gap / gibbs / MW / eta 退火 /
-   max_retries / legacy 评估 / equal 臂互斥；warmup 参数必须成对；
-   drop_donor 需要 strength>0。
+   构造时抛错；与 tilt / directed / gap / gibbs / MW / max_retries /
+   legacy 评估 / equal 臂互斥；warmup 参数必须成对；drop_donor 需要
+   strength>0。eta 退火兼容（η_t 进 base，末期复制职责向引导交接）。
 5. 主循环接线：λ 调度公式核验、gain 每接受轮重算一次、诊断与 params
    回显、lottery 组合跑通、关闭时零痕迹（enabled=False、空历史、
    evolve_step 不收新键）。
@@ -134,6 +134,130 @@ class TestValueGainComputer:
                 gains[name], expected, rtol=0, atol=1e-12,
                 err_msg=f"属性 {name} 的 gain 与暴力参考不一致",
             )
+
+    def test_exact_gain_matches_true_cost_delta(self, nltcs_setup):
+        """精确 gain == 真改表后的全局 cost 差（纸面算术=真实损益）。"""
+        schema, _, queries, target = nltcs_setup
+        queries = queries[:30]
+        target = target[:30]
+        df = _random_table(schema, 50, seed=11)
+        n_records = len(df)
+        w = np.ones(len(queries))
+
+        def true_cost(frame):
+            qq = np.array(
+                [int(eval_query_mask(frame, qr).sum()) for qr in queries]
+            )
+            r = compute_residual(
+                np.asarray(target, dtype=float), qq, n_records,
+                geometry="relative", geometry_floor=8.0,
+            )
+            return float(np.sum(w * np.abs(r)))
+
+        computer = ValueGainComputer(
+            queries, schema,
+            weights=w,
+            target=np.asarray(target, dtype=float),
+            residual_geometry="relative", residual_geometry_floor=8.0,
+            exact_gain=True,
+        )
+        q = np.array(
+            [int(eval_query_mask(df, qr).sum()) for qr in queries]
+        )
+        gains = computer.compute(df, q, n_records)
+        cost0 = true_cost(df)
+
+        rng = np.random.default_rng(5)
+        for name in schema.attribute_names():
+            block = schema.get_block(name)
+            rows = rng.choice(n_records, size=6, replace=False)
+            for i in rows:
+                cur = df.at[i, name]
+                for v_idx, v in enumerate(block.values):
+                    if str(v) == str(cur):
+                        assert gains[name][i, v_idx] == 0.0
+                        continue
+                    df2 = df.copy()
+                    df2.at[i, name] = v
+                    delta = true_cost(df2) - cost0
+                    np.testing.assert_allclose(
+                        gains[name][i, v_idx], -delta, rtol=0, atol=1e-12,
+                        err_msg=(
+                            f"exact gain 与真实 cost 差不一致："
+                            f"行 {i} 属性 {name} 值 {v!r}"
+                        ),
+                    )
+
+    def test_exact_gain_flat_account_penalty(self, nltcs_setup):
+        """平账被砸记负分（一阶盲区的直接反例）。"""
+        schema, *_ = nltcs_setup
+        df = _random_table(schema, 40, seed=3)
+        n_records = len(df)
+        attr = schema.attribute_names()[0]
+        block = schema.get_block(attr)
+        # 单查询：attr == values[1]，目标 = 当前计数（平账）
+        queries = [{
+            "id": "FLAT", "type": "single",
+            "expression": f"{attr} == {block.values[1]}",
+            "conditions": [{
+                "attribute": attr, "operator": "==",
+                "value": block.values[1],
+            }],
+        }]
+        q_now = int((df[attr].astype(str) == str(block.values[1])).sum())
+        computer = ValueGainComputer(
+            queries, schema,
+            weights=np.ones(1),
+            target=np.asarray([float(q_now)]),
+            residual_geometry="relative", residual_geometry_floor=8.0,
+            exact_gain=True,
+        )
+        gains = computer.compute(df, np.asarray([q_now]), n_records)
+        g = gains[attr]
+        pos1 = [str(v) for v in block.values].index(str(block.values[1]))
+        cur_is_v1 = (
+            df[attr].astype(str).to_numpy() == str(block.values[1])
+        )
+        # 当前≠v1 的行：改成 v1 → 平账 +1 被砸 → 负分
+        assert np.all(g[~cur_is_v1, pos1] < 0.0)
+        # 当前==v1 的行：改成任何其他值 → 平账 −1 被砸 → 负分
+        other_cols = [k for k in range(len(block.values)) if k != pos1]
+        assert np.all(g[np.ix_(cur_is_v1, other_cols)] < 0.0)
+
+    def test_exact_gain_rejects_sigma(self, nltcs_setup):
+        schema, _, queries, target = nltcs_setup
+        queries = queries[:10]
+        target = target[:10]
+        with pytest.raises(ValueError, match="sigma"):
+            ValueGainComputer(
+                queries, schema,
+                weights=np.ones(len(queries)),
+                target=np.asarray(target, dtype=float),
+                sigma=np.ones(len(queries)),
+                residual_geometry="relative", residual_geometry_floor=8.0,
+                exact_gain=True,
+            )
+
+    def test_exact_gain_rows_subset_matches_full(self, nltcs_setup):
+        schema, _, queries, target = nltcs_setup
+        queries = queries[:40]
+        target = target[:40]
+        df = _random_table(schema, 120, seed=13)
+        computer = ValueGainComputer(
+            queries, schema,
+            weights=np.ones(len(queries)),
+            target=np.asarray(target, dtype=float),
+            residual_geometry="relative", residual_geometry_floor=8.0,
+            exact_gain=True,
+        )
+        q = np.array(
+            [int(eval_query_mask(df, qr).sum()) for qr in queries]
+        )
+        full = computer.compute(df, q, len(df))
+        rows = np.array([3, 17, 44, 90, 119])
+        sub = computer.compute(df, q, len(df), rows=rows)
+        for name in schema.attribute_names():
+            np.testing.assert_array_equal(sub[name], full[name][rows])
 
     def test_rows_subset_matches_full(self, nltcs_setup):
         schema, _, queries, target = nltcs_setup
@@ -526,6 +650,50 @@ class TestRunEvolutionWiring:
         assert vg["scale_history"] == []
         assert diagnostics["params"]["value_guidance_adaptive_scale"] is False
 
+    def test_exact_gain_wiring_and_off_trace(self, nltcs_setup):
+        schema, marginals, queries, target = nltcs_setup
+        _, diagnostics = run_evolution(**_run_kwargs(
+            schema, marginals, queries, target,
+            n_rounds=10, value_guidance_strength=4.0,
+            value_guidance_adaptive_scale=True,
+            value_guidance_exact_gain=True,
+        ))
+        vg = diagnostics["value_guidance"]
+        assert vg["enabled"] is True
+        assert vg["exact_gain"] is True
+        assert diagnostics["params"]["value_guidance_exact_gain"] is True
+        # 关闭默认 False
+        _, diag_off = run_evolution(**_run_kwargs(
+            schema, marginals, queries, target,
+            n_rounds=5, value_guidance_strength=2.0,
+        ))
+        assert diag_off["value_guidance"]["exact_gain"] is False
+        assert (
+            diag_off["params"]["value_guidance_exact_gain"] is False
+        )
+
+    def test_eta_anneal_coexists_with_guidance(self, nltcs_setup):
+        """η 退火与值引导共存：η_t 进 base 分布（末期交接语义）。"""
+        schema, marginals, queries, target = nltcs_setup
+        _, diagnostics = run_evolution(**_run_kwargs(
+            schema, marginals, queries, target,
+            n_rounds=12, value_guidance_strength=4.0,
+            value_guidance_adaptive_scale=True,
+            eta_anneal_start_round=2, eta_anneal_rounds=6,
+            eta_anneal_end=0.01,
+        ))
+        vg = diagnostics["value_guidance"]
+        assert vg["enabled"] is True
+        assert len(vg["lambda_history"]) == 12
+        assert len(vg["scale_history"]) == 12
+        etas = diagnostics["eta_schedule_history"]
+        assert len(etas) == 12
+        assert etas[0] == 0.5  # 保温段恒 eta
+        assert abs(etas[-1] - 0.01) < 1e-12  # 快降段结束贴 end
+        assert all(
+            e2 <= e1 + 1e-15 for e1, e2 in zip(etas, etas[1:])
+        )  # 单调不增
+
     def test_disabled_leaves_no_trace(self, nltcs_setup):
         schema, marginals, queries, target = nltcs_setup
         _, diagnostics = run_evolution(**_run_kwargs(
@@ -552,8 +720,6 @@ class TestRunEvolutionWiring:
              "residual_directed_diffusion"),
             (dict(mw_query_weight_eta=0.1, mw_signal_cap=2.0,
                   mw_weight_cap=8.0), "MW"),
-            (dict(eta_anneal_end=0.1, eta_anneal_rounds=5,
-                  eta_anneal_start_round=0), "eta 退火"),
             (dict(fitness_only_mode="equal"), "equal"),
             (dict(eval_method="legacy"), "vectorized"),
             (dict(value_guidance_warmup_start_round=5), "成对"),
@@ -575,6 +741,12 @@ class TestRunEvolutionWiring:
         )
         with pytest.raises(ValueError, match="strength>0"):
             run_evolution(**no_strength_adaptive)
+        no_strength_exact = _run_kwargs(
+            schema, marginals, queries, target,
+            value_guidance_exact_gain=True,
+        )
+        with pytest.raises(ValueError, match="strength>0"):
+            run_evolution(**no_strength_exact)
 
 
 # ---------------------------------------------------------------- fitness-only 臂
@@ -618,10 +790,42 @@ class TestFitnessOnlyArm:
             FitnessOnlyConfig(
                 n_rounds=10, seed=1, value_guidance_adaptive_scale=True,
             ).validate()
+        with pytest.raises(ValueError, match="strength>0"):
+            FitnessOnlyConfig(
+                n_rounds=10, seed=1, value_guidance_exact_gain=True,
+            ).validate()
         FitnessOnlyConfig(
             n_rounds=10, seed=1, value_guidance_strength=4.0,
             value_guidance_adaptive_scale=True,
         ).validate()
+        FitnessOnlyConfig(
+            n_rounds=10, seed=1, value_guidance_strength=4.0,
+            value_guidance_exact_gain=True,
+        ).validate()
+        FitnessOnlyConfig(
+            n_rounds=10, seed=1, value_guidance_strength=4.0,
+            eta_anneal_start_round=2, eta_anneal_rounds=5,
+            eta_anneal_end=0.01,
+        ).validate()  # eta 退火与值引导兼容（交接语义）
+
+    def test_run_with_guidance_and_eta_anneal_passes_audit(self, nltcs_setup):
+        schema, marginals, queries, target = nltcs_setup
+        config = FitnessOnlyConfig(
+            n_rounds=15, seed=42, rho=0.05,
+            value_guidance_strength=3.0,
+            value_guidance_adaptive_scale=True,
+            eta_anneal_start_round=3, eta_anneal_rounds=8,
+            eta_anneal_end=0.02,
+        )
+        _, diagnostics = run_fitness_only_evolution(
+            target, queries, schema, 800,
+            config=config, fitness_mode="residual", marginals=marginals,
+        )
+        vg = diagnostics["value_guidance"]
+        assert vg["enabled"] is True
+        assert len(vg["scale_history"]) == 15
+        etas = diagnostics["eta_schedule_history"]
+        assert abs(etas[-1] - 0.02) < 1e-12
 
     def test_run_with_guidance_passes_audit(self, nltcs_setup):
         schema, marginals, queries, target = nltcs_setup
@@ -656,6 +860,22 @@ class TestFitnessOnlyArm:
         assert vg["adaptive_scale"] is True
         assert len(vg["scale_history"]) == 12
         assert all(s > 0.0 for s in vg["scale_history"])
+
+    def test_run_with_exact_gain_passes_audit(self, nltcs_setup):
+        schema, marginals, queries, target = nltcs_setup
+        config = FitnessOnlyConfig(
+            n_rounds=12, seed=42, rho=0.05,
+            value_guidance_strength=3.0,
+            value_guidance_adaptive_scale=True,
+            value_guidance_exact_gain=True,
+        )
+        _, diagnostics = run_fitness_only_evolution(
+            target, queries, schema, 800,
+            config=config, fitness_mode="residual", marginals=marginals,
+        )
+        vg = diagnostics["value_guidance"]
+        assert vg["exact_gain"] is True
+        assert len(vg["scale_history"]) == 12
 
     def test_run_without_guidance_unchanged(self, nltcs_setup):
         schema, marginals, queries, target = nltcs_setup

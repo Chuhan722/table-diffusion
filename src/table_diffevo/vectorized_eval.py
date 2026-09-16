@@ -651,7 +651,9 @@ class ValueGainComputer:
     """残差引导值分布核（value guidance）的逐格增益计算器。
 
     对每条记录 i、每个属性 a、每个候选值 v，计算"把 i 的 a 改成 v"
-    对加权残差账本的一阶增益（只保留随 v 变化的部分）：
+    对加权残差账本的增益。两种口径（构造参数 exact_gain 切换）：
+
+    一阶（默认，exact_gain=False）——只保留随 v 变化的线性部分：
 
         gain_a[i, v] = Σ_{j ∈ J_a, u_j = v} wr_j · M_other_j(i)
 
@@ -659,6 +661,21 @@ class ValueGainComputer:
     M_other_j(i) = 查询 j 除 a 外其余条件在记录 i 上的合取掩码
     （1-way 查询为全 1）；wr_j = 加权残差（与 fitness 完全同源：
     weights ⊙ compute_residual，欠账为正 → gain 越大越该补）。
+    盲区：平账（wr_j=0）对分数零贡献——引导看不见"改动会把平账砸欠"
+    （|q−y| 在 q=y 处的 V 形底，一阶导为 0）。
+
+    精确（exact_gain=True）——逐账精确边际差分（损益表口径）：
+
+        gain_a[i, v) = Σ_{j ∈ J_a} M_other_j(i) · [cost_j(q_j) − cost_j(q_j + δ_j)]
+        δ_j = +1 若 u_j = v ≠ cur_i；−1 若 u_j = cur_i ≠ v；否则 0
+        cost_j(q) = weights_j · |y_j − q| / denom_j / N（与 wr 同几何同分母）
+
+    修欠账为正分、砸平账为负分、v = cur_i 恒为 0（不动 = 零损益）。
+    实现恒等式：gain_a[i, v≠cur] = G⁺_a[i, v] + G⁻_a[i, cur_i]，其中
+    G⁺/G⁻ 分别用 c⁺_j = w_j(|r0_j|−|r⁺_j|)、c⁻_j = w_j(|r0_j|−|r⁻_j|)
+    填散射矩阵（r⁺/r⁻ = 计数 ±1 后的同源残差），矩阵乘结构与一阶
+    完全相同（两次 B @ W）。要求 sigma=None（κσ 容忍区会截断
+    |残差| 恒等式，fail-closed）。
 
     实现（矩阵分解，避免逐查询扫描）：
     - 1-way 查询 (a==u)：other 掩码 = 全 1 列；
@@ -694,6 +711,7 @@ class ValueGainComputer:
         kappa: float = 1.0,
         residual_geometry: str = "absolute",
         residual_geometry_floor: float = 8.0,
+        exact_gain: bool = False,
     ):
         self._schema = schema
         self._weights = np.asarray(weights, dtype=float)
@@ -702,6 +720,12 @@ class ValueGainComputer:
         self._kappa = kappa
         self._geometry = residual_geometry
         self._geometry_floor = residual_geometry_floor
+        self._exact_gain = bool(exact_gain)
+        if self._exact_gain and self._sigma is not None:
+            raise ValueError(
+                "exact_gain=True 与 sigma 容忍区不兼容（κσ 截断破坏 "
+                "|残差| 差分恒等式），fail-closed"
+            )
 
         if len(self._weights) != len(queries) or len(self._target) != len(queries):
             raise ValueError(
@@ -728,6 +752,7 @@ class ValueGainComputer:
             value_pos[name] = {str(v): k for k, v in enumerate(block.values)}
             offset += len(block.values)
         self._d_total = offset
+        self._value_pos = value_pos  # exact_gain 需要行当前值的值域位置
 
         # —— 解析查询：注册基底掩码列 + 散射条目 ——
         basis_index: Dict[Tuple[str, str], int] = {}
@@ -866,15 +891,68 @@ class ValueGainComputer:
         )
         wr = self._weights * r
 
-        # 散射矩阵 W (K+1, D) 重填 + 一次矩阵乘
-        W = np.zeros((self._n_basis + 1, self._d_total), dtype=float)
-        np.add.at(W, (self._entry_basis, self._entry_dest), wr[self._entry_query])
-        G = B @ W
+        if not self._exact_gain:
+            # 一阶：散射矩阵 W (K+1, D) 重填 wr + 一次矩阵乘
+            W = np.zeros((self._n_basis + 1, self._d_total), dtype=float)
+            np.add.at(
+                W, (self._entry_basis, self._entry_dest),
+                wr[self._entry_query],
+            )
+            G = B @ W
+            return {
+                name: G[:, off:off + len(self._domains[name])]
+                for name, off in self._dest_offset.items()
+            }
 
-        return {
-            name: G[:, off:off + len(self._domains[name])]
-            for name, off in self._dest_offset.items()
-        }
+        # 精确：c± = w·(|r0|−|r±|)，r± 为计数 ±1 后同源残差（denom 只依赖
+        # 目标与 floor，不随 q 变，|r| 恰是同几何 cost）。gain[i, v≠cur] =
+        # G⁺[i,v] + G⁻[i,cur]，gain[i,cur]=0。修欠账为正、砸平账为负。
+        q_arr = np.asarray(q, dtype=float)
+        r_plus = compute_residual(
+            self._target, q_arr + 1.0, n_records,
+            sigma=None, kappa=self._kappa,
+            geometry=self._geometry, geometry_floor=self._geometry_floor,
+        )
+        r_minus = compute_residual(
+            self._target, q_arr - 1.0, n_records,
+            sigma=None, kappa=self._kappa,
+            geometry=self._geometry, geometry_floor=self._geometry_floor,
+        )
+        abs_r0 = np.abs(r)
+        c_plus = self._weights * (abs_r0 - np.abs(r_plus))
+        c_minus = self._weights * (abs_r0 - np.abs(r_minus))
+
+        Wp = np.zeros((self._n_basis + 1, self._d_total), dtype=float)
+        Wm = np.zeros((self._n_basis + 1, self._d_total), dtype=float)
+        np.add.at(
+            Wp, (self._entry_basis, self._entry_dest),
+            c_plus[self._entry_query],
+        )
+        np.add.at(
+            Wm, (self._entry_basis, self._entry_dest),
+            c_minus[self._entry_query],
+        )
+        Gp = B @ Wp
+        Gm = B @ Wm
+
+        row_idx = np.arange(n)
+        gains: Dict[str, np.ndarray] = {}
+        for name, off in self._dest_offset.items():
+            n_vals = len(self._domains[name])
+            pos = (
+                df[name].astype(str).map(self._value_pos[name]).to_numpy()
+            )
+            if np.any(pd.isna(pos)):
+                raise ValueError(
+                    f"exact_gain：属性 {name!r} 存在 schema 值域外的表值，"
+                    "无法定位当前值列（fail-closed）"
+                )
+            pos = pos.astype(int)
+            block = Gp[:, off:off + n_vals].copy()
+            block += Gm[row_idx, off + pos][:, None]
+            block[row_idx, pos] = 0.0
+            gains[name] = block
+        return gains
 
 
 def evaluate_directional_potential(

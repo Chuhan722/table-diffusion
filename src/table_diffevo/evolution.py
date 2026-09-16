@@ -286,6 +286,7 @@ def run_evolution(
     value_guidance_warmup_rounds: Optional[int] = None,
     value_guidance_drop_donor: bool = False,
     value_guidance_adaptive_scale: bool = False,
+    value_guidance_exact_gain: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     运行扩散演化主循环，返回合成表和诊断信息。
@@ -637,8 +638,10 @@ def run_evolution(
         eval_method='vectorized'，且全部查询为 ≤2-way 纯 == 合取、全部
         属性 categorical（fail-closed）；与 block_score_tilt /
         residual_directed_diffusion / gap_l1 / factorized_gibbs / MW 权重
-        / eta 退火 / max_retries>0 / fitness_only_mode='equal' 互斥；
-        lottery_first_donor_selection 兼容（参与行=中签行）。
+        / max_retries>0 / fitness_only_mode='equal' 互斥；
+        lottery_first_donor_selection 兼容（参与行=中签行）；eta 退火
+        兼容（η_t 进 base 分布：末期 η_t→小时无辜格保持自值、欠账格由
+        λ 引导翻转——复制职责向引导交接）。
     value_guidance_warmup_start_round : int or None, default None
         λ_t 线性升温的起始轮（绝对轮数，兼容 horizon_invariant）。该轮
         之前 λ_t=0（新核照走、纯 base 抽样）。需要与 warmup_rounds 同时
@@ -658,6 +661,12 @@ def run_evolution(
         lambda_history 仍记调度值 λ_t，实际传入转移核的是 λ_t/scale_t
         （scale_history 诊断可复算）。仅 strength>0 时可用；关闭时逐位
         零痕迹。
+    value_guidance_exact_gain : bool, default False
+        精确边际增益：gain 从一阶（Σ wr·掩码，平账 wr=0 → 引导对"砸平
+        账"失明）升级为逐账精确差分 cost(q)−cost(q+δ)（与 wr 同几何同
+        分母）。修欠账为正分、砸平账为负分、保持当前值恒 0 分——"无辜
+        格子"（涉账全平的格）的保护内生在分数里，η 底分无需退火。仅
+        strength>0 时可用；关闭时逐位零痕迹。
 
     Returns
     -------
@@ -910,6 +919,12 @@ def run_evolution(
             f"得到 {value_guidance_adaptive_scale!r}"
         )
     value_guidance_adaptive_scale = bool(value_guidance_adaptive_scale)
+    if not isinstance(value_guidance_exact_gain, (bool, np.bool_)):
+        raise ValueError(
+            "value_guidance_exact_gain 必须是布尔值，"
+            f"得到 {value_guidance_exact_gain!r}"
+        )
+    value_guidance_exact_gain = bool(value_guidance_exact_gain)
     if value_guidance_enabled:
         # fail-closed：值引导核整轮替换"复制开关+变异事件"转移核，只在
         # "vectorized 评估 + 单一转移核 + 固定 η + 平凡查询权重"组合下
@@ -946,8 +961,10 @@ def run_evolution(
             )
         if mw_query_weight_eta is not None:
             vg_violations.append("MW 查询权重必须关闭（gain 与 wr 同源）")
-        if eta_anneal_end is not None:
-            vg_violations.append("eta 退火必须关闭（η 进 base 分布）")
+        # eta 退火兼容：η_t 进 base 分布后与 exp(λ·gain) 相乘——末期
+        # η_t→小时无辜格（gain≈0）以 (1−η_t)(1−μc) 概率保持自值不被
+        # 搅动，欠账格由自适应 λ_eff 的指数倾斜补偿翻转（交接而非断粮，
+        # 供体在早中期照常搬运块结构）。
         if fitness_only_mode == "equal":
             vg_violations.append(
                 "fitness_only_mode='equal' 不允许（equal 臂禁用一切残差"
@@ -966,6 +983,11 @@ def run_evolution(
         if value_guidance_adaptive_scale:
             raise ValueError(
                 "value_guidance_adaptive_scale=True 需要 "
+                "value_guidance_strength>0"
+            )
+        if value_guidance_exact_gain:
+            raise ValueError(
+                "value_guidance_exact_gain=True 需要 "
                 "value_guidance_strength>0"
             )
     if value_guidance_warmup_start_round is not None:
@@ -2033,6 +2055,7 @@ def run_evolution(
             target=np.asarray(target, dtype=float),
             residual_geometry=residual_geometry,
             residual_geometry_floor=residual_geometry_floor,
+            exact_gain=value_guidance_exact_gain,
         )
         value_guidance_structure_compile_elapsed_sec = (
             time.perf_counter() - vg_compile_start
@@ -3741,6 +3764,7 @@ def run_evolution(
             "warmup_rounds": value_guidance_warmup_rounds,
             "drop_donor": value_guidance_drop_donor,
             "adaptive_scale": value_guidance_adaptive_scale,
+            "exact_gain": value_guidance_exact_gain,
             "lambda_history": value_guidance_lambda_history,
             "scale_history": value_guidance_scale_history,
             "gain_recompute_count": value_guidance_gain_recompute_count,
@@ -4002,6 +4026,7 @@ def run_evolution(
             "value_guidance_warmup_rounds": value_guidance_warmup_rounds,
             "value_guidance_drop_donor": value_guidance_drop_donor,
             "value_guidance_adaptive_scale": value_guidance_adaptive_scale,
+            "value_guidance_exact_gain": value_guidance_exact_gain,
             "donor_diagnostics_scope": (
                 "participants_only"
                 if lottery_first_donor_selection else "all_rows"
