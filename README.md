@@ -41,6 +41,19 @@ test_300x10 实测，初始损失 19673.5，约 60 轮压到 2.0，初始比万�
 每轮约半秒，剩余误差是四个查询各差正负一的交错结构，
 单行菜单六十次刷新无正增益，这正是配对板块要解决的补偿死角，留作下一板块动机。
 
+## 评价指标，严格按 AIM 与 GSD 文献定义
+
+AIM 式，McKenna 等 VLDB 2022，workload 取全部 k 阶边缘表，
+单边缘误差为边缘计数表 L1 距离除以行数，对 workload 平均。
+GSD 式，Liu Vietri Wu ICML 2023，统计查询按比例口径，报平均与最大绝对误差。
+评价与生成严格分离，保留查询 1024 条只进评价脚本，加载时强制校验与生成查询语义零交集。
+
+三种子实测，随机基线到演化终表，
+GSD 式 measured 50 平均误差 0.0710 降到 0.0005，最大恰为一行计数 1/300，
+GSD 式 heldout 1024 平均误差 0.0128 降到 0.0067，没见过的三四阶查询误差近乎减半，
+AIM 式全部二阶边缘平均 0.662 降到 0.296，全部三阶边缘平均 0.981 降到 0.610，
+被查询覆盖的结构打满，未覆盖边缘的改进有限，与查询驱动的机理一致。
+
 ## 运行
 
 ```bash
@@ -53,8 +66,11 @@ test_300x10 实测，初始损失 19673.5，约 60 轮压到 2.0，初始比万�
 # 随机小表多轮演化冒烟，验证期望下降与蒙特卡洛一致性
 ./.venv/bin/python scripts/smoke_descent.py
 
-# test 数据端到端实验，编辑候选加候选提供器，输出逐轮损失曲线
-./.venv/bin/python scripts/run_test300.py --rounds 400 --retries 60 --out results/test300_curve.csv
+# test 数据端到端实验，编辑候选加候选提供器，输出逐轮损失曲线与终表
+./.venv/bin/python scripts/run_test300.py --rounds 400 --retries 60 --out results/test300_curve.csv --save-table results/evolved.csv
+
+# AIM 与 GSD 式评价，真实表自评、随机基线与任意合成表对比
+./.venv/bin/python scripts/eval_test300.py results/evolved.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。

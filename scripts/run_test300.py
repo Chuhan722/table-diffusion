@@ -41,6 +41,9 @@ def main() -> None:
     parser.add_argument(
         "--out", type=str, default="", help="逐轮损失曲线输出 CSV 路径，留空不写文件"
     )
+    parser.add_argument(
+        "--save-table", type=str, default="", help="演化终表输出 CSV 路径，留空不写文件"
+    )
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
@@ -111,6 +114,18 @@ def main() -> None:
                 )
             writer.writerow(["final", final_loss, "", "", "", "", "", out.stop_reason])
         print(f"曲线已写入 {out_path}")
+
+    if args.save_table:
+        from resevo.editspace import tuples_from_ids
+
+        table_path = Path(args.save_table)
+        table_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(table_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(schema.fields)
+            for row in tuples_from_ids(registry, out.state_ids):
+                writer.writerow(row)
+        print(f"终表已写入 {table_path}")
 
 
 if __name__ == "__main__":
