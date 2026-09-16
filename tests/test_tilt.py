@@ -123,3 +123,48 @@ def test_tiny_gain_counterexample(eps, beta_anchor):
 def test_bad_alpha_rejected():
     with pytest.raises(ValueError):
         calibrate_beta([np.array([0.0, 1.0])], [np.array([0.9, 0.1])], 1.0, alpha=1.5)
+
+
+def test_calibrate_beta_flat_matches_blockwise_random():
+    """分段矢量化熵校准与逐块版在 30 个随机例上一致，含重数加权。"""
+    from resevo.tilt import calibrate_beta_flat
+
+    rng = np.random.default_rng(0)
+    for trial in range(30):
+        num_groups = int(rng.integers(1, 8))
+        gains, refs, offsets = [], [], [0]
+        for _ in range(num_groups):
+            n = int(rng.integers(1, 6)) + 1
+            g = rng.normal(0, 2, n)
+            g[0] = 0.0
+            R = rng.uniform(0.1, 1, n)
+            R /= R.sum()
+            gains.append(g)
+            refs.append(R)
+            offsets.append(offsets[-1] + n)
+        mult = rng.integers(1, 5, num_groups).astype(float)
+        old_loss = float(rng.uniform(0.5, 100))
+        a = calibrate_beta(gains, refs, old_loss, multiplicities=mult)
+        b = calibrate_beta_flat(
+            np.concatenate(gains), np.concatenate(refs), np.array(offsets),
+            old_loss, multiplicities=mult,
+        )
+        assert a.frozen == b.frozen
+        assert b.beta == pytest.approx(a.beta, rel=1e-9, abs=1e-12)
+        assert b.direction_gain == pytest.approx(a.direction_gain, rel=1e-9)
+        assert b.max_gain_sum == pytest.approx(a.max_gain_sum, rel=1e-12)
+        np.testing.assert_allclose(
+            np.concatenate(a.probabilities), b.probabilities, rtol=1e-9, atol=1e-12
+        )
+
+
+def test_calibrate_beta_flat_frozen_puts_mass_on_sources():
+    """全负增益时冻结，质量全部落在各段源项。"""
+    from resevo.tilt import calibrate_beta_flat
+
+    gains = np.array([0.0, -1.0, -2.0, 0.0, -3.0])
+    refs = np.array([0.9, 0.05, 0.05, 0.9, 0.1])
+    offsets = np.array([0, 3, 5])
+    res = calibrate_beta_flat(gains, refs, offsets, 10.0)
+    assert res.frozen
+    np.testing.assert_allclose(res.probabilities, [1.0, 0.0, 0.0, 1.0, 0.0])

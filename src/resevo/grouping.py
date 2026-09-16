@@ -19,8 +19,9 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.sparse import csr_matrix
 
-from .candidates import BlockSupport, NormalizedBlock, normalize_block, validate_partition
+from .candidates import BlockSupport, NormalizedBlock, validate_partition
 from .dataset import StateRegistry
 from .editspace import (
     EditBudget,
@@ -31,18 +32,10 @@ from .editspace import (
     tuples_from_ids,
 )
 from .engine import BlockKernel, EvolveResult, RoundRecord, build_kernel, sample_next
-from .gain import block_deltas, block_gains
 from .pairing import PairingBudget, build_paired_supports
 from .state import Workload, loss_from_residual
-from .stepsize import (
-    analytic_step,
-    block_drifts,
-    block_leave_rates,
-    cross_interaction,
-    expected_changed_rows_at_unit_step,
-    rates_from_probabilities,
-)
-from .tilt import calibrate_beta
+from .stepsize import analytic_step
+from .tilt import calibrate_beta_flat
 
 
 @dataclass(frozen=True)
@@ -163,6 +156,47 @@ class GroupKernelResult:
     status: str
 
 
+def _normalize_group_block(
+    spec: BlockSupport,
+    source_id: int,
+    num_states: int,
+    stay_probability: float,
+) -> NormalizedBlock:
+    """normalize_block 的组路径快速版，语义与输出顺序与通用版完全一致。
+
+    组块的后继全是单状态元组，用保序去重矢量化合并参考质量，
+    落回源的路径照样丢弃，源元组固定在索引 0，非保持质量按迁移率比例分配。
+    """
+    n = len(spec.outcomes)
+    if not (0 < stay_probability < 1):
+        raise ValueError("stay_probability 必须落在 (0,1)")
+    ids = np.fromiter((o[0] for o in spec.outcomes), dtype=np.int64, count=n)
+    if n and (ids.min() < 0 or ids.max() >= num_states):
+        raise ValueError("块后继元组非法")
+    if spec.mobility is None:
+        mob = np.ones(n, dtype=np.float64)
+    else:
+        mob = np.asarray(spec.mobility, dtype=np.float64)
+        if mob.shape != (n,) or not np.isfinite(mob).all() or np.any(mob < 0):
+            raise ValueError("迁移率必须有限且非负")
+    keep = (ids != source_id) & (mob > 0)
+    ids_kept = ids[keep]
+    mob_kept = mob[keep]
+    uniq, first, inverse = np.unique(ids_kept, return_index=True, return_inverse=True)
+    mass = np.zeros(len(uniq), dtype=np.float64)
+    np.add.at(mass, inverse, mob_kept)
+    order = np.argsort(first, kind="stable")  # 恢复首现顺序，与通用版 dict 保序一致
+    dest = uniq[order]
+    cs = mass[order]
+    outcomes = ((int(source_id),),) + tuple((int(u),) for u in dest)
+    if len(dest):
+        reference = np.r_[stay_probability, (1 - stay_probability) * cs / cs.sum()]
+    else:
+        # 该块没有其他合法后继，保持概率直接为 1，不参与更新
+        reference = np.ones(1)
+    return NormalizedBlock(spec.rows, outcomes, reference)
+
+
 def grouped_residual(workload: Workload, grouped: GroupedTable) -> NDArray[np.float64]:
     """残差 e=y-sum_g c_g a(u_g)，与逐行求和精确同值仅浮点顺序不同。"""
     answers = grouped.counts.astype(np.float64) @ workload.features[grouped.unique_ids]
@@ -178,8 +212,18 @@ def build_group_kernel(
     damping: float = 1.0,
     max_expected_rows: float | None = None,
     numerical_tol: float = 1e-12,
+    quad_cache: dict | None = None,
+    keep_deltas: bool = False,
 ) -> GroupKernelResult:
-    """构造一轮的组核，每组算一份增益与概率，矩按重数加权。"""
+    """构造一轮的组核，每组算一份增益与概率，矩按重数加权。
+
+    数值路径不物化支持项乘查询数的增量大矩阵，
+    增益线性项 d@(We)=phi(u)-phi(s) 由每状态标量 phi=A@(We) 一次算出，
+    二次项 ||d||_W^2 只依赖状态对与固定权重，用 quad_cache 跨轮缓存，
+    漂移 v_g=sum r_u a(u) - b_g a(s_g) 用稀疏系数矩阵乘贡献矩阵直接得组级结果，
+    与显式增量实现数学恒等，浮点顺序不同数值容差内一致。
+    keep_deltas 为真时额外物化每组增量矩阵供测试对拍，默认不物化。
+    """
     validate_partition(supports, grouped.num_groups)
     if np.any(grouped.unique_ids < 0) or np.any(grouped.unique_ids >= workload.num_states):
         raise ValueError("组状态编号必须落在贡献矩阵行数范围内")
@@ -188,60 +232,113 @@ def build_group_kernel(
     old_loss = loss_from_residual(workload, residual)
 
     normalized: list[NormalizedBlock] = []
-    deltas_list: list[NDArray[np.float64]] = []
-    gains_list: list[NDArray[np.float64]] = []
-    for spec in supports:
-        nb = normalize_block(spec, grouped.unique_ids, workload.num_states, stay_probability)
-        d = block_deltas(workload.features, nb.outcomes[0], nb.outcomes)
-        g = block_gains(d, residual, workload.weights)
+    offsets = np.zeros(len(supports) + 1, dtype=np.int64)
+    for b, spec in enumerate(supports):
+        nb = _normalize_group_block(
+            spec, int(grouped.unique_ids[spec.rows[0]]), workload.num_states, stay_probability
+        )
         normalized.append(nb)
-        deltas_list.append(d)
-        gains_list.append(g)
+        offsets[b + 1] = offsets[b] + len(nb.outcomes)
+    total = int(offsets[-1])
+    seg_starts = offsets[:-1]
+    lengths = np.diff(offsets)
+    seg_ids = np.repeat(np.arange(len(supports)), lengths)
 
-    tilt = calibrate_beta(
-        gains_list,
-        [nb.reference for nb in normalized],
-        old_loss,
-        alpha=alpha,
-        numerical_tol=numerical_tol,
-        multiplicities=grouped.counts,
+    outcome_ids = np.empty(total, dtype=np.int64)
+    ref_flat = np.empty(total, dtype=np.float64)
+    for b, nb in enumerate(normalized):
+        outcome_ids[offsets[b] : offsets[b + 1]] = [o[0] for o in nb.outcomes]
+        ref_flat[offsets[b] : offsets[b + 1]] = nb.reference
+
+    source_rep = outcome_ids[seg_starts][seg_ids]
+    # 增益 G=phi(u)-phi(s)-quad(s,u)/2，phi 一次矩阵向量积，quad 跨轮缓存
+    phi = workload.features @ (workload.weights * residual)
+    quad_flat = np.zeros(total, dtype=np.float64)
+    if quad_cache is None:
+        quad_cache = {}
+    features = workload.features
+    weights = workload.weights
+    for t in range(total):
+        s_id = int(source_rep[t])
+        u_id = int(outcome_ids[t])
+        if u_id == s_id:
+            continue  # 源项增量恒为零
+        key = (s_id, u_id)
+        q = quad_cache.get(key)
+        if q is None:
+            diff = features[u_id] - features[s_id]
+            q = float(np.dot(diff * weights, diff))
+            quad_cache[key] = q
+        quad_flat[t] = q
+    gains_flat = phi[outcome_ids] - phi[source_rep] - quad_flat / 2
+
+    deltas_flat = None
+    if keep_deltas:
+        deltas_flat = features[outcome_ids] - features[source_rep]
+
+    counts = grouped.counts.astype(np.float64)
+    tilt = calibrate_beta_flat(
+        gains_flat, ref_flat, offsets, old_loss,
+        alpha=alpha, numerical_tol=numerical_tol, multiplicities=counts,
     )
 
-    if tilt.frozen:
+    def _blocks_from_flat(rates_flat, probs_flat):
         blocks = []
-        for nb, d, g, P in zip(normalized, deltas_list, gains_list, tilt.probabilities):
-            blocks.append(BlockKernel(nb.rows, nb.outcomes, nb.reference, d, g, np.zeros_like(P), P.copy()))
+        for b, nb in enumerate(normalized):
+            lo, hi = int(offsets[b]), int(offsets[b + 1])
+            blocks.append(
+                BlockKernel(
+                    nb.rows, nb.outcomes, nb.reference,
+                    None if deltas_flat is None else deltas_flat[lo:hi],
+                    gains_flat[lo:hi],
+                    rates_flat[lo:hi], probs_flat[lo:hi],
+                )
+            )
+        return blocks
+
+    if tilt.frozen:
+        blocks = _blocks_from_flat(np.zeros(total), tilt.probabilities)
         return GroupKernelResult(
             blocks, grouped, old_loss, 0.0, 0.0, 0.0, 0.0,
             old_loss, old_loss, 0.0, tilt.max_gain_sum, tilt.required_gain,
             "no_positive_direction",
         )
 
-    rates = rates_from_probabilities(tilt.probabilities)
-    leave = block_leave_rates(rates)
-    drifts = block_drifts(rates, deltas_list)
-    interaction = cross_interaction(drifts, workload.weights, multiplicities=grouped.counts)
-    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
-    unit_rows = expected_changed_rows_at_unit_step(
-        rates, [nb.outcomes for nb in normalized], multiplicities=grouped.counts
+    rates_flat = tilt.probabilities.copy()
+    rates_flat[seg_starts] = 0.0
+    leave = np.add.reduceat(rates_flat, seg_starts)
+    # 漂移 v_g=sum_u r_u a(u)-b_g a(s_g)，稀疏系数乘贡献矩阵，不物化增量
+    coeff = csr_matrix(
+        (rates_flat, (seg_ids, outcome_ids)),
+        shape=(grouped.num_groups, workload.num_states),
     )
+    drifts = coeff @ features
+    drifts -= leave[:, None] * features[outcome_ids[seg_starts]]
+    drift_total = counts @ drifts
+    interaction = float(
+        (np.dot(drift_total * workload.weights, drift_total)
+         - np.sum(counts[:, None] * drifts * drifts * workload.weights)) / 2
+    )
+    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
+    # 单行组的非保持后继恰好改一行，期望改行数就是重数加权离开率
+    unit_rows = float(counts @ leave)
     if max_expected_rows is not None and unit_rows > 0:
         step = damping * min(h_star, max_expected_rows / unit_rows)
     else:
         step = damping * h_star
 
-    blocks = []
-    for nb, d, g, r in zip(normalized, deltas_list, gains_list, rates):
-        probabilities = step * r
-        probabilities[0] = 1.0 - float(probabilities[1:].sum())
+    probs_flat = step * rates_flat
+    stay = 1.0 - np.add.reduceat(probs_flat, seg_starts)
+    if np.any(stay < -1e-12):
+        raise FloatingPointError("步长违反随机矩阵约束")
+    probs_flat[seg_starts] = np.maximum(stay, 0.0)
+    negative = np.flatnonzero(stay < 0)
+    for b in negative:
         # 只做舍入清理，不是按目标的接受或修改
-        if probabilities[0] < -1e-12:
-            raise FloatingPointError("步长违反随机矩阵约束")
-        if probabilities[0] < 0:
-            probabilities[0] = 0.0
-            probabilities /= probabilities.sum()
-        blocks.append(BlockKernel(nb.rows, nb.outcomes, nb.reference, d, g, r, probabilities))
+        lo, hi = int(offsets[b]), int(offsets[b + 1])
+        probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
 
+    blocks = _blocks_from_flat(rates_flat, probs_flat)
     expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
     upper = old_loss - step * tilt.direction_gain / 2
     return GroupKernelResult(
@@ -345,6 +442,7 @@ def evolve_grouped(
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
+    quad_cache: dict = {}  # 状态对二次项跨轮缓存，权重固定时增量恒定
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
         if plan.mode == "rows":
@@ -356,6 +454,7 @@ def evolve_grouped(
             result = build_group_kernel(
                 plan.workload, plan.grouped, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
+                quad_cache=quad_cache,
             )
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")

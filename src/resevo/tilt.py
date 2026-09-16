@@ -18,6 +18,103 @@ from scipy.special import logsumexp
 
 
 @dataclass
+class FlatTiltResult:
+    """拼接布局的熵校准结果，probabilities 与拼接后的支持项对齐。"""
+
+    beta: float
+    probabilities: NDArray[np.float64]  # T，全部块的支持项拼接
+    direction_gain: float
+    max_gain_sum: float
+    required_gain: float
+    frozen: bool
+
+
+def calibrate_beta_flat(
+    gains_flat: NDArray[np.float64],
+    references_flat: NDArray[np.float64],
+    segment_offsets: NDArray[np.int64],
+    old_loss: float,
+    alpha: float = 0.5,
+    numerical_tol: float = 1e-12,
+    multiplicities=None,
+) -> FlatTiltResult:
+    """calibrate_beta 的拼接矢量化版，数学定义与逐块版完全一致。
+
+    所有块的增益与参考质量拼成一维数组，segment_offsets 给出块边界，
+    每块的源项固定在段首，分段 log-sum-exp 用 reduceat 一次算完，
+    括根与二分的判据结构与逐块版相同，浮点求和顺序不同数值容差内一致。
+    """
+    if not (0 < alpha < 1):
+        raise ValueError("alpha 必须落在 (0,1)")
+    if not np.isfinite(numerical_tol) or numerical_tol < 0:
+        raise ValueError("numerical_tol 必须有限且非负")
+    offsets = np.asarray(segment_offsets, dtype=np.int64)
+    if offsets.ndim != 1 or offsets.size < 2 or offsets[0] != 0:
+        raise ValueError("段边界必须从 0 开始且至少一段")
+    if np.any(np.diff(offsets) < 1) or offsets[-1] != gains_flat.shape[0]:
+        raise ValueError("每段至少含源项且边界须覆盖全部支持项")
+    num_groups = offsets.size - 1
+    seg_starts = offsets[:-1]
+    lengths = np.diff(offsets)
+    seg_ids = np.repeat(np.arange(num_groups), lengths)
+
+    if multiplicities is not None:
+        mult = np.asarray(multiplicities, dtype=np.float64)
+        if mult.shape != (num_groups,) or np.any(mult < 1) or not np.isfinite(mult).all():
+            raise ValueError("multiplicities 必须与段数等长且每项至少为 1")
+    else:
+        mult = np.ones(num_groups, dtype=np.float64)
+
+    gmax = np.maximum.reduceat(gains_flat, seg_starts)
+    max_gain_sum = float(mult @ np.maximum(gmax, 0.0))
+    requirement = alpha * max_gain_sum
+    scale = max(1.0, old_loss)
+
+    if max_gain_sum <= numerical_tol * scale:
+        frozen = np.zeros_like(references_flat)
+        frozen[seg_starts] = 1.0
+        return FlatTiltResult(0.0, frozen, 0.0, max_gain_sum, requirement, True)
+
+    log_ref = np.log(references_flat)
+    centered = gains_flat - gmax[seg_ids]
+
+    def evaluate(beta: float):
+        logits = log_ref + beta * centered
+        m = np.maximum.reduceat(logits, seg_starts)
+        z = np.exp(logits - m[seg_ids])
+        norm = np.add.reduceat(z, seg_starts)
+        P = z / norm[seg_ids]
+        per_group = np.add.reduceat(P * gains_flat, seg_starts)
+        return P, float(mult @ per_group)
+
+    ps, D = evaluate(0.0)
+    if D >= requirement:
+        beta = 0.0
+    else:
+        lo = 0.0
+        hi = 1.0 / max(max_gain_sum, 1e-300)
+        for _ in range(100):
+            ps, D = evaluate(hi)
+            if D >= requirement:
+                break
+            hi *= 2.0
+        else:
+            raise FloatingPointError("无法括住 beta 根，检查数值条件")
+        for _ in range(80):
+            mid = (lo + hi) / 2.0
+            _, D_mid = evaluate(mid)
+            if D_mid >= requirement:
+                hi = mid
+            else:
+                lo = mid
+        beta = hi  # 取满足约束的上端点
+        ps, D = evaluate(beta)
+    if D <= 0:
+        raise FloatingPointError("方向增益必须严格为正")
+    return FlatTiltResult(beta, ps, D, max_gain_sum, requirement, False)
+
+
+@dataclass
 class TiltResult:
     """熵校准结果。frozen 为真表示本次支持没有正的一阶方向，整体保持不动。"""
 

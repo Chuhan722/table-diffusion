@@ -103,6 +103,48 @@ def query_field_sets(specs: list[QuerySpec], schema: TableSchema) -> list[tuple[
     ]
 
 
+def compile_conditions(
+    specs: list[QuerySpec], schema: TableSchema
+) -> tuple[tuple[tuple, ...], ...]:
+    """把查询条件预编译成字段索引加算子码，求值热路径不再做字段名查找。
+
+    每条件编译为 (算子码, 字段索引, 等值串, 下界, 上界)，
+    算子码 0 等值比串，1 介于闭区间，2 大于等于，与 evaluate_condition 语义一致。
+    """
+    compiled = []
+    for spec in specs:
+        conds = []
+        for c in spec.conditions:
+            j = schema.field_index(c["attribute"])
+            op = c["operator"]
+            if op == "==":
+                conds.append((0, j, str(c["value"]), 0.0, 0.0))
+            elif op == "between":
+                conds.append((1, j, "", float(c["lower"]), float(c["upper"])))
+            elif op == ">=":
+                conds.append((2, j, "", float(c["value"]), 0.0))
+            else:
+                raise ValueError(f"不支持的算子 {op}")
+        compiled.append(tuple(conds))
+    return tuple(compiled)
+
+
+def evaluate_compiled(conds: tuple[tuple, ...], row: tuple[str, ...]) -> float:
+    """预编译条件的谓词计数贡献，与 evaluate_query 精确同值。"""
+    for code, j, sval, lo, hi in conds:
+        if code == 0:
+            if row[j] != sval:
+                return 0.0
+        elif code == 1:
+            v = float(row[j])
+            if not (lo <= v <= hi):
+                return 0.0
+        else:
+            if float(row[j]) < lo:
+                return 0.0
+    return 1.0
+
+
 class StateRegistry:
     """状态元组到编号的惰性注册表，新状态按需求值全部查询。
 
@@ -121,6 +163,8 @@ class StateRegistry:
         self._tuples: list[tuple[str, ...]] = []
         self._count = 0
         self._features = np.empty((0, len(specs)), dtype=np.float64)
+        # 查询条件预编译，注册求值热路径不再做字段名查找
+        self._compiled = compile_conditions(specs, schema)
         # 字段到受影响查询列的依赖索引，编辑增量求值只碰这些列
         field_sets = query_field_sets(specs, schema)
         buckets: list[list[int]] = [[] for _ in range(schema.num_fields)]
@@ -165,7 +209,7 @@ class StateRegistry:
         if len(key) != self.schema.num_fields:
             raise ValueError("状态元组字段数与 schema 不一致")
         feats = np.array(
-            [evaluate_query(spec, key, self.schema) for spec in self.specs],
+            [evaluate_compiled(conds, key) for conds in self._compiled],
             dtype=np.float64,
         )
         if not np.isfinite(feats).all():
@@ -203,7 +247,7 @@ class StateRegistry:
             )
         feats = self._features[base_id].copy()
         for q in affected:
-            feats[q] = evaluate_query(self.specs[int(q)], key, self.schema)
+            feats[q] = evaluate_compiled(self._compiled[int(q)], key)
         if not np.isfinite(feats[affected]).all():
             raise ValueError("查询贡献必须全部有限")
         return self._insert(key, feats)
