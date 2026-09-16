@@ -106,3 +106,41 @@ def test_query_field_sets(loaded):
     assert len(sets) == 50
     sizes = {len(s) for s in sets}
     assert sizes == {1, 2, 3}  # 单条件 双条件 三条件都有
+
+
+def test_registry_growth_matches_manual_recompute(loaded):
+    """预分配扩容跨界后，视图矩阵与逐状态手工求值逐位一致。"""
+    from resevo.dataset import evaluate_query
+
+    schema, rows, specs = loaded
+    y = target_from_specs(specs)
+    w = np.ones(len(specs))
+    registry = StateRegistry(schema, specs)
+    registry._INITIAL_CAPACITY = 3  # 实例覆盖类属性，强制多次扩容
+    ids = registry.register_table(rows[:11])
+    feats = registry.build_workload(y, w).features
+    assert feats.shape[0] == registry.num_states
+    for sid in range(registry.num_states):
+        manual = np.array(
+            [evaluate_query(spec, registry.state_tuple(sid), schema) for spec in specs]
+        )
+        np.testing.assert_array_equal(feats[sid], manual)
+    assert ids.max() == registry.num_states - 1
+
+
+def test_workload_view_is_readonly_and_stable_after_growth(loaded):
+    """负载视图只读不可写，且扩容后旧负载持有的数值逐位不变。"""
+    schema, rows, specs = loaded
+    y = target_from_specs(specs)
+    w = np.ones(len(specs))
+    registry = StateRegistry(schema, specs)
+    registry._INITIAL_CAPACITY = 4
+    registry.register_table(rows[:4])
+    old = registry.build_workload(y, w)
+    snapshot = old.features.copy()
+    with pytest.raises(ValueError):
+        old.features[0, 0] = 99.0
+    registry.register_table(rows[4:40])  # 触发多次翻倍扩容
+    np.testing.assert_array_equal(old.features, snapshot)
+    new = registry.build_workload(y, w)
+    np.testing.assert_array_equal(new.features[:4], snapshot)

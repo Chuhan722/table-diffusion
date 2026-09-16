@@ -30,8 +30,17 @@ class Workload:
         return self.features.shape[1]
 
 
-def make_workload(features: ArrayLike, target: ArrayLike, weights: ArrayLike) -> Workload:
-    """校验并构造查询负载，坏输入在这里一次性拒绝。"""
+def make_workload(
+    features: ArrayLike,
+    target: ArrayLike,
+    weights: ArrayLike,
+    features_prevalidated: bool = False,
+) -> Workload:
+    """校验并构造查询负载，坏输入在这里一次性拒绝。
+
+    features_prevalidated 为真时跳过贡献矩阵的全量有限性扫描，
+    只允许在每行注册时已单独校验过的来源使用，形状校验照常执行。
+    """
     a = np.asarray(features, dtype=np.float64)
     y = np.asarray(target, dtype=np.float64)
     w = np.asarray(weights, dtype=np.float64)
@@ -39,7 +48,9 @@ def make_workload(features: ArrayLike, target: ArrayLike, weights: ArrayLike) ->
         raise ValueError("features 必须是非空的 状态×查询 矩阵")
     if y.shape != (a.shape[1],) or w.shape != (a.shape[1],):
         raise ValueError("target 与 weights 必须每个查询一个值")
-    if not (np.isfinite(a).all() and np.isfinite(y).all() and np.isfinite(w).all()):
+    if not features_prevalidated and not np.isfinite(a).all():
+        raise ValueError("所有数值输入必须有限")
+    if not (np.isfinite(y).all() and np.isfinite(w).all()):
         raise ValueError("所有数值输入必须有限")
     if np.any(w <= 0):
         raise ValueError("weights 必须严格正")

@@ -108,21 +108,33 @@ class StateRegistry:
 
     features 行只增不改，已发编号永不变，
     因此扩表后旧状态的贡献行前缀完全一致，跨轮损失可直接比较。
+    贡献矩阵预分配按需翻倍，取负载时给前段只读视图不做全量拷贝，
+    有限性校验在注册每行时做一次，之后不再重复扫全矩阵。
     """
+
+    _INITIAL_CAPACITY = 1024
 
     def __init__(self, schema: TableSchema, specs: list[QuerySpec]):
         self.schema = schema
         self.specs = specs
         self._index: dict[tuple[str, ...], int] = {}
-        self._rows: list[np.ndarray] = []
         self._tuples: list[tuple[str, ...]] = []
+        self._count = 0
+        self._features = np.empty((0, len(specs)), dtype=np.float64)
 
     @property
     def num_states(self) -> int:
-        return len(self._rows)
+        return self._count
 
     def state_tuple(self, state_id: int) -> tuple[str, ...]:
         return self._tuples[state_id]
+
+    def _grow(self) -> None:
+        """容量翻倍扩容，旧行原样拷入新矩阵，摊销代价常数。"""
+        new_capacity = max(self._INITIAL_CAPACITY, 2 * self._features.shape[0])
+        grown = np.empty((new_capacity, len(self.specs)), dtype=np.float64)
+        grown[: self._count] = self._features[: self._count]
+        self._features = grown
 
     def register(self, row: tuple[str, ...]) -> int:
         """注册一个状态元组，已存在直接返回编号，新状态求值全部查询。"""
@@ -136,9 +148,14 @@ class StateRegistry:
             [evaluate_query(spec, key, self.schema) for spec in self.specs],
             dtype=np.float64,
         )
-        state_id = len(self._rows)
+        if not np.isfinite(feats).all():
+            raise ValueError("查询贡献必须全部有限")
+        if self._count == self._features.shape[0]:
+            self._grow()
+        state_id = self._count
+        self._features[state_id] = feats
+        self._count += 1
         self._index[key] = state_id
-        self._rows.append(feats)
         self._tuples.append(key)
         return state_id
 
@@ -147,10 +164,16 @@ class StateRegistry:
         return np.array([self.register(r) for r in rows], dtype=np.int64)
 
     def build_workload(self, target, weights) -> Workload:
-        """用当前已注册状态的贡献矩阵快照构造负载。"""
-        if not self._rows:
+        """用已注册状态贡献矩阵的前段只读视图构造负载，不拷贝。
+
+        视图底层矩阵后续只会追加新行，已发编号的行内容永不改写，
+        因此旧负载持有的视图跨轮仍然有效且数值不变。
+        """
+        if self._count == 0:
             raise ValueError("注册表为空，先注册状态")
-        return make_workload(np.vstack(self._rows), target, weights)
+        view = self._features[: self._count]
+        view.setflags(write=False)
+        return make_workload(view, target, weights, features_prevalidated=True)
 
 
 def target_from_specs(specs: list[QuerySpec]) -> np.ndarray:
