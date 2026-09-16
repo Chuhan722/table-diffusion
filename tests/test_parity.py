@@ -123,6 +123,24 @@ def test_parity_random_two_row_blocks():
         assert_same_kernel(mine, ref)
 
 
+def test_parity_nondefault_parameters():
+    # 非默认保持比例 alpha 阻尼的随机例对拍，堵住只在默认参数对拍的盲区
+    rng = np.random.default_rng(20260914)
+    for stay, alpha, damping in [(0.7, 0.3, 1.0), (0.5, 0.8, 0.5), (0.95, 0.2, 0.25)]:
+        for _ in range(5):
+            features, target, weights, ids = random_case(rng)
+            workload = make_workload(features, target, weights)
+            mine = build_kernel(
+                workload, ids,
+                stay_probability=stay, alpha=alpha, damping=damping,
+            )
+            ref = construct_entropic_kernel(
+                ids, features, target, weights,
+                stay_probability=stay, progress_fraction=alpha, damping=damping,
+            )
+            assert_same_kernel(mine, ref)
+
+
 def test_parity_with_mobility_weights():
     # 非均匀迁移率也要一致
     rng = np.random.default_rng(20260913)
