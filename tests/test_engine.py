@@ -251,7 +251,7 @@ def test_provider_mode_matches_fixed_supports(four_record):
     fixed = full_single_row_supports(len(ids), workload.num_states)
     calls = []
 
-    def provider(state_ids, round_index):
+    def provider(state_ids, round_index, frozen_streak):
         calls.append(round_index)
         return workload, fixed
 
@@ -278,7 +278,7 @@ def test_provider_and_supports_mutually_exclusive(four_record):
     with pytest.raises(ValueError):
         evolve(
             workload, ids, 2, np.random.default_rng(0),
-            supports=fixed, support_provider=lambda s, k: (workload, fixed),
+            supports=fixed, support_provider=lambda s, k, f: (workload, fixed),
         )
     with pytest.raises(ValueError):
         evolve(None, ids, 2, np.random.default_rng(0))
@@ -291,7 +291,7 @@ def test_frozen_retry_then_recover(four_record):
 
     good = full_single_row_supports(len(ids), workload.num_states)
 
-    def provider(state_ids, round_index):
+    def provider(state_ids, round_index, frozen_streak):
         if round_index < 2:
             return workload, _pure_stay_supports(len(state_ids))
         return workload, good
@@ -310,7 +310,7 @@ def test_frozen_streak_exhausts_retries(four_record):
     """连续冻结超过重试预算即停，且停止原因明确报告。"""
     workload, ids = four_record
 
-    def provider(state_ids, round_index):
+    def provider(state_ids, round_index, frozen_streak):
         return workload, _pure_stay_supports(len(state_ids))
 
     out = evolve(
@@ -333,7 +333,7 @@ def test_frozen_streak_resets_after_progress(four_record):
 
     good = full_single_row_supports(len(ids), workload.num_states)
 
-    def provider(state_ids, round_index):
+    def provider(state_ids, round_index, frozen_streak):
         if round_index % 2 == 0:
             return workload, _pure_stay_supports(len(state_ids))
         return workload, good

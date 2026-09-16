@@ -195,7 +195,7 @@ def make_edit_provider(
     这样负载的贡献矩阵才包含本轮全部候选状态。
     """
 
-    def provider(state_ids, round_index: int):
+    def provider(state_ids, round_index: int, frozen_streak: int = 0):
         table = tuples_from_ids(registry, state_ids)
         supports = generate_edit_supports(
             table, registry.schema, registry, menu_rng, budget, joint_field_sets

@@ -26,6 +26,7 @@ from resevo.dataset import (  # noqa: E402
 )
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
+from resevo.pairing import make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "test_300x10"
@@ -43,6 +44,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--save-table", type=str, default="", help="演化终表输出 CSV 路径，留空不写文件"
+    )
+    parser.add_argument(
+        "--pairing", action="store_true",
+        help="启用配对板块，冻结重试轮把互补行绑成双行块",
     )
     args = parser.parse_args()
 
@@ -63,7 +68,8 @@ def main() -> None:
     ]
     ids = registry.register_table(init_rows)
 
-    provider = make_edit_provider(
+    factory = make_paired_provider if args.pairing else make_edit_provider
+    provider = factory(
         registry, y, w,
         np.random.default_rng(args.menu_seed),
         joint_field_sets=field_sets,

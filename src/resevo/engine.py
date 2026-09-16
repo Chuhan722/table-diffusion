@@ -245,7 +245,7 @@ def evolve(
     """多轮循环，轮内共享旧残差，轮间才更新残差。
 
     两种候选模式，固定 supports 一份用到底，或者传 support_provider，
-    每轮把当前表与轮号交给提供器，返回本轮的负载与菜单，
+    每轮把当前表轮号与连续冻结次数交给提供器，返回本轮的负载与菜单，
     提供器模式下负载允许只增不改地扩状态，旧编号贡献行必须保持前缀一致。
     冻结不再必然立即停，随机菜单本轮无正增益不是全局证书，
     连续冻结超过 max_frozen_retries 次才停，0 保持旧行为冻结即停。
@@ -267,7 +267,7 @@ def evolve(
     frozen_streak = 0
     for k in range(num_rounds):
         if support_provider is not None:
-            round_workload, round_supports = support_provider(current, k)
+            round_workload, round_supports = support_provider(current, k, frozen_streak)
         else:
             round_workload, round_supports = workload, supports
         result = build_kernel(
