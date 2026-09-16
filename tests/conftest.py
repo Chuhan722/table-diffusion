@@ -35,3 +35,21 @@ def four_record():
 
     workload = make_workload(FOUR_FEATURES, FOUR_TARGET, FOUR_WEIGHTS)
     return workload, FOUR_IDS.copy()
+
+
+def build_four_record_blocks():
+    """四条记录例子的规范化块、增量与增益，多个模块测试共用。"""
+    from resevo.candidates import full_single_row_supports, normalize_block
+    from resevo.gain import block_deltas, block_gains
+    from resevo.state import make_workload, table_residual
+
+    workload = make_workload(FOUR_FEATURES, FOUR_TARGET, FOUR_WEIGHTS)
+    ids = FOUR_IDS.copy()
+    residual = table_residual(workload, ids)
+    blocks = []
+    for spec in full_single_row_supports(4, 4):
+        nb = normalize_block(spec, ids, 4)
+        d = block_deltas(workload.features, nb.outcomes[0], nb.outcomes)
+        g = block_gains(d, residual, workload.weights)
+        blocks.append((nb, d, g))
+    return workload, ids, blocks
