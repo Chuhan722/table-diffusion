@@ -423,12 +423,15 @@ def make_batch_provider(
     pairing_budget: PairingBudget | None = None,
     pairing: bool = False,
     pairing_backoff: int = 4,
+    defer_workload: bool = False,
 ):
     """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
 
     配对退避，冻结重试的前三次都上配对，之后每 pairing_backoff 次上一次，
     其余重试轮只刷新便宜的批量菜单，重试语义与总次数上限不变，
     backoff 取 1 即每次重试都配对，等价旧行为。
+    defer_workload 为真时批量轮的计划只携带目标与权重不物化特征矩阵，
+    供 GPU 后端配合惰性注册表使用，行级回退轮仍取完整负载。
     """
     if pairing_backoff < 1:
         raise ValueError("配对退避周期必须为正")
@@ -456,7 +459,14 @@ def make_batch_provider(
             codes[grouped.unique_ids], grouped.counts, codebook.domain_sizes,
             menu_rng, budget, joint_field_sets,
         )
-        workload = registry.build_workload(target, weights)
+        if defer_workload:
+            workload = Workload(
+                np.empty((0, len(np.asarray(target)))),
+                np.asarray(target, dtype=np.float64),
+                np.asarray(weights, dtype=np.float64),
+            )
+        else:
+            workload = registry.build_workload(target, weights)
         return BatchRoundPlan("batch", workload, grouped, menu)
 
     provider.codebook = codebook
@@ -476,16 +486,24 @@ def evolve_batch(
     damping: float = 1.0,
     max_expected_rows: float | None = None,
     max_frozen_retries: int = 0,
+    backend: str = "cpu",
 ) -> EvolveResult:
-    """批量路径多轮循环，冻结与重试语义与组路径完全一致。"""
+    """批量路径多轮循环，冻结与重试语义与组路径完全一致。
+
+    backend 取 gpu 时批量轮核构造走 cupy 后端，数学定义一致，
+    抽样与行级回退轮仍在 CPU，随机数语义不变。
+    """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
     if max_frozen_retries < 0:
         raise ValueError("冻结重试次数不能为负")
+    if backend not in ("cpu", "gpu"):
+        raise ValueError(f"未知后端 {backend}")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
     last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
+    gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
         if plan.mode == "rows":
@@ -494,14 +512,28 @@ def evolve_batch(
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "batch":
-            cache = getattr(plan_provider, "cnt_cache", None)
-            result = build_batch_kernel(
-                plan.workload, plan.grouped, plan.menu,
-                plan_provider.structure[0], plan_provider.codebook.sync(),
-                stay_probability, alpha, damping, max_expected_rows,
-                cnt_cache=cache[0] if cache else None,
-                beta_hint=last_beta,
-            )
+            if backend == "gpu":
+                if gpu_ctx is None:
+                    from .gpukernel import GpuBatchContext
+
+                    gpu_ctx = GpuBatchContext(
+                        plan_provider.structure[0],
+                        plan.workload.target, plan.workload.weights,
+                    )
+                result = gpu_ctx.build(
+                    plan.grouped, plan.menu, plan_provider.codebook.sync(),
+                    stay_probability, alpha, damping, max_expected_rows,
+                    beta_hint=last_beta,
+                )
+            else:
+                cache = getattr(plan_provider, "cnt_cache", None)
+                result = build_batch_kernel(
+                    plan.workload, plan.grouped, plan.menu,
+                    plan_provider.structure[0], plan_provider.codebook.sync(),
+                    stay_probability, alpha, damping, max_expected_rows,
+                    cnt_cache=cache[0] if cache else None,
+                    beta_hint=last_beta,
+                )
             if result.beta > 0.0:
                 last_beta = result.beta
         else:

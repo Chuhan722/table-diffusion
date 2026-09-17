@@ -300,3 +300,60 @@ def test_register_many_matches_sequential_register():
     # 无预注册时与纯逐个注册的编号也一致
     fresh = StateRegistry(schema, specs)
     np.testing.assert_array_equal(fresh.register_many(rows), np.array(seq_ids))
+
+
+def test_lazy_features_matches_eager_bitwise():
+    """惰性特征模式编号次序与补算特征都与急切模式逐位一致。"""
+    from resevo.dataset import QuerySpec, TableSchema
+
+    schema = TableSchema(
+        ("x", "y", "z"),
+        (("0", "1", "2"), ("a", "b", "c"), ("10", "25", "40")),
+    )
+    specs = [
+        QuerySpec("q0", ({"attribute": "x", "operator": "==", "value": "1"},
+                          {"attribute": "y", "operator": "==", "value": "b"}), 0.0),
+        QuerySpec("q1", ({"attribute": "z", "operator": "between",
+                          "lower": 20, "upper": 40},), 0.0),
+        QuerySpec("q2", ({"operator": "halfspace",
+                          "scores": {"x": {"0": -3, "2": 5},
+                                     "y": {"a": 2, "c": -1},
+                                     "z": {"10": 1, "40": 4}},
+                          "threshold": 4},), 0.0),
+    ]
+    rng = np.random.default_rng(11)
+    rows = [
+        tuple(dom[int(rng.integers(len(dom)))] for dom in schema.domains)
+        for _ in range(120)
+    ]
+    eager = StateRegistry(schema, specs)
+    lazy = StateRegistry(schema, specs)
+    lazy.set_lazy_features(True)
+    ids_e = eager.register_many(rows)
+    ids_l = lazy.register_many(rows)
+    np.testing.assert_array_equal(ids_e, ids_l)
+    # 编辑注册与去重语义一致，惰性下同样发新号或回旧号
+    for k in range(0, 60, 7):
+        base = int(ids_e[k])
+        row = list(eager.state_tuple(base))
+        row[0] = "2" if row[0] != "2" else "0"
+        assert eager.register_edit(base, tuple(row)) == lazy.register_edit(
+            base, tuple(row)
+        )
+    assert eager.num_states == lazy.num_states
+    # 取负载触发欠账补算，特征与急切路径逐位相同
+    wl_e = eager.build_workload(np.zeros(len(specs)), np.ones(len(specs)))
+    wl_l = lazy.build_workload(np.zeros(len(specs)), np.ones(len(specs)))
+    np.testing.assert_array_equal(wl_e.features, wl_l.features)
+    # 关开关也会立刻清偿，之后急切注册继续对齐
+    lazy2 = StateRegistry(schema, specs)
+    lazy2.set_lazy_features(True)
+    lazy2.register_many(rows[:50])
+    lazy2.set_lazy_features(False)
+    eager2 = StateRegistry(schema, specs)
+    eager2.register_many(rows[:50])
+    assert lazy2.register(rows[77]) == eager2.register(rows[77])
+    np.testing.assert_array_equal(
+        lazy2.build_workload(np.zeros(len(specs)), np.ones(len(specs))).features,
+        eager2.build_workload(np.zeros(len(specs)), np.ones(len(specs))).features,
+    )

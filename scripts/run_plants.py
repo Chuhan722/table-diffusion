@@ -73,7 +73,13 @@ def main() -> None:
         "--pairing-backoff", type=int, default=4,
         help="批量路径冻结重试的配对退避周期，前三次都配对之后每 N 次一次，1 即每次都配对",
     )
+    parser.add_argument(
+        "--gpu", action="store_true",
+        help="批量轮核构造走 cupy 后端，需 --batched，抽样与回退仍在 CPU",
+    )
     args = parser.parse_args()
+    if args.gpu and not args.batched:
+        parser.error("--gpu 只支持批量路径，请同时带 --batched")
 
     schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
     specs = load_queries(str(DATA_DIR / args.exam))
@@ -88,6 +94,9 @@ def main() -> None:
             field_sets.append(fs)
 
     registry = StateRegistry(schema, specs)
+    if args.gpu:
+        # GPU 后端整轮不读注册表特征，惰性登记省掉每轮特征求值与特征矩阵内存
+        registry.set_lazy_features(True)
     init_rng = np.random.default_rng(args.init_seed)
     if args.uniform_init:
         init_rows = [
@@ -110,6 +119,7 @@ def main() -> None:
             joint_field_sets=field_sets,
             pairing=args.pairing,
             pairing_backoff=args.pairing_backoff,
+            defer_workload=args.gpu,
         )
     elif args.grouped:
         provider = make_grouped_provider(
@@ -134,6 +144,7 @@ def main() -> None:
             np.random.default_rng(args.sample_seed),
             provider, registry,
             max_frozen_retries=args.retries,
+            backend="gpu" if args.gpu else "cpu",
         )
     elif args.grouped:
         out = evolve_grouped(
@@ -151,8 +162,15 @@ def main() -> None:
         )
     elapsed = time.perf_counter() - t0
 
-    final_workload = registry.build_workload(y, w)
-    final_loss = table_loss(final_workload, out.state_ids)
+    if args.gpu:
+        # 终点损失也在卡上算，避免为一次报数补算全部欠账特征
+        from resevo.gpukernel import GpuBatchContext
+
+        gctx = GpuBatchContext(provider.structure[0], y, w)
+        final_loss = gctx.loss_of(provider.codebook.sync(), out.state_ids)
+    else:
+        final_workload = registry.build_workload(y, w)
+        final_loss = table_loss(final_workload, out.state_ids)
     frozen_rounds = sum(1 for r in out.records if r.status == "no_positive_direction")
     print(
         f"实际轮数 {len(out.records)}，停止原因 {out.stop_reason}，"

@@ -254,6 +254,31 @@ GSD 0.000016，0.0096，0.0376，0.000032，0.0169，0.006640。
 速度同一量级，本方法 CPU 2472 秒每轮均值 3.1 秒，GSD 在 4090 上 1224 秒，
 菜单预算每行约 32 条路径不随查询数爆炸，内存峰值约 14G。
 
+## GPU 后端与惰性特征注册，第七刀
+
+plants 规模 CPU 每轮 6.15 秒对 800 轮要一百多分钟，批量核整轮搬上 GPU，
+独立后端 gpukernel.py 用 cupy 实现，CPU 数值路径一行不动，evolve_batch 加 backend 参数切换。
+静态量查询结构目标权重上传一次，条件计数每轮在卡上重算不跨轮缓存省掉数 G 显存增长，
+残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同，不传大特征矩阵，
+抽样注册菜单生成留在 CPU，随机流语义零改变，概率下传后按原语义截断归一。
+
+确定性三原则，浮点聚合不用原子加，分段归约用自写 CUDA 核一段一线程块定序树规约，
+归约顺序只由块宽决定与数据无关，同种子同卡两遍逐位相同有测试把守，
+漂移合并用键排序加游程求和，段最大与顺序无关逐位精确，整数合并用 int64 前缀差分精确。
+
+三个踩坑记录，cupy 的 maximum.at 对双精度是非原子实现有竞态丢值不可用，
+前缀和差分求浮点段和在真数据规模有灾难性相消丢 12 位有效数字触发步长约束报错，
+凡浮点段和一律不过前缀差分，repeat 不支持数组重数用 searchsorted 展开代替。
+
+惰性特征注册表配套，GPU 模式整轮不读注册表特征，set_lazy_features 开关默认关，
+惰性下注册只发号记元组，编号次序与急切路径一致，build_workload 入口分块矢量化补算逐位相同，
+终点损失在卡上由条件计数直接算免物化，省掉每轮六千行特征拷贝与十几 G 内存增长。
+
+实证，plants 种子 1 前 30 轮 GPU 与 CPU 官方曲线损失逐位一致抽样表完全没漂，
+跨后端全指标对拍在容差内咬合，布伦特法对 1e-16 级评估差有放大 beta 容差放宽到 2e-7，
+每轮耗时 CPU 6150 毫秒降到 GPU 360 毫秒约 17 倍，剩余大头是 CPU 侧菜单生成，
+跑 GPU 前先 nvidia-smi 挑空闲卡用 CUDA_VISIBLE_DEVICES 指定。
+
 ## 运行
 
 ```bash
@@ -282,6 +307,10 @@ GSD 0.000016，0.0096，0.0376，0.000032，0.0169，0.006640。
 ./.venv/bin/python scripts/gen_plants_exam.py
 ./.venv/bin/python scripts/run_plants.py --rounds 800 --retries 60 --batched --pairing --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_curve_seed1.csv --save-table results/plants_seed1.csv
 ./.venv/bin/python scripts/eval_plants.py results/plants_seed1.csv results/plants_gsd_seed1.csv
+
+# GPU 后端，需 cupy，装法 uv pip install --python ./.venv/bin/python cupy-cuda12x
+# 先 nvidia-smi 挑空闲卡，--gpu 须配 --batched，同种子同卡逐位可复现
+CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --rounds 800 --retries 60 --batched --pairing --gpu --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_gpu_curve.csv --save-table results/plants_gpu.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。

@@ -222,6 +222,9 @@ class StateRegistry:
         # 批量特征器缓存，惰性构建，见 _build_featurizer
         self._feat_ready = False
         self._val_cache: list[dict[str, tuple[np.ndarray, np.ndarray]]] = []
+        # 惰性特征模式，注册只记元组编号，特征推迟到取负载时统一补算
+        self._lazy = False
+        self._feat_synced = 0
 
     @property
     def num_states(self) -> int:
@@ -241,11 +244,34 @@ class StateRegistry:
         return self._tuples[state_id]
 
     def _grow(self) -> None:
-        """容量翻倍扩容，旧行原样拷入新矩阵，摊销代价常数。"""
+        """容量翻倍扩容，已算好的特征行原样拷入新矩阵，摊销代价常数。"""
         new_capacity = max(self._INITIAL_CAPACITY, 2 * self._features.shape[0])
         grown = np.empty((new_capacity, len(self.specs)), dtype=np.float64)
-        grown[: self._count] = self._features[: self._count]
+        grown[: self._feat_synced] = self._features[: self._feat_synced]
         self._features = grown
+
+    def set_lazy_features(self, flag: bool) -> None:
+        """开关惰性特征模式，关闭时立刻补算全部欠账特征行。
+
+        惰性下注册只登记元组与编号，编号发放次序与急切模式逐个一致，
+        特征在首次取负载或显式关闭时按首次注册顺序统一矢量化补算，
+        数值与急切路径的逐行求值逐位相同，GPU 后端整轮不读特征时零开销。
+        """
+        self._lazy = bool(flag)
+        if not self._lazy:
+            self._ensure_features()
+
+    def _ensure_features(self) -> None:
+        """补算全部欠账特征行，分块矢量化限住临时内存。"""
+        if self._feat_synced >= self._count:
+            return
+        while self._features.shape[0] < self._count:
+            self._grow()
+        chunk = 8192
+        for lo in range(self._feat_synced, self._count, chunk):
+            hi = min(lo + chunk, self._count)
+            self._features[lo:hi] = self._features_for_rows(self._tuples[lo:hi])
+        self._feat_synced = self._count
 
     def _insert(self, key: tuple[str, ...], feats: np.ndarray) -> int:
         """把校验完的状态行写入注册表并发号，register 与 register_edit 共用。"""
@@ -253,6 +279,15 @@ class StateRegistry:
             self._grow()
         state_id = self._count
         self._features[state_id] = feats
+        self._count += 1
+        self._feat_synced = self._count
+        self._index[key] = state_id
+        self._tuples.append(key)
+        return state_id
+
+    def _insert_lazy(self, key: tuple[str, ...]) -> int:
+        """惰性登记状态行，只发号不算特征，欠账由 _ensure_features 清偿。"""
+        state_id = self._count
         self._count += 1
         self._index[key] = state_id
         self._tuples.append(key)
@@ -266,6 +301,8 @@ class StateRegistry:
             return found
         if len(key) != self.schema.num_fields:
             raise ValueError("状态元组字段数与 schema 不一致")
+        if self._lazy:
+            return self._insert_lazy(key)
         feats = np.array(
             [evaluate_compiled(conds, key) for conds in self._compiled],
             dtype=np.float64,
@@ -396,9 +433,13 @@ class StateRegistry:
                 new_keys.append(key)
             ids[r] = self._count + p
         if new_keys:
-            feats = self._features_for_rows(new_keys)
-            for key, row_feats in zip(new_keys, feats):
-                self._insert(key, row_feats)
+            if self._lazy:
+                for key in new_keys:
+                    self._insert_lazy(key)
+            else:
+                feats = self._features_for_rows(new_keys)
+                for key, row_feats in zip(new_keys, feats):
+                    self._insert(key, row_feats)
         return ids
 
     def register_edit(self, base_id: int, row: tuple[str, ...]) -> int:
@@ -420,6 +461,8 @@ class StateRegistry:
         changed = [j for j in range(self.schema.num_fields) if key[j] != base[j]]
         if not changed:
             raise AssertionError("元组与来源相同却不在索引里，注册表内部不一致")
+        if self._lazy:
+            return self._insert_lazy(key)
         if len(changed) == 1:
             affected = self._field_queries[changed[0]]
         else:
@@ -441,6 +484,7 @@ class StateRegistry:
         """
         if self._count == 0:
             raise ValueError("注册表为空，先注册状态")
+        self._ensure_features()  # 惰性模式欠账在此清偿，急切模式零开销
         view = self._features[: self._count]
         view.setflags(write=False)
         return make_workload(view, target, weights, features_prevalidated=True)
