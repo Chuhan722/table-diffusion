@@ -156,6 +156,23 @@ def test_calibrate_beta_flat_matches_blockwise_random():
         np.testing.assert_allclose(
             np.concatenate(a.probabilities), b.probabilities, rtol=1e-9, atol=1e-12
         )
+        # 布伦特法返回满足约束的达标点，方向增益必须达标
+        if not b.frozen:
+            assert b.direction_gain >= b.required_gain - 1e-12 * max(
+                1.0, b.required_gain
+            )
+        # 热启动括根只改评价点顺序，根应与冷启动在容差内一致
+        if not b.frozen and b.beta > 0.0:
+            for hint in (b.beta, b.beta * 7.3, b.beta / 7.3):
+                c = calibrate_beta_flat(
+                    np.concatenate(gains), np.concatenate(refs), np.array(offsets),
+                    old_loss, multiplicities=mult, beta_hint=hint,
+                )
+                assert not c.frozen
+                assert c.beta == pytest.approx(b.beta, rel=1e-9, abs=1e-12)
+                assert c.direction_gain >= c.required_gain - 1e-12 * max(
+                    1.0, c.required_gain
+                )
 
 
 def test_calibrate_beta_flat_frozen_puts_mass_on_sources():

@@ -76,15 +76,24 @@ def _delta_parts(
     def _finish(indptr, indices, adj, path_idx):
         """计数调整还原成答案差，通过当且仅当计数打满字段组个数。
 
-        计数与调整都是小整数，比较全程走整型，最后才落成浮点差。
+        计数与调整都是小整数，比较全程走整型，最后才落成浮点差，
+        组号先按路径取一次再展开到非零位，省去嵌套花式索引，
+        恰为零的答案差直接滤掉，下游矩阵向量积与漂移聚合按序累加，
+        去掉精确零加项每行部分和逐位不变。
         """
+        grp_of = menu.group[path_idx]
         row_of = np.repeat(np.arange(len(path_idx), dtype=np.int64), np.diff(indptr))
-        cnt_vals = cnt[menu.group[path_idx[row_of]], indices]
+        cnt_vals = cnt[grp_of[row_of], indices]
         need = qs.ncond[indices]
-        delta = (cnt_vals + adj == need).astype(np.float64)
-        delta -= cnt_vals == need
+        delta_i8 = (cnt_vals + adj == need).astype(np.int8)
+        delta_i8 -= cnt_vals == need
+        nz = np.flatnonzero(delta_i8)
+        row_nnz = np.bincount(row_of[nz], minlength=len(path_idx))
+        new_indptr = np.zeros(len(path_idx) + 1, dtype=np.int64)
+        np.cumsum(row_nnz, out=new_indptr[1:])
         sparse = csr_matrix(
-            (delta, indices, indptr), shape=(len(path_idx), num_queries)
+            (delta_i8[nz].astype(np.float64), indices[nz], new_indptr),
+            shape=(len(path_idx), num_queries),
         )
         parts.append((sparse, path_idx))
 
@@ -155,8 +164,7 @@ def _delta_parts(
             ),
             shape=(len(multis), num_queries),
         )
-        sparse = coo.tocsr()
-        sparse.sum_duplicates()
+        sparse = coo.tocsr()  # tocsr 已合并重复并排序列下标，无需再 sum_duplicates
         _finish(sparse.indptr, sparse.indices, sparse.data, multis.astype(np.int64))
     return parts
 
@@ -214,6 +222,7 @@ def build_batch_kernel(
     max_expected_rows: float | None = None,
     numerical_tol: float = 1e-12,
     cnt_cache: CntCache | None = None,
+    beta_hint: float | None = None,
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
@@ -240,8 +249,11 @@ def build_batch_kernel(
     we = workload.weights * residual
     gains_paths = np.zeros(menu.num_paths, dtype=np.float64)
     for sparse, path_idx in parts:
-        squared = sparse.copy()
-        squared.data = squared.data * squared.data
+        # 平方阵共享下标结构只换数据，免整块拷贝
+        squared = csr_matrix(
+            (sparse.data * sparse.data, sparse.indices, sparse.indptr),
+            shape=sparse.shape,
+        )
         gains_paths[path_idx] = sparse @ we - (squared @ workload.weights) / 2
     if delta_hs is not None:
         w_hs = workload.weights[qs.hs_cols]
@@ -270,6 +282,7 @@ def build_batch_kernel(
     tilt = calibrate_beta_flat(
         gains_flat, ref_flat, offsets, old_loss,
         alpha=alpha, numerical_tol=numerical_tol, multiplicities=counts,
+        beta_hint=beta_hint,
     )
     if tilt.frozen:
         return BatchKernelResult(
@@ -286,13 +299,14 @@ def build_batch_kernel(
     key_parts = []
     weight_parts = []
     for sparse, path_idx in parts:
+        grp_of = menu.group[path_idx]
         row_of = np.repeat(
             np.arange(len(path_idx), dtype=np.int64), np.diff(sparse.indptr)
         )
         key_parts.append(
-            menu.group[path_idx[row_of]] * workload.num_queries + sparse.indices
+            grp_of[row_of] * workload.num_queries + sparse.indices
         )
-        weight_parts.append(sparse.data * rates_paths[path_idx[row_of]])
+        weight_parts.append(sparse.data * rates_paths[path_idx][row_of])
     drifts = np.bincount(
         np.concatenate(key_parts) if key_parts else np.zeros(0, dtype=np.int64),
         weights=np.concatenate(weight_parts) if weight_parts else None,
@@ -471,6 +485,7 @@ def evolve_batch(
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
+    last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
         if plan.mode == "rows":
@@ -485,7 +500,10 @@ def evolve_batch(
                 plan_provider.structure[0], plan_provider.codebook.sync(),
                 stay_probability, alpha, damping, max_expected_rows,
                 cnt_cache=cache[0] if cache else None,
+                beta_hint=last_beta,
             )
+            if result.beta > 0.0:
+                last_beta = result.beta
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
         records.append(

@@ -4,9 +4,11 @@
 P_B(u;beta)=R_B(u)exp(beta*G_B(u))/Z_B(beta)，所有块共享同一个 beta。
 平均增益 D(beta) 关于 beta 单调不减，其导数为各块增益方差之和。
 M=sum_B max_u G_B(u) 为最大可达增益总和，delta=alpha*M。
-若 D(0)>=delta 取 beta=0，否则先翻倍括根再二分求唯一根。
+若 D(0)>=delta 取 beta=0，否则先翻倍括根再求唯一根。
 整个数值步骤只反复评价概率与平均增益，不抽样任何表。
-括根与二分的次数、端点选取和 log-sum-exp 顺序与参考实现完全一致，便于对拍逐位核对。
+逐块版 calibrate_beta 的括根与二分次数、端点选取和 log-sum-exp 顺序
+与参考实现完全一致便于逐位对拍，拼接版 calibrate_beta_flat 走布伦特法，
+同一个方程同容差 1e-13，只是逼近路线更省全量扫描。
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.optimize import brentq
 from scipy.special import logsumexp
 
 
@@ -37,12 +40,17 @@ def calibrate_beta_flat(
     alpha: float = 0.5,
     numerical_tol: float = 1e-12,
     multiplicities=None,
+    beta_hint: float | None = None,
 ) -> FlatTiltResult:
     """calibrate_beta 的拼接矢量化版，数学定义与逐块版完全一致。
 
     所有块的增益与参考质量拼成一维数组，segment_offsets 给出块边界，
-    每块的源项固定在段首，分段 log-sum-exp 用 reduceat 一次算完，
-    括根与二分的判据结构与逐块版相同，浮点求和顺序不同数值容差内一致。
+    每块的源项固定在段首，分段归一化用 reduceat 一次算完，
+    段内增益先减段最大故指数恒不上溢，无需再逐次求段最大移位，
+    求根用布伦特法，括根区间保证收缩且超线性收敛，
+    停止判据为相对容差 1e-13 与逐块二分版同精度，返回达标一侧的端点，
+    根与逐块版在容差内一致，末几位小数可能不同，
+    beta_hint 给出括根起点，典型取上一轮的根，省掉从 1/M 起的翻倍串。
     """
     if not (0 < alpha < 1):
         raise ValueError("alpha 必须落在 (0,1)")
@@ -75,15 +83,13 @@ def calibrate_beta_flat(
         frozen[seg_starts] = 1.0
         return FlatTiltResult(0.0, frozen, 0.0, max_gain_sum, requirement, True)
 
-    log_ref = np.log(references_flat)
+    # 段内先减段最大，centered 全体非正，exp 无上溢之忧，天然免去逐次移位
     centered = gains_flat - gmax[seg_ids]
 
     def evaluate(beta: float):
-        logits = log_ref + beta * centered
-        m = np.maximum.reduceat(logits, seg_starts)
-        z = np.exp(logits - m[seg_ids])
-        norm = np.add.reduceat(z, seg_starts)
-        P = z / norm[seg_ids]
+        zw = references_flat * np.exp(beta * centered)
+        norm = np.add.reduceat(zw, seg_starts)
+        P = zw / norm[seg_ids]
         per_group = np.add.reduceat(P * gains_flat, seg_starts)
         return P, float(mult @ per_group)
 
@@ -91,28 +97,53 @@ def calibrate_beta_flat(
     if D >= requirement:
         beta = 0.0
     else:
+        # 括根，有热启动点就从它出发折半或翻倍，没有则从 1/M 翻倍
         lo = 0.0
-        hi = 1.0 / max(max_gain_sum, 1e-300)
-        for _ in range(100):
-            ps, D = evaluate(hi)
+        hi = 0.0
+        probe = 1.0 / max(max_gain_sum, 1e-300)
+        if beta_hint is not None and np.isfinite(beta_hint) and beta_hint > 0.0:
+            probe = float(beta_hint)
+        ps, D = evaluate(probe)
+        if D >= requirement:
+            hi = probe
+            for _ in range(100):
+                probe /= 2.0
+                ps, D = evaluate(probe)
+                if D < requirement:
+                    lo = probe
+                    break
+                hi = probe
+            else:
+                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+        else:
+            lo = probe
+            for _ in range(100):
+                probe *= 2.0
+                ps, D = evaluate(probe)
+                if D >= requirement:
+                    hi = probe
+                    break
+                lo = probe
+            else:
+                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+        # 布伦特法求根，区间保证收缩且超线性收敛，容差与纯二分版同为相对 1e-13
+        beta = float(
+            brentq(
+                lambda b: evaluate(b)[1] - requirement,
+                lo,
+                hi,
+                xtol=1e-300,
+                rtol=1e-13,
+                maxiter=200,
+            )
+        )
+        ps, D = evaluate(beta)
+        # 根可能落在约束下侧，向上微推到达标一侧，与二分版取上端点的语义一致
+        for _ in range(8):
             if D >= requirement:
                 break
-            hi *= 2.0
-        else:
-            raise FloatingPointError("无法括住 beta 根，检查数值条件")
-        for _ in range(80):
-            mid = (lo + hi) / 2.0
-            if mid <= lo or mid >= hi:
-                break  # 区间已到浮点分辨极限，继续二分不再改变端点
-            _, D_mid = evaluate(mid)
-            if D_mid >= requirement:
-                hi = mid
-            else:
-                lo = mid
-            if hi - lo <= 1e-13 * hi:
-                break  # 相对宽度到达双精度水平，再分下去只动末两位
-        beta = hi  # 取满足约束的上端点
-        ps, D = evaluate(beta)
+            beta = beta * (1.0 + 4e-13) if beta > 0 else hi * 1e-16
+            ps, D = evaluate(beta)
     if D <= 0:
         raise FloatingPointError("方向增益必须严格为正")
     return FlatTiltResult(beta, ps, D, max_gain_sum, requirement, False)
