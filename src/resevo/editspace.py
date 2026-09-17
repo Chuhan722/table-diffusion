@@ -162,15 +162,23 @@ def generate_edit_supports(
     if budget is None:
         budget = EditBudget()
     joint_sets = [fs for fs in (joint_field_sets or []) if len(fs) >= 2]
-    supports = []
-    for i, current in enumerate(table):
+    row_paths: list[list[tuple[str, ...]]] = []
+    for current in table:
         paths: list[tuple[str, ...]] = []
         paths += _single_field_edits(current, schema, budget, rng)
         paths += _donor_copies(current, table, schema, budget, rng)
         paths += _joint_edits(current, schema, joint_sets, budget, rng)
         paths += _explore_edits(current, schema, budget, rng)
         assert len(paths) <= budget.max_nonstay_paths()
-        outcomes = tuple((registry.register(p),) for p in paths)
+        row_paths.append(paths)
+    # 全表候选一次批量注册，编号次序与逐个注册完全一致
+    flat_ids = registry.register_many([p for paths in row_paths for p in paths])
+    supports = []
+    pos = 0
+    for i, paths in enumerate(row_paths):
+        k = len(paths)
+        outcomes = tuple((int(sid),) for sid in flat_ids[pos : pos + k])
+        pos += k
         mobility = (1.0,) * len(outcomes)
         supports.append(BlockSupport((i,), outcomes, mobility))
     return supports

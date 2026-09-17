@@ -69,6 +69,10 @@ def main() -> None:
         "--uniform-init", action="store_true",
         help="退回纯均匀随机初始化，默认用考卷二阶边缘化出的一阶比例",
     )
+    parser.add_argument(
+        "--pairing-backoff", type=int, default=4,
+        help="批量路径冻结重试的配对退避周期，前三次都配对之后每 N 次一次，1 即每次都配对",
+    )
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
@@ -105,6 +109,7 @@ def main() -> None:
             np.random.default_rng(args.menu_seed),
             joint_field_sets=field_sets,
             pairing=args.pairing,
+            pairing_backoff=args.pairing_backoff,
         )
     elif args.grouped:
         provider = make_grouped_provider(

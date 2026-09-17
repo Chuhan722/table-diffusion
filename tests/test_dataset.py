@@ -254,3 +254,49 @@ def test_halfspace_must_be_single_condition():
     ), 0.0)
     with _pytest.raises(ValueError):
         compile_conditions([bad], schema)
+
+
+def test_register_many_matches_sequential_register():
+    """批量注册与逐个注册编号次序与特征逐位一致，含半空间与重复行。"""
+    import numpy as np
+
+    from resevo.dataset import QuerySpec, StateRegistry, TableSchema
+
+    schema = TableSchema(
+        ("x", "y", "z"),
+        (("0", "1", "2"), ("a", "b", "c"), ("10", "25", "40")),
+    )
+    specs = [
+        QuerySpec("q0", ({"attribute": "x", "operator": "==", "value": "1"},
+                          {"attribute": "y", "operator": "==", "value": "b"}), 0.0),
+        QuerySpec("q1", ({"attribute": "z", "operator": "between",
+                          "lower": 20, "upper": 40},), 0.0),
+        QuerySpec("q2", ({"attribute": "z", "operator": ">=", "value": 30},
+                          {"attribute": "x", "operator": "==", "value": "0"}), 0.0),
+        QuerySpec("q3", ({"operator": "halfspace",
+                          "scores": {"x": {"0": -3, "2": 5},
+                                     "y": {"a": 2, "c": -1},
+                                     "z": {"10": 1, "40": 4}},
+                          "threshold": 4},), 0.0),
+    ]
+    rng = np.random.default_rng(7)
+    rows = [
+        tuple(dom[int(rng.integers(len(dom)))] for dom in schema.domains)
+        for _ in range(200)
+    ]
+    rows += rows[:30]  # 批内重复
+    seq = StateRegistry(schema, specs)
+    seq_ids = [seq.register(r) for r in rows]
+    bat = StateRegistry(schema, specs)
+    bat.register(rows[5])  # 预注册一行制造已存在状态
+    bat2 = StateRegistry(schema, specs)
+    bat2.register(rows[5])
+    got = bat.register_many(rows)
+    one_by_one = [bat2.register(r) for r in rows]
+    np.testing.assert_array_equal(got, np.array(one_by_one))
+    wl_a = bat.build_workload(np.zeros(4), np.ones(4)).features
+    wl_b = bat2.build_workload(np.zeros(4), np.ones(4)).features
+    np.testing.assert_array_equal(wl_a, wl_b)
+    # 无预注册时与纯逐个注册的编号也一致
+    fresh = StateRegistry(schema, specs)
+    np.testing.assert_array_equal(fresh.register_many(rows), np.array(seq_ids))

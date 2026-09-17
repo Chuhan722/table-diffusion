@@ -219,6 +219,9 @@ class StateRegistry:
         self._field_queries = tuple(
             np.array(qs, dtype=np.int64) for qs in buckets
         )
+        # 批量特征器缓存，惰性构建，见 _build_featurizer
+        self._feat_ready = False
+        self._val_cache: list[dict[str, tuple[np.ndarray, np.ndarray]]] = []
 
     @property
     def num_states(self) -> int:
@@ -273,7 +276,130 @@ class StateRegistry:
 
     def register_table(self, rows: list[tuple[str, ...]]) -> np.ndarray:
         """注册整张表并返回状态编号向量。"""
-        return np.array([self.register(r) for r in rows], dtype=np.int64)
+        return self.register_many(rows)
+
+    def _build_featurizer(self) -> None:
+        """按字段整理条件清单，供取值命中向量惰性求值，批量注册用。
+
+        等值通道，每字段列出涉及它的 (查询列, 算子码, 载荷) 条件，
+        取值命中向量按查询列累加命中条件数，行特征为命中数恰等于条件总数，
+        半空间列条件总数记毒值 -1 防等值通道误命中，
+        分数通道，每字段列出 (半空间序号, 取值到分数表)，
+        行特征为各字段分数之和不小于阈值，与 evaluate_compiled 精确同值。
+        """
+        num_q = len(self.specs)
+        ncond = np.zeros(num_q, dtype=np.int16)
+        eq_conds: list[list[tuple[int, tuple]]] = [
+            [] for _ in range(self.schema.num_fields)
+        ]
+        hs_cols: list[int] = []
+        hs_thresholds: list[int] = []
+        hs_tables: list[list[tuple[int, dict[str, int]]]] = [
+            [] for _ in range(self.schema.num_fields)
+        ]
+        for h, conds in enumerate(self._compiled):
+            for code, a, b, lo, hi in conds:
+                if code == 3:
+                    ncond[h] = -1
+                    t = len(hs_cols)
+                    hs_cols.append(h)
+                    hs_thresholds.append(int(b))
+                    for j, table in a:
+                        hs_tables[j].append((t, table))
+                else:
+                    ncond[h] += 1
+                    eq_conds[a].append((h, (code, b, lo, hi)))
+        self._feat_ncond = ncond
+        self._feat_eq_conds = eq_conds
+        self._feat_hs_cols = np.array(hs_cols, dtype=np.int64)
+        self._feat_hs_thresholds = np.array(hs_thresholds, dtype=np.int64)
+        self._feat_hs_tables = hs_tables
+        self._val_cache = [dict() for _ in range(self.schema.num_fields)]
+        self._feat_ready = True
+
+    def _value_vectors(self, j: int, value: str) -> tuple[np.ndarray, np.ndarray]:
+        """字段 j 取 value 时的命中条件数向量与半空间分数向量，带缓存。"""
+        cached = self._val_cache[j].get(value)
+        if cached is not None:
+            return cached
+        cnt = np.zeros(len(self.specs), dtype=np.int16)
+        for h, (code, b, lo, hi) in self._feat_eq_conds[j]:
+            if code == 0:
+                hit = value == b
+            elif code == 1:
+                hit = lo <= float(value) <= hi
+            else:
+                hit = float(value) >= lo
+            if hit:
+                cnt[h] += 1
+        score = np.zeros(len(self._feat_hs_cols), dtype=np.int64)
+        for t, table in self._feat_hs_tables[j]:
+            score[t] = table.get(value, 0)
+        pair = (cnt, score)
+        self._val_cache[j][value] = pair
+        return pair
+
+    def _features_for_rows(self, rows: list[tuple[str, ...]]) -> np.ndarray:
+        """一批新状态行的贡献矩阵，矢量化按字段查表累加。
+
+        与 evaluate_compiled 逐行逐查询求值逐位一致，
+        谓词取值只有 0 与 1，构造上必然有限，无需再扫有限性。
+        """
+        if not self._feat_ready:
+            self._build_featurizer()
+        n = len(rows)
+        num_q = len(self.specs)
+        cnt = np.zeros((n, num_q), dtype=np.int16)
+        score = np.zeros((n, len(self._feat_hs_cols)), dtype=np.int64)
+        for j in range(self.schema.num_fields):
+            column = [row[j] for row in rows]
+            uniq = sorted(set(column))
+            pos = {v: p for p, v in enumerate(uniq)}
+            cnt_tab = np.stack([self._value_vectors(j, v)[0] for v in uniq])
+            codes = np.fromiter(
+                (pos[v] for v in column), dtype=np.int64, count=n
+            )
+            cnt += cnt_tab[codes]
+            if len(self._feat_hs_cols):
+                score_tab = np.stack(
+                    [self._value_vectors(j, v)[1] for v in uniq]
+                )
+                score += score_tab[codes]
+        feats = (cnt == self._feat_ncond[None, :]).astype(np.float64)
+        if len(self._feat_hs_cols):
+            feats[:, self._feat_hs_cols] = (
+                score >= self._feat_hs_thresholds[None, :]
+            ).astype(np.float64)
+        return feats
+
+    def register_many(self, rows: list[tuple[str, ...]]) -> np.ndarray:
+        """批量注册状态行，编号发放次序与逐个 register 完全一致。
+
+        重复行与已注册行直接给旧编号，真正的新状态按首次出现顺序
+        统一矢量化求特征后依序入表，返回与输入等长的编号向量。
+        """
+        ids = np.empty(len(rows), dtype=np.int64)
+        new_keys: list[tuple[str, ...]] = []
+        new_pos: dict[tuple[str, ...], int] = {}
+        for r, row in enumerate(rows):
+            key = tuple(row)
+            found = self._index.get(key)
+            if found is not None:
+                ids[r] = found
+                continue
+            p = new_pos.get(key)
+            if p is None:
+                if len(key) != self.schema.num_fields:
+                    raise ValueError("状态元组字段数与 schema 不一致")
+                p = len(new_keys)
+                new_pos[key] = p
+                new_keys.append(key)
+            ids[r] = self._count + p
+        if new_keys:
+            feats = self._features_for_rows(new_keys)
+            for key, row_feats in zip(new_keys, feats):
+                self._insert(key, row_feats)
+        return ids
 
     def register_edit(self, base_id: int, row: tuple[str, ...]) -> int:
         """注册一个由已注册状态编辑而来的状态，按依赖索引增量求值。

@@ -408,14 +408,23 @@ def make_batch_provider(
     joint_field_sets: list[tuple[int, ...]] | None = None,
     pairing_budget: PairingBudget | None = None,
     pairing: bool = False,
+    pairing_backoff: int = 4,
 ):
-    """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。"""
+    """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
+
+    配对退避，冻结重试的前三次都上配对，之后每 pairing_backoff 次上一次，
+    其余重试轮只刷新便宜的批量菜单，重试语义与总次数上限不变，
+    backoff 取 1 即每次重试都配对，等价旧行为。
+    """
+    if pairing_backoff < 1:
+        raise ValueError("配对退避周期必须为正")
     codebook = CodeBook(registry)
     structure_box: list[QueryStructure] = []
     cache_box: list[CntCache] = []
 
     def provider(state_ids, round_index: int, frozen_streak: int = 0) -> BatchRoundPlan:
-        if pairing and frozen_streak > 0:
+        pairing_turn = frozen_streak <= 3 or frozen_streak % pairing_backoff == 0
+        if pairing and frozen_streak > 0 and pairing_turn:
             table = tuples_from_ids(registry, state_ids)
             singles = generate_edit_supports(
                 table, registry.schema, registry, menu_rng, budget, joint_field_sets

@@ -178,3 +178,22 @@ def test_cnt_cache_matches_direct():
     np.testing.assert_array_equal(cached.probabilities, plain.probabilities)
     assert cached.beta == plain.beta
     assert cached.step == plain.step
+
+
+def test_pairing_backoff_schedule():
+    """配对退避，前三次冻结重试都配对，之后每周期一次，其余批量刷新。"""
+    registry, ids, weights, _ = _scene(5, num_rows=18)
+    y = np.zeros(len(weights))
+    provider = make_batch_provider(
+        registry, y, weights, np.random.default_rng(9),
+        pairing=True, pairing_backoff=4,
+    )
+    modes = {k: provider(ids, 0, frozen_streak=k).mode for k in range(9)}
+    assert modes[0] == "batch"  # 非冻结轮走批量
+    assert all(modes[k] == "rows" for k in (1, 2, 3, 4, 8))
+    assert all(modes[k] == "batch" for k in (5, 6, 7))
+    always = make_batch_provider(
+        registry, y, weights, np.random.default_rng(9),
+        pairing=True, pairing_backoff=1,
+    )
+    assert all(always(ids, 0, frozen_streak=k).mode == "rows" for k in (1, 5, 7))
