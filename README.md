@@ -225,6 +225,35 @@ measured 轴本方法明显更低，因为考卷里 150 条高阶与半空间题
 但抽成 300 行小表时离散化损失吃掉精度，二阶计数平均偏 2.2 个，小表场景是表空间方法的主场。
 PGM 拟合约 14 秒，GSD 搜索约 9 秒，本方法第六刀提速后约 41 秒，速度暂不占优后续再优化。
 
+## plants 真数据首战，全二阶考卷与 GSD 同餐对照
+
+数据，UCI plants 的 train 切分 17412 行 69 个 01 字段进仓 data/plants，
+attr_1 在该切分内是常值，值域按实际大小处理。
+考卷 gen_plants_exam.py，训练卷全二阶格子按实际值域逐格出题共 9248 条，
+与 AIM 和 GSD 文献的全二阶边缘 workload 同口径，一阶不出题由二阶精确边缘化，
+保留卷三阶四阶随机等值各 512 条加整数权重半空间 200 条共 1224 条，语义零交集，
+真值 numpy 矢量化数出，随机抽查 60 条与逐行求值逐条一致，每字段对格子和恰等行数。
+阅卷 eval_plants.py 与 test300 同口径，规模原因三阶 TVD 从全组合改为固定种子抽样 300 个边缘。
+
+跑法，run_plants.py 批量路径加配对，17412 行整表演化，800 轮上限重试 60，
+初始表用考卷二阶边缘化出的一阶比例独立抽样。
+基线 GSD 用 run_baseline_gsd_plants.py 同餐 9248 格加边缘化一阶零噪声搜索，
+PGM 这次缺席，原因是全二阶喂料等于 69 个字段的完全图，
+连接树宽爆炸拟合不动，文献里这个规模靠 AIM 自适应挑边缘，属加噪阶段的事。
+
+种子 1 成绩，指标依次是 measured，heldout，其中半空间，二阶 TVD，三阶 TVD，综合分。
+随机基线 0.2330，0.1243，0.1986，0.4592，0.5330，0.3374。
+GSD 0.000016，0.0096，0.0376，0.000032，0.0169，0.006640。
+本方法 0.000180，0.0074，0.0273，0.000354，0.0148，0.005677。
+
+结论三条。
+综合分本方法胜 GSD，泛化三轴全赢，保留卷等值高阶 0.0035 对 0.0041，
+半空间 0.0273 对 0.0376，三阶 TVD 0.0148 对 0.0169。
+训练卷贴合度 GSD 更低，它按残差阈值一直搜到几乎答满分，
+本方法 800 轮是轮数上限停的，全程零冻结损失仍在下降，训练卷还有余量。
+速度同一量级，本方法 CPU 2472 秒每轮均值 3.1 秒，GSD 在 4090 上 1224 秒，
+菜单预算每行约 32 条路径不随查询数爆炸，内存峰值约 14G。
+
 ## 运行
 
 ```bash
@@ -248,6 +277,11 @@ PGM 拟合约 14 秒，GSD 搜索约 9 秒，本方法第六刀提速后约 41 �
 
 # AIM 与 GSD 式评价，真实表自评、随机基线与任意合成表对比
 ./.venv/bin/python scripts/eval_test300.py results/evolved.csv
+
+# plants 真数据，生成考卷，整表演化，阅卷对比
+./.venv/bin/python scripts/gen_plants_exam.py
+./.venv/bin/python scripts/run_plants.py --rounds 800 --retries 60 --batched --pairing --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_curve_seed1.csv --save-table results/plants_seed1.csv
+./.venv/bin/python scripts/eval_plants.py results/plants_seed1.csv results/plants_gsd_seed1.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。
