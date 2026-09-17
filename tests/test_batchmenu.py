@@ -9,6 +9,8 @@ from resevo.batchmenu import (
     build_query_structure,
     condition_counts,
     generate_batch_menu,
+    halfspace_scores,
+    reconstruct_features,
 )
 from resevo.dataset import QuerySpec, StateRegistry, TableSchema
 from resevo.editspace import EditBudget
@@ -32,6 +34,15 @@ def _mixed_setup(seed: int):
         QuerySpec("q3", ({"attribute": "b", "operator": "==", "value": "0"},
                           {"attribute": "b", "operator": "between", "lower": 0, "upper": 1},
                           {"attribute": "d", "operator": "==", "value": "2"}), 2.0),
+        QuerySpec("q4", ({"operator": "halfspace",
+                          "scores": {"a": {"0": -3, "1": 5},
+                                     "b": {"0": 0, "1": 2, "2": -4},
+                                     "d": {"0": 1, "2": 6}},
+                          "threshold": 4},), 6.0),
+        QuerySpec("q5", ({"operator": "halfspace",
+                          "scores": {"c": {"0": 7, "1": -2},
+                                     "e": {"0": -1, "1": 3}},
+                          "threshold": 3},), 4.0),
     ]
     registry = StateRegistry(schema, specs)
     rows = [
@@ -43,13 +54,14 @@ def _mixed_setup(seed: int):
 
 @pytest.mark.parametrize("seed", range(6))
 def test_condition_counts_reconstruct_features(seed):
-    """条件计数与字段组个数的相等判断逐位重构注册表特征。"""
+    """条件计数加半空间分数的重构特征逐位等于注册表特征。"""
     registry, ids, _ = _mixed_setup(seed)
     codebook = CodeBook(registry)
     qs = build_query_structure(registry, codebook)
     codes = codebook.sync()
     cnt, _ = condition_counts(qs, codes)
-    rebuilt = (cnt == qs.ncond[None, :]).astype(np.float64)
+    score = halfspace_scores(qs, codes)
+    rebuilt = reconstruct_features(qs, cnt, score)
     workload = registry.build_workload(
         np.zeros(len(registry.specs)), np.ones(len(registry.specs))
     )

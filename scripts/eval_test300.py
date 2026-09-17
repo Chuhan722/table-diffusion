@@ -31,11 +31,26 @@ def evaluate_one(name, synth_rows, real_rows, schema, measured, heldout):
     n = len(real_rows)
     gm = gsd_query_errors(measured, synth_rows, schema, n)
     gh = gsd_query_errors(heldout, synth_rows, schema, n)
+    h_eq = [s for s in heldout if s.conditions[0]["operator"] != "halfspace"]
+    h_hs = [s for s in heldout if s.conditions[0]["operator"] == "halfspace"]
     a2 = aim_workload_error(real_rows, synth_rows, schema, 2)
     a3 = aim_workload_error(real_rows, synth_rows, schema, 3)
     print(f"\n== {name}，行数 {len(synth_rows)} ==")
-    print(f"GSD 式 measured 50   平均 {gm.average_error:.6f}  最大 {gm.max_error:.6f}")
-    print(f"GSD 式 heldout 1024  平均 {gh.average_error:.6f}  最大 {gh.max_error:.6f}")
+    print(
+        f"GSD 式 measured {gm.query_count}   "
+        f"平均 {gm.average_error:.6f}  最大 {gm.max_error:.6f}"
+    )
+    print(
+        f"GSD 式 heldout {gh.query_count}  "
+        f"平均 {gh.average_error:.6f}  最大 {gh.max_error:.6f}"
+    )
+    if h_eq and h_hs:
+        ge = gsd_query_errors(h_eq, synth_rows, schema, n)
+        gs = gsd_query_errors(h_hs, synth_rows, schema, n)
+        print(
+            f"  其中等值高阶 {ge.query_count} 平均 {ge.average_error:.6f}，"
+            f"半空间 {gs.query_count} 平均 {gs.average_error:.6f}"
+        )
     print(f"AIM 式 全部二阶边缘 45   平均 {a2.average_error:.6f}  最大 {a2.max_error:.6f}")
     print(f"AIM 式 全部三阶边缘 120  平均 {a3.average_error:.6f}  最大 {a3.max_error:.6f}")
     comp = composite_score(gm, gh, a2, a3)
@@ -64,8 +79,8 @@ def main() -> None:
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
-    measured = load_queries(str(DATA_DIR / "measured_50query.json"))
-    heldout = load_heldout_queries(str(DATA_DIR / "heldout_issue53_v1.json"))
+    measured = load_queries(str(DATA_DIR / "measured_698query.json"))
+    heldout = load_heldout_queries(str(DATA_DIR / "heldout_1224query.json"))
     assert_disjoint_workloads(measured, heldout)
     print(f"评价集校验通过，measured {len(measured)} 条与 heldout {len(heldout)} 条语义零交集")
 

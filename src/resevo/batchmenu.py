@@ -66,42 +66,82 @@ class CodeBook:
 class QueryStructure:
     """查询结构表，条件计数分解的全部静态信息，构造一次跨轮复用。
 
-    每条查询按涉及字段拆成字段级条件组，ncond 是字段组个数，
+    等值通道，每条查询按涉及字段拆成字段级条件组，ncond 是字段组个数，
     allow[j][t, v] 表示依赖字段 j 的第 t 条查询在 j 上的条件组对域值码 v 是否通过，
     一行通过查询当且仅当它在所有涉及字段上的条件组都通过，
     因此通过数计数矩阵 cnt 与 ncond 的相等判断精确重构查询特征。
+    半空间通道，每条半空间查询是跨字段整数加权分过线判断，
+    hs_score[j][t, v] 是第 t 条半空间查询里字段 j 取域值码 v 的整数分，
+    不带分的字段整列为零，行总分不小于 hs_threshold 才通过，全程整型无浮点误差，
+    半空间查询在 ncond 里记毒值 -1，等值通道的相等判断永不误命中。
     """
 
-    dep: tuple[NDArray[np.int64], ...]  # 每字段依赖查询列表
+    dep: tuple[NDArray[np.int64], ...]  # 每字段依赖查询列表，仅等值通道
     allow: tuple[NDArray[np.bool_], ...]  # 每字段 mj 乘 Kj 通过表
-    ncond: NDArray[np.int64]  # 每查询的字段组个数
+    ncond: NDArray[np.int64]  # 每查询的字段组个数，半空间查询为 -1
+    hs_cols: NDArray[np.int64]  # 半空间查询的全局列号
+    hs_threshold: NDArray[np.int64]  # 半空间整数阈值
+    hs_score: tuple[NDArray[np.int64], ...]  # 每字段 H 乘 Kj 整数分表
+
+    @property
+    def num_halfspaces(self) -> int:
+        return len(self.hs_cols)
 
 
 def build_query_structure(registry: StateRegistry, codebook: CodeBook) -> QueryStructure:
-    """从预编译条件构造查询结构表，同字段多条件按与合并。"""
+    """从预编译条件构造查询结构表，同字段多条件按与合并，半空间单列分数表。"""
     schema = registry.schema
     num_queries = len(registry.specs)
-    dep = registry.field_queries
+    num_fields = schema.num_fields
     ncond = np.zeros(num_queries, dtype=np.int64)
-    per_field_conds: list[dict[int, list[tuple]]] = [dict() for _ in range(schema.num_fields)]
+    per_field_conds: list[dict[int, list[tuple]]] = [dict() for _ in range(num_fields)]
+    hs_cols_list: list[int] = []
+    hs_tables: list[tuple] = []
+    hs_thresholds: list[int] = []
     for q, conds in enumerate(registry.compiled):
+        if conds and conds[0][0] == 3:
+            # 半空间查询编译期已校验单条件成查询
+            ncond[q] = -1
+            hs_cols_list.append(q)
+            hs_tables.append(conds[0][1])
+            hs_thresholds.append(int(conds[0][2]))
+            continue
         fields = set()
         for cond in conds:
             j = int(cond[1])
             fields.add(j)
             per_field_conds[j].setdefault(q, []).append(cond)
         ncond[q] = len(fields)
+    dep = []
     allow = []
-    for j in range(schema.num_fields):
+    for j in range(num_fields):
+        qlist = np.array(sorted(per_field_conds[j]), dtype=np.int64)
+        dep.append(qlist)
         domain = schema.domains[j]
-        table = np.ones((len(dep[j]), len(domain)), dtype=np.bool_)
-        for t, q in enumerate(dep[j]):
+        table = np.ones((len(qlist), len(domain)), dtype=np.bool_)
+        for t, q in enumerate(qlist):
             conds = tuple(per_field_conds[j][int(q)])
             for v, value in enumerate(domain):
                 # 借用编译求值语义，单字段条件组对该域值的与合并
-                table[t, v] = evaluate_compiled(conds, _probe_row(schema.num_fields, j, value)) > 0
+                table[t, v] = evaluate_compiled(conds, _probe_row(num_fields, j, value)) > 0
         allow.append(table)
-    return QueryStructure(dep, tuple(allow), ncond)
+    num_hs = len(hs_cols_list)
+    hs_score = []
+    for j in range(num_fields):
+        domain = schema.domains[j]
+        tab = np.zeros((num_hs, len(domain)), dtype=np.int64)
+        for t, tables in enumerate(hs_tables):
+            for jj, mapping in tables:
+                if jj == j:
+                    for v, value in enumerate(domain):
+                        tab[t, v] = mapping.get(value, 0)
+        hs_score.append(tab)
+    return QueryStructure(
+        tuple(dep), tuple(allow), ncond,
+        np.array(hs_cols_list, dtype=np.int64),
+        np.array(hs_thresholds, dtype=np.int64),
+        tuple(hs_score),
+    )
 
 
 def _probe_row(num_fields: int, j: int, value: str) -> tuple[str, ...]:
@@ -116,7 +156,8 @@ def condition_counts(
 ) -> tuple[NDArray[np.int16], list[NDArray[np.bool_]]]:
     """条件计数矩阵与每字段通过表，cnt[g,q] 是组 g 在查询 q 上通过的字段组数。
 
-    cnt 与 ncond 的相等判断逐位重构注册表特征，有测试把守。
+    只覆盖等值通道，半空间列恒为零且 ncond 是毒值不会误判，
+    等值列的 cnt 与 ncond 相等判断逐位重构注册表特征，有测试把守。
     """
     num_groups, num_fields = codes_g.shape
     cnt = np.zeros((num_groups, len(qs.ncond)), dtype=np.int16)
@@ -131,19 +172,55 @@ def condition_counts(
     return cnt, pass_list
 
 
-class CntCache:
-    """状态级条件计数缓存，行与注册表编号对齐，只增不改跨轮复用。
+def halfspace_scores(
+    qs: QueryStructure, codes_g: NDArray[np.int32]
+) -> NDArray[np.int64]:
+    """半空间加权分矩阵，score[g,t] 是组 g 在第 t 条半空间查询的整数总分。
 
-    每状态的条件计数只依赖状态本身，与轮次无关，
+    分数只依赖状态本身，通过判断是 score 不小于 hs_threshold。
+    """
+    num_groups, num_fields = codes_g.shape
+    score = np.zeros((num_groups, qs.num_halfspaces), dtype=np.int64)
+    if qs.num_halfspaces == 0:
+        return score
+    for j in range(num_fields):
+        tab = qs.hs_score[j]
+        if tab.size and tab.any():
+            score += tab[:, codes_g[:, j]].T
+    return score
+
+
+def reconstruct_features(
+    qs: QueryStructure,
+    cnt: NDArray[np.int16],
+    score: NDArray[np.int64],
+) -> NDArray[np.float64]:
+    """由条件计数与半空间分数重构查询特征，供对拍注册表使用。
+
+    等值列通过当且仅当计数打满字段组数，半空间列通过当且仅当分数过线。
+    """
+    feats = (cnt == qs.ncond[None, :]).astype(np.float64)
+    if qs.num_halfspaces:
+        feats[:, qs.hs_cols] = (score >= qs.hs_threshold[None, :]).astype(np.float64)
+    return feats
+
+
+class CntCache:
+    """状态级条件计数与半空间分数缓存，行与注册表编号对齐，只增不改跨轮复用。
+
+    每状态的计数与分数只依赖状态本身，与轮次无关，
     新注册状态按增量补算，每轮取行只是一次切片拷贝。
     """
 
     def __init__(self, qs: QueryStructure):
         self.qs = qs
         self._cnt = np.empty((0, len(qs.ncond)), dtype=np.int16)
+        self._score = np.empty((0, qs.num_halfspaces), dtype=np.int64)
         self._synced = 0
 
-    def sync(self, codes: NDArray[np.int32]) -> NDArray[np.int16]:
+    def sync(
+        self, codes: NDArray[np.int32]
+    ) -> tuple[NDArray[np.int16], NDArray[np.int64]]:
         total = codes.shape[0]
         if total > self._cnt.shape[0]:
             capacity = max(1024, self._cnt.shape[0])
@@ -152,13 +229,21 @@ class CntCache:
             grown = np.empty((capacity, self._cnt.shape[1]), dtype=np.int16)
             grown[: self._synced] = self._cnt[: self._synced]
             self._cnt = grown
+            grown_s = np.empty((capacity, self._score.shape[1]), dtype=np.int64)
+            grown_s[: self._synced] = self._score[: self._synced]
+            self._score = grown_s
         if total > self._synced:
             fresh, _ = condition_counts(self.qs, codes[self._synced : total])
             self._cnt[self._synced : total] = fresh
+            self._score[self._synced : total] = halfspace_scores(
+                self.qs, codes[self._synced : total]
+            )
             self._synced = total
-        view = self._cnt[:total]
-        view.setflags(write=False)
-        return view
+        cnt_view = self._cnt[:total]
+        cnt_view.setflags(write=False)
+        score_view = self._score[:total]
+        score_view.setflags(write=False)
+        return cnt_view, score_view
 
 
 @dataclass(frozen=True)

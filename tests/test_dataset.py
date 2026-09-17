@@ -189,3 +189,68 @@ def test_register_edit_rejects_bad_base(loaded):
     registry.register_table(rows[:3])
     with pytest.raises(ValueError):
         registry.register_edit(99, rows[0])
+
+
+def test_halfspace_query_semantics():
+    """半空间查询全路径同值，直接求值，编译求值，注册与增量注册。"""
+    import numpy as np
+
+    from resevo.dataset import (
+        QuerySpec,
+        StateRegistry,
+        TableSchema,
+        compile_conditions,
+        evaluate_compiled,
+        evaluate_query,
+        query_field_sets,
+    )
+
+    schema = TableSchema(
+        ("x", "y", "z"),
+        (("0", "1"), ("a", "b", "c"), ("0", "1")),
+    )
+    hs = {"operator": "halfspace",
+          "scores": {"x": {"0": -2, "1": 3}, "y": {"a": 1, "c": -4}},
+          "threshold": 2}
+    specs = [
+        QuerySpec("h0", (hs,), 0.0),
+        QuerySpec("e0", ({"attribute": "z", "operator": "==", "value": "1"},), 0.0),
+    ]
+    assert query_field_sets(specs, schema)[0] == (0, 1)
+    compiled = compile_conditions(specs, schema)
+    rng = np.random.default_rng(0)
+    registry = StateRegistry(schema, specs)
+    for _ in range(60):
+        row = tuple(dom[int(rng.integers(len(dom)))] for dom in schema.domains)
+        total = {"0": -2, "1": 3}[row[0]] + {"a": 1, "b": 0, "c": -4}[row[1]]
+        want = 1.0 if total >= 2 else 0.0
+        assert evaluate_query(specs[0], row, schema) == want
+        assert evaluate_compiled(compiled[0], row) == want
+        base_id = registry.register(row)
+        # 增量注册路径改半空间涉及字段，与全量注册特征逐位一致
+        edited = list(row)
+        j = int(rng.integers(3))
+        dom = schema.domains[j]
+        edited[j] = dom[(dom.index(row[j]) + 1) % len(dom)]
+        eid = registry.register_edit(base_id, tuple(edited))
+        full = np.array(
+            [evaluate_query(s, tuple(edited), schema) for s in specs]
+        )
+        np.testing.assert_array_equal(
+            registry.build_workload(np.zeros(2), np.ones(2)).features[eid], full
+        )
+
+
+def test_halfspace_must_be_single_condition():
+    """半空间混搭其他条件在编译期拒绝。"""
+    import pytest as _pytest
+
+    from resevo.dataset import QuerySpec, TableSchema, compile_conditions
+
+    schema = TableSchema(("x",), (("0", "1"),))
+    bad = QuerySpec("b0", (
+        {"operator": "halfspace", "scores": {"x": {"0": 1}}, "threshold": 1},
+        {"attribute": "x", "operator": "==", "value": "1"},
+    ), 0.0)
+    with _pytest.raises(ValueError):
+        compile_conditions([bad], schema)

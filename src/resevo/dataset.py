@@ -87,20 +87,41 @@ def evaluate_condition(cond: dict, value: str) -> bool:
 def evaluate_query(
     spec: QuerySpec, row: tuple[str, ...], schema: TableSchema
 ) -> float:
-    """谓词计数贡献，全部条件同时满足记 1 否则记 0。"""
+    """谓词计数贡献，全部条件同时满足记 1 否则记 0。
+
+    半空间条件是跨字段的整数加权分过线判断，
+    每字段每取值一个整数分，行的总分不小于阈值才通过，全程整型无浮点误差。
+    """
     for cond in spec.conditions:
+        if cond["operator"] == "halfspace":
+            total = 0
+            for fname, table in cond["scores"].items():
+                total += int(table.get(row[schema.field_index(fname)], 0))
+            if total < int(cond["threshold"]):
+                return 0.0
+            continue
         j = schema.field_index(cond["attribute"])
         if not evaluate_condition(cond, row[j]):
             return 0.0
     return 1.0
 
 
+def _condition_fields(cond: dict, schema: TableSchema) -> set[int]:
+    """单条件涉及的字段索引集合，半空间条件覆盖它所有带分字段。"""
+    if cond["operator"] == "halfspace":
+        return {schema.field_index(f) for f in cond["scores"]}
+    return {schema.field_index(cond["attribute"])}
+
+
 def query_field_sets(specs: list[QuerySpec], schema: TableSchema) -> list[tuple[int, ...]]:
     """每个查询依赖的字段索引集合，联合修改来源用它找关联字段。"""
-    return [
-        tuple(sorted({schema.field_index(c["attribute"]) for c in spec.conditions}))
-        for spec in specs
-    ]
+    out = []
+    for spec in specs:
+        fields: set[int] = set()
+        for c in spec.conditions:
+            fields |= _condition_fields(c, schema)
+        out.append(tuple(sorted(fields)))
+    return out
 
 
 def compile_conditions(
@@ -108,21 +129,39 @@ def compile_conditions(
 ) -> tuple[tuple[tuple, ...], ...]:
     """把查询条件预编译成字段索引加算子码，求值热路径不再做字段名查找。
 
-    每条件编译为 (算子码, 字段索引, 等值串, 下界, 上界)，
-    算子码 0 等值比串，1 介于闭区间，2 大于等于，与 evaluate_condition 语义一致。
+    每条件编译为 (算子码, 载荷一, 载荷二, 下界, 上界)，
+    算子码 0 等值比串，1 介于闭区间，2 大于等于，与 evaluate_condition 语义一致，
+    算子码 3 半空间，载荷一是按字段排序的 (字段索引, 取值到整数分映射) 元组，
+    载荷二是整数阈值，行的总分不小于阈值才通过。
+    半空间查询必须单条件成查询，等值通道与分数通道不混在同一条查询里。
     """
     compiled = []
     for spec in specs:
         conds = []
         for c in spec.conditions:
-            j = schema.field_index(c["attribute"])
             op = c["operator"]
             if op == "==":
+                j = schema.field_index(c["attribute"])
                 conds.append((0, j, str(c["value"]), 0.0, 0.0))
             elif op == "between":
+                j = schema.field_index(c["attribute"])
                 conds.append((1, j, "", float(c["lower"]), float(c["upper"])))
             elif op == ">=":
+                j = schema.field_index(c["attribute"])
                 conds.append((2, j, "", float(c["value"]), 0.0))
+            elif op == "halfspace":
+                if len(spec.conditions) != 1:
+                    raise ValueError("半空间查询必须单条件成查询")
+                tables = tuple(
+                    sorted(
+                        (
+                            schema.field_index(f),
+                            {str(v): int(s) for v, s in tab.items()},
+                        )
+                        for f, tab in c["scores"].items()
+                    )
+                )
+                conds.append((3, tables, int(c["threshold"]), 0.0, 0.0))
             else:
                 raise ValueError(f"不支持的算子 {op}")
         compiled.append(tuple(conds))
@@ -131,16 +170,22 @@ def compile_conditions(
 
 def evaluate_compiled(conds: tuple[tuple, ...], row: tuple[str, ...]) -> float:
     """预编译条件的谓词计数贡献，与 evaluate_query 精确同值。"""
-    for code, j, sval, lo, hi in conds:
+    for code, a, b, lo, hi in conds:
         if code == 0:
-            if row[j] != sval:
+            if row[a] != b:
                 return 0.0
         elif code == 1:
-            v = float(row[j])
+            v = float(row[a])
             if not (lo <= v <= hi):
                 return 0.0
+        elif code == 2:
+            if float(row[a]) < lo:
+                return 0.0
         else:
-            if float(row[j]) < lo:
+            total = 0
+            for j, table in a:
+                total += table.get(row[j], 0)
+            if total < b:
                 return 0.0
     return 1.0
 

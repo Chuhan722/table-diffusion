@@ -45,6 +45,18 @@ def _scene(seed: int, num_rows: int = 36):
         QuerySpec("q3", ({"attribute": "c", "operator": "==", "value": "1"},
                           {"attribute": "d", "operator": "==", "value": "0"}),
                   float(rng.integers(2, 20))),
+        QuerySpec("q4", ({"operator": "halfspace",
+                          "scores": {"a": {"0": 2, "1": -1},
+                                     "b": {"1": 3, "2": -2},
+                                     "c": {"0": 1, "1": -5},
+                                     "d": {"0": 0, "1": 4, "2": -3}},
+                          "threshold": 2},),
+                  float(rng.integers(2, 20))),
+        QuerySpec("q5", ({"operator": "halfspace",
+                          "scores": {"b": {"0": 6, "2": -6},
+                                     "d": {"1": 5, "2": 5}},
+                          "threshold": 5},),
+                  float(rng.integers(2, 20))),
     ]
     registry = StateRegistry(schema, specs)
     base = [tuple(str(rng.integers(len(dom))) for dom in schema.domains) for _ in range(8)]

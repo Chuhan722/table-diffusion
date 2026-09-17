@@ -22,6 +22,7 @@ from .batchmenu import (
     build_query_structure,
     condition_counts,
     generate_batch_menu,
+    halfspace_scores,
 )
 from .dataset import StateRegistry
 from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
@@ -160,6 +161,47 @@ def _delta_parts(
     return parts
 
 
+def _halfspace_delta(
+    menu: BatchMenu,
+    qs: QueryStructure,
+    score_g: NDArray[np.int64],
+    codes_g: NDArray[np.int32],
+) -> NDArray[np.float64] | None:
+    """半空间通道的答案差，路径乘半空间的稠密矩阵，无半空间时返回 None。
+
+    半空间一般依赖全部字段，答案差在半空间列上天然稠密，
+    每槽的分数调整按字段分桶整列查表，通过判断全程整型，
+    新旧过线之差才落成浮点，与逐查询求值精确同值。
+    """
+    num_hs = qs.num_halfspaces
+    if num_hs == 0 or menu.num_paths == 0:
+        return None
+    adj = np.zeros((menu.num_paths, num_hs), dtype=np.int64)
+    for slot in range(3):
+        live = np.flatnonzero(menu.fields[:, slot] >= 0)
+        if len(live) == 0:
+            continue
+        j_of = menu.fields[live, slot]
+        order = np.argsort(j_of, kind="stable")
+        live_s = live[order]
+        j_s = j_of[order]
+        bounds = np.flatnonzero(np.r_[True, j_s[1:] != j_s[:-1], True])
+        for b in range(len(bounds) - 1):
+            sel = live_s[bounds[b] : bounds[b + 1]]
+            j = int(j_s[bounds[b]])
+            tab = qs.hs_score[j]
+            if not (tab.size and tab.any()):
+                continue
+            cur = codes_g[menu.group[sel], j]
+            new = menu.values[sel, slot]
+            adj[sel] += (tab[:, new] - tab[:, cur]).T
+    base = score_g[menu.group]
+    thresh = qs.hs_threshold[None, :]
+    delta = ((base + adj) >= thresh).astype(np.float64)
+    delta -= base >= thresh
+    return delta
+
+
 def build_batch_kernel(
     workload: Workload,
     grouped: GroupedTable,
@@ -187,16 +229,24 @@ def build_batch_kernel(
 
     codes_g = codes[grouped.unique_ids]
     if cnt_cache is not None:
-        cnt = cnt_cache.sync(codes)[grouped.unique_ids]
+        cnt_all, score_all = cnt_cache.sync(codes)
+        cnt = cnt_all[grouped.unique_ids]
+        score_g = score_all[grouped.unique_ids]
     else:
         cnt, _ = condition_counts(qs, codes_g)
+        score_g = halfspace_scores(qs, codes_g)
     parts = _delta_parts(menu, qs, cnt, codes_g, workload.num_queries)
+    delta_hs = _halfspace_delta(menu, qs, score_g, codes_g)
     we = workload.weights * residual
     gains_paths = np.zeros(menu.num_paths, dtype=np.float64)
     for sparse, path_idx in parts:
         squared = sparse.copy()
         squared.data = squared.data * squared.data
         gains_paths[path_idx] = sparse @ we - (squared @ workload.weights) / 2
+    if delta_hs is not None:
+        w_hs = workload.weights[qs.hs_cols]
+        gains_paths += delta_hs @ we[qs.hs_cols]
+        gains_paths -= (delta_hs * delta_hs) @ w_hs / 2
 
     # flat 结构，每段索引 0 是保持项，其后依次是该组菜单路径
     lengths = np.diff(menu.offsets) + 1
@@ -248,6 +298,14 @@ def build_batch_kernel(
         weights=np.concatenate(weight_parts) if weight_parts else None,
         minlength=num_groups * workload.num_queries,
     ).reshape(num_groups, workload.num_queries)
+    if delta_hs is not None:
+        # 菜单路径组内连续，半空间漂移按段边界一次 reduceat 聚合
+        weighted = delta_hs * rates_paths[:, None]
+        starts = np.minimum(menu.offsets[:-1], len(weighted))
+        padded = np.vstack([weighted, np.zeros((1, delta_hs.shape[1]))])
+        seg = np.add.reduceat(padded, starts, axis=0)
+        seg[np.diff(menu.offsets) == 0] = 0.0
+        drifts[:, qs.hs_cols] += seg
     drift_total = counts @ drifts
     self_cross = float(counts @ ((drifts * drifts) @ workload.weights))
     interaction = float(

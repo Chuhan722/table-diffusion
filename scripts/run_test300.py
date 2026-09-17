@@ -1,6 +1,7 @@
 """test 数据端到端实验，编辑候选加候选提供器跑满演化并输出损失曲线。
 
-初始表各字段独立均匀随机生成 300 行，不偷看真实表的联合结构，
+初始表默认按考卷二阶答案边缘化出的一阶比例逐字段独立抽样，
+不偷看真实表的联合结构，关联结构留给演化去修，
 目标 y 直接取查询负载里的真实答案，权重单位对角，
 菜单随机数与抽样随机数分开，冻结重试上限 10。
 用法示例，./.venv/bin/python scripts/run_test300.py --rounds 400
@@ -28,6 +29,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
+from resevo.initialization import derive_first_order, sample_initial_rows  # noqa: E402
 from resevo.pairing import make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -59,23 +61,41 @@ def main() -> None:
         "--batched", action="store_true",
         help="启用懒注册批量菜单，候选用差分表示不注册，抽中落地才登记",
     )
+    parser.add_argument(
+        "--exam", type=str, default="measured_698query.json",
+        help="训练考卷文件名，在 data/test_300x10 目录下",
+    )
+    parser.add_argument(
+        "--uniform-init", action="store_true",
+        help="退回纯均匀随机初始化，默认用考卷二阶边缘化出的一阶比例",
+    )
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
-    specs = load_queries(str(DATA_DIR / "measured_50query.json"))
+    specs = load_queries(str(DATA_DIR / args.exam))
     y = target_from_specs(specs)
     w = np.ones(len(specs))
-    field_sets = [fs for fs in query_field_sets(specs, schema) if len(fs) >= 2]
+    seen = set()
+    field_sets = []
+    for fs in query_field_sets(specs, schema):
+        # 联合修改来源，二到四字段集合去重，半空间的全字段集合不进来源
+        if 2 <= len(fs) <= 4 and fs not in seen:
+            seen.add(fs)
+            field_sets.append(fs)
 
     registry = StateRegistry(schema, specs)
     init_rng = np.random.default_rng(args.init_seed)
-    init_rows = [
-        tuple(
-            schema.domains[j][int(init_rng.integers(len(schema.domains[j])))]
-            for j in range(schema.num_fields)
-        )
-        for _ in range(len(real_rows))
-    ]
+    if args.uniform_init:
+        init_rows = [
+            tuple(
+                schema.domains[j][int(init_rng.integers(len(schema.domains[j])))]
+                for j in range(schema.num_fields)
+            )
+            for _ in range(len(real_rows))
+        ]
+    else:
+        marginals = derive_first_order(specs, schema, len(real_rows))
+        init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
     ids = registry.register_table(init_rows)
 
     factory = make_paired_provider if args.pairing else make_edit_provider

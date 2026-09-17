@@ -1,0 +1,80 @@
+"""初始化模块测试，一阶边缘化对拍真实表与按比例抽样分布。"""
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+from resevo.dataset import QuerySpec, load_queries, load_table
+from resevo.initialization import (
+    _atom_signature,
+    _atom_values,
+    derive_first_order,
+    sample_initial_rows,
+)
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "test_300x10"
+
+
+@pytest.fixture(scope="module")
+def loaded():
+    schema, rows = load_table(str(DATA_DIR / "test_300x10.csv"))
+    specs = load_queries(str(DATA_DIR / "measured_698query.json"))
+    return schema, rows, specs
+
+
+def test_derive_first_order_matches_real_table(loaded):
+    """二阶边缘化出的一阶原子计数逐个等于真实表直接统计。"""
+    schema, rows, specs = loaded
+    marginals = derive_first_order(specs, schema, len(rows))
+    assert len(marginals) == schema.num_fields
+    for j, atoms in enumerate(marginals):
+        total = 0
+        for cond, count in atoms:
+            covered = set(_atom_values(cond, schema.domains[j]))
+            true_count = sum(1 for r in rows if r[j] in covered)
+            assert count == true_count, f"字段 {schema.fields[j]} 原子 {cond} 计数不符"
+            total += count
+        assert total == len(rows)
+
+
+def test_sample_initial_rows_proportions(loaded):
+    """抽样起点表的原子比例贴近边缘化计数，字段值都在域内。"""
+    schema, rows, specs = loaded
+    marginals = derive_first_order(specs, schema, len(rows))
+    rng = np.random.default_rng(7)
+    n = 6000
+    sampled = sample_initial_rows(marginals, schema, n, rng)
+    assert len(sampled) == n
+    for j, atoms in enumerate(marginals):
+        domain = set(schema.domains[j])
+        assert all(r[j] in domain for r in sampled)
+        for cond, count in atoms:
+            covered = set(_atom_values(cond, schema.domains[j]))
+            got = sum(1 for r in sampled if r[j] in covered) / n
+            want = count / len(rows)
+            assert abs(got - want) < 0.03, f"字段 {schema.fields[j]} 原子比例偏差过大"
+
+
+def test_derive_rejects_incomplete_coverage():
+    """覆盖不全的考卷拒绝边缘化，防止静默错比例。"""
+    from resevo.dataset import TableSchema
+
+    schema = TableSchema(("x", "y"), (("0", "1"), ("a", "b")))
+    specs = [
+        QuerySpec("q1", (
+            {"attribute": "x", "operator": "==", "value": "0"},
+            {"attribute": "y", "operator": "==", "value": "a"},
+        ), 3.0),
+    ]
+    with pytest.raises(ValueError):
+        derive_first_order(specs, schema, 10)
+
+
+def test_atom_signature_normalizes():
+    """同语义不同写法的原子签名一致。"""
+    a = {"attribute": "age", "operator": "between", "lower": 18, "upper": 24}
+    b = {"attribute": "age", "operator": "between", "lower": 18.0, "upper": 24.0}
+    assert _atom_signature(a) == _atom_signature(b)

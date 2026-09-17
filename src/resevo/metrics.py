@@ -115,11 +115,23 @@ def load_heldout_queries(json_path: str) -> list[QuerySpec]:
 
 
 def canonical_condition_set(spec: QuerySpec) -> frozenset:
-    """查询的语义规范形式，用于校验评价集与生成集零交集。"""
+    """查询的语义规范形式，用于校验评价集与生成集零交集。
+
+    半空间的规范形式是去掉零分项后的 (字段, 取值, 整数分) 集合加阈值，
+    零分项在求值里与缺项同义，去掉后语义等价判定才不受写法影响。
+    """
     out = []
     for c in spec.conditions:
         if c["operator"] == "between":
             out.append((c["attribute"], "between", float(c["lower"]), float(c["upper"])))
+        elif c["operator"] == "halfspace":
+            entries = frozenset(
+                (f, str(v), int(s))
+                for f, tab in c["scores"].items()
+                for v, s in tab.items()
+                if int(s) != 0
+            )
+            out.append(("halfspace", entries, int(c["threshold"])))
         else:
             out.append((c["attribute"], c["operator"], str(c.get("value"))))
     return frozenset(out)
