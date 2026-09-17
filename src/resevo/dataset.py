@@ -179,6 +179,16 @@ class StateRegistry:
     def num_states(self) -> int:
         return self._count
 
+    @property
+    def field_queries(self) -> tuple[np.ndarray, ...]:
+        """字段到受影响查询列的依赖索引，批量菜单与增量注册共用。"""
+        return self._field_queries
+
+    @property
+    def compiled(self) -> tuple[tuple[tuple, ...], ...]:
+        """预编译查询条件，批量结构表构造时按域值求通过表。"""
+        return self._compiled
+
     def state_tuple(self, state_id: int) -> tuple[str, ...]:
         return self._tuples[state_id]
 

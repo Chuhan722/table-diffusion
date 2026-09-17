@@ -102,11 +102,15 @@ def calibrate_beta_flat(
             raise FloatingPointError("无法括住 beta 根，检查数值条件")
         for _ in range(80):
             mid = (lo + hi) / 2.0
+            if mid <= lo or mid >= hi:
+                break  # 区间已到浮点分辨极限，继续二分不再改变端点
             _, D_mid = evaluate(mid)
             if D_mid >= requirement:
                 hi = mid
             else:
                 lo = mid
+            if hi - lo <= 1e-13 * hi:
+                break  # 相对宽度到达双精度水平，再分下去只动末两位
         beta = hi  # 取满足约束的上端点
         ps, D = evaluate(beta)
     if D <= 0:

@@ -24,6 +24,7 @@ from resevo.dataset import (  # noqa: E402
     query_field_sets,
     target_from_specs,
 )
+from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
@@ -54,6 +55,10 @@ def main() -> None:
         "--grouped", action="store_true",
         help="启用重复记录压缩，相同状态的行共享菜单增益概率并按多项分布抽样",
     )
+    parser.add_argument(
+        "--batched", action="store_true",
+        help="启用懒注册批量菜单，候选用差分表示不注册，抽中落地才登记",
+    )
     args = parser.parse_args()
 
     schema, real_rows = load_table(str(DATA_DIR / "test_300x10.csv"))
@@ -74,7 +79,14 @@ def main() -> None:
     ids = registry.register_table(init_rows)
 
     factory = make_paired_provider if args.pairing else make_edit_provider
-    if args.grouped:
+    if args.batched:
+        provider = make_batch_provider(
+            registry, y, w,
+            np.random.default_rng(args.menu_seed),
+            joint_field_sets=field_sets,
+            pairing=args.pairing,
+        )
+    elif args.grouped:
         provider = make_grouped_provider(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
@@ -91,7 +103,14 @@ def main() -> None:
     print(f"行数 {len(ids)}，查询数 {len(specs)}，初始损失 {initial_loss:.6f}")
 
     t0 = time.perf_counter()
-    if args.grouped:
+    if args.batched:
+        out = evolve_batch(
+            ids, args.rounds,
+            np.random.default_rng(args.sample_seed),
+            provider, registry,
+            max_frozen_retries=args.retries,
+        )
+    elif args.grouped:
         out = evolve_grouped(
             ids, args.rounds,
             np.random.default_rng(args.sample_seed),
