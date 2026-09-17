@@ -53,6 +53,7 @@ class BatchKernelResult:
     max_gain_sum: float
     required_gain: float
     status: str
+    group_scores: NDArray[np.float64] | None = None  # 每组错位分，供工作批挑组
 
 
 def _delta_parts(
@@ -223,6 +224,7 @@ def build_batch_kernel(
     numerical_tol: float = 1e-12,
     cnt_cache: CntCache | None = None,
     beta_hint: float | None = None,
+    want_scores: bool = False,
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
@@ -235,6 +237,12 @@ def build_batch_kernel(
     num_groups = grouped.num_groups
     residual = grouped_residual(workload, grouped)
     old_loss = loss_from_residual(workload, residual)
+    group_scores = None
+    if want_scores:
+        # 组错位分，组覆盖的题按绝对加权残差求和，供工作批挑组
+        group_scores = workload.features[grouped.unique_ids] @ (
+            workload.weights * np.abs(residual)
+        )
 
     codes_g = codes[grouped.unique_ids]
     if cnt_cache is not None:
@@ -289,6 +297,7 @@ def build_batch_kernel(
             menu, grouped, offsets, tilt.probabilities, old_loss,
             0.0, 0.0, 0.0, 0.0, old_loss, old_loss, 0.0,
             tilt.max_gain_sum, tilt.required_gain, "no_positive_direction",
+            group_scores,
         )
 
     rates_flat = tilt.probabilities.copy()
@@ -349,6 +358,7 @@ def build_batch_kernel(
         tilt.beta, tilt.direction_gain, interaction, step,
         expected_loss, upper, step * unit_rows,
         tilt.max_gain_sum, tilt.required_gain, "ok",
+        group_scores,
     )
 
 
@@ -424,6 +434,10 @@ def make_batch_provider(
     pairing: bool = False,
     pairing_backoff: int = 4,
     defer_workload: bool = False,
+    work_rows: int = 0,
+    work_random_frac: float = 0.25,
+    select_rng: np.random.Generator | None = None,
+    work_below_step: float = 0.0,
 ):
     """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
 
@@ -432,16 +446,78 @@ def make_batch_provider(
     backoff 取 1 即每次重试都配对，等价旧行为。
     defer_workload 为真时批量轮的计划只携带目标与权重不物化特征矩阵，
     供 GPU 后端配合惰性注册表使用，行级回退轮仍取完整负载。
+
+    工作批，work_rows 为正时每轮按上一轮核回传的组错位分挑组上场，
+    定向额度按分数降序装组，其余名额从剩下的组随机装到 work_rows 行，
+    未选组本轮菜单为空段等价保持概率 1，行原地不动不进核，
+    没上过场的新状态分数视为无穷大必入选，冻结重试轮回退全量搜索，
+    首轮尚无分数也走全量，work_rows 取 0 与旧行为逐位一致。
+    work_below_step 为正时早期全量演化，观测到某轮步长低于该值才开闸裁组，
+    单向切换不来回抖，早期残差处处大全员上场步长本就顶格，裁组只会自缚手脚。
     """
     if pairing_backoff < 1:
         raise ValueError("配对退避周期必须为正")
+    if not (0.0 <= work_random_frac <= 1.0):
+        raise ValueError("随机名额比例必须落在 [0,1]")
+    sel_rng = select_rng if select_rng is not None else np.random.default_rng(0)
     codebook = CodeBook(registry)
     structure_box: list[QueryStructure] = []
     cache_box: list[CntCache] = []
+    score_box: list[NDArray[np.float64]] = [np.empty(0, dtype=np.float64)]
+    gate_box = [work_below_step <= 0.0]  # 阈值非正则立即启用
+
+    def note_step(step: float) -> None:
+        """观测批量轮步长，低于阈值后永久开闸启用工作批。"""
+        if not gate_box[0] and step < work_below_step:
+            gate_box[0] = True
+
+    def feed_scores(unique_ids, scores) -> None:
+        """按状态号记组错位分，数组按需扩容，新号默认无穷大。"""
+        arr = score_box[0]
+        uids = np.asarray(unique_ids, dtype=np.int64)
+        need = int(uids.max()) + 1 if uids.size else 0
+        if need > len(arr):
+            grown = np.full(max(need, 2 * len(arr)), np.inf, dtype=np.float64)
+            grown[: len(arr)] = arr
+            score_box[0] = arr = grown
+        arr[uids] = scores
+
+    def _select_groups(grouped: GroupedTable) -> NDArray[np.int64] | None:
+        """挑本轮上场的组，返回升序组索引，None 表示全量。"""
+        arr = score_box[0]
+        if work_rows <= 0 or arr.size == 0 or not gate_box[0]:
+            return None
+        counts = grouped.counts
+        if int(counts.sum()) <= work_rows:
+            return None
+        uids = grouped.unique_ids
+        scores = np.full(len(uids), np.inf, dtype=np.float64)
+        known = uids < len(arr)
+        scores[known] = arr[uids[known]]
+        # 分数降序，平分按状态号升序，保证同种子可复现
+        order = np.lexsort((uids, -scores))
+        directed = int(round(work_rows * (1.0 - work_random_frac)))
+        chosen = order[:0]
+        taken = 0
+        if directed > 0:
+            cum = np.cumsum(counts[order])
+            j = int(np.searchsorted(cum, directed, side="left"))
+            chosen = order[: j + 1]
+            taken = int(cum[j])
+        rest = order[len(chosen):]
+        remaining = work_rows - taken
+        if remaining > 0 and len(rest) > 0:
+            perm = rest[sel_rng.permutation(len(rest))]
+            cum2 = np.cumsum(counts[perm])
+            j2 = min(int(np.searchsorted(cum2, remaining, side="left")), len(perm) - 1)
+            chosen = np.concatenate([chosen, perm[: j2 + 1]])
+        return np.sort(chosen)
 
     def provider(state_ids, round_index: int, frozen_streak: int = 0) -> BatchRoundPlan:
+        # 惰性负载模式禁配对回退，行级路径要物化全部历史状态特征，
+        # 步长解放后注册可达百万级一次物化即打爆内存，重试只刷全量菜单
         pairing_turn = frozen_streak <= 3 or frozen_streak % pairing_backoff == 0
-        if pairing and frozen_streak > 0 and pairing_turn:
+        if pairing and not defer_workload and frozen_streak > 0 and pairing_turn:
             table = tuples_from_ids(registry, state_ids)
             singles = generate_edit_supports(
                 table, registry.schema, registry, menu_rng, budget, joint_field_sets
@@ -455,10 +531,26 @@ def make_batch_provider(
             cache_box.append(CntCache(structure_box[0]))
         codes = codebook.sync()
         grouped = group_state_ids(state_ids)
-        menu = generate_batch_menu(
-            codes[grouped.unique_ids], grouped.counts, codebook.domain_sizes,
-            menu_rng, budget, joint_field_sets,
-        )
+        codes_g = codes[grouped.unique_ids]
+        sel = None if frozen_streak > 0 else _select_groups(grouped)
+        if sel is None:
+            menu = generate_batch_menu(
+                codes_g, grouped.counts, codebook.domain_sizes,
+                menu_rng, budget, joint_field_sets,
+            )
+        else:
+            # 只给选中组生成路径，再散回全组编号，未选组为空段
+            sub = generate_batch_menu(
+                codes_g[sel], grouped.counts[sel], codebook.domain_sizes,
+                menu_rng, budget, joint_field_sets,
+            )
+            per_group = np.zeros(grouped.num_groups, dtype=np.int64)
+            per_group[sel] = np.diff(sub.offsets)
+            offsets_full = np.zeros(grouped.num_groups + 1, dtype=np.int64)
+            np.cumsum(per_group, out=offsets_full[1:])
+            menu = BatchMenu(
+                offsets_full, sel[sub.group], sub.fields, sub.values, sub.mass
+            )
         if defer_workload:
             workload = Workload(
                 np.empty((0, len(np.asarray(target)))),
@@ -472,6 +564,9 @@ def make_batch_provider(
     provider.codebook = codebook
     provider.structure = structure_box
     provider.cnt_cache = cache_box
+    provider.feed_scores = feed_scores
+    provider.note_step = note_step
+    provider.wants_scores = work_rows > 0
     return provider
 
 
@@ -533,9 +628,16 @@ def evolve_batch(
                     stay_probability, alpha, damping, max_expected_rows,
                     cnt_cache=cache[0] if cache else None,
                     beta_hint=last_beta,
+                    want_scores=bool(getattr(plan_provider, "wants_scores", False)),
                 )
             if result.beta > 0.0:
                 last_beta = result.beta
+            feed = getattr(plan_provider, "feed_scores", None)
+            if feed is not None and result.group_scores is not None:
+                feed(result.grouped.unique_ids, result.group_scores)
+            note = getattr(plan_provider, "note_step", None)
+            if note is not None and result.status == "ok":
+                note(result.step)
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
         records.append(

@@ -77,9 +77,26 @@ def main() -> None:
         "--gpu", action="store_true",
         help="批量轮核构造走 cupy 后端，需 --batched，抽样与回退仍在 CPU",
     )
+    parser.add_argument(
+        "--work-rows", type=int, default=0,
+        help="工作批行数，每轮按错位分挑组上场其余保持，0 为全量，需 --batched",
+    )
+    parser.add_argument(
+        "--work-random", type=float, default=0.25,
+        help="工作批随机名额比例，防止低分组饿死",
+    )
+    parser.add_argument(
+        "--select-seed", type=int, default=20260917, help="工作批挑组随机种子"
+    )
+    parser.add_argument(
+        "--work-below", type=float, default=0.0,
+        help="步长低于该值后才启用工作批，早期全量后期裁组，0 为立即启用",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
+    if args.work_rows > 0 and not args.batched:
+        parser.error("--work-rows 只支持批量路径，请同时带 --batched")
 
     schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
     specs = load_queries(str(DATA_DIR / args.exam))
@@ -120,6 +137,10 @@ def main() -> None:
             pairing=args.pairing,
             pairing_backoff=args.pairing_backoff,
             defer_workload=args.gpu,
+            work_rows=args.work_rows,
+            work_random_frac=args.work_random,
+            select_rng=np.random.default_rng(args.select_seed),
+            work_below_step=args.work_below,
         )
     elif args.grouped:
         provider = make_grouped_provider(

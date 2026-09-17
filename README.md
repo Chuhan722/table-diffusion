@@ -279,6 +279,27 @@ plants 规模 CPU 每轮 6.15 秒对 800 轮要一百多分钟，批量核整轮
 每轮耗时 CPU 6150 毫秒降到 GPU 360 毫秒约 17 倍，剩余大头是 CPU 侧菜单生成，
 跑 GPU 前先 nvidia-smi 挑空闲卡用 CUDA_VISIBLE_DEVICES 指定。
 
+## 工作批挑组与步长闸门，第八刀
+
+诊断，后期残差集中少数题而全表每轮全员上场，几百行抢改同一题二阶项互相踩踏，
+解析步长被压到千分之五一轮只有约 90 行真动，其余行的菜单增益全是白算。
+方案，每轮抽样前按组错位分挑一小批行上场，批外组菜单为空段等价保持概率 1，
+错位分是组覆盖的题按绝对加权残差求和，由核顺手回传按状态号记账，
+定向额度按分数降序装组，其余名额随机装到 work_rows 行防饿死，
+没上过场的新状态分数视为无穷大必入选，冻结重试轮回退全量搜索。
+合法性依据，计划在抽样前冻结并按实际菜单求核，期望下降保证不破，
+互逆动作增益之和非正故来回拉锯被增益总账天然压制。
+
+步长闸门，早期残差处处大全员上场步长本就顶格，裁组只会自缚手脚，
+work_below_step 为正时先全量演化，观测到步长低于阈值才开闸裁组单向不回退。
+配套修复，惰性负载模式禁配对回退，行级路径要物化全部历史状态特征，
+步长解放后注册可达百万级一次物化即打爆内存，重试只刷全量菜单自救。
+
+实证，plants 种子 1 跑 3000 轮，纯 4096 工作批每轮 158 毫秒但早期吃亏终点 24210，
+闸门 0.2 加 4096 的切换版 438 秒跑完终点 17519 比全量 3000 轮的 17920 还低，
+墙钟比全量快 2.5 倍，同 438 秒全量只到 42093，后期步长中位从 0.005 放大到 0.024，
+阅卷综合分 0.005784 对全量 0.005590 基本持平各轴仍全胜 GSD，峰值内存 2.6G。
+
 ## 运行
 
 ```bash
@@ -311,6 +332,9 @@ plants 规模 CPU 每轮 6.15 秒对 800 轮要一百多分钟，批量核整轮
 # GPU 后端，需 cupy，装法 uv pip install --python ./.venv/bin/python cupy-cuda12x
 # 先 nvidia-smi 挑空闲卡，--gpu 须配 --batched，同种子同卡逐位可复现
 CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --rounds 800 --retries 60 --batched --pairing --gpu --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_gpu_curve.csv --save-table results/plants_gpu.csv
+
+# 工作批加步长闸门，早期全量演化，步长低于 0.2 后每轮只挑 4096 行上场
+CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --rounds 3000 --retries 60 --batched --pairing --gpu --work-rows 4096 --work-below 0.2 --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_work_curve.csv --save-table results/plants_work.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。

@@ -234,7 +234,7 @@ class GpuBatchContext:
 
     # ------------------------------------------------------------------
     def _residual_loss(self, cnt, score_g, counts):
-        """由条件计数重构特征算残差与损失，整数数据下与 CPU 逐位相同。"""
+        """由条件计数重构特征算残差损失与组错位分，整数数据下与 CPU 逐位相同。"""
         cp = self.cp
         feats = (cnt == self.ncond[None, :]).astype(cp.float64)
         if self.num_hs:
@@ -244,7 +244,9 @@ class GpuBatchContext:
         answers = counts @ feats
         residual = self.target - answers
         loss = float((residual * self.weights) @ residual / 2)
-        return residual, loss
+        # 组错位分，组覆盖的题按绝对加权残差求和，供工作批挑组
+        scores = feats @ (self.weights * cp.abs(residual))
+        return residual, loss, scores
 
     def loss_of(self, codes: np.ndarray, state_ids) -> float:
         """当前表的损失，全程在卡上算，等价 CPU 的 table_loss。"""
@@ -255,7 +257,7 @@ class GpuBatchContext:
         codes_g = cp.asarray(codes[grouped.unique_ids])
         counts = cp.asarray(grouped.counts.astype(np.float64))
         cnt, score_g = self._condition_counts(codes_g)
-        _, loss = self._residual_loss(cnt, score_g, counts)
+        _, loss, _ = self._residual_loss(cnt, score_g, counts)
         return loss
 
     # ------------------------------------------------------------------
@@ -500,7 +502,8 @@ class GpuBatchContext:
 
         # 残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同
         cnt, score_g = self._condition_counts(codes_g)
-        residual, old_loss = self._residual_loss(cnt, score_g, counts)
+        residual, old_loss, scores_gpu = self._residual_loss(cnt, score_g, counts)
+        group_scores = cp.asnumpy(scores_gpu)
 
         parts = self._delta_parts(menu_gpu, cnt, codes_g)
         delta_hs = self._halfspace_delta(menu_gpu, score_g, codes_g)
@@ -550,6 +553,7 @@ class GpuBatchContext:
                 menu, grouped, offsets_np, frozen, old_loss,
                 0.0, 0.0, 0.0, 0.0, old_loss, old_loss, 0.0,
                 max_gain_sum, requirement, "no_positive_direction",
+                group_scores,
             )
         beta, ps, direction_gain = tilt
 
@@ -625,4 +629,5 @@ class GpuBatchContext:
             beta, direction_gain, interaction, step,
             expected_loss, upper, step * unit_rows,
             max_gain_sum, requirement, "ok",
+            group_scores,
         )
