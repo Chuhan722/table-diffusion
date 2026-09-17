@@ -226,7 +226,7 @@ class EvolveResult:
 
     state_ids: NDArray[np.int64]
     records: list[RoundRecord]
-    stop_reason: str  # "no_positive_direction" 或 "round_limit"
+    stop_reason: str  # "no_positive_direction" 或 "round_limit"，批量路径另有平台早停 "loss_plateau"
 
 
 def evolve(

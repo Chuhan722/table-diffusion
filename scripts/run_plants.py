@@ -92,11 +92,21 @@ def main() -> None:
         "--work-below", type=float, default=0.0,
         help="步长低于该值后才启用工作批，早期全量后期裁组，0 为立即启用",
     )
+    parser.add_argument(
+        "--stop-threshold", type=float, default=0.0,
+        help="平台早停阈值，窗口相对改进低于该值即停，0 关闭，需 --batched",
+    )
+    parser.add_argument(
+        "--stop-lag", type=int, default=100,
+        help="平台早停窗口轮数，每窗比一次窗口内最优损失",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
     if args.work_rows > 0 and not args.batched:
         parser.error("--work-rows 只支持批量路径，请同时带 --batched")
+    if args.stop_threshold > 0 and not args.batched:
+        parser.error("--stop-threshold 只支持批量路径，请同时带 --batched")
 
     schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
     specs = load_queries(str(DATA_DIR / args.exam))
@@ -166,6 +176,8 @@ def main() -> None:
             provider, registry,
             max_frozen_retries=args.retries,
             backend="gpu" if args.gpu else "cpu",
+            stop_threshold=args.stop_threshold,
+            stop_lag=args.stop_lag,
         )
     elif args.grouped:
         out = evolve_grouped(

@@ -582,11 +582,18 @@ def evolve_batch(
     max_expected_rows: float | None = None,
     max_frozen_retries: int = 0,
     backend: str = "cpu",
+    stop_threshold: float = 0.0,
+    stop_lag: int = 100,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
     backend 取 gpu 时批量轮核构造走 cupy 后端，数学定义一致，
     抽样与行级回退轮仍在 CPU，随机数语义不变。
+    stop_threshold 大于零启用平台早停，参考 GSD 的窗口相对改进判据，
+    每 stop_lag 轮到窗口边界比一次，上窗最优损失到本窗最优损失的
+    相对改进低于阈值即停，停止原因记 loss_plateau。窗口取最优值防抽样抖动。
+    判停只读损失，不碰核菜单抽样与随机流，停前轨迹与不停的跑逐位一致，
+    返回的表是触发轮的起点表。冻结重试停照旧并存，默认 0 关闭零改变。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -594,9 +601,15 @@ def evolve_batch(
         raise ValueError("冻结重试次数不能为负")
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"未知后端 {backend}")
+    if stop_threshold < 0.0:
+        raise ValueError("早停阈值不能为负")
+    if stop_lag < 1:
+        raise ValueError("早停窗口轮数必须为正")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
+    window_best: float | None = None  # 本窗口内最优损失
+    prev_window_best: float | None = None  # 上一窗口最优损失
     last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
@@ -646,6 +659,18 @@ def evolve_batch(
                 result.interaction, result.step, result.expected_loss, result.status,
             )
         )
+        if stop_threshold > 0.0:
+            loss = result.old_loss
+            window_best = loss if window_best is None else min(window_best, loss)
+            if (k + 1) % stop_lag == 0:
+                if prev_window_best is not None and (
+                    prev_window_best <= 0.0
+                    or (prev_window_best - window_best) / prev_window_best
+                    < stop_threshold
+                ):
+                    return EvolveResult(current, records, "loss_plateau")
+                prev_window_best = window_best
+                window_best = None
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
