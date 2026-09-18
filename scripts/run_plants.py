@@ -30,7 +30,7 @@ from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import derive_first_order, sample_initial_rows  # noqa: E402
-from resevo.pairing import make_paired_provider  # noqa: E402
+from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "plants"
@@ -80,6 +80,10 @@ def main() -> None:
     parser.add_argument(
         "--rescue-after", type=int, default=6,
         help="连败达此数才首次动用子集救援，之前只刷菜单自愈，零星冻结不烧重炮",
+    )
+    parser.add_argument(
+        "--max-pairs", type=int, default=32,
+        help="每次救援允许绑定落回的配对上限，默认守文档预算 32",
     )
     parser.add_argument(
         "--gpu", action="store_true",
@@ -151,6 +155,7 @@ def main() -> None:
     ids = registry.register_table(init_rows)
 
     factory = make_paired_provider if args.pairing else make_edit_provider
+    pairing_budget = PairingBudget(max_pairs=args.max_pairs)
     if args.batched:
         provider = make_batch_provider(
             registry, y, w,
@@ -158,6 +163,7 @@ def main() -> None:
             joint_field_sets=field_sets,
             pairing=args.pairing,
             pairing_backoff=args.pairing_backoff,
+            pairing_budget=pairing_budget,
             defer_workload=args.gpu,
             pair_rescue_rows=args.pair_rescue_rows,
             rescue_after=args.rescue_after,

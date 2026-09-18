@@ -213,3 +213,77 @@ def test_swap_sparse_scores_match_dense():
         registry, cnt_b, score_b, we, w, len(pairs), acts
     )
     np.testing.assert_allclose(best_sparse, best_dense, rtol=1e-12, atol=1e-12)
+
+
+def test_sparse_flat_deltas_wide_schema():
+    """单行稀疏差分在字段数超 63 的宽表上与稠密差分同值。
+
+    变动字段组合分组若用整数位掩码，第 63 位起溢出会分组错打分错，
+    本测试专门覆盖高位字段与跨高低位的组合编辑。
+    """
+    from resevo.dataset import QuerySpec, StateRegistry, TableSchema
+    from resevo.pairing import _sparse_flat_deltas
+    from resevo.state import table_residual
+
+    nf = 70
+    schema = TableSchema(
+        tuple(f"f{j}" for j in range(nf)),
+        (("0", "1"),) * nf,
+    )
+    g = np.random.default_rng(29)
+    specs = []
+    for qi, j in enumerate([0, 5, 31, 62, 63, 64, 68, 69]):
+        specs.append(QuerySpec(
+            f"q{qi}",
+            ({"attribute": f"f{j}", "operator": "==", "value": "1"},
+             {"attribute": f"f{(j + 7) % nf}", "operator": "==", "value": "0"}),
+            float(g.integers(1, 9)),
+        ))
+    specs.append(QuerySpec(
+        "qh",
+        ({"operator": "halfspace",
+          "scores": {f"f{j}": {"0": int(g.integers(-3, 4)),
+                               "1": int(g.integers(-3, 4))}
+                     for j in [2, 63, 66, 69]},
+          "threshold": 1},),
+        float(g.integers(1, 9)),
+    ))
+    registry = StateRegistry(schema, specs)
+    base_rows = [
+        tuple(str(int(g.integers(2))) for _ in range(nf)) for _ in range(3)
+    ]
+    ids = registry.register_many(base_rows)
+    y = target_from_specs(specs)
+    weights = np.ones(len(specs))
+    wl = registry.build_workload(y, weights)
+    resid = table_residual(wl, ids)
+    we = wl.weights * resid
+    w = wl.weights
+    flat_rows, flat_base_idx = [], []
+    for r, b in enumerate(base_rows):
+        flat_rows.append(b)
+        flat_base_idx.append(r)
+        for fields in ([64], [68], [3], [5, 68], [62, 63], [1, 33, 69]):
+            e = list(b)
+            for j in fields:
+                e[j] = "1" if e[j] == "0" else "0"
+            flat_rows.append(tuple(e))
+            flat_base_idx.append(r)
+    cnt_b, score_b = registry.counts_scores_for_rows(base_rows)
+    g_flat, ptr, cols, vals = _sparse_flat_deltas(
+        registry, flat_rows, np.array(flat_base_idx), base_rows,
+        cnt_b, score_b, we, w,
+    )
+    mirror = StateRegistry(schema, specs)
+    mirror.register_many(base_rows)
+    fid = mirror.register_many(flat_rows)
+    feats = mirror.build_workload(y, weights).features
+    bid = mirror.register_many(base_rows)
+    for p in range(len(flat_rows)):
+        d = (feats[fid[p]] - feats[bid[flat_base_idx[p]]]).astype(float)
+        g_dense = float(d @ we - ((d * d) @ w) / 2)
+        np.testing.assert_allclose(g_flat[p], g_dense, rtol=1e-12, atol=1e-12)
+        d_rec = np.zeros(len(specs))
+        seg = slice(ptr[p], ptr[p + 1])
+        d_rec[cols[seg]] = vals[seg]
+        np.testing.assert_array_equal(d_rec, d)

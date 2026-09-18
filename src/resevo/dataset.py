@@ -225,6 +225,12 @@ class StateRegistry:
         # 惰性特征模式，注册只记元组编号，特征推迟到取负载时统一补算
         self._lazy = False
         self._feat_synced = 0
+        # GPU 物化开关，命中计数查表 gather 搬卡上做，整数运算逐位同 CPU
+        self.gpu_featurize = False
+        # 命中计数缓存，救援小注册表开启后基行计数免重算
+        self._cnt_cache: dict[tuple[str, ...], int] | None = None
+        self._cnt_rows: list[np.ndarray] = []
+        self._score_rows: list[np.ndarray] = []
 
     @property
     def num_states(self) -> int:
@@ -382,14 +388,18 @@ class StateRegistry:
         """一批状态行的命中计数与半空间分数中间量，矢量化按字段查表累加。
 
         特征由 counts 与 ncond 比较得出，稀疏差分打分拿中间量
-        做单字段增量，与全量重算逐位一致。
+        做单字段增量，与全量重算逐位一致，
+        GPU 开关打开时查表 gather 搬卡上算完回传，整数运算无舍入。
         """
         if not self._feat_ready:
             self._build_featurizer()
         n = len(rows)
         num_q = len(self.specs)
-        cnt = np.zeros((n, num_q), dtype=np.int16)
-        score = np.zeros((n, len(self._feat_hs_cols)), dtype=np.int64)
+        xp = np
+        if self.gpu_featurize:
+            import cupy as xp  # noqa: F811
+        cnt = xp.zeros((n, num_q), dtype=np.int16)
+        score = xp.zeros((n, len(self._feat_hs_cols)), dtype=np.int64)
         for j in range(self.schema.num_fields):
             column = [row[j] for row in rows]
             uniq = sorted(set(column))
@@ -398,12 +408,48 @@ class StateRegistry:
             codes = np.fromiter(
                 (pos[v] for v in column), dtype=np.int64, count=n
             )
+            if xp is not np:
+                cnt_tab = xp.asarray(cnt_tab)
+                codes = xp.asarray(codes)
             cnt += cnt_tab[codes]
             if len(self._feat_hs_cols):
                 score_tab = np.stack(
                     [self._value_vectors(j, v)[1] for v in uniq]
                 )
+                if xp is not np:
+                    score_tab = xp.asarray(score_tab)
                 score += score_tab[codes]
+        if xp is not np:
+            cnt = xp.asnumpy(cnt)
+            score = xp.asnumpy(score)
+        if self._cnt_cache is not None:
+            for r, row in enumerate(rows):
+                if row not in self._cnt_cache:
+                    self._cnt_cache[row] = len(self._cnt_rows)
+                    self._cnt_rows.append(cnt[r])
+                    self._score_rows.append(score[r])
+        return cnt, score
+
+    def enable_counts_cache(self) -> None:
+        """开启命中计数缓存，之后算过计数的行元组可直接复用。
+
+        只给救援小注册表用，全局注册表不开防内存无界增长。
+        """
+        if self._cnt_cache is None:
+            self._cnt_cache = {}
+
+    def counts_scores_cached(
+        self, rows: list[tuple[str, ...]]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """带缓存的命中计数查询，命中直接取，未命中批量补算并入缓存。"""
+        if self._cnt_cache is None:
+            return self.counts_scores_for_rows(rows)
+        miss = [row for row in rows if row not in self._cnt_cache]
+        if miss:
+            self.counts_scores_for_rows(miss)
+        idx = [self._cnt_cache[row] for row in rows]
+        cnt = np.stack([self._cnt_rows[p] for p in idx])
+        score = np.stack([self._score_rows[p] for p in idx])
         return cnt, score
 
     def edit_feature_pack(
@@ -532,7 +578,7 @@ class StateRegistry:
                 bpos[b] = p
                 uniq_bases.append(b)
             bidx[r] = p
-        cnt_b, score_b = self.counts_scores_for_rows(uniq_bases)
+        cnt_b, score_b = self.counts_scores_cached(uniq_bases)
         cnt = cnt_b[bidx]
         score = score_b[bidx]
         # 变动按字段分组，取值向量差只加到该字段依赖的查询列
