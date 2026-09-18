@@ -28,7 +28,7 @@ from .dataset import StateRegistry
 from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
 from .engine import EvolveResult, RoundRecord, build_kernel, sample_next
 from .grouping import GroupedTable, group_state_ids, grouped_residual
-from .pairing import PairingBudget, build_paired_supports
+from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .state import Workload, loss_from_residual
 from .stepsize import analytic_step
 from .tilt import calibrate_beta_flat
@@ -414,13 +414,16 @@ def sample_batch_next(
 
 @dataclass
 class BatchRoundPlan:
-    """批量提供器每轮的计划，批量路径或行级回退路径二选一。"""
+    """批量提供器每轮的计划，批量路径行级回退路径或子集救援路径三选一。"""
 
-    mode: str  # "batch" 或 "rows"
+    mode: str  # "batch" 或 "rows" 或 "rescue"
     workload: Workload
     grouped: GroupedTable | None = None
     menu: BatchMenu | None = None
     supports: list | None = None
+    rescue_ids: NDArray[np.int64] | None = None  # 抽中行在小注册表的编号
+    rescue_sub_idx: NDArray[np.int64] | None = None  # 抽中行的全表行下标
+    rescue_registry: StateRegistry | None = None  # 临时小注册表，用后即弃
 
 
 def make_batch_provider(
@@ -434,6 +437,8 @@ def make_batch_provider(
     pairing: bool = False,
     pairing_backoff: int = 4,
     defer_workload: bool = False,
+    pair_rescue_rows: int = 0,
+    rescue_after: int = 6,
     work_rows: int = 0,
     work_random_frac: float = 0.25,
     select_rng: np.random.Generator | None = None,
@@ -447,6 +452,14 @@ def make_batch_provider(
     defer_workload 为真时批量轮的计划只携带目标与权重不物化特征矩阵，
     供 GPU 后端配合惰性注册表使用，行级回退轮仍取完整负载。
 
+    子集救援，pair_rescue_rows 为正时惰性模式的冻结重试轮不再只刷菜单，
+    抽该数量的行走行级配对，临时小注册表隔离特征物化，
+    伪目标修正保持全表残差口径，其余行保持不动，默认 0 关闭零改变，
+    非惰性模式不受此参数影响仍走全表行级配对老路。
+    救援门槛，rescue_after 控制连败多少次才第一次动用救援，
+    之前的重试轮只刷便宜的批量菜单，零星冻结靠换菜单自愈不烧重炮，
+    达门槛后每 pairing_backoff 次连败再救一次，救援成功连败清零重计。
+
     工作批，work_rows 为正时每轮按上一轮核回传的组错位分挑组上场，
     定向额度按分数降序装组，其余名额从剩下的组随机装到 work_rows 行，
     未选组本轮菜单为空段等价保持概率 1，行原地不动不进核，
@@ -457,6 +470,10 @@ def make_batch_provider(
     """
     if pairing_backoff < 1:
         raise ValueError("配对退避周期必须为正")
+    if pair_rescue_rows < 0:
+        raise ValueError("救援行数不能为负")
+    if rescue_after < 1:
+        raise ValueError("救援门槛必须为正")
     if not (0.0 <= work_random_frac <= 1.0):
         raise ValueError("随机名额比例必须落在 [0,1]")
     sel_rng = select_rng if select_rng is not None else np.random.default_rng(0)
@@ -514,8 +531,8 @@ def make_batch_provider(
         return np.sort(chosen)
 
     def provider(state_ids, round_index: int, frozen_streak: int = 0) -> BatchRoundPlan:
-        # 惰性负载模式禁配对回退，行级路径要物化全部历史状态特征，
-        # 步长解放后注册可达百万级一次物化即打爆内存，重试只刷全量菜单
+        # 惰性负载模式的全表行级配对被禁，物化全部历史状态特征会打爆内存，
+        # pair_rescue_rows 为正时改走子集救援，小注册表隔离物化其余行保持
         pairing_turn = frozen_streak <= 3 or frozen_streak % pairing_backoff == 0
         if pairing and not defer_workload and frozen_streak > 0 and pairing_turn:
             table = tuples_from_ids(registry, state_ids)
@@ -526,6 +543,19 @@ def make_batch_provider(
                 state_ids, singles, registry, target, weights, menu_rng, pairing_budget
             )
             return BatchRoundPlan("rows", menu.workload, supports=menu.supports)
+        rescue_turn = (
+            frozen_streak >= rescue_after
+            and (frozen_streak - rescue_after) % pairing_backoff == 0
+        )
+        if (pairing and defer_workload and pair_rescue_rows > 0 and rescue_turn):
+            small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+                registry, state_ids, target, weights, menu_rng,
+                pair_rescue_rows, budget, joint_field_sets, pairing_budget,
+            )
+            return BatchRoundPlan(
+                "rescue", wl, supports=sups, rescue_ids=sub_ids,
+                rescue_sub_idx=sub_idx, rescue_registry=small,
+            )
         if not structure_box:
             structure_box.append(build_query_structure(registry, codebook))
             cache_box.append(CntCache(structure_box[0]))
@@ -584,6 +614,7 @@ def evolve_batch(
     backend: str = "cpu",
     stop_threshold: float = 0.0,
     stop_lag: int = 100,
+    progress_every: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -594,6 +625,8 @@ def evolve_batch(
     相对改进低于阈值即停，停止原因记 loss_plateau。窗口取最优值防抽样抖动。
     判停只读损失，不碰核菜单抽样与随机流，停前轨迹与不停的跑逐位一致，
     返回的表是触发轮的起点表。冻结重试停照旧并存，默认 0 关闭零改变。
+    progress_every 为正时每该数轮打印一行进度并立即刷出，
+    冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -614,9 +647,10 @@ def evolve_batch(
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
-        if plan.mode == "rows":
+        if plan.mode in ("rows", "rescue"):
+            kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
             result = build_kernel(
-                plan.workload, current, plan.supports,
+                plan.workload, kernel_ids, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "batch":
@@ -659,6 +693,17 @@ def evolve_batch(
                 result.interaction, result.step, result.expected_loss, result.status,
             )
         )
+        if progress_every > 0 and (
+            plan.mode != "batch" or result.status != "ok"
+            or k % progress_every == 0
+        ):
+            print(
+                f"轮 {k} 模式 {plan.mode} 损失 {result.old_loss:.1f} "
+                f"步长 {result.step:.4f} 预测降 "
+                f"{result.old_loss - result.expected_loss:.2f} "
+                f"{result.status} 连败 {frozen_streak}",
+                flush=True,
+            )
         if stop_threshold > 0.0:
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
@@ -679,6 +724,19 @@ def evolve_batch(
         frozen_streak = 0
         if plan.mode == "rows":
             current = sample_next(result, current, rng)
+        elif plan.mode == "rescue":
+            # 小注册表编号抽样，动过的行翻译回全局编号落回全表对应位置，
+            # 全局注册仍走惰性路径不物化特征，小注册表出作用域即弃
+            new_small = sample_next(result, plan.rescue_ids, rng)
+            moved = new_small != plan.rescue_ids
+            if moved.any():
+                tuples = [
+                    plan.rescue_registry.state_tuple(int(i))
+                    for i in new_small[moved]
+                ]
+                gids = registry.register_table(tuples)
+                current = current.copy()
+                current[plan.rescue_sub_idx[moved]] = gids
         else:
             current = sample_batch_next(result, current, rng, registry)
     return EvolveResult(current, records, "round_limit")

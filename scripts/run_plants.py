@@ -74,6 +74,14 @@ def main() -> None:
         help="批量路径冻结重试的配对退避周期，前三次都配对之后每 N 次一次，1 即每次都配对",
     )
     parser.add_argument(
+        "--pair-rescue-rows", type=int, default=0,
+        help="惰性模式冻结救援轮抽此数量的行走子集配对，需 --pairing --gpu，0 关闭",
+    )
+    parser.add_argument(
+        "--rescue-after", type=int, default=6,
+        help="连败达此数才首次动用子集救援，之前只刷菜单自愈，零星冻结不烧重炮",
+    )
+    parser.add_argument(
         "--gpu", action="store_true",
         help="批量轮核构造走 cupy 后端，需 --batched，抽样与回退仍在 CPU",
     )
@@ -99,6 +107,10 @@ def main() -> None:
     parser.add_argument(
         "--stop-lag", type=int, default=100,
         help="平台早停窗口轮数，每窗比一次窗口内最优损失",
+    )
+    parser.add_argument(
+        "--progress", type=int, default=0,
+        help="每 N 轮打印一行进度并即时刷出，冻结与救援轮无条件打印，0 静默",
     )
     args = parser.parse_args()
     if args.gpu and not args.batched:
@@ -147,6 +159,8 @@ def main() -> None:
             pairing=args.pairing,
             pairing_backoff=args.pairing_backoff,
             defer_workload=args.gpu,
+            pair_rescue_rows=args.pair_rescue_rows,
+            rescue_after=args.rescue_after,
             work_rows=args.work_rows,
             work_random_frac=args.work_random,
             select_rng=np.random.default_rng(args.select_seed),
@@ -178,6 +192,7 @@ def main() -> None:
             backend="gpu" if args.gpu else "cpu",
             stop_threshold=args.stop_threshold,
             stop_lag=args.stop_lag,
+            progress_every=args.progress,
         )
     elif args.grouped:
         out = evolve_grouped(

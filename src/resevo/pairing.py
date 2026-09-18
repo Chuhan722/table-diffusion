@@ -364,3 +364,46 @@ def make_paired_provider(
         return workload, singles
 
     return provider
+
+
+def build_rescue_menu(
+    registry: StateRegistry,
+    state_ids,
+    target,
+    weights,
+    rng: np.random.Generator,
+    rescue_rows: int,
+    budget: EditBudget | None = None,
+    joint_field_sets: list[tuple[int, ...]] | None = None,
+    pairing_budget: PairingBudget | None = None,
+):
+    """冻结救援轮的子集配对菜单，临时小注册表隔离特征物化。
+
+    惰性长跑里行级配对要物化全部历史状态的特征矩阵必爆内存，
+    救援轮新开小注册表，只装全表当前行与抽中行的候选结果，
+    算完整体丢弃，全局注册表的惰性欠账自始至终不清偿，
+    单次救援内存只随救援行数走，与已跑轮数无关。
+    抽 rescue_rows 行做行级配对其余行保持，伪目标 y' 取全表残差
+    加子集贡献，子表残差恒等于全表卡点残差，动作增益与损失
+    口径与全表一致，正方向结论是全表配对的保守下界。
+    返回小注册表，抽中行小编号，抽中行的全表行下标，小负载，分块菜单。
+    """
+    if rescue_rows < 1:
+        raise ValueError("救援行数必须为正")
+    s = np.asarray(state_ids).astype(np.int64, copy=False)
+    small = StateRegistry(registry.schema, registry.specs)
+    small_all = small.register_table(tuples_from_ids(registry, s))
+    base = small.build_workload(target, weights)
+    resid_full = table_residual(base, small_all)
+    n_sub = min(int(rescue_rows), len(s))
+    sub_idx = np.sort(rng.choice(len(s), size=n_sub, replace=False))
+    sub_ids = small_all[sub_idx]
+    y_prime = resid_full + base.features[sub_ids].sum(axis=0)
+    singles = generate_edit_supports(
+        tuples_from_ids(small, sub_ids), small.schema, small, rng,
+        budget, joint_field_sets,
+    )
+    menu = build_paired_supports(
+        sub_ids, singles, small, y_prime, weights, rng, pairing_budget
+    )
+    return small, sub_ids, sub_idx, menu.workload, menu.supports
