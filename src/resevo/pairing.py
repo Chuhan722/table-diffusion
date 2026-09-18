@@ -37,6 +37,66 @@ class PairingBudget:
     gamma_tol: float = 1e-9  # Gamma 正分门槛，防浮点误差凑数
 
 
+def _gpu_pack(features, weights, we):
+    """上传特征与权重到 GPU，返回打分包，进场先归还池内缓存腾显存。"""
+    import cupy as cp
+
+    cp.get_default_memory_pool().free_all_blocks()
+    return cp, cp.asarray(features), cp.asarray(weights), cp.asarray(we)
+
+
+def _score_flat_deltas(features, flat_ids, flat_base, we, w, gpu_pack, block=25000):
+    """平铺动作的增量矩阵与增益，GPU 路径分块算完回传，数学与 CPU 同式。"""
+    if gpu_pack is None:
+        d_flat = features[flat_ids] - features[flat_base]
+        g_flat = d_flat @ we - np.sum(d_flat * d_flat * w, axis=1) / 2
+        return d_flat, g_flat
+    cp, feats_g, w_g, we_g = gpu_pack
+    m = len(flat_ids)
+    d_flat = np.empty((m, features.shape[1]), dtype=np.float64)
+    g_flat = np.empty(m, dtype=np.float64)
+    for lo in range(0, m, block):
+        hi = min(lo + block, m)
+        d_g = feats_g[cp.asarray(flat_ids[lo:hi])] - feats_g[
+            cp.asarray(flat_base[lo:hi])
+        ]
+        g_flat[lo:hi] = cp.asnumpy(d_g @ we_g - ((d_g * d_g) @ w_g) / 2)
+        d_flat[lo:hi] = cp.asnumpy(d_g)
+        del d_g
+    return d_flat, g_flat
+
+
+def _score_joint_totals(features, us, vs, base_i, base_k, we, w, gpu_pack,
+                        block=10000):
+    """联合动作总分 gu 加 gv 减交叉项，GPU 路径分块算完回传，数学同式。"""
+    if gpu_pack is None:
+        du = features[us] - features[base_i]
+        dv = features[vs] - features[base_k]
+        gu = du @ we - ((du * du) @ w) / 2
+        gv = dv @ we - ((dv * dv) @ w) / 2
+        cross = (du * dv) @ w
+        return gu + gv - cross
+    cp, feats_g, w_g, we_g = gpu_pack
+    m = len(us)
+    totals = np.empty(m, dtype=np.float64)
+    for lo in range(0, m, block):
+        hi = min(lo + block, m)
+        du_g = feats_g[cp.asarray(us[lo:hi])] - feats_g[cp.asarray(base_i[lo:hi])]
+        dv_g = feats_g[cp.asarray(vs[lo:hi])] - feats_g[cp.asarray(base_k[lo:hi])]
+        gu = du_g @ we_g - ((du_g * du_g) @ w_g) / 2
+        gv = dv_g @ we_g - ((dv_g * dv_g) @ w_g) / 2
+        cross = (du_g * dv_g) @ w_g
+        totals[lo:hi] = cp.asnumpy(gu + gv - cross)
+        del du_g, dv_g, gu, gv, cross
+    return totals
+
+
+def _gpu_release(gpu_pack):
+    """打分包用完归还显存，让批量核随后照常吃满内存池。"""
+    if gpu_pack is not None:
+        gpu_pack[0].get_default_memory_pool().free_all_blocks()
+
+
 @dataclass
 class PairedMenu:
     """配对产出，负载快照，完整分块菜单，以及配对诊断信息。"""
@@ -155,6 +215,7 @@ def build_paired_supports(
     weights,
     rng: np.random.Generator,
     budget: PairingBudget | None = None,
+    use_gpu: bool = False,
 ) -> PairedMenu:
     """从每行单行菜单出发完成牵线打分成对，输出完整分块菜单。
 
@@ -187,12 +248,16 @@ def build_paired_supports(
         counts.append(len(row_ids))
         flat_ids.extend(row_ids)
         flat_base.extend([int(s[i])] * len(row_ids))
-    d_flat = workload.features[np.array(flat_ids, dtype=np.int64)] - workload.features[
-        np.array(flat_base, dtype=np.int64)
-    ]
-    g_flat = d_flat @ (workload.weights * residual) - np.sum(
-        d_flat * d_flat * workload.weights, axis=1
-    ) / 2
+    flat_ids_arr = np.array(flat_ids, dtype=np.int64)
+    flat_base_arr = np.array(flat_base, dtype=np.int64)
+    we_vec = workload.weights * residual
+    pack1 = _gpu_pack(workload.features, workload.weights, we_vec) if use_gpu else None
+    d_flat, g_flat = _score_flat_deltas(
+        workload.features, flat_ids_arr, flat_base_arr,
+        we_vec, workload.weights, pack1,
+    )
+    _gpu_release(pack1)
+    pack1 = None
     deltas_rows: list[NDArray[np.float64]] = []
     gains_rows: list[NDArray[np.float64]] = []
     pos = 0
@@ -275,16 +340,15 @@ def build_paired_supports(
         offsets.append(len(us))
     best = np.zeros(len(pairs_sorted), dtype=np.float64)
     if us:
-        du = feats[np.array(us, dtype=np.int64)] - feats[
-            np.array(base_i, dtype=np.int64)
-        ]
-        dv = feats[np.array(vs, dtype=np.int64)] - feats[
-            np.array(base_k, dtype=np.int64)
-        ]
-        gu = du @ we - ((du * du) @ w) / 2
-        gv = dv @ we - ((dv * dv) @ w) / 2
-        cross = (du * dv) @ w
-        totals = gu + gv - cross
+        pack2 = _gpu_pack(feats, w, we) if use_gpu else None
+        totals = _score_joint_totals(
+            feats,
+            np.array(us, dtype=np.int64), np.array(vs, dtype=np.int64),
+            np.array(base_i, dtype=np.int64), np.array(base_k, dtype=np.int64),
+            we, w, pack2,
+        )
+        _gpu_release(pack2)
+        pack2 = None
         starts = np.array(offsets[:-1], dtype=np.int64)
         valid = np.diff(np.array(offsets, dtype=np.int64)) > 0
         grouped_max = np.maximum.reduceat(
@@ -376,6 +440,7 @@ def build_rescue_menu(
     budget: EditBudget | None = None,
     joint_field_sets: list[tuple[int, ...]] | None = None,
     pairing_budget: PairingBudget | None = None,
+    use_gpu: bool = False,
 ):
     """冻结救援轮的子集配对菜单，临时小注册表隔离特征物化。
 
@@ -404,6 +469,7 @@ def build_rescue_menu(
         budget, joint_field_sets,
     )
     menu = build_paired_supports(
-        sub_ids, singles, small, y_prime, weights, rng, pairing_budget
+        sub_ids, singles, small, y_prime, weights, rng, pairing_budget,
+        use_gpu=use_gpu,
     )
     return small, sub_ids, sub_idx, menu.workload, menu.supports

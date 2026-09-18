@@ -161,6 +161,7 @@ def main() -> None:
             defer_workload=args.gpu,
             pair_rescue_rows=args.pair_rescue_rows,
             rescue_after=args.rescue_after,
+            rescue_gpu=args.gpu,
             work_rows=args.work_rows,
             work_random_frac=args.work_random,
             select_rng=np.random.default_rng(args.select_seed),

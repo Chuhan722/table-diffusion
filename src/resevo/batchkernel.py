@@ -439,6 +439,7 @@ def make_batch_provider(
     defer_workload: bool = False,
     pair_rescue_rows: int = 0,
     rescue_after: int = 6,
+    rescue_gpu: bool = False,
     work_rows: int = 0,
     work_random_frac: float = 0.25,
     select_rng: np.random.Generator | None = None,
@@ -551,6 +552,7 @@ def make_batch_provider(
             small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
                 registry, state_ids, target, weights, menu_rng,
                 pair_rescue_rows, budget, joint_field_sets, pairing_budget,
+                use_gpu=rescue_gpu,
             )
             return BatchRoundPlan(
                 "rescue", wl, supports=sups, rescue_ids=sub_ids,
