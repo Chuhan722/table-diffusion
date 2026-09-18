@@ -376,11 +376,13 @@ class StateRegistry:
         self._val_cache[j][value] = pair
         return pair
 
-    def _features_for_rows(self, rows: list[tuple[str, ...]]) -> np.ndarray:
-        """一批新状态行的贡献矩阵，矢量化按字段查表累加。
+    def counts_scores_for_rows(
+        self, rows: list[tuple[str, ...]]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """一批状态行的命中计数与半空间分数中间量，矢量化按字段查表累加。
 
-        与 evaluate_compiled 逐行逐查询求值逐位一致，
-        谓词取值只有 0 与 1，构造上必然有限，无需再扫有限性。
+        特征由 counts 与 ncond 比较得出，稀疏差分打分拿中间量
+        做单字段增量，与全量重算逐位一致。
         """
         if not self._feat_ready:
             self._build_featurizer()
@@ -402,6 +404,29 @@ class StateRegistry:
                     [self._value_vectors(j, v)[1] for v in uniq]
                 )
                 score += score_tab[codes]
+        return cnt, score
+
+    def edit_feature_pack(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """稀疏差分打分所需特征器结构，条件总数与半空间列及阈值。"""
+        if not self._feat_ready:
+            self._build_featurizer()
+        return self._feat_ncond, self._feat_hs_cols, self._feat_hs_thresholds
+
+    def value_vectors(self, j: int, value: str) -> tuple[np.ndarray, np.ndarray]:
+        """字段 j 取 value 的命中条件数向量与半空间分数向量，公开口。"""
+        if not self._feat_ready:
+            self._build_featurizer()
+        return self._value_vectors(j, value)
+
+    def _features_for_rows(self, rows: list[tuple[str, ...]]) -> np.ndarray:
+        """一批新状态行的贡献矩阵，矢量化按字段查表累加。
+
+        与 evaluate_compiled 逐行逐查询求值逐位一致，
+        谓词取值只有 0 与 1，构造上必然有限，无需再扫有限性。
+        """
+        cnt, score = self.counts_scores_for_rows(rows)
         feats = (cnt == self._feat_ncond[None, :]).astype(np.float64)
         if len(self._feat_hs_cols):
             feats[:, self._feat_hs_cols] = (
@@ -441,6 +466,104 @@ class StateRegistry:
                 for key, row_feats in zip(new_keys, feats):
                     self._insert(key, row_feats)
         return ids
+
+    def register_edited_many(
+        self, base_rows: list[tuple[str, ...]], rows: list[tuple[str, ...]]
+    ) -> np.ndarray:
+        """批量注册编辑行，特征由基行命中计数增量得出。
+
+        base_rows 与 rows 等长，每个编辑行给出它出发的基行元组，
+        编号发放次序与 register_many 完全一致，
+        新行命中数为基行命中数加变动字段取值向量之差，整数运算，
+        特征由命中数与条件总数比较得出，与全量重算逐位相同。
+        """
+        if len(base_rows) != len(rows):
+            raise ValueError("基行列表与编辑行列表长度不一致")
+        ids = np.empty(len(rows), dtype=np.int64)
+        new_keys: list[tuple[str, ...]] = []
+        new_base: list[tuple[str, ...]] = []
+        new_pos: dict[tuple[str, ...], int] = {}
+        for r, row in enumerate(rows):
+            key = tuple(row)
+            found = self._index.get(key)
+            if found is not None:
+                ids[r] = found
+                continue
+            p = new_pos.get(key)
+            if p is None:
+                if len(key) != self.schema.num_fields:
+                    raise ValueError("状态元组字段数与 schema 不一致")
+                p = len(new_keys)
+                new_pos[key] = p
+                new_keys.append(key)
+                new_base.append(tuple(base_rows[r]))
+            ids[r] = self._count + p
+        if not new_keys:
+            return ids
+        if self._lazy:
+            for key in new_keys:
+                self._insert_lazy(key)
+            return ids
+        feats = self._features_for_edited(new_base, new_keys)
+        for key, row_feats in zip(new_keys, feats):
+            self._insert(key, row_feats)
+        return ids
+
+    def _features_for_edited(
+        self,
+        base_rows: list[tuple[str, ...]],
+        rows: list[tuple[str, ...]],
+    ) -> np.ndarray:
+        """编辑行的贡献矩阵，基行命中数按变动字段稀疏增量。
+
+        基行去重后统一算命中数与半空间分数，编辑行 gather 基行整行，
+        变动字段按字段分组把取值向量之差加到依赖查询列上，
+        最后与条件总数比较出特征，整数路径与全量重算逐位一致。
+        """
+        if not self._feat_ready:
+            self._build_featurizer()
+        uniq_bases: list[tuple[str, ...]] = []
+        bpos: dict[tuple[str, ...], int] = {}
+        bidx = np.empty(len(rows), dtype=np.int64)
+        for r, b in enumerate(base_rows):
+            p = bpos.get(b)
+            if p is None:
+                p = len(uniq_bases)
+                bpos[b] = p
+                uniq_bases.append(b)
+            bidx[r] = p
+        cnt_b, score_b = self.counts_scores_for_rows(uniq_bases)
+        cnt = cnt_b[bidx]
+        score = score_b[bidx]
+        # 变动按字段分组，取值向量差只加到该字段依赖的查询列
+        by_field: dict[int, list[tuple[int, str, str]]] = {}
+        for r, (b, key) in enumerate(zip(base_rows, rows)):
+            for j in range(self.schema.num_fields):
+                if key[j] != b[j]:
+                    by_field.setdefault(j, []).append((r, b[j], key[j]))
+        for j, group in by_field.items():
+            cols = self._field_queries[j]
+            vals = sorted({g[1] for g in group} | {g[2] for g in group})
+            vpos = {v: p for p, v in enumerate(vals)}
+            cnt_tab = np.stack([self._value_vectors(j, v)[0] for v in vals])
+            rows_g = np.array([g[0] for g in group], dtype=np.int64)
+            old_c = np.fromiter((vpos[g[1]] for g in group), dtype=np.int64)
+            new_c = np.fromiter((vpos[g[2]] for g in group), dtype=np.int64)
+            if len(cols):
+                cnt[np.ix_(rows_g, cols)] += (
+                    cnt_tab[new_c][:, cols] - cnt_tab[old_c][:, cols]
+                )
+            if len(self._feat_hs_cols):
+                score_tab = np.stack(
+                    [self._value_vectors(j, v)[1] for v in vals]
+                )
+                score[rows_g] += score_tab[new_c] - score_tab[old_c]
+        feats = (cnt == self._feat_ncond[None, :]).astype(np.float64)
+        if len(self._feat_hs_cols):
+            feats[:, self._feat_hs_cols] = (
+                score >= self._feat_hs_thresholds[None, :]
+            ).astype(np.float64)
+        return feats
 
     def register_edit(self, base_id: int, row: tuple[str, ...]) -> int:
         """注册一个由已注册状态编辑而来的状态，按依赖索引增量求值。

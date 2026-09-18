@@ -139,3 +139,77 @@ def test_rescue_writeback_translation():
     # 落回后的全表损失可在全局注册表口径重算，编号翻译无缝
     loss_after = table_loss(registry.build_workload(y, weights), after)
     assert np.isfinite(loss_after)
+
+
+def test_register_edited_many_matches_full():
+    """编辑行增量注册与全量重算的编号与特征逐位一致。"""
+    from resevo.dataset import StateRegistry
+
+    registry, ids, weights, _ = _scene(3)
+    y = target_from_specs(registry.specs)
+    base_rows = [registry.state_tuple(int(i)) for i in ids]
+    mirror = StateRegistry(registry.schema, registry.specs)
+    mirror.register_many(
+        [registry.state_tuple(i) for i in range(registry.num_states)]
+    )
+    assert mirror.num_states == registry.num_states
+    g = np.random.default_rng(11)
+    bases, edits = [], []
+    for _ in range(60):
+        b = base_rows[int(g.integers(len(base_rows)))]
+        e = list(b)
+        for j in g.permutation(len(b))[: int(g.integers(1, 4))]:
+            dom = registry.schema.domains[int(j)]
+            e[int(j)] = dom[int(g.integers(len(dom)))]
+        bases.append(b)
+        edits.append(tuple(e))
+    ids_inc = registry.register_edited_many(bases, edits)
+    ids_full = mirror.register_many(edits)
+    np.testing.assert_array_equal(ids_inc, ids_full)
+    f_inc = registry.build_workload(y, weights).features
+    f_full = mirror.build_workload(y, weights).features
+    np.testing.assert_array_equal(f_inc, f_full)
+
+
+def test_swap_sparse_scores_match_dense():
+    """交换免物化打分与注册物化后的稠密打分同值。"""
+    from resevo.pairing import _score_swaps_sparse
+
+    registry, ids, weights, _ = _scene(4)
+    y = target_from_specs(registry.specs)
+    wl = registry.build_workload(y, weights)
+    resid = table_residual(wl, ids)
+    we = wl.weights * resid
+    s = np.asarray(ids, dtype=np.int64)
+    rows = [registry.state_tuple(int(x)) for x in s]
+    pairs = [(0, 1), (2, 3), (4, 7)]
+    acts, dense = [], []
+    for pidx, (i, k) in enumerate(pairs):
+        ri, rk = rows[i], rows[k]
+        for j in range(len(ri)):
+            if ri[j] == rk[j]:
+                continue
+            acts.append((pidx, j, i, k, ri[j], rk[j]))
+            u, v = list(ri), list(rk)
+            u[j], v[j] = rk[j], ri[j]
+            dense.append(
+                (pidx, registry.register(tuple(u)),
+                 registry.register(tuple(v)), int(s[i]), int(s[k]))
+            )
+    feats = registry.build_workload(y, weights).features
+    w = wl.weights
+    best_dense = np.zeros(len(pairs))
+    for pidx, uid, vid, bi, bk in dense:
+        du = feats[uid] - feats[bi]
+        dv = feats[vid] - feats[bk]
+        tot = (
+            du @ we - ((du * du) @ w) / 2
+            + dv @ we - ((dv * dv) @ w) / 2
+            - (du * dv) @ w
+        )
+        best_dense[pidx] = max(best_dense[pidx], tot)
+    cnt_b, score_b = registry.counts_scores_for_rows(rows)
+    best_sparse = _score_swaps_sparse(
+        registry, cnt_b, score_b, we, w, len(pairs), acts
+    )
+    np.testing.assert_allclose(best_sparse, best_dense, rtol=1e-12, atol=1e-12)

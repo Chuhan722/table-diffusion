@@ -171,8 +171,12 @@ def generate_edit_supports(
         paths += _explore_edits(current, schema, budget, rng)
         assert len(paths) <= budget.max_nonstay_paths()
         row_paths.append(paths)
-    # 全表候选一次批量注册，编号次序与逐个注册完全一致
-    flat_ids = registry.register_many([p for paths in row_paths for p in paths])
+    # 全表候选一次批量注册，编号次序与逐个注册完全一致，
+    # 候选都是表行的字段编辑，特征走基行命中计数增量，逐位同全量重算
+    flat_ids = registry.register_edited_many(
+        [table[i] for i, paths in enumerate(row_paths) for _ in paths],
+        [p for paths in row_paths for p in paths],
+    )
     supports = []
     pos = 0
     for i, paths in enumerate(row_paths):

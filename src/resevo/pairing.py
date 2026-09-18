@@ -97,6 +97,84 @@ def _gpu_release(gpu_pack):
         gpu_pack[0].get_default_memory_pool().free_all_blocks()
 
 
+def _score_swaps_sparse(
+    registry: StateRegistry,
+    cnt_base: np.ndarray,
+    score_base: np.ndarray,
+    we: NDArray[np.float64],
+    w: NDArray[np.float64],
+    num_pairs: int,
+    acts: list[tuple[int, int, int, int, str, str]],
+) -> NDArray[np.float64]:
+    """交换动作免物化打分，命中计数增量只碰受影响查询列。
+
+    交换只改一个字段，两侧增量都落在该字段的依赖查询列上，
+    新行命中数为基行命中数加取值向量之差，特征由命中数与条件总数比较得出，
+    与先注册物化再全列差分的稠密打分数学同式，
+    动作按字段分组矢量化，返回每对交换段最大总分，没有交换动作的对为零。
+    acts 每项为 (对序号, 字段, 基行 i 下标, 基行 k 下标, i 值, k 值)。
+    """
+    ncond, hs_cols, hs_thr = registry.edit_feature_pack()
+    col_to_hs = {int(c): t for t, c in enumerate(hs_cols)}
+    fq = registry.field_queries
+    best = np.zeros(num_pairs, dtype=np.float64)
+    by_field: dict[int, list[tuple[int, int, int, str, str]]] = {}
+    for pidx, j, bi, bk, vi, vk in acts:
+        by_field.setdefault(j, []).append((pidx, bi, bk, vi, vk))
+    for j, group in by_field.items():
+        cols = fq[j]
+        if len(cols) == 0:
+            continue
+        norm_cols = cols[ncond[cols] >= 0]
+        hs_sub = cols[ncond[cols] < 0]
+        ts = np.array([col_to_hs[int(c)] for c in hs_sub], dtype=np.int64)
+        pair_idx = np.array([g[0] for g in group], dtype=np.int64)
+        bi_idx = np.array([g[1] for g in group], dtype=np.int64)
+        bk_idx = np.array([g[2] for g in group], dtype=np.int64)
+        # 取值向量差按去重取值对建表，组内动作 gather
+        vals = sorted({g[3] for g in group} | {g[4] for g in group})
+        vpos = {v: p for p, v in enumerate(vals)}
+        cnt_tab = np.stack([registry.value_vectors(j, v)[0] for v in vals])
+        vi_code = np.fromiter((vpos[g[3]] for g in group), dtype=np.int64)
+        vk_code = np.fromiter((vpos[g[4]] for g in group), dtype=np.int64)
+        total = np.zeros(len(group), dtype=np.float64)
+        if len(norm_cols):
+            dvec = (
+                cnt_tab[vk_code][:, norm_cols] - cnt_tab[vi_code][:, norm_cols]
+            )
+            nc = ncond[norm_cols][None, :]
+            cb_i = cnt_base[bi_idx][:, norm_cols]
+            cb_k = cnt_base[bk_idx][:, norm_cols]
+            du = (cb_i + dvec == nc).astype(np.float64) - (
+                cb_i == nc
+            ).astype(np.float64)
+            dv = (cb_k - dvec == nc).astype(np.float64) - (
+                cb_k == nc
+            ).astype(np.float64)
+            d_sum = du + dv
+            total += d_sum @ we[norm_cols]
+            total -= ((d_sum * d_sum) @ w[norm_cols]) / 2
+        if len(hs_sub):
+            score_tab = np.stack(
+                [registry.value_vectors(j, v)[1] for v in vals]
+            )
+            dsc = score_tab[vk_code][:, ts] - score_tab[vi_code][:, ts]
+            thr = hs_thr[ts][None, :]
+            sb_i = score_base[bi_idx][:, ts]
+            sb_k = score_base[bk_idx][:, ts]
+            du = (sb_i + dsc >= thr).astype(np.float64) - (
+                sb_i >= thr
+            ).astype(np.float64)
+            dv = (sb_k - dsc >= thr).astype(np.float64) - (
+                sb_k >= thr
+            ).astype(np.float64)
+            d_sum = du + dv
+            total += d_sum @ we[hs_sub]
+            total -= ((d_sum * d_sum) @ w[hs_sub]) / 2
+        np.maximum.at(best, pair_idx, total)
+    return best
+
+
 @dataclass
 class PairedMenu:
     """配对产出，负载快照，完整分块菜单，以及配对诊断信息。"""
@@ -177,14 +255,17 @@ def _joint_actions_for_pair(
     ids_k: list[int],
     rng: np.random.Generator,
     budget: PairingBudget,
-) -> tuple[list[tuple[tuple[str, ...], tuple[str, ...]]], list[tuple[int, int]]]:
+) -> tuple[
+    list[tuple[int, tuple[str, ...], tuple[str, ...]]], list[tuple[int, int]]
+]:
     """每对的联合动作素材，一半交换一半组合。
 
     交换互换两行某字段的值，该字段总计数不变，只改与其他字段的搭配，
-    交换产生的新行元组先收集不注册，由调用方全量批量注册，
+    交换产生的新行元组连同字段号先收集不注册，打分免物化，
+    只有挑中配对的交换赢家才由调用方批量注册，
     组合让两行各出一个代表动作同时动，按单行增益之和取最好的几个。
     """
-    swaps: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    swaps: list[tuple[int, tuple[str, ...], tuple[str, ...]]] = []
     for j in rng.permutation(len(row_i)):
         if len(swaps) >= budget.swap_actions:
             break
@@ -194,7 +275,7 @@ def _joint_actions_for_pair(
         u = list(row_i)
         v = list(row_k)
         u[j], v[j] = row_k[j], row_i[j]
-        swaps.append((tuple(u), tuple(v)))
+        swaps.append((j, tuple(u), tuple(v)))
     combos = [
         (float(gains_i[a] + gains_k[b]), a, b)
         for a in reps_i
@@ -221,7 +302,8 @@ def build_paired_supports(
 
     步骤，算每个动作的影响清单与增益，每行挑方向各异的代表动作，
     建查询加方向的登记本，按相反方向检索搭档，逐对拼联合动作，
-    Gamma 为正的对按分数贪心绑定，每行至多属于一个块，
+    交换段打分免物化走命中计数增量，落选交换状态从不进注册表，
+    Gamma 为正的对按分数贪心绑定，每行至多属于一个块，挑中赢家才注册，
     绑定对输出双行块并完整保留两边全部单边动作，其余行保留原单行菜单。
     """
     if budget is None:
@@ -284,11 +366,10 @@ def build_paired_supports(
         ):
             pair_set.add((min(i, k), max(i, k)))
 
-    # 先收集全部联合动作素材，交换行统一批量注册，注册次序与逐个注册一致
+    # 先收集全部联合动作素材，交换动作只记字段与新行元组，先不注册
     pairs_sorted = sorted(pair_set)
     swaps_of: dict[tuple[int, int], list] = {}
     combos_of: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    swap_rows: list[tuple[str, ...]] = []
     for i, k in pairs_sorted:
         swaps, combo_ids = _joint_actions_for_pair(
             registry.state_tuple(int(s[i])),
@@ -304,41 +385,41 @@ def build_paired_supports(
         )
         swaps_of[(i, k)] = swaps
         combos_of[(i, k)] = combo_ids
-        for u, v in swaps:
-            swap_rows.append(u)
-            swap_rows.append(v)
-    swap_ids = registry.register_many(swap_rows)
-    joint_of: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    cursor = 0
-    for i, k in pairs_sorted:
-        n_swaps = len(swaps_of[(i, k)])
-        joint = [
-            (int(swap_ids[cursor + 2 * t]), int(swap_ids[cursor + 2 * t + 1]))
-            for t in range(n_swaps)
-        ]
-        cursor += 2 * n_swaps
-        joint_of[(i, k)] = joint + combos_of[(i, k)]
 
-    workload = registry.build_workload(target, weights)
+    # 表没动过，负载与残差和函数开头一份逐位相同，直接沿用
     feats = workload.features
     w = workload.weights
-    residual = table_residual(workload, s)
-    we = w * residual
+    we = we_vec
 
-    # 全部联合动作平铺一次矢量化打分，再按对分组取最大
+    # 交换段免物化稀疏打分，落选交换状态自始至终不注册不物化
+    best = np.zeros(len(pairs_sorted), dtype=np.float64)
+    acts: list[tuple[int, int, int, int, str, str]] = []
+    for idx, (i, k) in enumerate(pairs_sorted):
+        row_i = registry.state_tuple(int(s[i]))
+        row_k = registry.state_tuple(int(s[k]))
+        for j, _, _ in swaps_of[(i, k)]:
+            acts.append((idx, j, i, k, row_i[j], row_k[j]))
+    if acts:
+        cnt_base, score_base = registry.counts_scores_for_rows(
+            [registry.state_tuple(int(x)) for x in s]
+        )
+        best = _score_swaps_sparse(
+            registry, cnt_base, score_base, we, w, len(pairs_sorted), acts
+        )
+
+    # 组合段动作全部已注册，平铺一次稠密打分，再按对分组取最大
     us: list[int] = []
     vs: list[int] = []
     base_i: list[int] = []
     base_k: list[int] = []
     offsets = [0]
     for i, k in pairs_sorted:
-        for u, v in joint_of[(i, k)]:
+        for u, v in combos_of[(i, k)]:
             us.append(u)
             vs.append(v)
             base_i.append(int(s[i]))
             base_k.append(int(s[k]))
         offsets.append(len(us))
-    best = np.zeros(len(pairs_sorted), dtype=np.float64)
     if us:
         pack2 = _gpu_pack(feats, w, we) if use_gpu else None
         totals = _score_joint_totals(
@@ -354,7 +435,7 @@ def build_paired_supports(
         grouped_max = np.maximum.reduceat(
             totals, np.minimum(starts, len(totals) - 1)
         )
-        best[valid] = grouped_max[valid]
+        best[valid] = np.maximum(best[valid], grouped_max[valid])
     best = np.maximum(best, 0.0)
 
     scored: list[tuple[float, int, int]] = []
@@ -376,6 +457,25 @@ def build_paired_supports(
         used.add(i)
         used.add(k)
         chosen.append((i, k, gamma))
+
+    # 只注册挑中配对的交换赢家，注册次序按对排序确定，与打分次序无关
+    swap_rows_sel: list[tuple[str, ...]] = []
+    for i, k in sorted((i, k) for i, k, _ in chosen):
+        for _, u, v in swaps_of[(i, k)]:
+            swap_rows_sel.append(u)
+            swap_rows_sel.append(v)
+    swap_ids = registry.register_many(swap_rows_sel)
+    joint_of: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    cursor = 0
+    for i, k in sorted((i, k) for i, k, _ in chosen):
+        n_swaps = len(swaps_of[(i, k)])
+        joint = [
+            (int(swap_ids[cursor + 2 * t]), int(swap_ids[cursor + 2 * t + 1]))
+            for t in range(n_swaps)
+        ]
+        cursor += 2 * n_swaps
+        joint_of[(i, k)] = joint + combos_of[(i, k)]
+    workload = registry.build_workload(target, weights)
 
     lead_of: dict[int, tuple[int, int, float]] = {i: (i, k, g) for i, k, g in chosen}
     supports: list[BlockSupport] = []
