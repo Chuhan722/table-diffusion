@@ -212,6 +212,24 @@ class GpuBatchContext:
         self.target = cp.asarray(np.asarray(target, dtype=np.float64))
         self.weights = cp.asarray(np.asarray(weights, dtype=np.float64))
         self.num_queries = int(self.target.size)
+        # 依赖表拼接缓存，供条目流展开一次取数，免去按字段的小核循环
+        sizes_np = np.array([d.size for d in qs.dep], dtype=np.int64)
+        off_np = np.zeros(len(sizes_np) + 1, dtype=np.int64)
+        np.cumsum(sizes_np, out=off_np[1:])
+        total_dep = int(off_np[-1])
+        dep_cat = (
+            np.concatenate([np.asarray(d, dtype=np.int32) for d in qs.dep])
+            if total_dep else np.zeros(0, dtype=np.int32)
+        )
+        maxdom = max((a.shape[1] for a in qs.allow if a.size), default=1)
+        allow_cat = np.zeros((total_dep, maxdom), dtype=np.int8)
+        for j, a in enumerate(qs.allow):
+            if a.size:
+                allow_cat[off_np[j]:off_np[j + 1], : a.shape[1]] = a
+        self.dep_sizes = cp.asarray(sizes_np)
+        self.dep_off = cp.asarray(off_np)
+        self.dep_all = cp.asarray(dep_cat)
+        self.allow_flat = cp.asarray(allow_cat)
 
     # ------------------------------------------------------------------
     def _condition_counts(self, codes_g):
@@ -261,6 +279,29 @@ class GpuBatchContext:
         return loss
 
     # ------------------------------------------------------------------
+    def _entry_expand(self, j_of, cur_codes, new_codes):
+        """条目流展开，按路径序铺开各自字段的依赖列并取通过差。
+
+        返回 CSR 段边界，列号，通过差与条目行归属，
+        段内列序即依赖表原序，与旧的按字段小核循环逐位同序，
+        全程整批索引取数，无按字段的 Python 循环与主机同步。
+        """
+        cp = self.cp
+        j64 = j_of.astype(cp.int64)
+        row_nnz = self.dep_sizes[j64]
+        indptr = cp.zeros(int(j_of.size) + 1, dtype=cp.int64)
+        cp.cumsum(row_nnz, out=indptr[1:])
+        total = int(indptr[-1])
+        row_of = _seg_ids(cp, indptr, total)
+        within = cp.arange(total, dtype=cp.int64) - indptr[row_of]
+        dep_pos = self.dep_off[j64[row_of]] + within
+        indices = self.dep_all[dep_pos]
+        adj = (
+            self.allow_flat[dep_pos, new_codes[row_of]]
+            - self.allow_flat[dep_pos, cur_codes[row_of]]
+        )
+        return indptr, indices, adj, row_of
+
     def _delta_parts(self, menu_gpu, cnt, codes_g):
         """答案差稀疏块，结构复刻 CPU 版，坐标合并用键排序整型分段和。"""
         cp = self.cp
@@ -268,9 +309,6 @@ class GpuBatchContext:
         parts = []
         valid = fields >= 0
         nslots = valid.sum(axis=1)
-        dep_sizes = cp.asarray(
-            np.array([len(d) for d in self.qs.dep], dtype=np.int64)
-        )
 
         def _finish(indptr, indices, adj, path_idx):
             grp_of = group[path_idx]
@@ -292,32 +330,17 @@ class GpuBatchContext:
                 "grp_of": grp_of,
             })
 
-        # 单字段路径，行内列取依赖表本身有序
+        # 单字段路径，条目流一次展开，行内列取依赖表本身有序
         singles = cp.flatnonzero(nslots == 1)
         if singles.size:
             j_of = fields[singles, 0]
-            v_of = values[singles, 0]
-            row_nnz = dep_sizes[j_of.astype(cp.int64)]
-            indptr = cp.zeros(singles.size + 1, dtype=cp.int64)
-            cp.cumsum(row_nnz, out=indptr[1:])
-            indices = cp.empty(int(indptr[-1]), dtype=cp.int64)
-            adj = cp.empty(int(indptr[-1]), dtype=cp.int8)
-            j_host = cp.asnumpy(j_of)
-            for j in np.unique(j_host):
-                dep_j = self.dep[int(j)]
-                if dep_j.size == 0:
-                    continue
-                sel = cp.flatnonzero(j_of == int(j))
-                g_sel = group[singles[sel]]
-                cur_pass = self.allow[int(j)][:, codes_g[g_sel, int(j)]]
-                new_pass = self.allow[int(j)][:, v_of[sel]]
-                block_adj = (new_pass.astype(cp.int8) - cur_pass.astype(cp.int8)).T
-                slots = indptr[sel][:, None] + cp.arange(dep_j.size)[None, :]
-                indices[slots.ravel()] = cp.tile(dep_j, int(sel.size))
-                adj[slots.ravel()] = block_adj.ravel()
+            cur = codes_g[group[singles], j_of]
+            indptr, indices, adj, _ = self._entry_expand(
+                j_of, cur, values[singles, 0]
+            )
             _finish(indptr, indices, adj, singles.astype(cp.int64))
 
-        # 多字段路径，坐标键排序合并，整型前缀和精确无误差
+        # 多字段路径，各槽位条目流展开后坐标键排序合并，整型前缀和精确无误差
         multis = cp.flatnonzero(nslots >= 2)
         if multis.size:
             rows_parts, cols_parts, adj_parts = [], [], []
@@ -327,25 +350,25 @@ class GpuBatchContext:
                 if live.size == 0:
                     continue
                 j_of = fields[live, slot]
-                j_host = cp.asnumpy(j_of)
-                for j in np.unique(j_host):
-                    dep_j = self.dep[int(j)]
-                    if dep_j.size == 0:
-                        continue
-                    sel = live[j_of == int(j)]
-                    g_sel = group[sel]
-                    cur_pass = self.allow[int(j)][:, codes_g[g_sel, int(j)]]
-                    new_pass = self.allow[int(j)][:, values[sel, slot]]
-                    block_adj = (new_pass.astype(cp.int8) - cur_pass.astype(cp.int8)).T
-                    loc = cp.searchsorted(multis, sel)
-                    rows_parts.append(cp.repeat(loc, int(dep_j.size)))
-                    cols_parts.append(cp.tile(dep_j, int(sel.size)))
-                    adj_parts.append(block_adj.ravel().astype(cp.int64))
-            keys = (
-                cp.concatenate(rows_parts) * self.num_queries
-                + cp.concatenate(cols_parts)
-            )
+                cur = codes_g[group[live], j_of]
+                loc = cp.flatnonzero(live_mask)
+                _, cols_s, adj_s, row_of_s = self._entry_expand(
+                    j_of, cur, values[live, slot]
+                )
+                rows_parts.append(loc[row_of_s])
+                cols_parts.append(cols_s)
+                adj_parts.append(adj_s.astype(cp.int64))
+            keys_rows = cp.concatenate(rows_parts)
+            keys_cols = cp.concatenate(cols_parts)
             vals = cp.concatenate(adj_parts)
+            # 键位宽够时压成 int32 排序，radix 位数减半，值域超界回退 int64
+            if int(multis.size) * self.num_queries < 2 ** 31:
+                keys = (
+                    keys_rows.astype(cp.int32) * np.int32(self.num_queries)
+                    + keys_cols.astype(cp.int32)
+                )
+            else:
+                keys = keys_rows.astype(cp.int64) * self.num_queries + keys_cols
             order = cp.argsort(keys)
             sk = keys[order]
             sv = vals[order]

@@ -444,39 +444,74 @@ def _normalize_menu(
         bad = idx[(values[idx, slot] < 0) | same]
         fields[bad, slot] = _NO_FIELD
         values[bad, slot] = _NO_FIELD
-    # 槽内按字段升序排列，无效槽排最后，打包排序一次完成
+    # 槽内按字段升序排列，无效槽排最后，三元素排序网络一次完成
     packed = np.where(
         fields < 0,
         np.iinfo(np.int64).max,
         fields.astype(np.int64) << 32 | values.astype(np.int64),
     )
-    packed.sort(axis=1)
+    c0, c1, c2 = packed[:, 0], packed[:, 1], packed[:, 2]
+    c0, c1 = np.minimum(c0, c1), np.maximum(c0, c1)
+    c0, c2 = np.minimum(c0, c2), np.maximum(c0, c2)
+    c1, c2 = np.minimum(c1, c2), np.maximum(c1, c2)
+    packed = np.stack([c0, c1, c2], axis=1)
     alive = packed[:, 0] != np.iinfo(np.int64).max
     group = group[alive]
     packed = packed[alive]
-    # 组内去重合并，lexsort 找重复，首现位置恢复生成顺序
-    order = np.lexsort((packed[:, 2], packed[:, 1], packed[:, 0], group))
+    # 组内去重合并，键位宽够就压成单键稳定排序，超宽回退四键 lexsort，
+    # 压缩键与原键字典序单调等价，稳定排序下首现位置逐位一致
+    fbits = max(int(codes_g.shape[1]), 1).bit_length()
+    vbits = max(int(values.max(initial=-1)) + 1, 1).bit_length()
+    sbits = fbits + vbits
+    gbits = max(num_groups, 1).bit_length()
+    if gbits + 3 * sbits <= 63:
+        inval = (np.int64(1) << np.int64(sbits)) - 1
+        ks = np.where(
+            packed == np.iinfo(np.int64).max,
+            inval,
+            (packed >> 32) << vbits | (packed & 0xFFFFFFFF),
+        )
+        skey = (
+            group << (3 * sbits)
+            | ks[:, 0] << (2 * sbits) | ks[:, 1] << sbits | ks[:, 2]
+        )
+        order = np.argsort(skey, kind="stable")
+        sorted_key = skey[order]
+        new_key = np.ones(len(order), dtype=np.bool_)
+        if len(order) > 1:
+            new_key[1:] = sorted_key[1:] != sorted_key[:-1]
+    else:
+        order = np.lexsort((packed[:, 2], packed[:, 1], packed[:, 0], group))
+        sg_chk = group[order]
+        sp_chk = packed[order]
+        new_key = np.ones(len(order), dtype=np.bool_)
+        if len(order) > 1:
+            new_key[1:] = (sg_chk[1:] != sg_chk[:-1]) | np.any(
+                sp_chk[1:] != sp_chk[:-1], axis=1
+            )
     sg = group[order]
     sp = packed[order]
-    new_key = np.ones(len(order), dtype=np.bool_)
-    if len(order) > 1:
-        new_key[1:] = (sg[1:] != sg[:-1]) | np.any(sp[1:] != sp[:-1], axis=1)
     key_ids = np.cumsum(new_key) - 1
     mass = np.bincount(key_ids).astype(np.float64)
-    # lexsort 稳定，同键内保持生成顺序，键首成员就是首现位置
+    # 稳定排序同键内保持生成顺序，键首成员就是首现位置
     firsts = order[new_key]
-    # 输出必须组内连续才能按段边界切组，组间按组号排组内保持首现顺序
+    # 输出必须组内连续才能按段边界切组，组间按组号排组内保持首现顺序，
+    # 组号乘跨度加首现位置构成唯一单键，直接排序免掉二次 lexsort
     grp_keys = sg[new_key]
-    keep = np.lexsort((firsts, grp_keys))
+    span = np.int64(len(order) + 1)
+    if num_groups * int(span) < np.iinfo(np.int64).max:
+        keep = np.argsort(grp_keys * span + firsts)
+    else:
+        keep = np.lexsort((firsts, grp_keys))
     out_packed = sp[new_key][keep]
     out_group = sg[new_key][keep]
     out_mass = mass[keep]
     dead = out_packed == np.iinfo(np.int64).max
     out_fields = np.where(dead, _NO_FIELD, (out_packed >> 32).astype(np.int32))
     out_values = np.where(dead, _NO_FIELD, (out_packed & 0xFFFFFFFF).astype(np.int32))
+    counts_g = np.bincount(out_group, minlength=num_groups)
     offsets = np.zeros(num_groups + 1, dtype=np.int64)
-    np.add.at(offsets, out_group + 1, 1)
-    offsets = np.cumsum(offsets)
+    np.cumsum(counts_g, out=offsets[1:])
     return BatchMenu(offsets, out_group, out_fields, out_values, out_mass)
 
 
