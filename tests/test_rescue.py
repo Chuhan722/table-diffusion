@@ -287,3 +287,75 @@ def test_sparse_flat_deltas_wide_schema():
         seg = slice(ptr[p], ptr[p + 1])
         d_rec[cols[seg]] = vals[seg]
         np.testing.assert_array_equal(d_rec, d)
+
+
+def _rescue_only_provider(registry, y, weights, rows=8):
+    """每轮固定给救援计划的桩，损失几乎不动，天然衰竭。"""
+
+    def stub(state_ids, round_index, frozen_streak=0):
+        small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+            registry, state_ids, y, weights, np.random.default_rng(13), rows, BUDGET
+        )
+        return BatchRoundPlan(
+            "rescue", wl, supports=sups, rescue_ids=sub_ids,
+            rescue_sub_idx=sub_idx, rescue_registry=small,
+        )
+
+    return stub
+
+
+def test_rescue_stop_triggers_and_matches_replay():
+    """救援衰竭早停在窗口降幅不足时触发，停止点与离线回放同口径。"""
+    registry, ids, weights, _ = _scene(5)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    out = evolve_batch(
+        ids, 50, np.random.default_rng(3), stub, registry,
+        rescue_stop_window=3, rescue_stop_tol=0.5,
+    )
+    assert out.stop_reason == "rescue_exhausted"
+    assert len(out.records) < 50
+    # 回放口径，第 i 次救援起点损失相对第 i-3 次降幅低于阈值的首个 i 即停
+    losses = [r.old_loss for r in out.records]
+    k = len(losses) - 1
+    assert k >= 3
+    assert (losses[k - 3] - losses[k]) / losses[k - 3] < 0.5
+    for i in range(3, k):
+        assert (losses[i - 3] - losses[i]) / losses[i - 3] >= 0.5
+    # 触发轮只记账不落表，返回的是触发轮起点表
+    replay = evolve_batch(
+        ids, k, np.random.default_rng(3), stub, registry,
+    )
+    np.testing.assert_array_equal(out.state_ids, replay.state_ids)
+
+
+def test_rescue_stop_off_is_zero_change():
+    """窗口开着但阈值极小时永不触发，轨迹与完全关闭逐位一致。"""
+    registry, ids, weights, _ = _scene(6)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    base = evolve_batch(ids, 6, np.random.default_rng(7), stub, registry)
+    armed = evolve_batch(
+        ids, 6, np.random.default_rng(7), stub, registry,
+        rescue_stop_window=999, rescue_stop_tol=0.5,
+    )
+    assert armed.stop_reason == base.stop_reason == "round_limit"
+    np.testing.assert_array_equal(base.state_ids, armed.state_ids)
+    assert [r.old_loss for r in base.records] == [r.old_loss for r in armed.records]
+
+
+def test_rescue_stop_param_validation():
+    """救援早停参数非法值直接拒绝。"""
+    registry, ids, weights, _ = _scene(7)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    with pytest.raises(ValueError):
+        evolve_batch(
+            ids, 1, np.random.default_rng(1), stub, registry,
+            rescue_stop_window=-1,
+        )
+    with pytest.raises(ValueError):
+        evolve_batch(
+            ids, 1, np.random.default_rng(1), stub, registry,
+            rescue_stop_window=2, rescue_stop_tol=-0.1,
+        )

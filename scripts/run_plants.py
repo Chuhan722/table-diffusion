@@ -113,6 +113,14 @@ def main() -> None:
         help="平台早停窗口轮数，每窗比一次窗口内最优损失",
     )
     parser.add_argument(
+        "--rescue-stop-window", type=int, default=0,
+        help="救援衰竭早停窗口，按救援次数开窗审计性价比，0 关闭，需 --batched",
+    )
+    parser.add_argument(
+        "--rescue-stop-tol", type=float, default=0.02,
+        help="救援衰竭早停阈值，窗口内损失相对降幅低于该值即停，默认 0.02",
+    )
+    parser.add_argument(
         "--progress", type=int, default=0,
         help="每 N 轮打印一行进度并即时刷出，冻结与救援轮无条件打印，0 静默",
     )
@@ -123,6 +131,8 @@ def main() -> None:
         parser.error("--work-rows 只支持批量路径，请同时带 --batched")
     if args.stop_threshold > 0 and not args.batched:
         parser.error("--stop-threshold 只支持批量路径，请同时带 --batched")
+    if args.rescue_stop_window > 0 and not args.batched:
+        parser.error("--rescue-stop-window 只支持批量路径，请同时带 --batched")
 
     schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
     specs = load_queries(str(DATA_DIR / args.exam))
@@ -199,6 +209,8 @@ def main() -> None:
             backend="gpu" if args.gpu else "cpu",
             stop_threshold=args.stop_threshold,
             stop_lag=args.stop_lag,
+            rescue_stop_window=args.rescue_stop_window,
+            rescue_stop_tol=args.rescue_stop_tol,
             progress_every=args.progress,
         )
     elif args.grouped:

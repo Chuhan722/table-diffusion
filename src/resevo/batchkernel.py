@@ -616,6 +616,8 @@ def evolve_batch(
     backend: str = "cpu",
     stop_threshold: float = 0.0,
     stop_lag: int = 100,
+    rescue_stop_window: int = 0,
+    rescue_stop_tol: float = 0.02,
     progress_every: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
@@ -627,6 +629,13 @@ def evolve_batch(
     相对改进低于阈值即停，停止原因记 loss_plateau。窗口取最优值防抽样抖动。
     判停只读损失，不碰核菜单抽样与随机流，停前轨迹与不停的跑逐位一致，
     返回的表是触发轮的起点表。冻结重试停照旧并存，默认 0 关闭零改变。
+    rescue_stop_window 大于零启用救援衰竭早停，救援模式下轮窗口判据
+    永远差一口气够不着，改按救援次数开窗直接审计救援性价比，
+    第 i 次救援轮起点损失相对第 i-window 次的降幅低于 rescue_stop_tol
+    即认定衰竭停跑，停止原因记 rescue_exhausted，触发轮只记账不落表，
+    返回触发轮起点表，与曲线离线回放同语义，默认 0 关闭零改变，
+    默认阈值由 plants 种子 1 两条长跑曲线回放校准，窗口 10 降幅 2% 一带
+    停止点对窗口与阈值取值不敏感。
     progress_every 为正时每该数轮打印一行进度并立即刷出，
     冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
     """
@@ -640,11 +649,16 @@ def evolve_batch(
         raise ValueError("早停阈值不能为负")
     if stop_lag < 1:
         raise ValueError("早停窗口轮数必须为正")
+    if rescue_stop_window < 0:
+        raise ValueError("救援早停窗口不能为负")
+    if rescue_stop_tol < 0.0:
+        raise ValueError("救援早停阈值不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
     window_best: float | None = None  # 本窗口内最优损失
     prev_window_best: float | None = None  # 上一窗口最优损失
+    rescue_losses: list[float] = []  # 各救援轮起点损失，衰竭判据用
     last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
@@ -706,6 +720,14 @@ def evolve_batch(
                 f"{result.status} 连败 {frozen_streak}",
                 flush=True,
             )
+        if rescue_stop_window > 0 and plan.mode == "rescue":
+            rescue_losses.append(result.old_loss)
+            if len(rescue_losses) > rescue_stop_window:
+                base = rescue_losses[-1 - rescue_stop_window]
+                if base <= 0.0 or (
+                    (base - rescue_losses[-1]) / base < rescue_stop_tol
+                ):
+                    return EvolveResult(current, records, "rescue_exhausted")
         if stop_threshold > 0.0:
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
