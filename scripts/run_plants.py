@@ -130,6 +130,10 @@ def main() -> None:
         help="GPU 条目流分块预算，大域宽数据压显存峰值用，0 不分块零改变",
     )
     parser.add_argument(
+        "--init-margin-tol", type=float, default=0.0,
+        help="初始化一阶边缘化覆盖校验相对容差，噪声考卷用 0.05，默认 0 精确",
+    )
+    parser.add_argument(
         "--progress", type=int, default=0,
         help="每 N 轮打印一行进度并即时刷出，冻结与救援轮无条件打印，0 静默",
     )
@@ -177,7 +181,9 @@ def main() -> None:
             for _ in range(len(real_rows))
         ]
     else:
-        marginals = derive_first_order(specs, schema, len(real_rows))
+        marginals = derive_first_order(
+            specs, schema, len(real_rows), tol_rows=args.init_margin_tol
+        )
         init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
     ids = registry.register_table(init_rows)
 

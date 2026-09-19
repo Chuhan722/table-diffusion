@@ -11,6 +11,9 @@ CUDA_VISIBLE_DEVICES=1 /home/chuhan/projects/private_gsd/.venv/bin/python \
 
 同餐断言，官方统计模块从码表算出的全二阶计数，
 必须逐格等于考卷 9248 条答案，任何一格不等立即失败退出。
+
+加噪对照给 --noisy-exam 指噪声考卷 json，拟合目标整卷替换成噪声答案，
+此时按官方 oneshot 口径只挂全二阶模块，评价与残差打印仍对真实统计。
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from itertools import combinations
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
@@ -35,8 +39,8 @@ from genetic_sd.utils import Dataset, Domain
 REPO = Path(__file__).resolve().parent.parent
 
 
-def load_exam(data_csv: Path, exam_json: Path):
-    """考卷重建每字段值域与全部字段对列联表。"""
+def load_exam(data_csv: Path, exam_json: Path, dtype=np.int64):
+    """考卷重建每字段值域与全部字段对列联表，噪声考卷传浮点 dtype。"""
     with open(data_csv, encoding="utf-8-sig") as fh:
         raw = list(csv.DictReader(fh))
     fields = list(raw[0].keys())
@@ -47,7 +51,7 @@ def load_exam(data_csv: Path, exam_json: Path):
     if total != len(raw):
         raise RuntimeError("考卷行数与真实表不一致")
     tables = {
-        (fa, fb): np.zeros((len(cats[fa]), len(cats[fb])), dtype=np.int64)
+        (fa, fb): np.zeros((len(cats[fa]), len(cats[fb])), dtype=dtype)
         for fa, fb in combinations(fields, 2)
     }
     for q in exam["queries"]:
@@ -71,6 +75,11 @@ def main() -> None:
     parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
     parser.add_argument("--num-generations", type=int, default=50000000)
     parser.add_argument("--early-stop-threshold", type=float, default=0.0001)
+    parser.add_argument(
+        "--noisy-exam", type=str, default="",
+        help="外部噪声考卷 json 路径，给了就按其答案当拟合目标，"
+        "官方 oneshot 口径只挂全二阶，评价照旧对真实统计",
+    )
     args = parser.parse_args()
 
     data_dir = REPO / "data" / args.data
@@ -94,20 +103,48 @@ def main() -> None:
     dataset = Dataset(frame.astype(float), domain)
 
     stats = AdaptiveChainedStatistics(dataset)
-    one_way = Marginals.get_all_kway_combinations(domain, k=1)
-    two_way = Marginals.get_all_kway_combinations(domain, k=2)
-    stats.add_stat_module_and_fit(one_way)
-    stats.add_stat_module_and_fit(two_way)
     key = jax.random.PRNGKey(args.seed)
     key, key_dp = jax.random.split(key)
-    stats.private_measure_all_statistics(key=key_dp, rho=np.inf)
+    if args.noisy_exam:
+        # 官方 oneshot 口径只挂全二阶，外部噪声答案整卷替换拟合目标
+        _, _, noisy_tables, _, _ = load_exam(
+            data_dir / f"{args.data}.csv", Path(args.noisy_exam), dtype=np.float64
+        )
+        two_way = Marginals.get_all_kway_combinations(domain, k=2)
+        stats.add_stat_module_and_fit(two_way)
+        stats.private_measure_all_statistics(key=key_dp, rho=np.inf)
+        pairs = [tuple(c) for c in stats.stat_modules[0].kway_combinations]
+        rebuilt = []
+        for workload_id, wfn, _noised, true in stats.selected_workloads[0]:
+            fa, fb = pairs[workload_id]
+            true_freq = pair_tables[(fa, fb)].astype(np.float64).ravel() / total
+            if not np.allclose(np.asarray(true), true_freq, atol=1e-6, rtol=0.0):
+                raise RuntimeError(f"噪声注入顺序断言失败，字段对 ({fa},{fb})")
+            noisy_freq = jnp.asarray(noisy_tables[(fa, fb)].ravel() / total)
+            rebuilt.append((workload_id, wfn, noisy_freq, true))
+        stats.selected_workloads[0] = rebuilt
+        want = np.concatenate(
+            [noisy_tables[p].ravel() / total for p in pairs]
+        )
+        got = np.asarray(stats.get_selected_noised_statistics())
+        drift = float(np.max(np.abs(want - got)))
+        if drift > 1e-6:
+            raise RuntimeError(f"噪声目标整卷断言失败，最大漂移 {drift}")
+        print(f"噪声目标注入 {got.shape[0]} 格，与噪声考卷逐格一致")
+        true_stats = np.asarray(stats.get_all_true_statistics())
+    else:
+        one_way = Marginals.get_all_kway_combinations(domain, k=1)
+        two_way = Marginals.get_all_kway_combinations(domain, k=2)
+        stats.add_stat_module_and_fit(one_way)
+        stats.add_stat_module_and_fit(two_way)
+        stats.private_measure_all_statistics(key=key_dp, rho=np.inf)
 
-    true_stats = np.asarray(stats.get_all_true_statistics())
-    noised = np.asarray(stats.get_selected_noised_statistics())
-    drift = float(np.max(np.abs(true_stats - noised)))
-    if drift != 0.0:
-        raise RuntimeError(f"零噪声断言失败，最大漂移 {drift}")
-    print(f"统计量 {true_stats.shape[0]} 格，零噪声逐格一致")
+        true_stats = np.asarray(stats.get_all_true_statistics())
+        noised = np.asarray(stats.get_selected_noised_statistics())
+        drift = float(np.max(np.abs(true_stats - noised)))
+        if drift != 0.0:
+            raise RuntimeError(f"零噪声断言失败，最大漂移 {drift}")
+        print(f"统计量 {true_stats.shape[0]} 格，零噪声逐格一致")
 
     generator = GeneticSD(
         domain=domain,
@@ -130,6 +167,9 @@ def main() -> None:
         f"搜索 {fit_seconds:.1f} 秒，频率尺度残差 平均 {l1.mean():.6f} "
         f"最大 {l1.max():.6f}"
     )
+    if args.noisy_exam:
+        l1n = np.abs(np.asarray(stats.get_selected_noised_statistics()) - sync_stats)
+        print(f"对噪声目标残差 平均 {l1n.mean():.6f} 最大 {l1n.max():.6f}")
 
     out_codes = sync_data.df[fields].astype(float).round().astype(int)
     if len(out_codes) != total:

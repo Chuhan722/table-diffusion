@@ -38,16 +38,19 @@ def _atom_values(cond: dict, domain: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def derive_first_order(
-    specs: list[QuerySpec], schema: TableSchema, total_rows: int
-) -> list[list[tuple[dict, int]]]:
+    specs: list[QuerySpec], schema: TableSchema, total_rows: int,
+    tol_rows: float = 0.0,
+) -> list[list[tuple[dict, float]]]:
     """从二阶等值与分箱查询答案边缘化出每字段的一阶原子计数。
 
     只看恰好两个单字段条件的查询，按字段对分桶，
     对字段 A 取包含 A 的第一个覆盖完整的字段对，
     固定 A 侧原子对 B 侧全部原子求和得到 A 的原子计数，
-    覆盖校验，全部原子计数之和必须恰等于表行数，否则拒绝。
+    覆盖校验，全部原子计数之和必须恰等于表行数，否则拒绝，
+    tol_rows 是相对容差，噪声考卷答案带噪总和不再精确等于行数，
+    调用方显式放宽，默认零保持零噪声路径精确校验。
     """
-    pair_cells: dict[tuple[int, int], dict[tuple, tuple[dict, dict, int]]] = {}
+    pair_cells: dict[tuple[int, int], dict[tuple, tuple[dict, dict, float]]] = {}
     for spec in specs:
         if len(spec.conditions) != 2:
             continue
@@ -61,23 +64,23 @@ def derive_first_order(
         if ja > jb:
             ja, jb, ca, cb = jb, ja, cb, ca
         key = (_atom_signature(ca), _atom_signature(cb))
-        pair_cells.setdefault((ja, jb), {})[key] = (ca, cb, int(spec.result))
+        pair_cells.setdefault((ja, jb), {})[key] = (ca, cb, float(spec.result))
 
-    marginals: list[list[tuple[dict, int]]] = []
+    marginals: list[list[tuple[dict, float]]] = []
     for j in range(schema.num_fields):
         found = None
         for (ja, jb), cells in sorted(pair_cells.items()):
             if j not in (ja, jb):
                 continue
             side = 0 if j == ja else 1
-            counts: dict[tuple, tuple[dict, int]] = {}
+            counts: dict[tuple, tuple[dict, float]] = {}
             for (sa, sb), (ca, cb, r) in cells.items():
                 sig = sa if side == 0 else sb
                 cond = ca if side == 0 else cb
                 prev = counts.get(sig)
-                counts[sig] = (cond, (prev[1] if prev else 0) + r)
+                counts[sig] = (cond, (prev[1] if prev else 0.0) + r)
             total = sum(v for _, v in counts.values())
-            if total == total_rows:
+            if abs(total - total_rows) <= tol_rows * total_rows:
                 found = sorted(counts.values(), key=lambda t: _atom_signature(t[0]))
                 break
         if found is None:

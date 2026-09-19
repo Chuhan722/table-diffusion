@@ -78,3 +78,38 @@ def test_atom_signature_normalizes():
     a = {"attribute": "age", "operator": "between", "lower": 18, "upper": 24}
     b = {"attribute": "age", "operator": "between", "lower": 18.0, "upper": 24.0}
     assert _atom_signature(a) == _atom_signature(b)
+
+
+def test_derive_first_order_noisy_tolerance():
+    """噪声考卷浮点答案总和偏离行数，容差放宽可过，默认精确拒绝。"""
+    from resevo.dataset import TableSchema
+
+    schema = TableSchema(("x", "y"), (("0", "1"), ("a", "b")))
+    cells = [("0", "a", 2.7), ("0", "b", 3.4), ("1", "a", 1.9), ("1", "b", 2.3)]
+    specs = [
+        QuerySpec(f"q{i}", (
+            {"attribute": "x", "operator": "==", "value": vx},
+            {"attribute": "y", "operator": "==", "value": vy},
+        ), r)
+        for i, (vx, vy, r) in enumerate(cells)
+    ]
+    with pytest.raises(ValueError):
+        derive_first_order(specs, schema, 10)
+    marginals = derive_first_order(specs, schema, 10, tol_rows=0.05)
+    got_x = {(_atom_signature(c)): v for c, v in marginals[0]}
+    key0 = _atom_signature({"attribute": "x", "operator": "==", "value": "0"})
+    assert abs(got_x[key0] - (2.7 + 3.4)) < 1e-12
+
+
+def test_cdp_rho_roundtrip():
+    """cdp_rho 换算回代 delta 自洽，锚住与官方 snsynth 同源的实现。"""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from make_noisy_exam import _cdp_delta, cdp_rho
+
+    rho = cdp_rho(1.0, 1e-5)
+    assert 0.02 < rho < 0.05
+    assert abs(_cdp_delta(rho, 1.0) - 1e-5) < 1e-9
+    assert cdp_rho(2.0, 1e-5) > rho
