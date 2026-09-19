@@ -199,3 +199,39 @@ def test_gpu_work_mode_descends():
     )
     losses = [r.old_loss for r in out.records]
     assert min(losses) < 0.3 * losses[0]
+
+
+def test_retry_select_prunes_frozen_rounds():
+    """开关开着时冻结重试轮照样裁组，关着时回退全量，老行为零改变。"""
+    r1, ids1, w1, _ = _scene(6, num_rows=30)
+    r2, ids2, w2, _ = _scene(6, num_rows=30)
+    common = dict(work_rows=6, work_random_frac=0.0)
+    pa = _provider(r1, w1, select_rng=np.random.default_rng(7), **common)
+    pb = _provider(
+        r2, w2, select_rng=np.random.default_rng(7), retry_select=True, **common
+    )
+    for prov, ids in ((pa, ids1), (pb, ids2)):
+        plan0 = prov(ids, 0)
+        res0 = build_batch_kernel(
+            plan0.workload, plan0.grouped, plan0.menu,
+            prov.structure[0], prov.codebook.sync(), want_scores=True,
+        )
+        prov.feed_scores(res0.grouped.unique_ids, res0.group_scores)
+    plan_a = pa(ids1, 1, frozen_streak=2)
+    plan_b = pb(ids2, 1, frozen_streak=2)
+    assert not np.any(np.diff(plan_a.menu.offsets) == 0), "关闭时重试轮应全量"
+    empty_b = np.diff(plan_b.menu.offsets) == 0
+    assert empty_b.any(), "开启时重试轮应留下未选组"
+    assert (~empty_b).any()
+
+
+def test_retry_select_end_to_end_descends():
+    """开关开着端到端多轮含冻结重试仍正常下降收尾。"""
+    registry, ids, weights, _ = _scene(8, num_rows=30)
+    out = _evolve(
+        registry, ids, weights, rounds=60,
+        work_rows=8, select_rng=np.random.default_rng(11), retry_select=True,
+    )
+    losses = [r.old_loss for r in out.records]
+    assert losses[-1] < losses[0]
+    assert out.stop_reason in ("round_limit", "no_positive_direction")

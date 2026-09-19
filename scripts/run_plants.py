@@ -105,6 +105,10 @@ def main() -> None:
         help="步长低于该值后才启用工作批，早期全量后期裁组，0 为立即启用",
     )
     parser.add_argument(
+        "--retry-select", action="store_true",
+        help="冻结重试轮也走错位挑组不回退全量，有损开关需终点加阅卷验收",
+    )
+    parser.add_argument(
         "--stop-threshold", type=float, default=0.0,
         help="平台早停阈值，窗口相对改进低于该值即停，0 关闭，需 --batched",
     )
@@ -182,6 +186,7 @@ def main() -> None:
             work_random_frac=args.work_random,
             select_rng=np.random.default_rng(args.select_seed),
             work_below_step=args.work_below,
+            retry_select=args.retry_select,
         )
     elif args.grouped:
         provider = make_grouped_provider(

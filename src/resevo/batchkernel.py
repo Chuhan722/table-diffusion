@@ -444,6 +444,7 @@ def make_batch_provider(
     work_random_frac: float = 0.25,
     select_rng: np.random.Generator | None = None,
     work_below_step: float = 0.0,
+    retry_select: bool = False,
 ):
     """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
 
@@ -468,6 +469,10 @@ def make_batch_provider(
     首轮尚无分数也走全量，work_rows 取 0 与旧行为逐位一致。
     work_below_step 为正时早期全量演化，观测到某轮步长低于该值才开闸裁组，
     单向切换不来回抖，早期残差处处大全员上场步长本就顶格，裁组只会自缚手脚。
+    retry_select 为真时冻结重试轮不再回退全量，照常错位挑组换一批上场，
+    长跑账本显示后期九成重试轮全量也找不到方向，全量构核纯烧钱，
+    挑组的随机名额与菜单刷新天然换视野，属有损开关轨迹从首个冻结轮起分叉，
+    需终点与阅卷双验收，默认关闭零改变。
     """
     if pairing_backoff < 1:
         raise ValueError("配对退避周期必须为正")
@@ -564,7 +569,7 @@ def make_batch_provider(
         codes = codebook.sync()
         grouped = group_state_ids(state_ids)
         codes_g = codes[grouped.unique_ids]
-        sel = None if frozen_streak > 0 else _select_groups(grouped)
+        sel = _select_groups(grouped) if (retry_select or frozen_streak == 0) else None
         if sel is None:
             menu = generate_batch_menu(
                 codes_g, grouped.counts, codebook.domain_sizes,
