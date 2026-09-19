@@ -33,11 +33,12 @@ from resevo.initialization import derive_first_order, sample_initial_rows  # noq
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "plants"
+DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="plants 真数据端到端实验")
+    parser = argparse.ArgumentParser(description="真数据端到端实验")
+    parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
     parser.add_argument("--rounds", type=int, default=400, help="演化轮数上限")
     parser.add_argument("--menu-seed", type=int, default=20260916, help="菜单随机种子")
     parser.add_argument("--sample-seed", type=int, default=7, help="抽样随机种子")
@@ -62,8 +63,8 @@ def main() -> None:
         help="启用懒注册批量菜单，候选用差分表示不注册，抽中落地才登记",
     )
     parser.add_argument(
-        "--exam", type=str, default="measured_9248query.json",
-        help="训练考卷文件名，在 data/plants 目录下",
+        "--exam", type=str, default="",
+        help="训练考卷文件名，在数据目录下，留空自动发现唯一的 measured_*query.json",
     )
     parser.add_argument(
         "--uniform-init", action="store_true",
@@ -138,8 +139,16 @@ def main() -> None:
     if args.rescue_stop_window > 0 and not args.batched:
         parser.error("--rescue-stop-window 只支持批量路径，请同时带 --batched")
 
-    schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
-    specs = load_queries(str(DATA_DIR / args.exam))
+    data_dir = DATA_ROOT / args.data
+    schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
+    if args.exam:
+        exam_path = data_dir / args.exam
+    else:
+        found = sorted(data_dir.glob("measured_*query.json"))
+        if len(found) != 1:
+            parser.error(f"数据目录 {data_dir} 下 measured_*query.json 须恰有一个，实有 {len(found)}")
+        exam_path = found[0]
+    specs = load_queries(str(exam_path))
     y = target_from_specs(specs)
     w = np.ones(len(specs))
     seen = set()

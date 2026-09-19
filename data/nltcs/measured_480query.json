@@ -1,0 +1,8649 @@
+{
+ "dataset": "nltcs.csv",
+ "record_count": 16181,
+ "query_count": 480,
+ "result_unit": "records",
+ "description": "训练考卷，全二阶格子逐格出题，一阶不出题，与文献全二阶边缘同口径",
+ "queries": [
+  {
+   "id": "W2_00001",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_2 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11981
+  },
+  {
+   "id": "W2_00002",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_2 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1835
+  },
+  {
+   "id": "W2_00003",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_2 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 775
+  },
+  {
+   "id": "W2_00004",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_2 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1590
+  },
+  {
+   "id": "W2_00005",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_3 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11862
+  },
+  {
+   "id": "W2_00006",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_3 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1954
+  },
+  {
+   "id": "W2_00007",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_3 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 562
+  },
+  {
+   "id": "W2_00008",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_3 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1803
+  },
+  {
+   "id": "W2_00009",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7744
+  },
+  {
+   "id": "W2_00010",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6072
+  },
+  {
+   "id": "W2_00011",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 471
+  },
+  {
+   "id": "W2_00012",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1894
+  },
+  {
+   "id": "W2_00013",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6610
+  },
+  {
+   "id": "W2_00014",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7206
+  },
+  {
+   "id": "W2_00015",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 566
+  },
+  {
+   "id": "W2_00016",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1799
+  },
+  {
+   "id": "W2_00017",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8020
+  },
+  {
+   "id": "W2_00018",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5796
+  },
+  {
+   "id": "W2_00019",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 301
+  },
+  {
+   "id": "W2_00020",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2064
+  },
+  {
+   "id": "W2_00021",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11421
+  },
+  {
+   "id": "W2_00022",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2395
+  },
+  {
+   "id": "W2_00023",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 574
+  },
+  {
+   "id": "W2_00024",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1791
+  },
+  {
+   "id": "W2_00025",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9959
+  },
+  {
+   "id": "W2_00026",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3857
+  },
+  {
+   "id": "W2_00027",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 482
+  },
+  {
+   "id": "W2_00028",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1883
+  },
+  {
+   "id": "W2_00029",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11814
+  },
+  {
+   "id": "W2_00030",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2002
+  },
+  {
+   "id": "W2_00031",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 854
+  },
+  {
+   "id": "W2_00032",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1511
+  },
+  {
+   "id": "W2_00033",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4976
+  },
+  {
+   "id": "W2_00034",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 8840
+  },
+  {
+   "id": "W2_00035",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 215
+  },
+  {
+   "id": "W2_00036",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2150
+  },
+  {
+   "id": "W2_00037",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11090
+  },
+  {
+   "id": "W2_00038",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2726
+  },
+  {
+   "id": "W2_00039",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1072
+  },
+  {
+   "id": "W2_00040",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1293
+  },
+  {
+   "id": "W2_00041",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8460
+  },
+  {
+   "id": "W2_00042",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5356
+  },
+  {
+   "id": "W2_00043",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 613
+  },
+  {
+   "id": "W2_00044",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1752
+  },
+  {
+   "id": "W2_00045",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11878
+  },
+  {
+   "id": "W2_00046",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1938
+  },
+  {
+   "id": "W2_00047",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 960
+  },
+  {
+   "id": "W2_00048",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1405
+  },
+  {
+   "id": "W2_00049",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8903
+  },
+  {
+   "id": "W2_00050",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4913
+  },
+  {
+   "id": "W2_00051",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 786
+  },
+  {
+   "id": "W2_00052",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1579
+  },
+  {
+   "id": "W2_00053",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10804
+  },
+  {
+   "id": "W2_00054",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3012
+  },
+  {
+   "id": "W2_00055",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 954
+  },
+  {
+   "id": "W2_00056",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1411
+  },
+  {
+   "id": "W2_00057",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 13092
+  },
+  {
+   "id": "W2_00058",
+   "type": "eq2way",
+   "expression": "attr_1 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 724
+  },
+  {
+   "id": "W2_00059",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1395
+  },
+  {
+   "id": "W2_00060",
+   "type": "eq2way",
+   "expression": "attr_1 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_1",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 970
+  },
+  {
+   "id": "W2_00061",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_3 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11192
+  },
+  {
+   "id": "W2_00062",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_3 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1564
+  },
+  {
+   "id": "W2_00063",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_3 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1232
+  },
+  {
+   "id": "W2_00064",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_3 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2193
+  },
+  {
+   "id": "W2_00065",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7488
+  },
+  {
+   "id": "W2_00066",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5268
+  },
+  {
+   "id": "W2_00067",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 727
+  },
+  {
+   "id": "W2_00068",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2698
+  },
+  {
+   "id": "W2_00069",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6410
+  },
+  {
+   "id": "W2_00070",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6346
+  },
+  {
+   "id": "W2_00071",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 766
+  },
+  {
+   "id": "W2_00072",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2659
+  },
+  {
+   "id": "W2_00073",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7811
+  },
+  {
+   "id": "W2_00074",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4945
+  },
+  {
+   "id": "W2_00075",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 510
+  },
+  {
+   "id": "W2_00076",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2915
+  },
+  {
+   "id": "W2_00077",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11016
+  },
+  {
+   "id": "W2_00078",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1740
+  },
+  {
+   "id": "W2_00079",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 979
+  },
+  {
+   "id": "W2_00080",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2446
+  },
+  {
+   "id": "W2_00081",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9626
+  },
+  {
+   "id": "W2_00082",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3130
+  },
+  {
+   "id": "W2_00083",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 815
+  },
+  {
+   "id": "W2_00084",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2610
+  },
+  {
+   "id": "W2_00085",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11320
+  },
+  {
+   "id": "W2_00086",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1436
+  },
+  {
+   "id": "W2_00087",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1348
+  },
+  {
+   "id": "W2_00088",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2077
+  },
+  {
+   "id": "W2_00089",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4935
+  },
+  {
+   "id": "W2_00090",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7821
+  },
+  {
+   "id": "W2_00091",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 256
+  },
+  {
+   "id": "W2_00092",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3169
+  },
+  {
+   "id": "W2_00093",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10634
+  },
+  {
+   "id": "W2_00094",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2122
+  },
+  {
+   "id": "W2_00095",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1528
+  },
+  {
+   "id": "W2_00096",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1897
+  },
+  {
+   "id": "W2_00097",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8303
+  },
+  {
+   "id": "W2_00098",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4453
+  },
+  {
+   "id": "W2_00099",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 770
+  },
+  {
+   "id": "W2_00100",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2655
+  },
+  {
+   "id": "W2_00101",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11393
+  },
+  {
+   "id": "W2_00102",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1363
+  },
+  {
+   "id": "W2_00103",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1445
+  },
+  {
+   "id": "W2_00104",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1980
+  },
+  {
+   "id": "W2_00105",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8595
+  },
+  {
+   "id": "W2_00106",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4161
+  },
+  {
+   "id": "W2_00107",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1094
+  },
+  {
+   "id": "W2_00108",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2331
+  },
+  {
+   "id": "W2_00109",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10379
+  },
+  {
+   "id": "W2_00110",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2377
+  },
+  {
+   "id": "W2_00111",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1379
+  },
+  {
+   "id": "W2_00112",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2046
+  },
+  {
+   "id": "W2_00113",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 12299
+  },
+  {
+   "id": "W2_00114",
+   "type": "eq2way",
+   "expression": "attr_2 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 457
+  },
+  {
+   "id": "W2_00115",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2188
+  },
+  {
+   "id": "W2_00116",
+   "type": "eq2way",
+   "expression": "attr_2 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_2",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1237
+  },
+  {
+   "id": "W2_00117",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7568
+  },
+  {
+   "id": "W2_00118",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4856
+  },
+  {
+   "id": "W2_00119",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_4 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 647
+  },
+  {
+   "id": "W2_00120",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_4 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3110
+  },
+  {
+   "id": "W2_00121",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6289
+  },
+  {
+   "id": "W2_00122",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6135
+  },
+  {
+   "id": "W2_00123",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 887
+  },
+  {
+   "id": "W2_00124",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2870
+  },
+  {
+   "id": "W2_00125",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7923
+  },
+  {
+   "id": "W2_00126",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4501
+  },
+  {
+   "id": "W2_00127",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 398
+  },
+  {
+   "id": "W2_00128",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3359
+  },
+  {
+   "id": "W2_00129",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10771
+  },
+  {
+   "id": "W2_00130",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1653
+  },
+  {
+   "id": "W2_00131",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1224
+  },
+  {
+   "id": "W2_00132",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2533
+  },
+  {
+   "id": "W2_00133",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9446
+  },
+  {
+   "id": "W2_00134",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2978
+  },
+  {
+   "id": "W2_00135",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 995
+  },
+  {
+   "id": "W2_00136",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2762
+  },
+  {
+   "id": "W2_00137",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10947
+  },
+  {
+   "id": "W2_00138",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1477
+  },
+  {
+   "id": "W2_00139",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1721
+  },
+  {
+   "id": "W2_00140",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2036
+  },
+  {
+   "id": "W2_00141",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4863
+  },
+  {
+   "id": "W2_00142",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7561
+  },
+  {
+   "id": "W2_00143",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 328
+  },
+  {
+   "id": "W2_00144",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3429
+  },
+  {
+   "id": "W2_00145",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10230
+  },
+  {
+   "id": "W2_00146",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2194
+  },
+  {
+   "id": "W2_00147",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1932
+  },
+  {
+   "id": "W2_00148",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1825
+  },
+  {
+   "id": "W2_00149",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8013
+  },
+  {
+   "id": "W2_00150",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4411
+  },
+  {
+   "id": "W2_00151",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1060
+  },
+  {
+   "id": "W2_00152",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2697
+  },
+  {
+   "id": "W2_00153",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10945
+  },
+  {
+   "id": "W2_00154",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1479
+  },
+  {
+   "id": "W2_00155",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1893
+  },
+  {
+   "id": "W2_00156",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1864
+  },
+  {
+   "id": "W2_00157",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8261
+  },
+  {
+   "id": "W2_00158",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4163
+  },
+  {
+   "id": "W2_00159",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1428
+  },
+  {
+   "id": "W2_00160",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2329
+  },
+  {
+   "id": "W2_00161",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9943
+  },
+  {
+   "id": "W2_00162",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2481
+  },
+  {
+   "id": "W2_00163",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1815
+  },
+  {
+   "id": "W2_00164",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1942
+  },
+  {
+   "id": "W2_00165",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11909
+  },
+  {
+   "id": "W2_00166",
+   "type": "eq2way",
+   "expression": "attr_3 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 515
+  },
+  {
+   "id": "W2_00167",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2578
+  },
+  {
+   "id": "W2_00168",
+   "type": "eq2way",
+   "expression": "attr_3 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_3",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1179
+  },
+  {
+   "id": "W2_00169",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5464
+  },
+  {
+   "id": "W2_00170",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2751
+  },
+  {
+   "id": "W2_00171",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_5 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1712
+  },
+  {
+   "id": "W2_00172",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_5 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6254
+  },
+  {
+   "id": "W2_00173",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6702
+  },
+  {
+   "id": "W2_00174",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1513
+  },
+  {
+   "id": "W2_00175",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1619
+  },
+  {
+   "id": "W2_00176",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6347
+  },
+  {
+   "id": "W2_00177",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7539
+  },
+  {
+   "id": "W2_00178",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 676
+  },
+  {
+   "id": "W2_00179",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4456
+  },
+  {
+   "id": "W2_00180",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3510
+  },
+  {
+   "id": "W2_00181",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7050
+  },
+  {
+   "id": "W2_00182",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1165
+  },
+  {
+   "id": "W2_00183",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3391
+  },
+  {
+   "id": "W2_00184",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4575
+  },
+  {
+   "id": "W2_00185",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7597
+  },
+  {
+   "id": "W2_00186",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 618
+  },
+  {
+   "id": "W2_00187",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5071
+  },
+  {
+   "id": "W2_00188",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2895
+  },
+  {
+   "id": "W2_00189",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4289
+  },
+  {
+   "id": "W2_00190",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3926
+  },
+  {
+   "id": "W2_00191",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 902
+  },
+  {
+   "id": "W2_00192",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7064
+  },
+  {
+   "id": "W2_00193",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7246
+  },
+  {
+   "id": "W2_00194",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 969
+  },
+  {
+   "id": "W2_00195",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4916
+  },
+  {
+   "id": "W2_00196",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3050
+  },
+  {
+   "id": "W2_00197",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6097
+  },
+  {
+   "id": "W2_00198",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2118
+  },
+  {
+   "id": "W2_00199",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2976
+  },
+  {
+   "id": "W2_00200",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4990
+  },
+  {
+   "id": "W2_00201",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7519
+  },
+  {
+   "id": "W2_00202",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 696
+  },
+  {
+   "id": "W2_00203",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5319
+  },
+  {
+   "id": "W2_00204",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2647
+  },
+  {
+   "id": "W2_00205",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6351
+  },
+  {
+   "id": "W2_00206",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1864
+  },
+  {
+   "id": "W2_00207",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3338
+  },
+  {
+   "id": "W2_00208",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4628
+  },
+  {
+   "id": "W2_00209",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7151
+  },
+  {
+   "id": "W2_00210",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1064
+  },
+  {
+   "id": "W2_00211",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4607
+  },
+  {
+   "id": "W2_00212",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3359
+  },
+  {
+   "id": "W2_00213",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7939
+  },
+  {
+   "id": "W2_00214",
+   "type": "eq2way",
+   "expression": "attr_4 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 276
+  },
+  {
+   "id": "W2_00215",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6548
+  },
+  {
+   "id": "W2_00216",
+   "type": "eq2way",
+   "expression": "attr_4 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_4",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1418
+  },
+  {
+   "id": "W2_00217",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5483
+  },
+  {
+   "id": "W2_00218",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1693
+  },
+  {
+   "id": "W2_00219",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_6 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2838
+  },
+  {
+   "id": "W2_00220",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_6 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6167
+  },
+  {
+   "id": "W2_00221",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6500
+  },
+  {
+   "id": "W2_00222",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 676
+  },
+  {
+   "id": "W2_00223",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5495
+  },
+  {
+   "id": "W2_00224",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3510
+  },
+  {
+   "id": "W2_00225",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6137
+  },
+  {
+   "id": "W2_00226",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1039
+  },
+  {
+   "id": "W2_00227",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4304
+  },
+  {
+   "id": "W2_00228",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4701
+  },
+  {
+   "id": "W2_00229",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6714
+  },
+  {
+   "id": "W2_00230",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 462
+  },
+  {
+   "id": "W2_00231",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5954
+  },
+  {
+   "id": "W2_00232",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3051
+  },
+  {
+   "id": "W2_00233",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3908
+  },
+  {
+   "id": "W2_00234",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3268
+  },
+  {
+   "id": "W2_00235",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1283
+  },
+  {
+   "id": "W2_00236",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7722
+  },
+  {
+   "id": "W2_00237",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6669
+  },
+  {
+   "id": "W2_00238",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 507
+  },
+  {
+   "id": "W2_00239",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5493
+  },
+  {
+   "id": "W2_00240",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3512
+  },
+  {
+   "id": "W2_00241",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5774
+  },
+  {
+   "id": "W2_00242",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1402
+  },
+  {
+   "id": "W2_00243",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3299
+  },
+  {
+   "id": "W2_00244",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5706
+  },
+  {
+   "id": "W2_00245",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6675
+  },
+  {
+   "id": "W2_00246",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 501
+  },
+  {
+   "id": "W2_00247",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6163
+  },
+  {
+   "id": "W2_00248",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2842
+  },
+  {
+   "id": "W2_00249",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6733
+  },
+  {
+   "id": "W2_00250",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 443
+  },
+  {
+   "id": "W2_00251",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2956
+  },
+  {
+   "id": "W2_00252",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6049
+  },
+  {
+   "id": "W2_00253",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6754
+  },
+  {
+   "id": "W2_00254",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 422
+  },
+  {
+   "id": "W2_00255",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5004
+  },
+  {
+   "id": "W2_00256",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4001
+  },
+  {
+   "id": "W2_00257",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6962
+  },
+  {
+   "id": "W2_00258",
+   "type": "eq2way",
+   "expression": "attr_5 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 214
+  },
+  {
+   "id": "W2_00259",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7525
+  },
+  {
+   "id": "W2_00260",
+   "type": "eq2way",
+   "expression": "attr_5 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_5",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1480
+  },
+  {
+   "id": "W2_00261",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8058
+  },
+  {
+   "id": "W2_00262",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 263
+  },
+  {
+   "id": "W2_00263",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_7 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3937
+  },
+  {
+   "id": "W2_00264",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_7 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3923
+  },
+  {
+   "id": "W2_00265",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7635
+  },
+  {
+   "id": "W2_00266",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 686
+  },
+  {
+   "id": "W2_00267",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2806
+  },
+  {
+   "id": "W2_00268",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5054
+  },
+  {
+   "id": "W2_00269",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8082
+  },
+  {
+   "id": "W2_00270",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 239
+  },
+  {
+   "id": "W2_00271",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4586
+  },
+  {
+   "id": "W2_00272",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3274
+  },
+  {
+   "id": "W2_00273",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4566
+  },
+  {
+   "id": "W2_00274",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3755
+  },
+  {
+   "id": "W2_00275",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 625
+  },
+  {
+   "id": "W2_00276",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7235
+  },
+  {
+   "id": "W2_00277",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7515
+  },
+  {
+   "id": "W2_00278",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 806
+  },
+  {
+   "id": "W2_00279",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4647
+  },
+  {
+   "id": "W2_00280",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3213
+  },
+  {
+   "id": "W2_00281",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6388
+  },
+  {
+   "id": "W2_00282",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1933
+  },
+  {
+   "id": "W2_00283",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2685
+  },
+  {
+   "id": "W2_00284",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5175
+  },
+  {
+   "id": "W2_00285",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7836
+  },
+  {
+   "id": "W2_00286",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 485
+  },
+  {
+   "id": "W2_00287",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5002
+  },
+  {
+   "id": "W2_00288",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2858
+  },
+  {
+   "id": "W2_00289",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6630
+  },
+  {
+   "id": "W2_00290",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1691
+  },
+  {
+   "id": "W2_00291",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3059
+  },
+  {
+   "id": "W2_00292",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4801
+  },
+  {
+   "id": "W2_00293",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7473
+  },
+  {
+   "id": "W2_00294",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 848
+  },
+  {
+   "id": "W2_00295",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4285
+  },
+  {
+   "id": "W2_00296",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3575
+  },
+  {
+   "id": "W2_00297",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8190
+  },
+  {
+   "id": "W2_00298",
+   "type": "eq2way",
+   "expression": "attr_6 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 131
+  },
+  {
+   "id": "W2_00299",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6297
+  },
+  {
+   "id": "W2_00300",
+   "type": "eq2way",
+   "expression": "attr_6 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_6",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1563
+  },
+  {
+   "id": "W2_00301",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9964
+  },
+  {
+   "id": "W2_00302",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2031
+  },
+  {
+   "id": "W2_00303",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_8 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 477
+  },
+  {
+   "id": "W2_00304",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_8 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3709
+  },
+  {
+   "id": "W2_00305",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11453
+  },
+  {
+   "id": "W2_00306",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 542
+  },
+  {
+   "id": "W2_00307",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1215
+  },
+  {
+   "id": "W2_00308",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2971
+  },
+  {
+   "id": "W2_00309",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5095
+  },
+  {
+   "id": "W2_00310",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6900
+  },
+  {
+   "id": "W2_00311",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 96
+  },
+  {
+   "id": "W2_00312",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4090
+  },
+  {
+   "id": "W2_00313",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10355
+  },
+  {
+   "id": "W2_00314",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1640
+  },
+  {
+   "id": "W2_00315",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1807
+  },
+  {
+   "id": "W2_00316",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2379
+  },
+  {
+   "id": "W2_00317",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8274
+  },
+  {
+   "id": "W2_00318",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3721
+  },
+  {
+   "id": "W2_00319",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 799
+  },
+  {
+   "id": "W2_00320",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3387
+  },
+  {
+   "id": "W2_00321",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11078
+  },
+  {
+   "id": "W2_00322",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 917
+  },
+  {
+   "id": "W2_00323",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1760
+  },
+  {
+   "id": "W2_00324",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2426
+  },
+  {
+   "id": "W2_00325",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8569
+  },
+  {
+   "id": "W2_00326",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3426
+  },
+  {
+   "id": "W2_00327",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1120
+  },
+  {
+   "id": "W2_00328",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3066
+  },
+  {
+   "id": "W2_00329",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10160
+  },
+  {
+   "id": "W2_00330",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1835
+  },
+  {
+   "id": "W2_00331",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1598
+  },
+  {
+   "id": "W2_00332",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2588
+  },
+  {
+   "id": "W2_00333",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11749
+  },
+  {
+   "id": "W2_00334",
+   "type": "eq2way",
+   "expression": "attr_7 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 246
+  },
+  {
+   "id": "W2_00335",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2738
+  },
+  {
+   "id": "W2_00336",
+   "type": "eq2way",
+   "expression": "attr_7 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_7",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1448
+  },
+  {
+   "id": "W2_00337",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10215
+  },
+  {
+   "id": "W2_00338",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 226
+  },
+  {
+   "id": "W2_00339",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_9 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2453
+  },
+  {
+   "id": "W2_00340",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_9 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3287
+  },
+  {
+   "id": "W2_00341",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5058
+  },
+  {
+   "id": "W2_00342",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5383
+  },
+  {
+   "id": "W2_00343",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 133
+  },
+  {
+   "id": "W2_00344",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5607
+  },
+  {
+   "id": "W2_00345",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9215
+  },
+  {
+   "id": "W2_00346",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1226
+  },
+  {
+   "id": "W2_00347",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2947
+  },
+  {
+   "id": "W2_00348",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2793
+  },
+  {
+   "id": "W2_00349",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7558
+  },
+  {
+   "id": "W2_00350",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2883
+  },
+  {
+   "id": "W2_00351",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1515
+  },
+  {
+   "id": "W2_00352",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4225
+  },
+  {
+   "id": "W2_00353",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9751
+  },
+  {
+   "id": "W2_00354",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 690
+  },
+  {
+   "id": "W2_00355",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3087
+  },
+  {
+   "id": "W2_00356",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2653
+  },
+  {
+   "id": "W2_00357",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7871
+  },
+  {
+   "id": "W2_00358",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2570
+  },
+  {
+   "id": "W2_00359",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1818
+  },
+  {
+   "id": "W2_00360",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3922
+  },
+  {
+   "id": "W2_00361",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9157
+  },
+  {
+   "id": "W2_00362",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1284
+  },
+  {
+   "id": "W2_00363",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2601
+  },
+  {
+   "id": "W2_00364",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3139
+  },
+  {
+   "id": "W2_00365",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10232
+  },
+  {
+   "id": "W2_00366",
+   "type": "eq2way",
+   "expression": "attr_8 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 209
+  },
+  {
+   "id": "W2_00367",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4255
+  },
+  {
+   "id": "W2_00368",
+   "type": "eq2way",
+   "expression": "attr_8 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_8",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1485
+  },
+  {
+   "id": "W2_00369",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5184
+  },
+  {
+   "id": "W2_00370",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 7484
+  },
+  {
+   "id": "W2_00371",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_10 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7
+  },
+  {
+   "id": "W2_00372",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_10 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3506
+  },
+  {
+   "id": "W2_00373",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10854
+  },
+  {
+   "id": "W2_00374",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1814
+  },
+  {
+   "id": "W2_00375",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1308
+  },
+  {
+   "id": "W2_00376",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2205
+  },
+  {
+   "id": "W2_00377",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8543
+  },
+  {
+   "id": "W2_00378",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4125
+  },
+  {
+   "id": "W2_00379",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 530
+  },
+  {
+   "id": "W2_00380",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2983
+  },
+  {
+   "id": "W2_00381",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11571
+  },
+  {
+   "id": "W2_00382",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1097
+  },
+  {
+   "id": "W2_00383",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1267
+  },
+  {
+   "id": "W2_00384",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2246
+  },
+  {
+   "id": "W2_00385",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8958
+  },
+  {
+   "id": "W2_00386",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3710
+  },
+  {
+   "id": "W2_00387",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 731
+  },
+  {
+   "id": "W2_00388",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2782
+  },
+  {
+   "id": "W2_00389",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10676
+  },
+  {
+   "id": "W2_00390",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1992
+  },
+  {
+   "id": "W2_00391",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1082
+  },
+  {
+   "id": "W2_00392",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2431
+  },
+  {
+   "id": "W2_00393",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 12313
+  },
+  {
+   "id": "W2_00394",
+   "type": "eq2way",
+   "expression": "attr_9 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 355
+  },
+  {
+   "id": "W2_00395",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2174
+  },
+  {
+   "id": "W2_00396",
+   "type": "eq2way",
+   "expression": "attr_9 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_9",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1339
+  },
+  {
+   "id": "W2_00397",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4891
+  },
+  {
+   "id": "W2_00398",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 300
+  },
+  {
+   "id": "W2_00399",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_11 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7271
+  },
+  {
+   "id": "W2_00400",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_11 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3719
+  },
+  {
+   "id": "W2_00401",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4425
+  },
+  {
+   "id": "W2_00402",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 766
+  },
+  {
+   "id": "W2_00403",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4648
+  },
+  {
+   "id": "W2_00404",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 6342
+  },
+  {
+   "id": "W2_00405",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5027
+  },
+  {
+   "id": "W2_00406",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 164
+  },
+  {
+   "id": "W2_00407",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7811
+  },
+  {
+   "id": "W2_00408",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3179
+  },
+  {
+   "id": "W2_00409",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4500
+  },
+  {
+   "id": "W2_00410",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 691
+  },
+  {
+   "id": "W2_00411",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5189
+  },
+  {
+   "id": "W2_00412",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 5801
+  },
+  {
+   "id": "W2_00413",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4911
+  },
+  {
+   "id": "W2_00414",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 280
+  },
+  {
+   "id": "W2_00415",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 6847
+  },
+  {
+   "id": "W2_00416",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4143
+  },
+  {
+   "id": "W2_00417",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5148
+  },
+  {
+   "id": "W2_00418",
+   "type": "eq2way",
+   "expression": "attr_10 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 43
+  },
+  {
+   "id": "W2_00419",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9339
+  },
+  {
+   "id": "W2_00420",
+   "type": "eq2way",
+   "expression": "attr_10 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_10",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1651
+  },
+  {
+   "id": "W2_00421",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8611
+  },
+  {
+   "id": "W2_00422",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3551
+  },
+  {
+   "id": "W2_00423",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_12 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 462
+  },
+  {
+   "id": "W2_00424",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_12 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3557
+  },
+  {
+   "id": "W2_00425",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11259
+  },
+  {
+   "id": "W2_00426",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 903
+  },
+  {
+   "id": "W2_00427",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1579
+  },
+  {
+   "id": "W2_00428",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2440
+  },
+  {
+   "id": "W2_00429",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9050
+  },
+  {
+   "id": "W2_00430",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3112
+  },
+  {
+   "id": "W2_00431",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 639
+  },
+  {
+   "id": "W2_00432",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3380
+  },
+  {
+   "id": "W2_00433",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10578
+  },
+  {
+   "id": "W2_00434",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1584
+  },
+  {
+   "id": "W2_00435",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1180
+  },
+  {
+   "id": "W2_00436",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2839
+  },
+  {
+   "id": "W2_00437",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11877
+  },
+  {
+   "id": "W2_00438",
+   "type": "eq2way",
+   "expression": "attr_11 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 285
+  },
+  {
+   "id": "W2_00439",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2610
+  },
+  {
+   "id": "W2_00440",
+   "type": "eq2way",
+   "expression": "attr_11 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_11",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1409
+  },
+  {
+   "id": "W2_00441",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8787
+  },
+  {
+   "id": "W2_00442",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 286
+  },
+  {
+   "id": "W2_00443",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_13 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4051
+  },
+  {
+   "id": "W2_00444",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_13 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3057
+  },
+  {
+   "id": "W2_00445",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 7391
+  },
+  {
+   "id": "W2_00446",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1682
+  },
+  {
+   "id": "W2_00447",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2298
+  },
+  {
+   "id": "W2_00448",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4810
+  },
+  {
+   "id": "W2_00449",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 8372
+  },
+  {
+   "id": "W2_00450",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 701
+  },
+  {
+   "id": "W2_00451",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 3386
+  },
+  {
+   "id": "W2_00452",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3722
+  },
+  {
+   "id": "W2_00453",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9014
+  },
+  {
+   "id": "W2_00454",
+   "type": "eq2way",
+   "expression": "attr_12 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 59
+  },
+  {
+   "id": "W2_00455",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 5473
+  },
+  {
+   "id": "W2_00456",
+   "type": "eq2way",
+   "expression": "attr_12 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_12",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1635
+  },
+  {
+   "id": "W2_00457",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9138
+  },
+  {
+   "id": "W2_00458",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 3700
+  },
+  {
+   "id": "W2_00459",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_14 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 551
+  },
+  {
+   "id": "W2_00460",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_14 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2792
+  },
+  {
+   "id": "W2_00461",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 10997
+  },
+  {
+   "id": "W2_00462",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1841
+  },
+  {
+   "id": "W2_00463",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 761
+  },
+  {
+   "id": "W2_00464",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 2582
+  },
+  {
+   "id": "W2_00465",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 12675
+  },
+  {
+   "id": "W2_00466",
+   "type": "eq2way",
+   "expression": "attr_13 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 163
+  },
+  {
+   "id": "W2_00467",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 1812
+  },
+  {
+   "id": "W2_00468",
+   "type": "eq2way",
+   "expression": "attr_13 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_13",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1531
+  },
+  {
+   "id": "W2_00469",
+   "type": "eq2way",
+   "expression": "attr_14 == 0 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9329
+  },
+  {
+   "id": "W2_00470",
+   "type": "eq2way",
+   "expression": "attr_14 == 0 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 360
+  },
+  {
+   "id": "W2_00471",
+   "type": "eq2way",
+   "expression": "attr_14 == 1 AND attr_15 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2429
+  },
+  {
+   "id": "W2_00472",
+   "type": "eq2way",
+   "expression": "attr_14 == 1 AND attr_15 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 4063
+  },
+  {
+   "id": "W2_00473",
+   "type": "eq2way",
+   "expression": "attr_14 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 9543
+  },
+  {
+   "id": "W2_00474",
+   "type": "eq2way",
+   "expression": "attr_14 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 146
+  },
+  {
+   "id": "W2_00475",
+   "type": "eq2way",
+   "expression": "attr_14 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 4944
+  },
+  {
+   "id": "W2_00476",
+   "type": "eq2way",
+   "expression": "attr_14 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_14",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1548
+  },
+  {
+   "id": "W2_00477",
+   "type": "eq2way",
+   "expression": "attr_15 == 0 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 11588
+  },
+  {
+   "id": "W2_00478",
+   "type": "eq2way",
+   "expression": "attr_15 == 0 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "0"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 170
+  },
+  {
+   "id": "W2_00479",
+   "type": "eq2way",
+   "expression": "attr_15 == 1 AND attr_16 == 0",
+   "conditions": [
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "0"
+    }
+   ],
+   "result": 2899
+  },
+  {
+   "id": "W2_00480",
+   "type": "eq2way",
+   "expression": "attr_15 == 1 AND attr_16 == 1",
+   "conditions": [
+    {
+     "attribute": "attr_15",
+     "operator": "==",
+     "value": "1"
+    },
+    {
+     "attribute": "attr_16",
+     "operator": "==",
+     "value": "1"
+    }
+   ],
+   "result": 1524
+  }
+ ]
+}

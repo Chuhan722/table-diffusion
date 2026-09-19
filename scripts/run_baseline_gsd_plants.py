@@ -33,17 +33,15 @@ from genetic_sd.generator.mutation_strategies import AVAILABLE_GENETIC_OPERATORS
 from genetic_sd.utils import Dataset, Domain
 
 REPO = Path(__file__).resolve().parent.parent
-DATA_CSV = REPO / "data" / "plants" / "plants.csv"
-EXAM_JSON = REPO / "data" / "plants" / "measured_9248query.json"
 
 
-def load_exam():
+def load_exam(data_csv: Path, exam_json: Path):
     """考卷重建每字段值域与全部字段对列联表。"""
-    with open(DATA_CSV, encoding="utf-8-sig") as fh:
+    with open(data_csv, encoding="utf-8-sig") as fh:
         raw = list(csv.DictReader(fh))
     fields = list(raw[0].keys())
     cats = {f: sorted({r[f] for r in raw}) for f in fields}
-    with open(EXAM_JSON, encoding="utf-8") as fh:
+    with open(exam_json, encoding="utf-8") as fh:
         exam = json.load(fh)
     total = exam["record_count"]
     if total != len(raw):
@@ -70,11 +68,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
     parser.add_argument("--num-generations", type=int, default=50000000)
     parser.add_argument("--early-stop-threshold", type=float, default=0.0001)
     args = parser.parse_args()
 
-    fields, cats, pair_tables, total, frame = load_exam()
+    data_dir = REPO / "data" / args.data
+    exam_found = sorted(data_dir.glob("measured_*query.json"))
+    if len(exam_found) != 1:
+        raise RuntimeError(f"数据目录 {data_dir} 下 measured_*query.json 须恰有一个")
+    fields, cats, pair_tables, total, frame = load_exam(
+        data_dir / f"{args.data}.csv", exam_found[0]
+    )
 
     for (fa, fb), target in pair_tables.items():
         ka, kb = len(cats[fa]), len(cats[fb])

@@ -25,7 +25,7 @@ from resevo.metrics import (  # noqa: E402
     canonical_condition_set,
 )
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "plants"
+DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 HELDOUT_SEED = 20260919
 NUM_HELDOUT_EQ = 1024
@@ -129,9 +129,9 @@ def spot_check(queries, schema, real_rows, rng, count=60):
     return len(picks)
 
 
-def dump(path, queries, num_rows, description):
+def dump(path, queries, num_rows, description, dataset):
     payload = {
-        "dataset": "plants.csv",
+        "dataset": dataset,
         "record_count": num_rows,
         "query_count": len(queries),
         "result_unit": "records",
@@ -143,9 +143,15 @@ def dump(path, queries, num_rows, description):
 
 
 def main():
-    schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="二阶格子考卷生成器")
+    parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
+    args = parser.parse_args()
+    data_dir = DATA_ROOT / args.data
+    schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
     if any(any(v not in ("0", "1") for v in d) for d in schema.domains):
-        raise AssertionError("plants 字段取值必须落在 01 内")
+        raise AssertionError(f"{args.data} 字段取值必须落在 01 内")
     constant = [schema.fields[j] for j, d in enumerate(schema.domains) if len(d) == 1]
     if constant:
         print(f"常值字段 {len(constant)} 个 {constant}，其格子按实际值域出")
@@ -176,10 +182,10 @@ def main():
     if any(s != len(real_rows) for s in sums.values()):
         raise AssertionError("某字段对全格答案之和不等于行数")
 
-    m_path = DATA_DIR / f"measured_{len(two)}query.json"
-    h_path = DATA_DIR / f"heldout_{len(heldout)}query.json"
-    dump(m_path, two, len(real_rows), "训练考卷，全二阶格子逐格出题，一阶不出题，与文献全二阶边缘同口径")
-    dump(h_path, heldout, len(real_rows), "保留考卷，评价专用，三阶四阶等值加整数权重半空间，与训练卷语义零交集")
+    m_path = data_dir / f"measured_{len(two)}query.json"
+    h_path = data_dir / f"heldout_{len(heldout)}query.json"
+    dump(m_path, two, len(real_rows), "训练考卷，全二阶格子逐格出题，一阶不出题，与文献全二阶边缘同口径", f"{args.data}.csv")
+    dump(h_path, heldout, len(real_rows), "保留考卷，评价专用，三阶四阶等值加整数权重半空间，与训练卷语义零交集", f"{args.data}.csv")
     print(f"训练卷 {len(two)} 条全二阶，字段对 {len(sums)} 个格子和均为 {len(real_rows)}")
     print(f"保留卷 {len(heldout)} 条，三阶 {len(h3)} 四阶 {len(h4)} 半空间 {len(hhs)}")
     print(f"抽查 {checked} 条矢量化与逐行求值一致")

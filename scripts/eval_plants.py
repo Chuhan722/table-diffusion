@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from resevo.dataset import load_queries, load_table  # noqa: E402
 from resevo.metrics import assert_disjoint_workloads, load_heldout_queries  # noqa: E402
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "plants"
+DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 AIM3_SEED = 20260920
 AIM3_SAMPLES = 300
 
@@ -102,7 +102,8 @@ def evaluate_one(name, schema, Xs, Xr, measured, heldout, real_total):
     print(f"GSD 式 measured {len(measured)}   平均 {gm_avg:.6f}  最大 {gm_max:.6f}")
     print(f"GSD 式 heldout {len(heldout)}  平均 {gh_avg:.6f}  最大 {gh_max:.6f}")
     print(f"  其中等值高阶 {len(h_eq)} 平均 {ge_avg:.6f}，半空间 {len(h_hs)} 平均 {gs_avg:.6f}")
-    print(f"AIM 式 全部二阶边缘 2346   平均 {a2_avg:.6f}  最大 {a2_max:.6f}")
+    n2 = schema.num_fields * (schema.num_fields - 1) // 2
+    print(f"AIM 式 全部二阶边缘 {n2}   平均 {a2_avg:.6f}  最大 {a2_max:.6f}")
     print(f"AIM 式 抽样三阶边缘 {AIM3_SAMPLES}  平均 {a3_avg:.6f}  最大 {a3_max:.6f}")
     print(
         f"综合误差分 {comp:.6f}，四组 measured {gm_avg:.6f}，heldout {gh_avg:.6f}，"
@@ -112,14 +113,20 @@ def evaluate_one(name, schema, Xs, Xr, measured, heldout, real_total):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="plants AIM 与 GSD 式评价对比")
+    parser = argparse.ArgumentParser(description="AIM 与 GSD 式评价对比")
     parser.add_argument("tables", nargs="*", help="待评合成表 CSV 路径列表")
+    parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
     parser.add_argument("--baseline-seeds", type=int, default=3, help="随机基线种子数")
     args = parser.parse_args()
 
-    schema, real_rows = load_table(str(DATA_DIR / "plants.csv"))
-    measured = load_queries(str(DATA_DIR / "measured_9248query.json"))
-    heldout = load_heldout_queries(str(DATA_DIR / "heldout_1224query.json"))
+    data_dir = DATA_ROOT / args.data
+    m_found = sorted(data_dir.glob("measured_*query.json"))
+    h_found = sorted(data_dir.glob("heldout_*query.json"))
+    if len(m_found) != 1 or len(h_found) != 1:
+        parser.error(f"数据目录 {data_dir} 下 measured 与 heldout 考卷须各恰有一个")
+    schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
+    measured = load_queries(str(m_found[0]))
+    heldout = load_heldout_queries(str(h_found[0]))
     assert_disjoint_workloads(measured, heldout)
     print(f"评价集校验通过，measured {len(measured)} 条与 heldout {len(heldout)} 条语义零交集")
     Xr = to_matrix(schema, real_rows)
