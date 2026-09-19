@@ -37,16 +37,24 @@ class PairingBudget:
     gamma_tol: float = 1e-9  # Gamma 正分门槛，防浮点误差凑数
 
 
-def _ragged_take(ptr: np.ndarray, pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """按位置取 CSR 段的条目下标与归属，变长段拼接全矢量化。"""
+def _ragged_take(
+    ptr: np.ndarray, pos: np.ndarray, xp=np
+) -> tuple[np.ndarray, np.ndarray]:
+    """按位置取 CSR 段的条目下标与归属，变长段拼接全矢量化，可搬卡。
+
+    归属与段内偏移用段尾前缀和加 searchsorted 求出，
+    不用变长 repeat，cupy 不支持数组重复数。
+    """
     starts = ptr[pos]
     lens = ptr[pos + 1] - starts
     total = int(lens.sum())
     if total == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-    owner = np.repeat(np.arange(len(pos), dtype=np.int64), lens)
-    head = np.concatenate(([0], np.cumsum(lens)[:-1]))
-    idx = np.repeat(starts - head, lens) + np.arange(total, dtype=np.int64)
+        return xp.empty(0, dtype=np.int64), xp.empty(0, dtype=np.int64)
+    ends = xp.cumsum(lens)
+    grid = xp.arange(total, dtype=np.int64)
+    owner = xp.searchsorted(ends, grid, side="right")
+    head = ends - lens
+    idx = starts[owner] + (grid - head[owner])
     return idx, owner
 
 
@@ -62,98 +70,132 @@ def _sparse_flat_deltas(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """单行候选的稀疏差分与增益，免物化免全宽增量矩阵。
 
-    候选都是基行的少字段编辑，按变动字段组合分组矢量化，
-    组内基行命中计数加取值向量差得新特征，与基行特征之差即非零条目，
-    增益按条目汇总，与全宽稠密差分数学同式，
-    返回增益向量与条目 CSR 三件套，条目即动作的影响清单。
+    候选都是基行的少字段编辑，变动对按字段分维度展开成条目流，
+    组数只随字段数走不随字段组合数爆炸，同动作同列条目合并同类项，
+    基行命中计数加合并增量与条件总数比较得特征差分非零条目，
+    增益按条目汇总，与全宽稠密差分数学同式，整数中间量无舍入，
+    registry 开 gpu_featurize 时展开合并全搬卡，
+    返回增益向量与条目 CSR 三件套，条目即动作的影响清单，
+    条目序为动作内普通列升序在前半空间列升序在后，与旧分组路径一致。
     """
     m = len(flat_rows)
     ncond, hs_cols, hs_thr = registry.edit_feature_pack()
-    col_to_hs = {int(c): t for t, c in enumerate(hs_cols)}
+    num_q = len(registry.specs)
+    n_hs = len(hs_cols)
     fq = registry.field_queries
+    xp = np
+    if registry.gpu_featurize:
+        import cupy as xp  # noqa: F811
     rows_arr = np.array(flat_rows, dtype=str)
     base_arr = np.array(base_rows, dtype=str)[flat_base_idx]
     diff = rows_arr != base_arr
-    # 按变动字段组合分组，布尔行分组不受字段数超 63 的位宽限制
-    uniq_masks, gkey = np.unique(diff, axis=0, return_inverse=True)
-    ent_act: list[np.ndarray] = []
-    ent_col: list[np.ndarray] = []
-    ent_val: list[np.ndarray] = []
-    for gi, gmask in enumerate(uniq_masks):
-        if not gmask.any():
-            continue  # 保持项，零变动零条目
-        rows_g = np.flatnonzero(gkey == gi)
-        fields = np.flatnonzero(gmask).tolist()
-        cols = (
-            fq[fields[0]]
-            if len(fields) == 1
-            else np.unique(np.concatenate([fq[j] for j in fields]))
-        )
-        if len(cols) == 0:
+    acts_nz, fields_nz = np.nonzero(diff)
+    fbidx_x = xp.asarray(np.asarray(flat_base_idx, dtype=np.int64))
+    cnt_base_x = xp.asarray(cnt_base)
+    score_base_x = xp.asarray(score_base)
+    ncond_x = xp.asarray(ncond)
+    hs_thr_x = xp.asarray(hs_thr)
+    hs_cols_x = xp.asarray(hs_cols)
+    order_f = np.argsort(fields_nz, kind="stable")
+    bounds = np.searchsorted(fields_nz[order_f], np.arange(diff.shape[1] + 1))
+    na: list = []
+    nc_l: list = []
+    nv: list = []
+    ha: list = []
+    hslot: list = []
+    hv: list = []
+    for j in range(diff.shape[1]):
+        seg = order_f[bounds[j] : bounds[j + 1]]
+        if len(seg) == 0:
             continue
-        norm_cols = cols[ncond[cols] >= 0]
-        hs_sub = cols[ncond[cols] < 0]
-        ts = np.array([col_to_hs[int(c)] for c in hs_sub], dtype=np.int64)
-        bidx = flat_base_idx[rows_g]
-        # 各变动字段的取值向量差在依赖列并集上累加
-        dcnt = np.zeros((len(rows_g), len(norm_cols)), dtype=np.int16)
-        dsc = (
-            np.zeros((len(rows_g), len(ts)), dtype=np.int64)
-            if len(ts)
-            else None
+        aj = acts_nz[seg]
+        vals_arr, cnt_tab, score_tab = registry.field_value_tables(j)
+        oc = xp.asarray(np.searchsorted(vals_arr, base_arr[aj, j]))
+        nc2 = xp.asarray(np.searchsorted(vals_arr, rows_arr[aj, j]))
+        aj_x = xp.asarray(aj)
+        fqj = fq[j]
+        if len(fqj):
+            ct = xp.asarray(cnt_tab[:, fqj].astype(np.int64))
+            d_ = ct[nc2] - ct[oc]
+            r_, c_ = xp.nonzero(d_)
+            na.append(aj_x[r_])
+            nc_l.append(xp.asarray(fqj)[c_])
+            nv.append(d_[r_, c_])
+        if n_hs and score_tab.any():
+            st = xp.asarray(score_tab)
+            ds_ = st[nc2] - st[oc]
+            r_, c_ = xp.nonzero(ds_)
+            ha.append(aj_x[r_])
+            hslot.append(c_.astype(np.int64))
+            hv.append(ds_[r_, c_])
+
+    def _merge(a_l, k_l, v_l, width):
+        """按 (动作, 键) 合并同类项，段和走前缀和差分，整数精确。"""
+        a_cat = xp.concatenate(a_l)
+        k_cat = xp.concatenate(k_l)
+        v_cat = xp.concatenate(v_l).astype(np.int64)
+        key = a_cat * np.int64(width) + k_cat
+        o = xp.argsort(key)
+        ks = key[o]
+        vs = v_cat[o]
+        segb = xp.concatenate((xp.ones(1, dtype=bool), ks[1:] != ks[:-1]))
+        starts = xp.flatnonzero(segb)
+        csum = xp.cumsum(vs)
+        ends = xp.concatenate((starts[1:], xp.asarray([len(vs)]))) - 1
+        dsum = csum[ends] - csum[starts] + vs[starts]
+        ku = ks[starts]
+        return ku // np.int64(width), ku % np.int64(width), dsum
+
+    ent_parts: list[tuple] = []
+    if na:
+        a_u, c_u, dsum = _merge(na, nc_l, nv, num_q)
+        cb = cnt_base_x[fbidx_x[a_u], c_u].astype(np.int64)
+        thr_n = ncond_x[c_u]
+        dfeat = (cb + dsum == thr_n).astype(np.int8) - (cb == thr_n).astype(
+            np.int8
         )
-        for j in fields:
-            old_v = base_arr[rows_g, j]
-            new_v = rows_arr[rows_g, j]
-            vals = sorted(set(old_v.tolist()) | set(new_v.tolist()))
-            vpos = {v: p for p, v in enumerate(vals)}
-            cnt_tab = np.stack(
-                [registry.value_vectors(j, v)[0] for v in vals]
-            )
-            oc = np.fromiter((vpos[v] for v in old_v), dtype=np.int64)
-            nc_ = np.fromiter((vpos[v] for v in new_v), dtype=np.int64)
-            if len(norm_cols):
-                dcnt += (
-                    cnt_tab[nc_][:, norm_cols] - cnt_tab[oc][:, norm_cols]
-                )
-            if dsc is not None:
-                score_tab = np.stack(
-                    [registry.value_vectors(j, v)[1] for v in vals]
-                )
-                dsc += score_tab[nc_][:, ts] - score_tab[oc][:, ts]
-        if len(norm_cols):
-            nc = ncond[norm_cols][None, :]
-            cb = cnt_base[bidx][:, norm_cols]
-            d = (cb + dcnt == nc).astype(np.int8) - (cb == nc).astype(np.int8)
-            r_nz, c_nz = np.nonzero(d)
-            ent_act.append(rows_g[r_nz])
-            ent_col.append(norm_cols[c_nz])
-            ent_val.append(d[r_nz, c_nz].astype(np.float64))
-        if dsc is not None:
-            thr = hs_thr[ts][None, :]
-            sb = score_base[bidx][:, ts]
-            d = (sb + dsc >= thr).astype(np.int8) - (sb >= thr).astype(np.int8)
-            r_nz, c_nz = np.nonzero(d)
-            ent_act.append(rows_g[r_nz])
-            ent_col.append(hs_sub[c_nz])
-            ent_val.append(d[r_nz, c_nz].astype(np.float64))
-    if ent_act:
-        acts = np.concatenate(ent_act)
-        cols_all = np.concatenate(ent_col)
-        vals_all = np.concatenate(ent_val)
+        keep = dfeat != 0
+        ent_parts.append(
+            (a_u[keep], c_u[keep], dfeat[keep], xp.int64(0))
+        )
+    if ha:
+        a_u, s_u, dsum = _merge(ha, hslot, hv, max(n_hs, 1))
+        sb = score_base_x[fbidx_x[a_u], s_u]
+        thr_h = hs_thr_x[s_u]
+        dfeat = (sb + dsum >= thr_h).astype(np.int8) - (sb >= thr_h).astype(
+            np.int8
+        )
+        keep = dfeat != 0
+        ent_parts.append(
+            (a_u[keep], hs_cols_x[s_u[keep]], dfeat[keep], xp.int64(1))
+        )
+    if ent_parts:
+        a_all = xp.concatenate([p[0] for p in ent_parts])
+        c_all = xp.concatenate([p[1] for p in ent_parts])
+        v_all = xp.concatenate([p[2] for p in ent_parts]).astype(np.float64)
+        seg_all = xp.concatenate(
+            [xp.full(len(p[0]), p[3], dtype=np.int64) for p in ent_parts]
+        )
+        # 终序为动作内普通列升序在前半空间列升序在后，键无重复
+        final_key = (a_all * 2 + seg_all) * np.int64(num_q) + c_all
+        o2 = xp.argsort(final_key)
+        acts = a_all[o2]
+        cols_s = c_all[o2]
+        vals_s = v_all[o2]
+        if xp is not np:
+            acts = xp.asnumpy(acts)
+            cols_s = xp.asnumpy(cols_s)
+            vals_s = xp.asnumpy(vals_s)
     else:
         acts = np.empty(0, dtype=np.int64)
-        cols_all = np.empty(0, dtype=np.int64)
-        vals_all = np.empty(0, dtype=np.float64)
+        cols_s = np.empty(0, dtype=np.int64)
+        vals_s = np.empty(0, dtype=np.float64)
     g_flat = np.bincount(
         acts,
-        weights=we[cols_all] * vals_all - (w[cols_all] * vals_all * vals_all) / 2,
+        weights=we[cols_s] * vals_s - (w[cols_s] * vals_s * vals_s) / 2,
         minlength=m,
     )
-    order = np.argsort(acts, kind="stable")
-    cols_s = cols_all[order]
-    vals_s = vals_all[order]
-    ptr = np.searchsorted(acts[order], np.arange(m + 1, dtype=np.int64))
+    ptr = np.searchsorted(acts, np.arange(m + 1, dtype=np.int64))
     return g_flat, ptr, cols_s, vals_s
 
 
@@ -166,31 +208,48 @@ def _score_combos_sparse(
     w: NDArray[np.float64],
     a_pos: np.ndarray,
     b_pos: np.ndarray,
+    use_gpu: bool = False,
 ) -> NDArray[np.float64]:
     """组合动作总分，两侧稀疏差分合并同类项后按条目汇总。
 
     组合动作两侧都是已打分的单行候选，稀疏条目直接复用，
     同一查询列的两侧增量先求和再进二次项，丢交叉项的错误由合并规避，
-    与稠密路径 gu 加 gv 减交叉项数学同式。
+    与稠密路径 gu 加 gv 减交叉项数学同式，
+    开 GPU 时排序与段和搬卡，段和走前缀和差分，顺序确定无原子加。
     """
-    idx_a, own_a = _ragged_take(ptr, a_pos)
-    idx_b, own_b = _ragged_take(ptr, b_pos)
-    owner = np.concatenate((own_a, own_b))
-    col_cat = np.concatenate((cols[idx_a], cols[idx_b]))
-    val_cat = np.concatenate((vals[idx_a], vals[idx_b]))
+    xp = np
+    if use_gpu:
+        import cupy as xp  # noqa: F811
+    ptr_x = xp.asarray(ptr)
+    cols_x = xp.asarray(cols)
+    vals_x = xp.asarray(vals)
+    idx_a, own_a = _ragged_take(ptr_x, xp.asarray(a_pos), xp)
+    idx_b, own_b = _ragged_take(ptr_x, xp.asarray(b_pos), xp)
+    owner = xp.concatenate((own_a, own_b))
+    col_cat = xp.concatenate((cols_x[idx_a], cols_x[idx_b]))
+    val_cat = xp.concatenate((vals_x[idx_a], vals_x[idx_b]))
     if len(owner) == 0:
         return np.zeros(len(a_pos), dtype=np.float64)
     key = owner * np.int64(num_q) + col_cat
-    order = np.argsort(key, kind="stable")
+    order = xp.argsort(key, kind="stable")
     key_s = key[order]
     val_s = val_cat[order]
-    seg = np.concatenate(([True], key_s[1:] != key_s[:-1]))
-    seg_starts = np.flatnonzero(seg)
-    d_sum = np.add.reduceat(val_s, seg_starts)
+    seg = xp.concatenate((xp.ones(1, dtype=bool), key_s[1:] != key_s[:-1]))
+    seg_starts = xp.flatnonzero(seg)
+    # 段和用闭区间前缀和差分，等价 reduceat，条目值为小整数无舍入
+    csum = xp.cumsum(val_s)
+    seg_ends = xp.concatenate((seg_starts[1:], xp.asarray([len(val_s)]))) - 1
+    d_sum = csum[seg_ends] - csum[seg_starts] + val_s[seg_starts]
     key_u = key_s[seg_starts]
     own_u = key_u // np.int64(num_q)
     col_u = key_u % np.int64(num_q)
-    g_ent = we[col_u] * d_sum - (w[col_u] * d_sum * d_sum) / 2
+    g_ent = xp.asarray(we)[col_u] * d_sum - (
+        xp.asarray(w)[col_u] * d_sum * d_sum
+    ) / 2
+    if xp is not np:
+        own_u = xp.asnumpy(own_u)
+        g_ent = xp.asnumpy(g_ent)
+    # 汇总回 CPU 走 bincount 顺序累加，与纯 CPU 路径逐位同序
     return np.bincount(own_u, weights=g_ent, minlength=len(a_pos))
 
 
@@ -210,38 +269,57 @@ def _score_swaps_sparse(
     与先注册物化再全列差分的稠密打分数学同式，
     动作按字段分组矢量化，返回每对交换段最大总分，没有交换动作的对为零。
     acts 每项为 (对序号, 字段, 基行 i 下标, 基行 k 下标, i 值, k 值)。
+    registry 开 gpu_featurize 时组内矩阵运算搬卡，逐元素式与 CPU 同序。
     """
     ncond, hs_cols, hs_thr = registry.edit_feature_pack()
     col_to_hs = {int(c): t for t, c in enumerate(hs_cols)}
     fq = registry.field_queries
+    xp = np
+    if registry.gpu_featurize:
+        import cupy as xp  # noqa: F811
+    cnt_base_x = xp.asarray(cnt_base)
+    score_base_x = xp.asarray(score_base)
+    we_x = xp.asarray(we)
+    w_x = xp.asarray(w)
+    ncond_x = xp.asarray(ncond)
+    hs_thr_x = xp.asarray(hs_thr)
     best = np.zeros(num_pairs, dtype=np.float64)
     by_field: dict[int, list[tuple[int, int, int, str, str]]] = {}
     for pidx, j, bi, bk, vi, vk in acts:
         by_field.setdefault(j, []).append((pidx, bi, bk, vi, vk))
+    tot_parts: list = []
+    pid_parts: list[np.ndarray] = []
     for j, group in by_field.items():
         cols = fq[j]
         if len(cols) == 0:
             continue
-        norm_cols = cols[ncond[cols] >= 0]
+        norm_cols = xp.asarray(cols[ncond[cols] >= 0])
         hs_sub = cols[ncond[cols] < 0]
-        ts = np.array([col_to_hs[int(c)] for c in hs_sub], dtype=np.int64)
+        ts = xp.asarray(
+            np.array([col_to_hs[int(c)] for c in hs_sub], dtype=np.int64)
+        )
+        hs_sub = xp.asarray(hs_sub)
         pair_idx = np.array([g[0] for g in group], dtype=np.int64)
-        bi_idx = np.array([g[1] for g in group], dtype=np.int64)
-        bk_idx = np.array([g[2] for g in group], dtype=np.int64)
-        # 取值向量差按去重取值对建表，组内动作 gather
-        vals = sorted({g[3] for g in group} | {g[4] for g in group})
-        vpos = {v: p for p, v in enumerate(vals)}
-        cnt_tab = np.stack([registry.value_vectors(j, v)[0] for v in vals])
-        vi_code = np.fromiter((vpos[g[3]] for g in group), dtype=np.int64)
-        vk_code = np.fromiter((vpos[g[4]] for g in group), dtype=np.int64)
-        total = np.zeros(len(group), dtype=np.float64)
+        bi_idx = xp.asarray(np.array([g[1] for g in group], dtype=np.int64))
+        bk_idx = xp.asarray(np.array([g[2] for g in group], dtype=np.int64))
+        # 取值向量差用全域查表加 searchsorted 编码，免重建小表
+        vals_arr, cnt_tab, score_tab = registry.field_value_tables(j)
+        vi_code = xp.asarray(np.searchsorted(
+            vals_arr, np.array([g[3] for g in group], dtype=str)
+        ))
+        vk_code = xp.asarray(np.searchsorted(
+            vals_arr, np.array([g[4] for g in group], dtype=str)
+        ))
+        cnt_tab = xp.asarray(cnt_tab)
+        score_tab = xp.asarray(score_tab)
+        total = xp.zeros(len(group), dtype=np.float64)
         if len(norm_cols):
             dvec = (
                 cnt_tab[vk_code][:, norm_cols] - cnt_tab[vi_code][:, norm_cols]
             )
-            nc = ncond[norm_cols][None, :]
-            cb_i = cnt_base[bi_idx][:, norm_cols]
-            cb_k = cnt_base[bk_idx][:, norm_cols]
+            nc = ncond_x[norm_cols][None, :]
+            cb_i = cnt_base_x[bi_idx][:, norm_cols]
+            cb_k = cnt_base_x[bk_idx][:, norm_cols]
             du = (cb_i + dvec == nc).astype(np.float64) - (
                 cb_i == nc
             ).astype(np.float64)
@@ -249,16 +327,13 @@ def _score_swaps_sparse(
                 cb_k == nc
             ).astype(np.float64)
             d_sum = du + dv
-            total += d_sum @ we[norm_cols]
-            total -= ((d_sum * d_sum) @ w[norm_cols]) / 2
-        if len(hs_sub):
-            score_tab = np.stack(
-                [registry.value_vectors(j, v)[1] for v in vals]
-            )
+            total += d_sum @ we_x[norm_cols]
+            total -= ((d_sum * d_sum) @ w_x[norm_cols]) / 2
+        if len(ts):
             dsc = score_tab[vk_code][:, ts] - score_tab[vi_code][:, ts]
-            thr = hs_thr[ts][None, :]
-            sb_i = score_base[bi_idx][:, ts]
-            sb_k = score_base[bk_idx][:, ts]
+            thr = hs_thr_x[ts][None, :]
+            sb_i = score_base_x[bi_idx][:, ts]
+            sb_k = score_base_x[bk_idx][:, ts]
             du = (sb_i + dsc >= thr).astype(np.float64) - (
                 sb_i >= thr
             ).astype(np.float64)
@@ -266,9 +341,16 @@ def _score_swaps_sparse(
                 sb_k >= thr
             ).astype(np.float64)
             d_sum = du + dv
-            total += d_sum @ we[hs_sub]
-            total -= ((d_sum * d_sum) @ w[hs_sub]) / 2
-        np.maximum.at(best, pair_idx, total)
+            total += d_sum @ we_x[hs_sub]
+            total -= ((d_sum * d_sum) @ w_x[hs_sub]) / 2
+        tot_parts.append(total)
+        pid_parts.append(pair_idx)
+    if tot_parts:
+        # 全部组算完一次回传，免每组同步往返
+        total_all = xp.concatenate(tot_parts)
+        if xp is not np:
+            total_all = xp.asnumpy(total_all)
+        np.maximum.at(best, np.concatenate(pid_parts), total_all)
     return best
 
 
@@ -345,34 +427,27 @@ def _partners_for_row(
 def _joint_actions_for_pair(
     row_i: tuple[str, ...],
     row_k: tuple[str, ...],
+    row_i_arr: np.ndarray,
+    row_k_arr: np.ndarray,
     reps_i: list[int],
     reps_k: list[int],
     gains_i: NDArray[np.float64],
     gains_k: NDArray[np.float64],
     rng: np.random.Generator,
     budget: PairingBudget,
-) -> tuple[
-    list[tuple[int, tuple[str, ...], tuple[str, ...]]], list[tuple[int, int]]
-]:
+) -> tuple[list[int], list[tuple[int, int]]]:
     """每对的联合动作素材，一半交换一半组合。
 
     交换互换两行某字段的值，该字段总计数不变，只改与其他字段的搭配，
-    交换产生的新行元组连同字段号先收集不注册，打分免物化，
-    只有挑中配对的交换赢家才由调用方批量注册，
+    交换只返回字段号先不构造新行元组，打分只需字段与两侧取值，
+    挑中配对的交换赢家元组由调用方注册前现场构造，
+    row_i_arr 与 row_k_arr 为两行的预转字符串数组，字段比较矢量化，
     组合让两行各出一个代表动作同时动，按单行增益之和取最好的几个，
     组合以行内动作序号对返回，状态号由调用方查表。
     """
-    swaps: list[tuple[int, tuple[str, ...], tuple[str, ...]]] = []
-    for j in rng.permutation(len(row_i)):
-        if len(swaps) >= budget.swap_actions:
-            break
-        j = int(j)
-        if row_i[j] == row_k[j]:
-            continue
-        u = list(row_i)
-        v = list(row_k)
-        u[j], v[j] = row_k[j], row_i[j]
-        swaps.append((j, tuple(u), tuple(v)))
+    perm = rng.permutation(len(row_i))
+    diff_p = row_i_arr[perm] != row_k_arr[perm]
+    swaps = [int(j) for j in perm[diff_p][: budget.swap_actions]]
     combos = [
         (float(gains_i[a] + gains_k[b]), a, b)
         for a in reps_i
@@ -487,12 +562,15 @@ def build_paired_supports(
 
     # 先收集全部联合动作素材，交换动作只记字段与新行元组，先不注册
     pairs_sorted = sorted(pair_set)
-    swaps_of: dict[tuple[int, int], list] = {}
+    rows_mat = np.array(base_rows, dtype=str)
+    swaps_of: dict[tuple[int, int], list[int]] = {}
     combos_of: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for i, k in pairs_sorted:
         swaps, combo_ab = _joint_actions_for_pair(
             registry.state_tuple(int(s[i])),
             registry.state_tuple(int(s[k])),
+            rows_mat[i],
+            rows_mat[k],
             reps_rows[i],
             reps_rows[k],
             gains_rows[i],
@@ -509,7 +587,7 @@ def build_paired_supports(
     for idx, (i, k) in enumerate(pairs_sorted):
         row_i = base_rows[i]
         row_k = base_rows[k]
-        for j, _, _ in swaps_of[(i, k)]:
+        for j in swaps_of[(i, k)]:
             acts.append((idx, j, i, k, row_i[j], row_k[j]))
     if acts:
         best = _score_swaps_sparse(
@@ -529,6 +607,7 @@ def build_paired_supports(
         totals = _score_combos_sparse(
             ent_ptr, ent_cols, ent_vals, len(registry.specs), we, w,
             np.array(a_pos, dtype=np.int64), np.array(b_pos, dtype=np.int64),
+            use_gpu=registry.gpu_featurize,
         )
         starts = np.array(offsets[:-1], dtype=np.int64)
         valid = np.diff(np.array(offsets, dtype=np.int64)) > 0
@@ -559,11 +638,17 @@ def build_paired_supports(
         chosen.append((i, k, gamma))
 
     # 只注册挑中配对的交换赢家，注册次序按对排序确定，与打分次序无关
+    # 交换新行元组只为赢家现场构造，落选对从不花元组构造钱
     swap_rows_sel: list[tuple[str, ...]] = []
     for i, k in sorted((i, k) for i, k, _ in chosen):
-        for _, u, v in swaps_of[(i, k)]:
-            swap_rows_sel.append(u)
-            swap_rows_sel.append(v)
+        row_i = base_rows[i]
+        row_k = base_rows[k]
+        for j in swaps_of[(i, k)]:
+            u = list(row_i)
+            v = list(row_k)
+            u[j], v[j] = row_k[j], row_i[j]
+            swap_rows_sel.append(tuple(u))
+            swap_rows_sel.append(tuple(v))
     swap_ids = registry.register_many(swap_rows_sel)
     joint_of: dict[tuple[int, int], list[tuple[int, int]]] = {}
     cursor = 0

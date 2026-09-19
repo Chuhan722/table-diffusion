@@ -222,6 +222,8 @@ class StateRegistry:
         # 批量特征器缓存，惰性构建，见 _build_featurizer
         self._feat_ready = False
         self._val_cache: list[dict[str, tuple[np.ndarray, np.ndarray]]] = []
+        # 每字段全域取值查表，稀疏打分与物化共用，惰性构建一次
+        self._field_tabs: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         # 惰性特征模式，注册只记元组编号，特征推迟到取负载时统一补算
         self._lazy = False
         self._feat_synced = 0
@@ -277,6 +279,29 @@ class StateRegistry:
         for lo in range(self._feat_synced, self._count, chunk):
             hi = min(lo + chunk, self._count)
             self._features[lo:hi] = self._features_for_rows(self._tuples[lo:hi])
+        self._feat_synced = self._count
+
+    def _insert_block(
+        self, keys: list[tuple[str, ...]], feats: np.ndarray
+    ) -> None:
+        """一批新状态整块入表，容量一次扩到位，特征切片赋值免逐行拷贝。
+
+        编号发放次序与逐行 _insert 完全一致，keys 必须都是未注册的新键。
+        """
+        m = len(keys)
+        need = self._count + m
+        if need > self._features.shape[0]:
+            cap = max(self._INITIAL_CAPACITY, self._features.shape[0])
+            while cap < need:
+                cap *= 2
+            grown = np.empty((cap, len(self.specs)), dtype=np.float64)
+            grown[: self._feat_synced] = self._features[: self._feat_synced]
+            self._features = grown
+        self._features[self._count : need] = feats
+        for key in keys:
+            self._index[key] = self._count
+            self._tuples.append(key)
+            self._count += 1
         self._feat_synced = self._count
 
     def _insert(self, key: tuple[str, ...], feats: np.ndarray) -> int:
@@ -400,22 +425,15 @@ class StateRegistry:
             import cupy as xp  # noqa: F811
         cnt = xp.zeros((n, num_q), dtype=np.int16)
         score = xp.zeros((n, len(self._feat_hs_cols)), dtype=np.int64)
+        rows_arr = np.array(rows, dtype=str)
         for j in range(self.schema.num_fields):
-            column = [row[j] for row in rows]
-            uniq = sorted(set(column))
-            pos = {v: p for p, v in enumerate(uniq)}
-            cnt_tab = np.stack([self._value_vectors(j, v)[0] for v in uniq])
-            codes = np.fromiter(
-                (pos[v] for v in column), dtype=np.int64, count=n
-            )
+            vals_arr, cnt_tab, score_tab = self.field_value_tables(j)
+            codes = np.searchsorted(vals_arr, rows_arr[:, j])
             if xp is not np:
                 cnt_tab = xp.asarray(cnt_tab)
                 codes = xp.asarray(codes)
             cnt += cnt_tab[codes]
             if len(self._feat_hs_cols):
-                score_tab = np.stack(
-                    [self._value_vectors(j, v)[1] for v in uniq]
-                )
                 if xp is not np:
                     score_tab = xp.asarray(score_tab)
                 score += score_tab[codes]
@@ -466,6 +484,26 @@ class StateRegistry:
             self._build_featurizer()
         return self._value_vectors(j, value)
 
+    def field_value_tables(
+        self, j: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """字段 j 全域取值查表，排序值数组与命中计数表与半空间分数表。
+
+        一次救援内查表内容不变，惰性构建一次后各处纯索引取用，
+        取值编码用 searchsorted 矢量化，免去每次重建小表与字典查找。
+        """
+        tabs = self._field_tabs.get(j)
+        if tabs is None:
+            if not self._feat_ready:
+                self._build_featurizer()
+            dom = sorted(set(self.schema.domains[j]))
+            vals_arr = np.array(dom, dtype=str)
+            cnt_tab = np.stack([self._value_vectors(j, v)[0] for v in dom])
+            score_tab = np.stack([self._value_vectors(j, v)[1] for v in dom])
+            tabs = (vals_arr, cnt_tab, score_tab)
+            self._field_tabs[j] = tabs
+        return tabs
+
     def _features_for_rows(self, rows: list[tuple[str, ...]]) -> np.ndarray:
         """一批新状态行的贡献矩阵，矢量化按字段查表累加。
 
@@ -509,8 +547,7 @@ class StateRegistry:
                     self._insert_lazy(key)
             else:
                 feats = self._features_for_rows(new_keys)
-                for key, row_feats in zip(new_keys, feats):
-                    self._insert(key, row_feats)
+                self._insert_block(new_keys, feats)
         return ids
 
     def register_edited_many(
@@ -551,8 +588,7 @@ class StateRegistry:
                 self._insert_lazy(key)
             return ids
         feats = self._features_for_edited(new_base, new_keys)
-        for key, row_feats in zip(new_keys, feats):
-            self._insert(key, row_feats)
+        self._insert_block(new_keys, feats)
         return ids
 
     def _features_for_edited(
@@ -589,20 +625,19 @@ class StateRegistry:
                     by_field.setdefault(j, []).append((r, b[j], key[j]))
         for j, group in by_field.items():
             cols = self._field_queries[j]
-            vals = sorted({g[1] for g in group} | {g[2] for g in group})
-            vpos = {v: p for p, v in enumerate(vals)}
-            cnt_tab = np.stack([self._value_vectors(j, v)[0] for v in vals])
+            vals_arr, cnt_tab, score_tab = self.field_value_tables(j)
             rows_g = np.array([g[0] for g in group], dtype=np.int64)
-            old_c = np.fromiter((vpos[g[1]] for g in group), dtype=np.int64)
-            new_c = np.fromiter((vpos[g[2]] for g in group), dtype=np.int64)
+            old_c = np.searchsorted(
+                vals_arr, np.array([g[1] for g in group], dtype=str)
+            )
+            new_c = np.searchsorted(
+                vals_arr, np.array([g[2] for g in group], dtype=str)
+            )
             if len(cols):
                 cnt[np.ix_(rows_g, cols)] += (
                     cnt_tab[new_c][:, cols] - cnt_tab[old_c][:, cols]
                 )
             if len(self._feat_hs_cols):
-                score_tab = np.stack(
-                    [self._value_vectors(j, v)[1] for v in vals]
-                )
                 score[rows_g] += score_tab[new_c] - score_tab[old_c]
         feats = (cnt == self._feat_ncond[None, :]).astype(np.float64)
         if len(self._feat_hs_cols):
