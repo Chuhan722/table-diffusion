@@ -623,6 +623,7 @@ def evolve_batch(
     stop_lag: int = 100,
     rescue_stop_window: int = 0,
     rescue_stop_tol: float = 0.02,
+    gpu_entry_budget: int = 0,
     progress_every: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
@@ -641,6 +642,8 @@ def evolve_batch(
     返回触发轮起点表，与曲线离线回放同语义，默认 0 关闭零改变，
     默认阈值由 plants 种子 1 两条长跑曲线回放校准，窗口 10 降幅 2% 一带
     停止点对窗口与阈值取值不敏感。
+    gpu_entry_budget 为正时 GPU 批量轮条目流按该预算分块，
+    收益逐位不变，漂移改块序累加，大域宽数据防显存爆，默认 0 不分块。
     progress_every 为正时每该数轮打印一行进度并立即刷出，
     冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
     """
@@ -658,6 +661,8 @@ def evolve_batch(
         raise ValueError("救援早停窗口不能为负")
     if rescue_stop_tol < 0.0:
         raise ValueError("救援早停阈值不能为负")
+    if gpu_entry_budget < 0:
+        raise ValueError("条目流分块预算不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
@@ -687,6 +692,7 @@ def evolve_batch(
                     plan.grouped, plan.menu, plan_provider.codebook.sync(),
                     stay_probability, alpha, damping, max_expected_rows,
                     beta_hint=last_beta,
+                    entry_budget=gpu_entry_budget,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)

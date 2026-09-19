@@ -174,6 +174,31 @@ def _seg_ids(cp, offsets, total: int):
     )
 
 
+def _chunk_bounds(cp, sizes, budget: int):
+    """按条目预算把路径序列切成连续块，返回主机端 (lo, hi) 列表。
+
+    预算不正或总量不超预算时整段一块，切点由条目累计和二分得出，
+    每块至少一条路径，单路径超预算时独占一块不再细分。
+    """
+    n = int(sizes.size)
+    if n == 0:
+        return []
+    if budget <= 0:
+        return [(0, n)]
+    cums = cp.asnumpy(cp.cumsum(sizes.astype(cp.int64)))
+    if int(cums[-1]) <= budget:
+        return [(0, n)]
+    out = []
+    lo = 0
+    while lo < n:
+        base = int(cums[lo - 1]) if lo else 0
+        hi = int(np.searchsorted(cums, base + budget, side="right"))
+        hi = min(max(hi, lo + 1), n)
+        out.append((lo, hi))
+        lo = hi
+    return out
+
+
 def _seg_max(cp, values, offsets):
     """按段最大，一段一线程块的定序树规约核，与顺序无关逐位精确。
 
@@ -302,8 +327,13 @@ class GpuBatchContext:
         )
         return indptr, indices, adj, row_of
 
-    def _delta_parts(self, menu_gpu, cnt, codes_g):
-        """答案差稀疏块，结构复刻 CPU 版，坐标合并用键排序整型分段和。"""
+    def _delta_parts(self, menu_gpu, cnt, codes_g, entry_budget: int = 0):
+        """答案差稀疏块，结构复刻 CPU 版，坐标合并用键排序整型分段和。
+
+        entry_budget 为正时按条目预算把路径切块逐块展开，
+        路径不跨块且块内条目序同不分块，每路径的收益逐位不变，
+        大域宽数据条目流上亿时靠这个压住显存峰值，默认 0 不切块零改变。
+        """
         cp = self.cp
         group, fields, values = menu_gpu["group"], menu_gpu["fields"], menu_gpu["values"]
         parts = []
@@ -333,59 +363,70 @@ class GpuBatchContext:
         # 单字段路径，条目流一次展开，行内列取依赖表本身有序
         singles = cp.flatnonzero(nslots == 1)
         if singles.size:
-            j_of = fields[singles, 0]
-            cur = codes_g[group[singles], j_of]
-            indptr, indices, adj, _ = self._entry_expand(
-                j_of, cur, values[singles, 0]
-            )
-            _finish(indptr, indices, adj, singles.astype(cp.int64))
+            j_all = fields[singles, 0].astype(cp.int64)
+            for lo, hi in _chunk_bounds(cp, self.dep_sizes[j_all], entry_budget):
+                sub = singles[lo:hi]
+                j_of = fields[sub, 0]
+                cur = codes_g[group[sub], j_of]
+                indptr, indices, adj, _ = self._entry_expand(
+                    j_of, cur, values[sub, 0]
+                )
+                _finish(indptr, indices, adj, sub.astype(cp.int64))
 
         # 多字段路径，各槽位条目流展开后坐标键排序合并，整型前缀和精确无误差
         multis = cp.flatnonzero(nslots >= 2)
         if multis.size:
-            rows_parts, cols_parts, adj_parts = [], [], []
+            sizes_m = cp.zeros(multis.size, dtype=cp.int64)
             for slot in range(3):
-                live_mask = fields[multis, slot] >= 0
-                live = multis[live_mask]
-                if live.size == 0:
-                    continue
-                j_of = fields[live, slot]
-                cur = codes_g[group[live], j_of]
-                loc = cp.flatnonzero(live_mask)
-                _, cols_s, adj_s, row_of_s = self._entry_expand(
-                    j_of, cur, values[live, slot]
+                jm = fields[multis, slot]
+                sizes_m += cp.where(
+                    jm >= 0, self.dep_sizes[cp.maximum(jm, 0).astype(cp.int64)], 0
                 )
-                rows_parts.append(loc[row_of_s])
-                cols_parts.append(cols_s)
-                adj_parts.append(adj_s.astype(cp.int64))
-            keys_rows = cp.concatenate(rows_parts)
-            keys_cols = cp.concatenate(cols_parts)
-            vals = cp.concatenate(adj_parts)
-            # 键位宽够时压成 int32 排序，radix 位数减半，值域超界回退 int64
-            if int(multis.size) * self.num_queries < 2 ** 31:
-                keys = (
-                    keys_rows.astype(cp.int32) * np.int32(self.num_queries)
-                    + keys_cols.astype(cp.int32)
+            for lo, hi in _chunk_bounds(cp, sizes_m, entry_budget):
+                sub = multis[lo:hi]
+                rows_parts, cols_parts, adj_parts = [], [], []
+                for slot in range(3):
+                    live_mask = fields[sub, slot] >= 0
+                    live = sub[live_mask]
+                    if live.size == 0:
+                        continue
+                    j_of = fields[live, slot]
+                    cur = codes_g[group[live], j_of]
+                    loc = cp.flatnonzero(live_mask)
+                    _, cols_s, adj_s, row_of_s = self._entry_expand(
+                        j_of, cur, values[live, slot]
+                    )
+                    rows_parts.append(loc[row_of_s])
+                    cols_parts.append(cols_s)
+                    adj_parts.append(adj_s.astype(cp.int64))
+                keys_rows = cp.concatenate(rows_parts)
+                keys_cols = cp.concatenate(cols_parts)
+                vals = cp.concatenate(adj_parts)
+                # 键位宽够时压成 int32 排序，radix 位数减半，值域超界回退 int64
+                if int(sub.size) * self.num_queries < 2 ** 31:
+                    keys = (
+                        keys_rows.astype(cp.int32) * np.int32(self.num_queries)
+                        + keys_cols.astype(cp.int32)
+                    )
+                else:
+                    keys = keys_rows.astype(cp.int64) * self.num_queries + keys_cols
+                order = cp.argsort(keys)
+                sk = keys[order]
+                sv = vals[order]
+                newseg = cp.concatenate(
+                    [cp.ones(1, dtype=cp.bool_), sk[1:] != sk[:-1]]
                 )
-            else:
-                keys = keys_rows.astype(cp.int64) * self.num_queries + keys_cols
-            order = cp.argsort(keys)
-            sk = keys[order]
-            sv = vals[order]
-            newseg = cp.concatenate(
-                [cp.ones(1, dtype=cp.bool_), sk[1:] != sk[:-1]]
-            )
-            starts = cp.flatnonzero(newseg)
-            bounds = cp.concatenate([starts, cp.asarray([sk.size])])
-            csum = cp.concatenate([cp.zeros(1, dtype=cp.int64), cp.cumsum(sv)])
-            merged = (csum[bounds[1:]] - csum[bounds[:-1]]).astype(cp.int8)
-            uk = sk[starts]
-            urows = uk // self.num_queries
-            ucols = uk - urows * self.num_queries
-            row_nnz = cp.bincount(urows, minlength=int(multis.size))
-            indptr = cp.zeros(int(multis.size) + 1, dtype=cp.int64)
-            cp.cumsum(row_nnz, out=indptr[1:])
-            _finish(indptr, ucols, merged, multis.astype(cp.int64))
+                starts = cp.flatnonzero(newseg)
+                bounds = cp.concatenate([starts, cp.asarray([sk.size])])
+                csum = cp.concatenate([cp.zeros(1, dtype=cp.int64), cp.cumsum(sv)])
+                merged = (csum[bounds[1:]] - csum[bounds[:-1]]).astype(cp.int8)
+                uk = sk[starts]
+                urows = uk // self.num_queries
+                ucols = uk - urows * self.num_queries
+                row_nnz = cp.bincount(urows, minlength=int(sub.size))
+                indptr = cp.zeros(int(sub.size) + 1, dtype=cp.int64)
+                cp.cumsum(row_nnz, out=indptr[1:])
+                _finish(indptr, ucols, merged, sub.astype(cp.int64))
         return parts
 
     # ------------------------------------------------------------------
@@ -504,6 +545,7 @@ class GpuBatchContext:
         max_expected_rows: float | None = None,
         numerical_tol: float = 1e-12,
         beta_hint: float | None = None,
+        entry_budget: int = 0,
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -528,7 +570,7 @@ class GpuBatchContext:
         residual, old_loss, scores_gpu = self._residual_loss(cnt, score_g, counts)
         group_scores = cp.asnumpy(scores_gpu)
 
-        parts = self._delta_parts(menu_gpu, cnt, codes_g)
+        parts = self._delta_parts(menu_gpu, cnt, codes_g, entry_budget)
         delta_hs = self._halfspace_delta(menu_gpu, score_g, codes_g)
         we = self.weights * residual
         gains_paths = cp.zeros(menu.num_paths, dtype=cp.float64)
@@ -586,17 +628,9 @@ class GpuBatchContext:
         rates_paths = rates_flat[path_pos]
 
         # 漂移，键排序加前缀和分段归约，确定性合并
-        key_parts, weight_parts = [], []
-        for part in parts:
-            keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
-            key_parts.append(keys)
-            weight_parts.append(
-                part["data"] * rates_paths[part["path_idx"]][part["row_of"]]
-            )
         drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
-        if key_parts:
-            keys = cp.concatenate(key_parts)
-            wvals = cp.concatenate(weight_parts)
+
+        def _merge_into(keys, wvals, accumulate):
             order = cp.argsort(keys)
             sk = keys[order]
             sw = wvals[order]
@@ -608,12 +642,45 @@ class GpuBatchContext:
             sums = cp.zeros(starts.size, dtype=cp.float64)
             kern = _seg_kernels(cp)["run"]
             nruns = int(starts.size)
+            if nruns == 0:
+                return
             threads = 256
             kern(
                 ((nruns + threads - 1) // threads,), (threads,),
                 (sw, starts, bounds, sums, np.int64(nruns)),
             )
-            drifts[sk[starts]] = sums
+            uk = sk[starts].astype(cp.int64)
+            if accumulate:
+                # 块内键唯一花式加法安全，跨块按块序累加，分块固定结果确定
+                drifts[uk] += sums
+            else:
+                drifts[uk] = sums
+
+        if entry_budget > 0:
+            # 分块口径，逐块排序合并后散射累加，免去全量条目流一次性拼接
+            for part in parts:
+                if part["indices"].size == 0:
+                    continue
+                keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
+                _merge_into(
+                    keys,
+                    part["data"] * rates_paths[part["path_idx"]][part["row_of"]],
+                    accumulate=True,
+                )
+        else:
+            key_parts, weight_parts = [], []
+            for part in parts:
+                keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
+                key_parts.append(keys)
+                weight_parts.append(
+                    part["data"] * rates_paths[part["path_idx"]][part["row_of"]]
+                )
+            if key_parts:
+                _merge_into(
+                    cp.concatenate(key_parts),
+                    cp.concatenate(weight_parts),
+                    accumulate=False,
+                )
         drifts = drifts.reshape(num_groups, num_queries)
         if delta_hs is not None:
             weighted = delta_hs * rates_paths[:, None]

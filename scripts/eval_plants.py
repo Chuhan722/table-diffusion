@@ -38,12 +38,16 @@ def spec_answers(specs, schema, X):
     for i, s in enumerate(specs):
         if s.conditions[0]["operator"] == "halfspace":
             c = s.conditions[0]
-            w = np.zeros((schema.num_fields, 2), dtype=np.int64)
+            max_dom = max(len(d) for d in schema.domains)
+            w = np.zeros((schema.num_fields, max_dom), dtype=np.int64)
             for name, tab in c["scores"].items():
                 j = fpos[name]
+                dom = list(schema.domains[j])
                 for v, sc in tab.items():
-                    w[j, int(v)] = int(sc)
-            rs = X.astype(np.int64) @ (w[:, 1] - w[:, 0]) + int(w[:, 0].sum())
+                    w[j, dom.index(v)] = int(sc)
+            rs = np.zeros(len(X), dtype=np.int64)
+            for j in range(schema.num_fields):
+                rs += w[j, X[:, j]]
             out[i] = int((rs >= int(c["threshold"])).sum())
         else:
             mask = np.ones(len(X), dtype=bool)
@@ -62,27 +66,29 @@ def gsd_axis(specs, schema, X, real_total):
     return float(err.mean()), float(err.max())
 
 
-def marginal_l1(Xr, Xs, attrs):
-    """一组字段上的边缘分布 L1 距离，比例口径。"""
+def marginal_l1(Xr, Xs, attrs, widths):
+    """一组字段上的边缘分布 L1 距离，比例口径，混合基数按域宽。"""
     base = 1
     idx_r = np.zeros(len(Xr), dtype=np.int64)
     idx_s = np.zeros(len(Xs), dtype=np.int64)
     for j in attrs:
-        idx_r = idx_r * 2 + Xr[:, j]
-        idx_s = idx_s * 2 + Xs[:, j]
-        base *= 2
+        k = int(widths[j])
+        idx_r = idx_r * k + Xr[:, j]
+        idx_s = idx_s * k + Xs[:, j]
+        base *= k
     pr = np.bincount(idx_r, minlength=base) / len(Xr)
     ps = np.bincount(idx_s, minlength=base) / len(Xs)
     return float(np.abs(pr - ps).sum())
 
 
 def aim_axes(schema, Xr, Xs):
-    two = [marginal_l1(Xr, Xs, ab) for ab in combinations(range(schema.num_fields), 2)]
+    widths = [len(d) for d in schema.domains]
+    two = [marginal_l1(Xr, Xs, ab, widths) for ab in combinations(range(schema.num_fields), 2)]
     rng = np.random.default_rng(AIM3_SEED)
     triples = set()
     while len(triples) < AIM3_SAMPLES:
         triples.add(tuple(sorted(int(j) for j in rng.choice(schema.num_fields, 3, replace=False))))
-    three = [marginal_l1(Xr, Xs, t) for t in sorted(triples)]
+    three = [marginal_l1(Xr, Xs, t, widths) for t in sorted(triples)]
     return (
         float(np.mean(two)), float(np.max(two)),
         float(np.mean(three)), float(np.max(three)),

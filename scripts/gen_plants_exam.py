@@ -45,18 +45,23 @@ def eq_query(qid, conditions, result):
 
 
 def gen_all_2way(schema, X):
-    """全二阶格子，按实际值域出格，常值字段的对只出存在的格。"""
+    """全二阶格子，按实际值域出格，常值字段的对只出存在的格，值即码任意域宽。"""
     out = []
     k = 0
     for a, b in combinations(range(schema.num_fields), 2):
-        counts = np.bincount(X[:, a] * 2 + X[:, b], minlength=4)
+        wb = int(X[:, b].max()) + 1
+        wa = int(X[:, a].max()) + 1
+        counts = np.bincount(
+            X[:, a].astype(np.int64) * wb + X[:, b].astype(np.int64),
+            minlength=wa * wb,
+        )
         for va, vb in product(schema.domains[a], schema.domains[b]):
             k += 1
             conds = (
                 {"attribute": schema.fields[a], "operator": "==", "value": va},
                 {"attribute": schema.fields[b], "operator": "==", "value": vb},
             )
-            out.append(eq_query(f"W2_{k:05d}", conds, counts[int(va) * 2 + int(vb)]))
+            out.append(eq_query(f"W2_{k:05d}", conds, counts[int(va) * wb + int(vb)]))
     return out
 
 
@@ -90,18 +95,27 @@ def gen_random_eq(schema, X, order, count, rng, prefix, taken):
 def gen_halfspaces(schema, X, count, rng, prefix):
     """随机整数权重半空间题，阈值取真实分数分布的随机分位点。
 
-    01 字段每取值独立正态权重乘一百万量化成整数，
-    行总分即整数分表求和，不小于阈值才通过，无浮点歧义。
+    每字段每取值独立正态权重乘一百万量化成整数，
+    行总分即整数分表求和，不小于阈值才通过，无浮点歧义，
+    权重矩阵按最大域宽生成，值即码按取值查表求和，任意域宽通用。
     """
+    max_dom = max(len(d) for d in schema.domains)
+    vmax = int(X.max()) + 1
     out = []
     for t in range(count):
-        w = np.round(rng.normal(size=(schema.num_fields, 2)) * QUANT).astype(np.int64)
+        w = np.round(rng.normal(size=(schema.num_fields, max_dom)) * QUANT).astype(np.int64)
         scores = {
-            name: {v: int(w[j, int(v)]) for v in schema.domains[j]}
+            name: {v: int(w[j, k]) for k, v in enumerate(schema.domains[j])}
             for j, name in enumerate(schema.fields)
         }
-        # 行分即每字段按取值查表求和，01 字段等价于基础分加取 1 字段的差分
-        row_scores = X.astype(np.int64) @ (w[:, 1] - w[:, 0]) + int(w[:, 0].sum())
+        # 行分即每字段按取值查表求和，先建值到分的查表再按列 gather
+        wv = np.zeros((schema.num_fields, vmax), dtype=np.int64)
+        for j in range(schema.num_fields):
+            for k, v in enumerate(schema.domains[j]):
+                wv[j, int(v)] = w[j, k]
+        row_scores = np.zeros(len(X), dtype=np.int64)
+        for j in range(schema.num_fields):
+            row_scores += wv[j, X[:, j]]
         q = float(rng.uniform(0.15, 0.85))
         threshold = int(np.quantile(row_scores, q, method="higher"))
         cond = {"operator": "halfspace", "scores": scores, "threshold": threshold}
@@ -150,8 +164,9 @@ def main():
     args = parser.parse_args()
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
-    if any(any(v not in ("0", "1") for v in d) for d in schema.domains):
-        raise AssertionError(f"{args.data} 字段取值必须落在 01 内")
+    for d in schema.domains:
+        if any((not v.isdigit()) for v in d):
+            raise AssertionError(f"{args.data} 字段取值必须是非负整数码")
     constant = [schema.fields[j] for j, d in enumerate(schema.domains) if len(d) == 1]
     if constant:
         print(f"常值字段 {len(constant)} 个 {constant}，其格子按实际值域出")
