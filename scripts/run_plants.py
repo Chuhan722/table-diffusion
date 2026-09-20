@@ -29,7 +29,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
-from resevo.initialization import derive_first_order, sample_initial_rows  # noqa: E402
+from resevo.initialization import clean_first_order, derive_first_order, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -134,6 +134,10 @@ def main() -> None:
         help="初始化一阶边缘化覆盖校验相对容差，噪声考卷用 0.05，默认 0 精确",
     )
     parser.add_argument(
+        "--init-clean", action="store_true",
+        help="初始化一阶计数清洗，截负加等额摊归一到行数，考卷评分不动，默认关",
+    )
+    parser.add_argument(
         "--noise-floor", type=float, default=0.0,
         help="噪声地板，损失低于此值进入追噪区平台阈值切粗，"
         "取 c 乘格子数乘计数 sigma 平方，默认 0 关闭",
@@ -193,6 +197,8 @@ def main() -> None:
         marginals = derive_first_order(
             specs, schema, len(real_rows), tol_rows=args.init_margin_tol
         )
+        if args.init_clean:
+            marginals = clean_first_order(marginals, len(real_rows))
         init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
     ids = registry.register_table(init_rows)
 

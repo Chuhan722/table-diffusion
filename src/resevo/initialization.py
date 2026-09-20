@@ -91,6 +91,33 @@ def derive_first_order(
     return marginals
 
 
+def _project_simplex(v: np.ndarray, total: float) -> np.ndarray:
+    """欧氏投影到总和 total 的非负单纯形，Duchi 排序法，输入可含负值。"""
+    u = np.sort(v)[::-1]
+    cssv = np.cumsum(u) - total
+    idx = np.arange(1, len(u) + 1)
+    cond = u - cssv / idx > 0
+    rho = idx[cond][-1]
+    tau = cssv[rho - 1] / rho
+    return np.maximum(v - tau, 0.0)
+
+
+def clean_first_order(
+    marginals: list[list[tuple[dict, float]]], total_rows: int,
+) -> list[list[tuple[dict, float]]]:
+    """噪声一阶计数清洗，逐字段投影到总和恰等行数的非负单纯形。
+
+    截负加等额摊归一，等价于欧氏投影，高斯噪声每格同方差所以等额摊对口，
+    只作用于初始化用的一阶比例，考卷答案与评分完全不动，零隐私预算。
+    """
+    cleaned = []
+    for atoms in marginals:
+        counts = np.array([c for _, c in atoms], dtype=np.float64)
+        fixed = _project_simplex(counts, float(total_rows))
+        cleaned.append([(cond, float(v)) for (cond, _), v in zip(atoms, fixed)])
+    return cleaned
+
+
 def sample_initial_rows(
     marginals: list[list[tuple[dict, int]]],
     schema: TableSchema,

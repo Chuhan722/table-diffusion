@@ -11,6 +11,7 @@ from resevo.dataset import QuerySpec, load_queries, load_table
 from resevo.initialization import (
     _atom_signature,
     _atom_values,
+    clean_first_order,
     derive_first_order,
     sample_initial_rows,
 )
@@ -113,3 +114,22 @@ def test_cdp_rho_roundtrip():
     assert 0.02 < rho < 0.05
     assert abs(_cdp_delta(rho, 1.0) - 1e-5) < 1e-9
     assert cdp_rho(2.0, 1e-5) > rho
+
+
+def test_clean_first_order_noisy_counts():
+    """负计数截零，总和恰归行数，等额摊符合单纯形投影手算。"""
+    cond = {"attribute": "x", "operator": "==", "value": "0"}
+    marginals = [[(cond, -2.0), (cond, 4.0), (cond, 6.0)]]
+    cleaned = clean_first_order(marginals, 10)
+    vals = np.array([v for _, v in cleaned[0]])
+    assert (vals >= 0.0).all()
+    assert abs(vals.sum() - 10.0) < 1e-9
+    assert np.allclose(vals, [0.0, 4.0, 6.0])
+
+
+def test_clean_first_order_keeps_clean_input():
+    """已在单纯形内的干净计数投影后逐位不变。"""
+    cond = {"attribute": "x", "operator": "==", "value": "0"}
+    marginals = [[(cond, 3.0), (cond, 7.0)]]
+    cleaned = clean_first_order(marginals, 10)
+    assert np.allclose([v for _, v in cleaned[0]], [3.0, 7.0])
