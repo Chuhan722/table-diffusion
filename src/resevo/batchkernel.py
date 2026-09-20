@@ -624,6 +624,8 @@ def evolve_batch(
     rescue_stop_window: int = 0,
     rescue_stop_tol: float = 0.02,
     gpu_entry_budget: int = 0,
+    noise_floor: float = 0.0,
+    stop_threshold_noisy: float = 0.0,
     progress_every: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
@@ -644,6 +646,13 @@ def evolve_batch(
     停止点对窗口与阈值取值不敏感。
     gpu_entry_budget 为正时 GPU 批量轮条目流按该预算分块，
     收益逐位不变，漂移改块序累加，大域宽数据防显存爆，默认 0 不分块。
+    noise_floor 与 stop_threshold_noisy 同时为正启用噪声版两段平台停，
+    按偏差原理损失低于噪声地板后的下降全是追噪，窗口最优损失一旦
+    低于地板，平台判据阈值就从 stop_threshold 切换到更粗的
+    stop_threshold_noisy 尽快收工，停止原因记 noise_plateau，
+    地板取 c 乘格子数乘计数 sigma 平方，sigma 只由公开机制参数决定，
+    九条 eps 1 曲线回放校准 c 0.5 粗阈 1e-3 一带甜点区宽，
+    停在俯冲段不可能因为俯冲段窗口相对改进远超粗阈值，默认 0 关闭零改变。
     progress_every 为正时每该数轮打印一行进度并立即刷出，
     冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
     """
@@ -663,6 +672,14 @@ def evolve_batch(
         raise ValueError("救援早停阈值不能为负")
     if gpu_entry_budget < 0:
         raise ValueError("条目流分块预算不能为负")
+    if noise_floor < 0.0:
+        raise ValueError("噪声地板不能为负")
+    if stop_threshold_noisy < 0.0:
+        raise ValueError("追噪区粗阈值不能为负")
+    if (noise_floor > 0.0) != (stop_threshold_noisy > 0.0):
+        raise ValueError("噪声地板与追噪区粗阈值须同时给出")
+    if noise_floor > 0.0 and stop_threshold <= 0.0:
+        raise ValueError("两段平台停须先启用 stop_threshold 平台判据")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
@@ -743,12 +760,17 @@ def evolve_batch(
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
             if (k + 1) % stop_lag == 0:
+                armed = noise_floor > 0.0 and window_best <= noise_floor
+                threshold = stop_threshold_noisy if armed else stop_threshold
                 if prev_window_best is not None and (
                     prev_window_best <= 0.0
                     or (prev_window_best - window_best) / prev_window_best
-                    < stop_threshold
+                    < threshold
                 ):
-                    return EvolveResult(current, records, "loss_plateau")
+                    return EvolveResult(
+                        current, records,
+                        "noise_plateau" if armed else "loss_plateau",
+                    )
                 prev_window_best = window_best
                 window_best = None
         if result.status == "no_positive_direction":

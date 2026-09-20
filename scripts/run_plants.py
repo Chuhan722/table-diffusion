@@ -134,6 +134,15 @@ def main() -> None:
         help="初始化一阶边缘化覆盖校验相对容差，噪声考卷用 0.05，默认 0 精确",
     )
     parser.add_argument(
+        "--noise-floor", type=float, default=0.0,
+        help="噪声地板，损失低于此值进入追噪区平台阈值切粗，"
+        "取 c 乘格子数乘计数 sigma 平方，默认 0 关闭",
+    )
+    parser.add_argument(
+        "--stop-threshold-noisy", type=float, default=0.0,
+        help="追噪区平台粗阈值，与 --noise-floor 同时给出，默认 0 关闭",
+    )
+    parser.add_argument(
         "--progress", type=int, default=0,
         help="每 N 轮打印一行进度并即时刷出，冻结与救援轮无条件打印，0 静默",
     )
@@ -236,6 +245,8 @@ def main() -> None:
             rescue_stop_window=args.rescue_stop_window,
             rescue_stop_tol=args.rescue_stop_tol,
             gpu_entry_budget=args.gpu_entry_budget,
+            noise_floor=args.noise_floor,
+            stop_threshold_noisy=args.stop_threshold_noisy,
             progress_every=args.progress,
         )
     elif args.grouped:

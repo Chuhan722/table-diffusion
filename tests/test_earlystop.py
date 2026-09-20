@@ -65,3 +65,55 @@ def test_earlystop_validation():
         _evolve(registry, ids, weights, rounds=5, stop_threshold=-0.1)
     with pytest.raises(ValueError):
         _evolve(registry, ids, weights, rounds=5, stop_threshold=0.5, stop_lag=0)
+
+
+def test_noise_floor_default_off_bitwise_identical():
+    """噪声地板默认零与不传参数的轨迹逐位一致，旧行为零改变。"""
+    r1, ids1, w1, _ = _scene(2, num_rows=30)
+    r2, ids2, w2, _ = _scene(2, num_rows=30)
+    base = _evolve(r1, ids1, w1, stop_threshold=1e-9, stop_lag=5)
+    off = _evolve(
+        r2, ids2, w2, stop_threshold=1e-9, stop_lag=5,
+        noise_floor=0.0, stop_threshold_noisy=0.0,
+    )
+    assert [r.old_loss for r in base.records] == [r.old_loss for r in off.records]
+    assert base.stop_reason == off.stop_reason
+
+
+def test_noise_floor_switches_to_coarse():
+    """窗口最优损失踩进地板后粗阈值生效，停止原因记 noise_plateau。"""
+    registry, ids, weights, _ = _scene(3, num_rows=30)
+    out = _evolve(
+        registry, ids, weights, rounds=40,
+        stop_threshold=1e-12, stop_lag=5,
+        noise_floor=1e18, stop_threshold_noisy=1.0,
+    )
+    assert out.stop_reason == "noise_plateau"
+    assert len(out.records) <= 11
+
+
+def test_noise_floor_above_loss_keeps_fine_threshold():
+    """损失始终高于地板时粗阈值不生效，行为同纯平台判据。"""
+    r1, ids1, w1, _ = _scene(2, num_rows=30)
+    r2, ids2, w2, _ = _scene(2, num_rows=30)
+    base = _evolve(r1, ids1, w1, rounds=40, stop_threshold=1e-12, stop_lag=5)
+    two = _evolve(
+        r2, ids2, w2, rounds=40, stop_threshold=1e-12, stop_lag=5,
+        noise_floor=1e-30, stop_threshold_noisy=1.0,
+    )
+    assert [r.old_loss for r in base.records] == [r.old_loss for r in two.records]
+    assert two.stop_reason == base.stop_reason
+
+
+def test_noise_floor_validation():
+    """地板与粗阈值须成对给出且不能为负，缺平台判据直接拒绝。"""
+    registry, ids, weights, _ = _scene(2, num_rows=30)
+    with pytest.raises(ValueError):
+        _evolve(registry, ids, weights, noise_floor=1.0, stop_threshold_noisy=0.0)
+    with pytest.raises(ValueError):
+        _evolve(registry, ids, weights, noise_floor=-1.0, stop_threshold_noisy=1.0)
+    with pytest.raises(ValueError):
+        _evolve(
+            registry, ids, weights, stop_threshold=0.0,
+            noise_floor=1.0, stop_threshold_noisy=1.0,
+        )
