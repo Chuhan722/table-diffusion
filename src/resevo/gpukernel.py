@@ -534,6 +534,136 @@ class GpuBatchContext:
         return (beta, ps, D), max_gain_sum, requirement
 
     # ------------------------------------------------------------------
+    def _probe_grid(self, gains_flat, ref_flat, offsets, seg_ids, counts,
+                    menu_gpu, parts, delta_hs, path_pos, damping,
+                    max_expected_rows, max_gain_sum, entry_budget,
+                    grid_size=16):
+        """beta 网格探针 GPU 版，与 CPU 版 _probe_beta_grid 同口径。
+
+        纯只读确定性，不碰随机流不写主路径任何数组，
+        漂移合并用与主路径相同的键排序分段归约，探针自持漂移数组。
+        """
+        cp = self.cp
+        num_queries = self.num_queries
+        seg_starts = offsets[:-1]
+        num_groups = int(offsets.size - 1)
+        gmax = _seg_max(cp, gains_flat, offsets)
+        centered = gains_flat - gmax[seg_ids]
+
+        def tilted(beta: float):
+            zw = ref_flat * cp.exp(beta * centered)
+            norm = _seg_sum(cp, zw, offsets)
+            P = zw / norm[seg_ids]
+            D = float(counts @ _seg_sum(cp, P * gains_flat, offsets))
+            return P, D
+
+        target = 0.99 * max_gain_sum
+        beta_sat = 1.0 / max(max_gain_sum, 1e-300)
+        _, dv = tilted(beta_sat)
+        for _ in range(200):
+            if dv >= target:
+                break
+            beta_sat *= 2.0
+            _, dv = tilted(beta_sat)
+
+        kern = _seg_kernels(cp)["run"]
+        grid = [0.0] + list(
+            np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1)
+        )
+        best_beta, best_j = 0.0, 0.0
+        for beta in grid:
+            P, D = tilted(float(beta))
+            if D <= 0.0:
+                continue
+            rates_flat = P.copy()
+            rates_flat[seg_starts] = 0.0
+            leave = _seg_sum(cp, rates_flat, offsets)
+            max_leave = float(leave.max())
+            if max_leave <= 0.0:
+                continue
+            rates_paths = rates_flat[path_pos]
+            drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
+
+            def merge_into(keys, wvals, accumulate):
+                order = cp.argsort(keys)
+                sk = keys[order]
+                sw = wvals[order]
+                newseg = cp.concatenate(
+                    [cp.ones(1, dtype=cp.bool_), sk[1:] != sk[:-1]]
+                )
+                starts = cp.flatnonzero(newseg)
+                bounds = cp.concatenate(
+                    [starts[1:], cp.asarray([int(sk.size)], dtype=cp.int64)]
+                )
+                sums = cp.zeros(starts.size, dtype=cp.float64)
+                nruns = int(starts.size)
+                if nruns == 0:
+                    return
+                threads = 256
+                kern(
+                    ((nruns + threads - 1) // threads,), (threads,),
+                    (sw, starts, bounds, sums, np.int64(nruns)),
+                )
+                uk = sk[starts].astype(cp.int64)
+                if accumulate:
+                    drifts[uk] += sums
+                else:
+                    drifts[uk] = sums
+
+            if entry_budget > 0:
+                for part in parts:
+                    if part["indices"].size == 0:
+                        continue
+                    keys = (
+                        part["grp_of"][part["row_of"]] * num_queries
+                        + part["indices"]
+                    )
+                    merge_into(
+                        keys,
+                        part["data"]
+                        * rates_paths[part["path_idx"]][part["row_of"]],
+                        True,
+                    )
+            else:
+                key_parts, weight_parts = [], []
+                for part in parts:
+                    keys = (
+                        part["grp_of"][part["row_of"]] * num_queries
+                        + part["indices"]
+                    )
+                    key_parts.append(keys)
+                    weight_parts.append(
+                        part["data"]
+                        * rates_paths[part["path_idx"]][part["row_of"]]
+                    )
+                if key_parts:
+                    merge_into(
+                        cp.concatenate(key_parts),
+                        cp.concatenate(weight_parts),
+                        False,
+                    )
+            drifts = drifts.reshape(num_groups, num_queries)
+            if delta_hs is not None:
+                weighted = delta_hs * rates_paths[:, None]
+                seg = _seg_sum2d(cp, weighted, menu_gpu["offsets"])
+                drifts[:, self.hs_cols] += seg
+            drift_total = counts @ drifts
+            self_cross = float(counts @ ((drifts * drifts) @ self.weights))
+            interaction = float(
+                ((drift_total * self.weights) @ drift_total - self_cross) / 2
+            )
+            h_star = analytic_step(max_leave, D, interaction)
+            unit_rows = float(counts @ leave)
+            if max_expected_rows is not None and unit_rows > 0:
+                step = damping * min(h_star, max_expected_rows / unit_rows)
+            else:
+                step = damping * h_star
+            j = step * D - step * step * interaction
+            if j > best_j:
+                best_j, best_beta = j, float(beta)
+        return best_beta, best_j
+
+    # ------------------------------------------------------------------
     def build(
         self,
         grouped: GroupedTable,
@@ -546,6 +676,7 @@ class GpuBatchContext:
         numerical_tol: float = 1e-12,
         beta_hint: float | None = None,
         entry_budget: int = 0,
+        probe_grid: int = 0,
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -714,10 +845,18 @@ class GpuBatchContext:
 
         expected_loss = old_loss - step * direction_gain + step * step * interaction
         upper = old_loss - step * direction_gain / 2
+        probe = None
+        if probe_grid > 0:
+            probe = self._probe_grid(
+                gains_flat, ref_flat, offsets, seg_ids, counts, menu_gpu,
+                parts, delta_hs, path_pos, damping, max_expected_rows,
+                max_gain_sum, entry_budget, probe_grid,
+            )
         return BatchKernelResult(
             menu, grouped, offsets_np, probs_flat, old_loss,
             beta, direction_gain, interaction, step,
             expected_loss, upper, step * unit_rows,
             max_gain_sum, requirement, "ok",
             group_scores,
+            probe,
         )

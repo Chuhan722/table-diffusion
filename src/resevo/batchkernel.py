@@ -26,7 +26,7 @@ from .batchmenu import (
 )
 from .dataset import StateRegistry
 from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
-from .engine import EvolveResult, RoundRecord, build_kernel, sample_next
+from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .state import Workload, loss_from_residual
@@ -54,6 +54,7 @@ class BatchKernelResult:
     required_gain: float
     status: str
     group_scores: NDArray[np.float64] | None = None  # 每组错位分，供工作批挑组
+    probe: tuple[float, float] | None = None  # beta 网格探针 (beta_best, j_best)，未开启为 None
 
 
 def _delta_parts(
@@ -211,6 +212,117 @@ def _halfspace_delta(
     return delta
 
 
+def _probe_beta_grid(
+    gains_flat: NDArray[np.float64],
+    ref_flat: NDArray[np.float64],
+    offsets: NDArray[np.int64],
+    counts: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    num_queries: int,
+    menu: BatchMenu,
+    parts,
+    delta_hs,
+    hs_cols,
+    damping: float,
+    max_expected_rows: float | None,
+    max_gain_sum: float,
+    grid_size: int = 16,
+) -> tuple[float, float]:
+    """beta 网格探针，每点算最优步长下的期望下降 J，返回网格最优点。
+
+    纯只读的确定性计算，不碰随机流不写任何主路径状态，
+    J=h*D-h^2*C，h 与主路径同口径含可行上限行预算与阻尼，
+    网格取 0 加上从饱和点向下十四个二倍程的对数均匀十五点，
+    饱和点为 D 达到 0.99M 的最小翻倍探点，D 随 beta 单调必可达，
+    漂移键基座一轮组装一次十六个方向分布复用，D 非正的点下降记零跳过。
+    """
+    seg_starts = offsets[:-1]
+    lengths = np.diff(offsets)
+    num_groups = len(lengths)
+    seg_ids = np.repeat(np.arange(num_groups), lengths)
+    path_pos = np.arange(menu.num_paths, dtype=np.int64) + menu.group + 1
+    gmax = np.maximum.reduceat(gains_flat, seg_starts)
+    centered = gains_flat - gmax[seg_ids]
+
+    def tilted(beta: float):
+        zw = ref_flat * np.exp(beta * centered)
+        norm = np.add.reduceat(zw, seg_starts)
+        P = zw / norm[seg_ids]
+        D = float(counts @ np.add.reduceat(P * gains_flat, seg_starts))
+        return P, D
+
+    target = 0.99 * max_gain_sum
+    beta_sat = 1.0 / max(max_gain_sum, 1e-300)
+    _, dv = tilted(beta_sat)
+    for _ in range(200):
+        if dv >= target:
+            break
+        beta_sat *= 2.0
+        _, dv = tilted(beta_sat)
+
+    key_parts, data_parts, path_parts = [], [], []
+    for sparse, path_idx in parts:
+        grp_of = menu.group[path_idx]
+        row_of = np.repeat(
+            np.arange(len(path_idx), dtype=np.int64), np.diff(sparse.indptr)
+        )
+        key_parts.append(grp_of[row_of] * num_queries + sparse.indices)
+        data_parts.append(sparse.data)
+        path_parts.append(path_idx[row_of])
+    keys = (
+        np.concatenate(key_parts) if key_parts else np.zeros(0, dtype=np.int64)
+    )
+    base_data = (
+        np.concatenate(data_parts)
+        if data_parts
+        else np.zeros(0, dtype=np.float64)
+    )
+    entry_paths = (
+        np.concatenate(path_parts) if path_parts else np.zeros(0, dtype=np.int64)
+    )
+
+    grid = [0.0] + list(np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1))
+    best_beta, best_j = 0.0, 0.0
+    for beta in grid:
+        P, D = tilted(float(beta))
+        if D <= 0.0:
+            continue
+        rates_flat = P.copy()
+        rates_flat[seg_starts] = 0.0
+        leave = np.add.reduceat(rates_flat, seg_starts)
+        max_leave = float(leave.max())
+        if max_leave <= 0.0:
+            continue
+        rates_paths = rates_flat[path_pos]
+        drifts = np.bincount(
+            keys,
+            weights=base_data * rates_paths[entry_paths],
+            minlength=num_groups * num_queries,
+        ).reshape(num_groups, num_queries)
+        if delta_hs is not None:
+            weighted = delta_hs * rates_paths[:, None]
+            starts = np.minimum(menu.offsets[:-1], len(weighted))
+            padded = np.vstack([weighted, np.zeros((1, delta_hs.shape[1]))])
+            seg = np.add.reduceat(padded, starts, axis=0)
+            seg[np.diff(menu.offsets) == 0] = 0.0
+            drifts[:, hs_cols] += seg
+        drift_total = counts @ drifts
+        self_cross = float(counts @ ((drifts * drifts) @ weights))
+        interaction = float(
+            (np.dot(drift_total * weights, drift_total) - self_cross) / 2
+        )
+        h_star = analytic_step(max_leave, D, interaction)
+        unit_rows = float(counts @ leave)
+        if max_expected_rows is not None and unit_rows > 0:
+            step = damping * min(h_star, max_expected_rows / unit_rows)
+        else:
+            step = damping * h_star
+        j = step * D - step * step * interaction
+        if j > best_j:
+            best_j, best_beta = j, float(beta)
+    return best_beta, best_j
+
+
 def build_batch_kernel(
     workload: Workload,
     grouped: GroupedTable,
@@ -225,12 +337,15 @@ def build_batch_kernel(
     cnt_cache: CntCache | None = None,
     beta_hint: float | None = None,
     want_scores: bool = False,
+    probe_grid: int = 0,
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
     增益 G=d@(We)-||d||_W^2/2 在稀疏差矩阵上一次算完全部路径，
     参考分布保持概率之外按合并质量比例分配，与迁移率语义一致，
     整代矩按重数加权，交互项的总漂移与自交叉扣除都在稀疏结构上组装。
+    probe_grid 为正时核构造完成后跑一次 beta 网格探针，
+    复用本轮增益与参考分布纯只读，主路径浮点顺序零改动。
     """
     if not (0 < stay_probability < 1):
         raise ValueError("stay_probability 必须落在 (0,1)")
@@ -353,12 +468,21 @@ def build_batch_kernel(
 
     expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
     upper = old_loss - step * tilt.direction_gain / 2
+    probe = None
+    if probe_grid > 0:
+        probe = _probe_beta_grid(
+            gains_flat, ref_flat, offsets, counts, workload.weights,
+            workload.num_queries, menu, parts, delta_hs,
+            qs.hs_cols if delta_hs is not None else None,
+            damping, max_expected_rows, tilt.max_gain_sum, probe_grid,
+        )
     return BatchKernelResult(
         menu, grouped, offsets, probs_flat, old_loss,
         tilt.beta, tilt.direction_gain, interaction, step,
         expected_loss, upper, step * unit_rows,
         tilt.max_gain_sum, tilt.required_gain, "ok",
         group_scores,
+        probe,
     )
 
 
@@ -627,6 +751,7 @@ def evolve_batch(
     noise_floor: float = 0.0,
     stop_threshold_noisy: float = 0.0,
     progress_every: int = 0,
+    probe_interval: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -655,6 +780,9 @@ def evolve_batch(
     停在俯冲段不可能因为俯冲段窗口相对改进远超粗阈值，默认 0 关闭零改变。
     progress_every 为正时每该数轮打印一行进度并立即刷出，
     冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
+    probe_interval 为正时每该数轮的批量轮跑一次 beta 网格探针，
+    记实际所用与网格最优的期望下降到旁路日志，探针纯只读确定性，
+    不消耗抽样随机数不改演化路径，默认 0 关闭零改变。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -680,8 +808,11 @@ def evolve_batch(
         raise ValueError("噪声地板与追噪区粗阈值须同时给出")
     if noise_floor > 0.0 and stop_threshold <= 0.0:
         raise ValueError("两段平台停须先启用 stop_threshold 平台判据")
+    if probe_interval < 0:
+        raise ValueError("探针间隔不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    probes: list[ProbeRecord] = []
     frozen_streak = 0
     window_best: float | None = None  # 本窗口内最优损失
     prev_window_best: float | None = None  # 上一窗口最优损失
@@ -697,6 +828,7 @@ def evolve_batch(
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "batch":
+            probe_now = probe_interval > 0 and k % probe_interval == 0
             if backend == "gpu":
                 if gpu_ctx is None:
                     from .gpukernel import GpuBatchContext
@@ -710,6 +842,7 @@ def evolve_batch(
                     stay_probability, alpha, damping, max_expected_rows,
                     beta_hint=last_beta,
                     entry_budget=gpu_entry_budget,
+                    probe_grid=16 if probe_now else 0,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
@@ -720,6 +853,14 @@ def evolve_batch(
                     cnt_cache=cache[0] if cache else None,
                     beta_hint=last_beta,
                     want_scores=bool(getattr(plan_provider, "wants_scores", False)),
+                    probe_grid=16 if probe_now else 0,
+                )
+            if result.probe is not None:
+                probes.append(
+                    ProbeRecord(
+                        k, result.beta, result.old_loss - result.expected_loss,
+                        result.probe[0], result.probe[1],
+                    )
                 )
             if result.beta > 0.0:
                 last_beta = result.beta
@@ -735,6 +876,7 @@ def evolve_batch(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
                 result.interaction, result.step, result.expected_loss, result.status,
+                result.max_gain_sum,
             )
         )
         if progress_every > 0 and (
@@ -755,7 +897,7 @@ def evolve_batch(
                 if base <= 0.0 or (
                     (base - rescue_losses[-1]) / base < rescue_stop_tol
                 ):
-                    return EvolveResult(current, records, "rescue_exhausted")
+                    return EvolveResult(current, records, "rescue_exhausted", probes)
         if stop_threshold > 0.0:
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
@@ -770,13 +912,14 @@ def evolve_batch(
                     return EvolveResult(
                         current, records,
                         "noise_plateau" if armed else "loss_plateau",
+                        probes,
                     )
                 prev_window_best = window_best
                 window_best = None
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(current, records, "no_positive_direction")
+                return EvolveResult(current, records, "no_positive_direction", probes)
             continue
         frozen_streak = 0
         if plan.mode == "rows":
@@ -796,4 +939,4 @@ def evolve_batch(
                 current[plan.rescue_sub_idx[moved]] = gids
         else:
             current = sample_batch_next(result, current, rng, registry)
-    return EvolveResult(current, records, "round_limit")
+    return EvolveResult(current, records, "round_limit", probes)

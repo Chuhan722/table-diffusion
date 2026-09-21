@@ -150,6 +150,14 @@ def main() -> None:
         "--progress", type=int, default=0,
         help="每 N 轮打印一行进度并即时刷出，冻结与救援轮无条件打印，0 静默",
     )
+    parser.add_argument(
+        "--alpha", type=float, default=0.5,
+        help="熵校准增益要求系数，方向收益须达最大可达增益的该比例，落在 (0,1)",
+    )
+    parser.add_argument(
+        "--probe-interval", type=int, default=0,
+        help="每 N 轮批量轮跑一次 beta 网格探针记旁路日志，纯只读，0 关闭",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
@@ -159,6 +167,10 @@ def main() -> None:
         parser.error("--stop-threshold 只支持批量路径，请同时带 --batched")
     if args.rescue_stop_window > 0 and not args.batched:
         parser.error("--rescue-stop-window 只支持批量路径，请同时带 --batched")
+    if not (0 < args.alpha < 1):
+        parser.error("--alpha 必须落在 (0,1)")
+    if args.probe_interval > 0 and not args.batched:
+        parser.error("--probe-interval 只支持批量路径，请同时带 --batched")
 
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
@@ -244,6 +256,7 @@ def main() -> None:
             ids, args.rounds,
             np.random.default_rng(args.sample_seed),
             provider, registry,
+            alpha=args.alpha,
             max_frozen_retries=args.retries,
             backend="gpu" if args.gpu else "cpu",
             stop_threshold=args.stop_threshold,
@@ -254,12 +267,14 @@ def main() -> None:
             noise_floor=args.noise_floor,
             stop_threshold_noisy=args.stop_threshold_noisy,
             progress_every=args.progress,
+            probe_interval=args.probe_interval,
         )
     elif args.grouped:
         out = evolve_grouped(
             ids, args.rounds,
             np.random.default_rng(args.sample_seed),
             provider,
+            alpha=args.alpha,
             max_frozen_retries=args.retries,
         )
     else:
@@ -267,6 +282,7 @@ def main() -> None:
             None, ids, args.rounds,
             np.random.default_rng(args.sample_seed),
             support_provider=provider,
+            alpha=args.alpha,
             max_frozen_retries=args.retries,
         )
     elapsed = time.perf_counter() - t0
@@ -303,15 +319,25 @@ def main() -> None:
             writer = csv.writer(f)
             writer.writerow(
                 ["round", "old_loss", "beta", "direction_gain", "interaction", "step",
-                 "expected_loss", "status"]
+                 "expected_loss", "status", "max_gain_sum"]
             )
             for r in out.records:
                 writer.writerow(
                     [r.round_index, r.old_loss, r.beta, r.direction_gain,
-                     r.interaction, r.step, r.expected_loss, r.status]
+                     r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
                 )
-            writer.writerow(["final", final_loss, "", "", "", "", "", out.stop_reason])
+            writer.writerow(["final", final_loss, "", "", "", "", "", out.stop_reason, ""])
         print(f"曲线已写入 {out_path}")
+        if out.probes:
+            probe_path = out_path.with_name(out_path.stem + "_probe.csv")
+            with open(probe_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"])
+                for p in out.probes:
+                    writer.writerow(
+                        [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
+                    )
+            print(f"探针已写入 {probe_path}")
 
     if args.save_table:
         from resevo.editspace import tuples_from_ids

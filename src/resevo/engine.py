@@ -218,6 +218,18 @@ class RoundRecord:
     step: float
     expected_loss: float
     status: str
+    max_gain_sum: float = 0.0  # M，熵校准的最大可达增益总和
+
+
+@dataclass
+class ProbeRecord:
+    """一次 beta 网格探针的日志，J 为最优步长下的期望下降量。"""
+
+    round_index: int
+    beta_used: float
+    j_used: float  # 实际所用 beta 的期望下降，old_loss-expected_loss
+    beta_best: float
+    j_best: float  # 网格上最优的期望下降
 
 
 @dataclass
@@ -227,6 +239,7 @@ class EvolveResult:
     state_ids: NDArray[np.int64]
     records: list[RoundRecord]
     stop_reason: str  # "no_positive_direction" 或 "round_limit"，批量路径另有 "loss_plateau" 与 "rescue_exhausted"
+    probes: list[ProbeRecord] | None = None  # beta 探针旁路日志，未开启为 None
 
 
 def evolve(
@@ -278,6 +291,7 @@ def evolve(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
                 result.interaction, result.step, result.expected_loss, result.status,
+                result.max_gain_sum,
             )
         )
         if result.status == "no_positive_direction":

@@ -146,3 +146,24 @@ def test_gpu_loss_of_matches_table_loss():
     got = ctx.loss_of(codes, ids)
     ref = table_loss(registry.build_workload(target, weights), ids)
     np.testing.assert_allclose(got, ref, rtol=1e-12)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_gpu_probe_matches_cpu(seed):
+    """beta 网格探针跨后端一致，开探针不改主输出。"""
+    _, workload, grouped, menu, qs, codes, target, weights = _setup(seed)
+    ref_plain = build_batch_kernel(workload, grouped, menu, qs, codes)
+    ref = build_batch_kernel(workload, grouped, menu, qs, codes, probe_grid=16)
+    ctx = GpuBatchContext(qs, target, weights)
+    got_plain = ctx.build(grouped, menu, codes)
+    got = ctx.build(grouped, menu, codes, probe_grid=16)
+    # 开探针零改变，主输出与不开时逐位一致
+    np.testing.assert_array_equal(ref.probabilities, ref_plain.probabilities)
+    np.testing.assert_array_equal(got.probabilities, got_plain.probabilities)
+    assert ref_plain.probe is None and got_plain.probe is None
+    # 探针本身跨后端在容差内一致
+    assert ref.probe is not None and got.probe is not None
+    np.testing.assert_allclose(got.probe[0], ref.probe[0], rtol=1e-6, atol=1e-12)
+    np.testing.assert_allclose(got.probe[1], ref.probe[1], rtol=1e-6, atol=1e-9)
+    # 网格最优下降不应劣于账面下降的一半以下这种病态，只作弱合理性检查
+    assert ref.probe[1] >= 0.0

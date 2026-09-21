@@ -462,6 +462,7 @@ def evolve_grouped(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
                 result.interaction, result.step, result.expected_loss, result.status,
+                result.max_gain_sum,
             )
         )
         if result.status == "no_positive_direction":
