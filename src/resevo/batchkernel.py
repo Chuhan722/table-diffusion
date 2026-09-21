@@ -212,6 +212,64 @@ def _halfspace_delta(
     return delta
 
 
+def _distance_reference(
+    menu: BatchMenu,
+    codes_g: NDArray[np.int32],
+    counts: NDArray[np.float64],
+    num_groups: int,
+    stay_probability: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """距离衰减参考分布，host 端一份实现供双后端共用保证逐位一致。
+
+    每条路径的距离 d 为候选与源行真正不同的字段数，路径权重 mass*c^d，
+    源权重 1，块内归一化，折扣 c 由锚定方程解出，
+    非空组按行数加权的平均保持概率恰等于 stay_probability，
+    与均匀签筒同松紧只换形状，空组保持概率仍为 1。
+    方程左端关于 c 严格单调递减，翻倍括上界后二分，纯确定性。
+    返回 (源概率 G 维, 路径概率 P 维)。
+    """
+    slots = menu.fields >= 0
+    src_vals = np.where(
+        slots, codes_g[menu.group[:, None], np.maximum(menu.fields, 0)], -1
+    )
+    dist = (slots & (menu.values != src_vals)).sum(axis=1)
+    # 距离系数按组聚合，S_g(c)=sum_k coef[k,g]*c^(k+1)，槽结构保证 d 不超过 3
+    max_d = 3
+    coef = np.zeros((max_d, num_groups), dtype=np.float64)
+    for k in range(1, max_d + 1):
+        sel = dist == k
+        if np.any(sel):
+            coef[k - 1] = np.bincount(
+                menu.group[sel], weights=menu.mass[sel], minlength=num_groups
+            )
+    nonempty = np.diff(menu.offsets) > 0
+    total_ne = float(counts[nonempty].sum())
+    target = stay_probability * total_ne
+
+    def stay_mass(c: float) -> float:
+        s = coef[0] * c + coef[1] * (c * c) + coef[2] * (c * c * c)
+        return float((counts[nonempty] / (1.0 + s[nonempty])).sum())
+
+    lo, hi = 0.0, 1.0
+    while stay_mass(hi) > target:
+        lo, hi = hi, hi * 2.0
+        if hi > 1e12:
+            break
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if mid == lo or mid == hi:
+            break
+        if stay_mass(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    c = 0.5 * (lo + hi)
+    s_g = coef[0] * c + coef[1] * (c * c) + coef[2] * (c * c * c)
+    ref_src = np.where(nonempty, 1.0 / (1.0 + s_g), 1.0)
+    ref_paths = menu.mass * np.power(c, dist) * ref_src[menu.group]
+    return ref_src, ref_paths
+
+
 def _probe_beta_grid(
     gains_flat: NDArray[np.float64],
     ref_flat: NDArray[np.float64],
@@ -338,6 +396,7 @@ def build_batch_kernel(
     beta_hint: float | None = None,
     want_scores: bool = False,
     probe_grid: int = 0,
+    ref_shape: str = "uniform",
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
@@ -398,8 +457,18 @@ def build_batch_kernel(
     )
     empty = np.diff(menu.offsets) == 0
     mass_sum[empty] = 1.0  # 退化组无路径，保持概率直接为 1
-    ref_flat[path_pos] = (1 - stay_probability) * menu.mass / mass_sum[menu.group]
-    ref_flat[seg_starts] = np.where(empty, 1.0, stay_probability)
+    if ref_shape == "distance":
+        ref_src, ref_paths = _distance_reference(
+            menu, codes_g, grouped.counts.astype(np.float64),
+            num_groups, stay_probability,
+        )
+        ref_flat[path_pos] = ref_paths
+        ref_flat[seg_starts] = ref_src
+    elif ref_shape == "uniform":
+        ref_flat[path_pos] = (1 - stay_probability) * menu.mass / mass_sum[menu.group]
+        ref_flat[seg_starts] = np.where(empty, 1.0, stay_probability)
+    else:
+        raise ValueError(f"未知参考分布形状 {ref_shape}")
 
     counts = grouped.counts.astype(np.float64)
     tilt = calibrate_beta_flat(
@@ -752,6 +821,7 @@ def evolve_batch(
     stop_threshold_noisy: float = 0.0,
     progress_every: int = 0,
     probe_interval: int = 0,
+    ref_shape: str = "uniform",
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -810,6 +880,8 @@ def evolve_batch(
         raise ValueError("两段平台停须先启用 stop_threshold 平台判据")
     if probe_interval < 0:
         raise ValueError("探针间隔不能为负")
+    if ref_shape not in ("uniform", "distance"):
+        raise ValueError(f"未知参考分布形状 {ref_shape}")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -843,6 +915,7 @@ def evolve_batch(
                     beta_hint=last_beta,
                     entry_budget=gpu_entry_budget,
                     probe_grid=16 if probe_now else 0,
+                    ref_shape=ref_shape,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
@@ -854,6 +927,7 @@ def evolve_batch(
                     beta_hint=last_beta,
                     want_scores=bool(getattr(plan_provider, "wants_scores", False)),
                     probe_grid=16 if probe_now else 0,
+                    ref_shape=ref_shape,
                 )
             if result.probe is not None:
                 probes.append(

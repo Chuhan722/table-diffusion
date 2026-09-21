@@ -677,6 +677,7 @@ class GpuBatchContext:
         beta_hint: float | None = None,
         entry_budget: int = 0,
         probe_grid: int = 0,
+        ref_shape: str = "uniform",
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -733,10 +734,24 @@ class GpuBatchContext:
         mass_sum = _seg_sum(cp, menu_gpu["mass"], menu_gpu["offsets"])
         empty = cp.diff(menu_gpu["offsets"]) == 0
         mass_sum = cp.where(empty, 1.0, mass_sum)
-        ref_flat[path_pos] = (
-            (1 - stay_probability) * menu_gpu["mass"] / mass_sum[menu_gpu["group"]]
-        )
-        ref_flat[seg_starts] = cp.where(empty, 1.0, stay_probability)
+        if ref_shape == "distance":
+            # host 端同一实现算距离参考分布再上传，双后端逐位一致
+            from .batchkernel import _distance_reference
+
+            ref_src_np, ref_paths_np = _distance_reference(
+                menu, codes[grouped.unique_ids],
+                grouped.counts.astype(np.float64),
+                num_groups, stay_probability,
+            )
+            ref_flat[path_pos] = cp.asarray(ref_paths_np)
+            ref_flat[seg_starts] = cp.asarray(ref_src_np)
+        elif ref_shape == "uniform":
+            ref_flat[path_pos] = (
+                (1 - stay_probability) * menu_gpu["mass"] / mass_sum[menu_gpu["group"]]
+            )
+            ref_flat[seg_starts] = cp.where(empty, 1.0, stay_probability)
+        else:
+            raise ValueError(f"未知参考分布形状 {ref_shape}")
 
         tilt, max_gain_sum, requirement = self._calibrate_flat(
             gains_flat, ref_flat, offsets, seg_ids, counts,

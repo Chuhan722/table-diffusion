@@ -158,6 +158,10 @@ def main() -> None:
         "--probe-interval", type=int, default=0,
         help="每 N 轮批量轮跑一次 beta 网格探针记旁路日志，纯只读，0 关闭",
     )
+    parser.add_argument(
+        "--ref-shape", type=str, default="uniform", choices=["uniform", "distance"],
+        help="批量轮参考分布形状，uniform 现状均匀签筒，distance 距离衰减签筒锚定同松紧",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
@@ -171,6 +175,8 @@ def main() -> None:
         parser.error("--alpha 必须落在 (0,1)")
     if args.probe_interval > 0 and not args.batched:
         parser.error("--probe-interval 只支持批量路径，请同时带 --batched")
+    if args.ref_shape != "uniform" and not args.batched:
+        parser.error("--ref-shape 只支持批量路径，请同时带 --batched")
 
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
@@ -268,6 +274,7 @@ def main() -> None:
             stop_threshold_noisy=args.stop_threshold_noisy,
             progress_every=args.progress,
             probe_interval=args.probe_interval,
+            ref_shape=args.ref_shape,
         )
     elif args.grouped:
         out = evolve_grouped(

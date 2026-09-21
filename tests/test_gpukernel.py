@@ -167,3 +167,16 @@ def test_gpu_probe_matches_cpu(seed):
     np.testing.assert_allclose(got.probe[1], ref.probe[1], rtol=1e-6, atol=1e-9)
     # 网格最优下降不应劣于账面下降的一半以下这种病态，只作弱合理性检查
     assert ref.probe[1] >= 0.0
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_gpu_distance_ref_matches_cpu(seed):
+    """距离衰减参考分布跨后端一致，ref 由 host 共享实现保证。"""
+    _, workload, grouped, menu, qs, codes, target, weights = _setup(seed)
+    ref = build_batch_kernel(workload, grouped, menu, qs, codes, ref_shape="distance")
+    ctx = GpuBatchContext(qs, target, weights)
+    got = ctx.build(grouped, menu, codes, ref_shape="distance")
+    assert got.status == ref.status
+    np.testing.assert_allclose(got.beta, ref.beta, rtol=2e-7, atol=1e-12)
+    np.testing.assert_allclose(got.probabilities, ref.probabilities, rtol=1e-6, atol=1e-12)
+    np.testing.assert_allclose(got.expected_loss, ref.expected_loss, rtol=1e-9)
