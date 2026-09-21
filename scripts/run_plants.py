@@ -162,6 +162,10 @@ def main() -> None:
         "--ref-shape", type=str, default="uniform", choices=["uniform", "distance"],
         help="批量轮参考分布形状，uniform 现状均匀签筒，distance 距离衰减签筒锚定同松紧",
     )
+    parser.add_argument(
+        "--stay", type=float, default=0.9,
+        help="批量轮参考分布源候选保持概率，控制每轮先验松紧，落在 (0,1)",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
@@ -177,6 +181,10 @@ def main() -> None:
         parser.error("--probe-interval 只支持批量路径，请同时带 --batched")
     if args.ref_shape != "uniform" and not args.batched:
         parser.error("--ref-shape 只支持批量路径，请同时带 --batched")
+    if not (0 < args.stay < 1):
+        parser.error("--stay 必须落在 (0,1)")
+    if args.stay != 0.9 and not args.batched:
+        parser.error("--stay 只支持批量路径，请同时带 --batched")
 
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
@@ -275,6 +283,7 @@ def main() -> None:
             progress_every=args.progress,
             probe_interval=args.probe_interval,
             ref_shape=args.ref_shape,
+            stay_probability=args.stay,
         )
     elif args.grouped:
         out = evolve_grouped(

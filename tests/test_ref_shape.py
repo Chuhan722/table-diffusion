@@ -106,3 +106,21 @@ def test_evolve_batch_with_distance_shape():
         evolve_batch(
             ids, 2, np.random.default_rng(9), provider, registry, ref_shape="bogus"
         )
+
+
+def test_stay_passthrough_changes_calibration():
+    """stay 越高非源先验质量越小，同增益校准解出的首轮 beta 越大。"""
+    betas = {}
+    for stay in (0.5, 0.99):
+        registry, ids, weights, rng = _scene(2, num_rows=30)
+        fs = [f for f in query_field_sets(registry.specs, registry.schema) if len(f) >= 2]
+        provider = make_batch_provider(
+            registry, target_from_specs(registry.specs), weights,
+            np.random.default_rng(5), joint_field_sets=fs,
+        )
+        out = evolve_batch(
+            ids, 1, np.random.default_rng(9), provider, registry,
+            max_frozen_retries=3, stay_probability=stay,
+        )
+        betas[stay] = out.records[0].beta
+    assert betas[0.99] > betas[0.5]
