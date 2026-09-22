@@ -36,6 +36,16 @@ from resevo.state import table_loss  # noqa: E402
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 
+def resolve_work_rows(total_rows: int, work_rows: int, work_frac: float) -> int:
+    """工作批名额折算，比例开启时按行数乘比例四舍五入且至少一行。
+
+    work_frac 为 0 时沿用 work_rows 绝对值，两者同时给出由参数校验拦截。
+    """
+    if work_frac <= 0.0:
+        return work_rows
+    return max(1, int(total_rows * work_frac + 0.5))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="真数据端到端实验")
     parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
@@ -93,6 +103,10 @@ def main() -> None:
     parser.add_argument(
         "--work-rows", type=int, default=0,
         help="工作批行数，每轮按错位分挑组上场其余保持，0 为全量，需 --batched",
+    )
+    parser.add_argument(
+        "--work-frac", type=float, default=0.0,
+        help="工作批名额占数据行数比例，四舍五入取整且至少一行，0 关闭，与 --work-rows 二选一，需 --batched",
     )
     parser.add_argument(
         "--work-random", type=float, default=0.25,
@@ -166,6 +180,10 @@ def main() -> None:
         "--stay", type=float, default=0.9,
         help="批量轮参考分布源候选保持概率，控制每轮先验松紧，落在 (0,1)",
     )
+    parser.add_argument(
+        "--damping", type=float, default=1.0,
+        help="步长阻尼系数，乘在解析最优步长与可行上限取小之后，1.0 为现状，须为正",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
@@ -185,9 +203,23 @@ def main() -> None:
         parser.error("--stay 必须落在 (0,1)")
     if args.stay != 0.9 and not args.batched:
         parser.error("--stay 只支持批量路径，请同时带 --batched")
+    if args.work_frac != 0.0:
+        if not (0 < args.work_frac < 1):
+            parser.error("--work-frac 必须落在 (0,1)")
+        if args.work_rows > 0:
+            parser.error("--work-frac 与 --work-rows 二选一，不能同时给")
+        if not args.batched:
+            parser.error("--work-frac 只支持批量路径，请同时带 --batched")
+    if args.damping <= 0:
+        parser.error("--damping 必须为正")
+    if args.damping != 1.0 and not args.batched:
+        parser.error("--damping 只支持批量路径，请同时带 --batched")
 
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
+    work_rows_val = resolve_work_rows(len(real_rows), args.work_rows, args.work_frac)
+    if args.work_frac > 0:
+        print(f"工作批比例 {args.work_frac} 按 {len(real_rows)} 行折算名额 {work_rows_val} 行")
     if args.exam:
         exam_path = data_dir / args.exam
     else:
@@ -242,7 +274,7 @@ def main() -> None:
             pair_rescue_rows=args.pair_rescue_rows,
             rescue_after=args.rescue_after,
             rescue_gpu=args.gpu,
-            work_rows=args.work_rows,
+            work_rows=work_rows_val,
             work_random_frac=args.work_random,
             select_rng=np.random.default_rng(args.select_seed),
             work_below_step=args.work_below,
@@ -284,6 +316,7 @@ def main() -> None:
             probe_interval=args.probe_interval,
             ref_shape=args.ref_shape,
             stay_probability=args.stay,
+            damping=args.damping,
         )
     elif args.grouped:
         out = evolve_grouped(
