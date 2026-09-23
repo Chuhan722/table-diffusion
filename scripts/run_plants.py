@@ -157,6 +157,11 @@ def main() -> None:
         "替代贪心选首张过关表，缺格表跳过，此模式忽略 --init-margin-tol，默认关走原路径",
     )
     parser.add_argument(
+        "--init-table", type=str, default="",
+        help="从 CSV 载入初始表跳过抽样初始化，字段与行数须与真表一致，"
+        "选择循环热启动用，默认空走原路径",
+    )
+    parser.add_argument(
         "--noise-floor", type=float, default=0.0,
         help="噪声地板，损失低于此值进入追噪区平台阈值切粗，"
         "取 c 乘格子数乘计数 sigma 平方，默认 0 关闭",
@@ -194,6 +199,8 @@ def main() -> None:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
     if args.init_avg and args.uniform_init:
         parser.error("--init-avg 与 --uniform-init 互斥，二选一")
+    if args.init_table and (args.uniform_init or args.init_avg or args.init_clean):
+        parser.error("--init-table 与其他初始化开关互斥")
     if args.work_rows > 0 and not args.batched:
         parser.error("--work-rows 只支持批量路径，请同时带 --batched")
     if args.stop_threshold > 0 and not args.batched:
@@ -250,7 +257,19 @@ def main() -> None:
         # GPU 后端整轮不读注册表特征，惰性登记省掉每轮特征求值与特征矩阵内存
         registry.set_lazy_features(True)
     init_rng = np.random.default_rng(args.init_seed)
-    if args.uniform_init:
+    if args.init_table:
+        it_schema, init_rows = load_table(args.init_table)
+        if it_schema.fields != schema.fields:
+            parser.error("--init-table 字段与真表不一致")
+        if len(init_rows) != len(real_rows):
+            parser.error(
+                f"--init-table 行数 {len(init_rows)} 与真表 {len(real_rows)} 不一致"
+            )
+        for j in range(schema.num_fields):
+            allowed = set(schema.domains[j])
+            if not {r[j] for r in init_rows} <= allowed:
+                parser.error(f"--init-table 字段 {schema.fields[j]} 出现域外值")
+    elif args.uniform_init:
         init_rows = [
             tuple(
                 schema.domains[j][int(init_rng.integers(len(schema.domains[j])))]
