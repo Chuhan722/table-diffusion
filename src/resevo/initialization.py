@@ -37,18 +37,13 @@ def _atom_values(cond: dict, domain: tuple[str, ...]) -> tuple[str, ...]:
     raise ValueError(f"一阶边缘化不支持算子 {cond['operator']}")
 
 
-def derive_first_order(
-    specs: list[QuerySpec], schema: TableSchema, total_rows: int,
-    tol_rows: float = 0.0,
-) -> list[list[tuple[dict, float]]]:
-    """从二阶等值与分箱查询答案边缘化出每字段的一阶原子计数。
+def _collect_pair_cells(
+    specs: list[QuerySpec], schema: TableSchema,
+) -> dict[tuple[int, int], dict[tuple, tuple[dict, dict, float]]]:
+    """按字段对分桶收集全部两单字段条件查询的格子答案。
 
-    只看恰好两个单字段条件的查询，按字段对分桶，
-    对字段 A 取包含 A 的第一个覆盖完整的字段对，
-    固定 A 侧原子对 B 侧全部原子求和得到 A 的原子计数，
-    覆盖校验，全部原子计数之和必须恰等于表行数，否则拒绝，
-    tol_rows 是相对容差，噪声考卷答案带噪总和不再精确等于行数，
-    调用方显式放宽，默认零保持零噪声路径精确校验。
+    只看恰好两个单字段条件的查询，半空间跳过，
+    键是排好序的字段下标对，值是原子签名对到条件与答案的映射。
     """
     pair_cells: dict[tuple[int, int], dict[tuple, tuple[dict, dict, float]]] = {}
     for spec in specs:
@@ -65,6 +60,22 @@ def derive_first_order(
             ja, jb, ca, cb = jb, ja, cb, ca
         key = (_atom_signature(ca), _atom_signature(cb))
         pair_cells.setdefault((ja, jb), {})[key] = (ca, cb, float(spec.result))
+    return pair_cells
+
+
+def derive_first_order(
+    specs: list[QuerySpec], schema: TableSchema, total_rows: int,
+    tol_rows: float = 0.0,
+) -> list[list[tuple[dict, float]]]:
+    """从二阶等值与分箱查询答案边缘化出每字段的一阶原子计数。
+
+    按字段对分桶，对字段 A 取包含 A 的第一个覆盖完整的字段对，
+    固定 A 侧原子对 B 侧全部原子求和得到 A 的原子计数，
+    覆盖校验，全部原子计数之和必须恰等于表行数，否则拒绝，
+    tol_rows 是相对容差，噪声考卷答案带噪总和不再精确等于行数，
+    调用方显式放宽，默认零保持零噪声路径精确校验。
+    """
+    pair_cells = _collect_pair_cells(specs, schema)
 
     marginals: list[list[tuple[dict, float]]] = []
     for j in range(schema.num_fields):
@@ -88,6 +99,62 @@ def derive_first_order(
                 f"字段 {schema.fields[j]} 找不到覆盖完整的二阶配对，无法边缘化一阶"
             )
         marginals.append(found)
+    return marginals
+
+
+def derive_first_order_avg(
+    specs: list[QuerySpec], schema: TableSchema, total_rows: int,
+) -> list[list[tuple[dict, float]]]:
+    """全表逆方差加权平均边缘化一阶，替代贪心选首张过关表。
+
+    对字段 A，每个配对字段 B 的联表按 A 侧原子求和各得一份 A 的计数，
+    每份的噪声方差与 B 侧原子数成正比，按一比伙伴原子数加权平均，
+    即独立高斯异方差下的最大似然融合，全二值考卷自动退化为等权，
+    结构校验取全部覆盖表 A 侧原子集合的并集作参照，
+    集合不等于并集的缺格表跳过不进平均，全部被跳过才拒绝，
+    不做行数总和校验，总和偏差交给抽样归一与可选清洗消化，
+    纯后处理零隐私预算，total_rows 仅作接口对齐不参与计算。
+    """
+    pair_cells = _collect_pair_cells(specs, schema)
+    marginals: list[list[tuple[dict, float]]] = []
+    for j in range(schema.num_fields):
+        tables: list[tuple[frozenset, dict[tuple, tuple[dict, float]], int]] = []
+        for (ja, jb), cells in sorted(pair_cells.items()):
+            if j not in (ja, jb):
+                continue
+            side = 0 if j == ja else 1
+            counts: dict[tuple, tuple[dict, float]] = {}
+            partner_sigs: set = set()
+            for (sa, sb), (ca, cb, r) in cells.items():
+                sig = sa if side == 0 else sb
+                cond = ca if side == 0 else cb
+                partner_sigs.add(sb if side == 0 else sa)
+                prev = counts.get(sig)
+                counts[sig] = (cond, (prev[1] if prev else 0.0) + r)
+            tables.append((frozenset(counts), counts, len(partner_sigs)))
+        if not tables:
+            raise ValueError(
+                f"字段 {schema.fields[j]} 找不到任何二阶配对，无法平均边缘化一阶"
+            )
+        union: frozenset = frozenset().union(*(t[0] for t in tables))
+        acc = {sig: 0.0 for sig in union}
+        conds: dict[tuple, dict] = {}
+        weight_sum = 0.0
+        for sigs, counts, partner_n in tables:
+            if sigs != union:
+                continue
+            w = 1.0 / max(1, partner_n)
+            for sig, (cond, v) in counts.items():
+                acc[sig] += w * v
+                conds.setdefault(sig, cond)
+            weight_sum += w
+        if weight_sum <= 0.0:
+            raise ValueError(
+                f"字段 {schema.fields[j]} 无覆盖完整的二阶配对，缺格表全部被跳过"
+            )
+        merged = [(conds[sig], acc[sig] / weight_sum) for sig in union]
+        merged.sort(key=lambda t: _atom_signature(t[0]))
+        marginals.append(merged)
     return marginals
 
 

@@ -29,7 +29,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
-from resevo.initialization import clean_first_order, derive_first_order, sample_initial_rows  # noqa: E402
+from resevo.initialization import clean_first_order, derive_first_order, derive_first_order_avg, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -152,6 +152,11 @@ def main() -> None:
         help="初始化一阶计数清洗，截负加等额摊归一到行数，考卷评分不动，默认关",
     )
     parser.add_argument(
+        "--init-avg", action="store_true",
+        help="初始化一阶边缘化改全表逆方差加权平均，权重一比伙伴原子数，"
+        "替代贪心选首张过关表，缺格表跳过，此模式忽略 --init-margin-tol，默认关走原路径",
+    )
+    parser.add_argument(
         "--noise-floor", type=float, default=0.0,
         help="噪声地板，损失低于此值进入追噪区平台阈值切粗，"
         "取 c 乘格子数乘计数 sigma 平方，默认 0 关闭",
@@ -187,6 +192,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
+    if args.init_avg and args.uniform_init:
+        parser.error("--init-avg 与 --uniform-init 互斥，二选一")
     if args.work_rows > 0 and not args.batched:
         parser.error("--work-rows 只支持批量路径，请同时带 --batched")
     if args.stop_threshold > 0 and not args.batched:
@@ -252,9 +259,12 @@ def main() -> None:
             for _ in range(len(real_rows))
         ]
     else:
-        marginals = derive_first_order(
-            specs, schema, len(real_rows), tol_rows=args.init_margin_tol
-        )
+        if args.init_avg:
+            marginals = derive_first_order_avg(specs, schema, len(real_rows))
+        else:
+            marginals = derive_first_order(
+                specs, schema, len(real_rows), tol_rows=args.init_margin_tol
+            )
         if args.init_clean:
             marginals = clean_first_order(marginals, len(real_rows))
         init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
