@@ -1,83 +1,115 @@
-"""AIM 文献基线，Private-PGM 零噪声吃考卷全二阶边缘一次性拟合抽样。
+"""Private-PGM 同卷基线，读带噪考卷 JSON，喂 mbi 2.0 MirrorDescent 拟合图模型再采样成表。
 
-完整 AIM 是带隐私预算逐轮自适应选边缘的机制，零噪声下选择环节无意义，
-文献对照的标准做法即本脚本，把全部二阶边缘一次性喂给其官方估计器
-mbi 的 MirrorDescent 拟合图模型再抽样出表，等加噪版本再跑完整 AIM。
+同卷公平性说明，考卷全部是二字段等值计数查询且每字段对满格覆盖，
+恰好等价于 PGM 需要的全套二阶带噪边际，零信息损失。
+AIM 剥掉自适应选择过程就是本脚本跑的 Private-PGM，纯比生成器官。
+旧版零噪声文献对照脚本见 git 历史 bb8649c，本版把考卷路径与噪声参数化后两者通吃。
 
-运行环境，借旧仓第三方虚拟环境，只用 mbi 与 jax 官方库，不碰旧仓自研代码，
-/home/chuhan/projects/table-diffusion-issue53-bounded-gap-r8/.venv/bin/python \
-    scripts/run_baseline_pgm.py --seed 1 --out results/pgm_seed1.csv
-
-喂料，考卷 548 条全二阶答案按 45 个字段对组装成完整边缘测量，
-外加从二阶边缘化出的 10 条一阶边缘，stddev 统一取 1 仅作占位，零噪声下不影响最优解。
+用法，需在 /home/chuhan/projects/private-pgm 的 venv 里跑，
+  .venv/bin/python run_baseline_pgm.py --exam data/nltcs_eps1_s1/measured_480query.json \
+      --sigma 62.6669 --seed 1 --out results/nltcs_eps1_pgm_seed1.csv
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import time
-from pathlib import Path
+from collections import defaultdict
 
-import jax
+import numpy as np
+import pandas as pd
 
-jax.config.update("jax_enable_x64", True)
-
-import numpy as np  # noqa: E402
-
-from mbi import Domain, LinearMeasurement, estimation  # noqa: E402
-
-import baseline_common as bc  # noqa: E402
+from mbi import Domain, estimation, junction_tree, marginal_loss
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--iters", type=int, default=3000)
-    args = parser.parse_args()
+def build_measurements(exam: dict, sigma: float):
+    queries = exam["queries"]
+    values: dict[str, set] = defaultdict(set)
+    for q in queries:
+        for c in q["conditions"]:
+            if c["operator"] != "==":
+                raise ValueError(f"非等值算子无法转边际: {c}")
+            values[c["attribute"]].add(c["value"])
 
-    fields, cats, bins, pair_tables, total = bc.load_exam_structure()
-    margins = bc.marginalize_first_order(fields, cats, pair_tables, total)
-    _, domains, _ = bc.load_real_domains()
+    def attr_key(name: str):
+        head, _, tail = name.rpartition("_")
+        return (head, int(tail)) if tail.isdigit() else (name, 0)
 
-    domain = Domain(tuple(fields), tuple(len(cats[f]) for f in fields))
-    measurements = [
-        LinearMeasurement(margins[f].astype(np.float64), (f,), stddev=1.0)
-        for f in fields
-    ]
-    for (fa, fb), table in sorted(pair_tables.items()):
+    attrs = sorted(values, key=attr_key)
+    value_order = {a: sorted(values[a], key=lambda v: int(v)) for a in attrs}
+    value_index = {a: {v: i for i, v in enumerate(value_order[a])} for a in attrs}
+    domain = Domain(attrs, [len(value_order[a]) for a in attrs])
+
+    pair_cells: dict[tuple[str, str], dict[tuple[int, int], float]] = defaultdict(dict)
+    for q in queries:
+        c1, c2 = sorted(q["conditions"], key=lambda c: attr_key(c["attribute"]))
+        a, b = c1["attribute"], c2["attribute"]
+        ia, ib = value_index[a][c1["value"]], value_index[b][c2["value"]]
+        pair_cells[(a, b)][(ia, ib)] = float(q["result"])
+
+    measurements = []
+    skipped = []
+    for (a, b), cells in sorted(pair_cells.items()):
+        na, nb = len(value_order[a]), len(value_order[b])
+        if len(cells) != na * nb:
+            skipped.append((a, b, len(cells), na * nb))
+            continue
+        mat = np.zeros((na, nb))
+        for (ia, ib), y in cells.items():
+            mat[ia, ib] = y
         measurements.append(
-            LinearMeasurement(
-                table.astype(np.float64).ravel(), (fa, fb), stddev=1.0
-            )
+            marginal_loss.LinearMeasurement(mat.flatten(), (a, b), stddev=sigma)
         )
-    n_cells = sum(int(np.asarray(m.noisy_measurement).size) for m in measurements)
-    print(f"测量 {len(measurements)} 条，格数 {n_cells}，域大小 {domain.size()}")
+    return domain, measurements, value_order, skipped
 
-    started = time.time()
+
+def main():
+    ap = argparse.ArgumentParser(description="Private-PGM 同卷基线")
+    ap.add_argument("--exam", required=True, help="带噪考卷 JSON 路径")
+    ap.add_argument("--sigma", type=float, required=True, help="考卷计数噪声标准差")
+    ap.add_argument("--seed", type=int, default=1, help="采样种子")
+    ap.add_argument("--iters", type=int, default=1000, help="MirrorDescent 迭代数")
+    ap.add_argument("--out", required=True, help="输出合成表 CSV 路径")
+    ap.add_argument(
+        "--max-model-mb",
+        type=float,
+        default=32768,
+        help="联结树参数表内存上限 MB，超限直接判树宽爆炸退出",
+    )
+    args = ap.parse_args()
+
+    with open(args.exam, "r", encoding="utf-8") as fh:
+        exam = json.load(fh)
+    total = int(exam["record_count"])
+    domain, measurements, value_order, skipped = build_measurements(exam, args.sigma)
+    print(f"字段 {len(domain)} 个，边际 {len(measurements)} 对，known_total {total}")
+    if skipped:
+        print(f"缺格跳过 {len(skipped)} 对: {skipped[:5]}")
+
+    cliques = [m.clique for m in measurements]
+    model_mb = junction_tree.hypothetical_model_size(domain, cliques)
+    print(f"联结树参数表 {model_mb:.1f} MB")
+    if model_mb > args.max_model_mb:
+        raise SystemExit(
+            f"树宽爆炸: 参数表 {model_mb:.1f} MB 超上限 {args.max_model_mb:.0f} MB，"
+            "精确图模型推断在全二阶边际下不可行，记录为证据"
+        )
+
+    loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
+    t0 = time.time()
     model = estimation.MirrorDescent().estimate(
-        domain, measurements, known_total=float(total), iters=args.iters
+        domain, loss_fn, known_total=total, iters=args.iters
     )
-    fit_seconds = time.time() - started
+    fit_s = time.time() - t0
 
-    fit_diffs = []
-    for (fa, fb), table in pair_tables.items():
-        proj = np.asarray(model.project((fa, fb)).datavector())
-        fit_diffs.append(np.abs(proj - table.ravel()))
-    fit_all = np.concatenate(fit_diffs)
-    print(
-        f"拟合 {fit_seconds:.1f} 秒，模型二阶残差 平均 {fit_all.mean():.4f} "
-        f"最大 {fit_all.max():.4f}"
+    np.random.seed(args.seed)
+    syn = model.synthetic_data(total)
+    df = pd.DataFrame(
+        {a: [value_order[a][i] for i in syn.data[a]] for a in domain.attributes}
     )
-
-    synth = model.synthetic_data(rows=total)
-    codes = {f: np.asarray(synth.data[f]) for f in fields}
-    mean_d, max_d = bc.binned_counts(codes, pair_tables, cats)
-    print(f"抽样后二阶计数偏差 平均 {mean_d:.3f} 最大 {max_d:.0f}")
-
-    rows = bc.decode_rows(codes, fields, cats, bins, domains["age"], args.seed)
-    bc.write_table(Path(args.out), rows, fields)
-    print(f"已写出 {args.out}，{len(rows)} 行")
+    df.to_csv(args.out, index=False)
+    print(f"拟合 {fit_s:.0f} 秒，合成 {len(df)} 行 -> {args.out}")
 
 
 if __name__ == "__main__":
