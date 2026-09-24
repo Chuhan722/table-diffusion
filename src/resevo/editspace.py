@@ -26,6 +26,7 @@ class EditBudget:
     max_edit_fields: int = 8  # 单块修改每轮抽的字段数上限
     max_values_per_field: int = 2  # 每字段替代值上限
     donor_copies: int = 8  # 供体复制路径数
+    donor_fields_max: int = 2  # 供体复制每条路径最多复制的字段数，批量路径至多 3
     joint_edits: int = 4  # 联合修改路径数
     explore_edits: int = 4  # 支持探索路径数
 
@@ -79,11 +80,11 @@ def _donor_copies(
     budget: EditBudget,
     rng: np.random.Generator,
 ) -> list[tuple[str, ...]]:
-    """供体复制，从当前合成表均匀抽供体行，复制其一到两个字段的值。"""
+    """供体复制，从当前合成表均匀抽供体行，复制其一到 donor_fields_max 个字段的值。"""
     results = []
     for _ in range(budget.donor_copies):
         donor = table[int(rng.integers(len(table)))]
-        k = int(rng.integers(1, 3))  # 每次复制 1 到 2 个字段
+        k = int(rng.integers(1, budget.donor_fields_max + 1))  # 默认 1 到 2 个字段
         fields = rng.permutation(schema.num_fields)[:k]
         edited = list(current)
         for j in fields:

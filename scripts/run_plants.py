@@ -26,10 +26,10 @@ from resevo.dataset import (  # noqa: E402
     target_from_specs,
 )
 from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
-from resevo.editspace import make_edit_provider  # noqa: E402
+from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
-from resevo.initialization import clean_first_order, derive_first_order, derive_first_order_avg, sample_initial_rows  # noqa: E402
+from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -162,6 +162,23 @@ def main() -> None:
         "选择循环热启动用，默认空走原路径",
     )
     parser.add_argument(
+        "--init-tree", action="store_true",
+        help="初始化改 Chow-Liu 树，只用卷面二阶答案建互信息最大生成树树上条件抽样，"
+        "与其他初始化开关互斥，默认关走一阶独立抽样",
+    )
+    parser.add_argument(
+        "--donor-copies", type=int, default=8,
+        help="供体复制路径数，菜单每组抽的供体行数，默认 8 为现状",
+    )
+    parser.add_argument(
+        "--donor-fields-max", type=int, default=2,
+        help="供体复制每条路径最多复制的字段数，批量路径表示上限 3，默认 2 为现状",
+    )
+    parser.add_argument(
+        "--max-edit-fields", type=int, default=8,
+        help="单属性修改每组抽的字段数上限，0 关闭单字段路径只留保结构编辑，默认 8 为现状",
+    )
+    parser.add_argument(
         "--noise-floor", type=float, default=0.0,
         help="噪声地板，损失低于此值进入追噪区平台阈值切粗，"
         "取 c 乘格子数乘计数 sigma 平方，默认 0 关闭",
@@ -201,6 +218,16 @@ def main() -> None:
         parser.error("--init-avg 与 --uniform-init 互斥，二选一")
     if args.init_table and (args.uniform_init or args.init_avg or args.init_clean):
         parser.error("--init-table 与其他初始化开关互斥")
+    if args.init_tree and (
+        args.uniform_init or args.init_avg or args.init_clean or args.init_table
+    ):
+        parser.error("--init-tree 与其他初始化开关互斥")
+    if args.donor_copies < 0:
+        parser.error("--donor-copies 不能为负")
+    if not (1 <= args.donor_fields_max <= 3):
+        parser.error("--donor-fields-max 必须落在 1 到 3，批量路径表示上限 3")
+    if args.max_edit_fields < 0:
+        parser.error("--max-edit-fields 不能为负")
     if args.work_rows > 0 and not args.batched:
         parser.error("--work-rows 只支持批量路径，请同时带 --batched")
     if args.stop_threshold > 0 and not args.batched:
@@ -277,6 +304,10 @@ def main() -> None:
             )
             for _ in range(len(real_rows))
         ]
+    elif args.init_tree:
+        init_rows = chow_liu_rows(
+            specs, schema, len(real_rows), init_rng, tol_rows=args.init_margin_tol
+        )
     else:
         if args.init_avg:
             marginals = derive_first_order_avg(specs, schema, len(real_rows))
@@ -291,10 +322,15 @@ def main() -> None:
 
     factory = make_paired_provider if args.pairing else make_edit_provider
     pairing_budget = PairingBudget(max_pairs=args.max_pairs)
+    edit_budget = EditBudget(
+        max_edit_fields=args.max_edit_fields,
+        donor_copies=args.donor_copies, donor_fields_max=args.donor_fields_max,
+    )
     if args.batched:
         provider = make_batch_provider(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
+            budget=edit_budget,
             joint_field_sets=field_sets,
             pairing=args.pairing,
             pairing_backoff=args.pairing_backoff,
@@ -313,6 +349,7 @@ def main() -> None:
         provider = make_grouped_provider(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
+            budget=edit_budget,
             joint_field_sets=field_sets,
             pairing=args.pairing,
         )
@@ -320,6 +357,7 @@ def main() -> None:
         provider = factory(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
+            budget=edit_budget,
             joint_field_sets=field_sets,
         )
     initial_loss = table_loss(registry.build_workload(y, w), ids)

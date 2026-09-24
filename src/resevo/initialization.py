@@ -211,3 +211,128 @@ def sample_initial_rows(
             col.append(pool[int(rng.integers(len(pool)))])
         columns.append(col)
     return [tuple(columns[j][i] for j in range(schema.num_fields)) for i in range(num_rows)]
+
+
+def chow_liu_rows(
+    specs: list[QuerySpec],
+    schema: TableSchema,
+    num_rows: int,
+    rng: np.random.Generator,
+    tol_rows: float = 0.0,
+) -> list[tuple[str, ...]]:
+    """Chow-Liu 树初始化，只用卷面二阶答案，树上条件抽样出起点表。
+
+    每个覆盖完整的字段对由卷面格子答案组装原子联合计数矩阵，
+    负计数夹到零防加噪卷，互信息作边权取最大生成树，
+    根字段取互信息总和最大者，按边缘比例抽原子，
+    树边按父原子条件行抽子原子，零计数父原子行回退子字段边缘，
+    分箱原子内部对覆盖域值均匀抽与一阶装表同口径，
+    覆盖校验与一阶同源，总和偏离行数超 tol_rows 比例的对不用，
+    树连不满全部字段就拒绝，考卷二阶覆盖不足时不硬撑。
+    """
+    pair_cells = _collect_pair_cells(specs, schema)
+    F = schema.num_fields
+
+    # 一，逐对组装原子联合计数矩阵，行列按签名排序，覆盖不完整的对丢弃
+    tables: dict[tuple[int, int], tuple[list[dict], list[dict], np.ndarray]] = {}
+    field_sigs: dict[int, list[tuple]] = {}
+    for (ja, jb), cells in sorted(pair_cells.items()):
+        conds_a: dict[tuple, dict] = {}
+        conds_b: dict[tuple, dict] = {}
+        for (sa, sb), (ca, cb, _r) in cells.items():
+            conds_a.setdefault(sa, ca)
+            conds_b.setdefault(sb, cb)
+        keys_a = sorted(conds_a)
+        keys_b = sorted(conds_b)
+        idx_a = {s: i for i, s in enumerate(keys_a)}
+        idx_b = {s: i for i, s in enumerate(keys_b)}
+        M = np.zeros((len(keys_a), len(keys_b)), dtype=np.float64)
+        for (sa, sb), (_ca, _cb, r) in cells.items():
+            M[idx_a[sa], idx_b[sb]] = max(float(r), 0.0)
+        total = float(M.sum())
+        if total <= 0 or abs(total - num_rows) > tol_rows * num_rows:
+            continue
+        for j, keys in ((ja, keys_a), (jb, keys_b)):
+            if field_sigs.setdefault(j, keys) != keys:
+                raise ValueError(
+                    f"字段 {schema.fields[j]} 各配对表原子集合不一致，Chow-Liu 初始化不可用"
+                )
+        tables[(ja, jb)] = (
+            [conds_a[s] for s in keys_a], [conds_b[s] for s in keys_b], M,
+        )
+
+    # 二，互信息边权
+    def _mi(M: np.ndarray) -> float:
+        P = M / M.sum()
+        outer = np.outer(P.sum(axis=1), P.sum(axis=0))
+        mask = P > 0
+        return float(np.sum(P[mask] * np.log(P[mask] / outer[mask])))
+
+    weights = {pair: _mi(M) for pair, (_a, _b, M) in tables.items()}
+
+    # 三，Prim 最大生成树，根取互信息总和最大字段，平票取小下标，确定性
+    strength = [0.0] * F
+    for (ja, jb), w in weights.items():
+        strength[ja] += w
+        strength[jb] += w
+    root = int(np.argmax(strength))
+    in_tree = [False] * F
+    in_tree[root] = True
+    edges: list[tuple[int, int]] = []  # 父在前子在后，父必先入树
+    for _ in range(F - 1):
+        best = None
+        for (ja, jb), w in sorted(weights.items()):
+            for p, c in ((ja, jb), (jb, ja)):
+                if in_tree[p] and not in_tree[c] and (best is None or w > best[0]):
+                    best = (w, p, c)
+        if best is None:
+            raise ValueError("考卷二阶覆盖连不成生成树，Chow-Liu 初始化不可用")
+        in_tree[best[2]] = True
+        edges.append((best[1], best[2]))
+
+    def _oriented(p: int, c: int) -> tuple[list[dict], list[dict], np.ndarray]:
+        """把字段对表转成父在行子在列的方向。"""
+        if (p, c) in tables:
+            a, b, M = tables[(p, c)]
+            return a, b, M
+        a, b, M = tables[(c, p)]
+        return b, a, M.T
+
+    # 四，根按边缘比例抽原子，树边按父条件行抽子原子，零计数行回退子边缘
+    conds_of: dict[int, list[dict]] = {}
+    atom_picks: dict[int, np.ndarray] = {}
+    other = next(jb if root == ja else ja for (ja, jb) in sorted(tables) if root in (ja, jb))
+    root_conds, _cc, root_M = _oriented(root, other)
+    conds_of[root] = root_conds
+    margin = root_M.sum(axis=1)
+    atom_picks[root] = rng.choice(len(margin), size=num_rows, p=margin / margin.sum())
+    for p, c in edges:
+        _pc, child_conds, M = _oriented(p, c)
+        conds_of[c] = child_conds
+        row_sums = M.sum(axis=1)
+        child_margin = M.sum(axis=0)
+        child_margin = child_margin / child_margin.sum()
+        picks = np.empty(num_rows, dtype=np.int64)
+        parent = atom_picks[p]
+        for i in range(M.shape[0]):
+            mask = parent == i
+            n = int(mask.sum())
+            if n == 0:
+                continue
+            pr = M[i] / row_sums[i] if row_sums[i] > 0 else child_margin
+            picks[mask] = rng.choice(M.shape[1], size=n, p=pr)
+        atom_picks[c] = picks
+
+    # 五，原子落到域值，分箱原子内均匀抽，与一阶装表同口径
+    columns = []
+    for j in range(F):
+        domain = schema.domains[j]
+        pools = [_atom_values(cond, domain) for cond in conds_of[j]]
+        col = []
+        for a in atom_picks[j]:
+            pool = pools[int(a)]
+            if not pool:
+                raise ValueError("原子在域内无覆盖值，考卷与表不一致")
+            col.append(pool[int(rng.integers(len(pool)))])
+        columns.append(col)
+    return [tuple(columns[j][i] for j in range(F)) for i in range(num_rows)]

@@ -361,21 +361,26 @@ def generate_batch_menu(
             values[:, 0] = vcol.ravel()
             _push(np.repeat(gidx, m), fields, values)
 
-    # 二，供体复制，按重数加权抽供体组，改一到两个字段为供体的值
+    # 二，供体复制，按重数加权抽供体组，改一到 donor_fields_max 个字段为供体的值
     if budget.donor_copies > 0 and num_groups > 0:
         d = budget.donor_copies
+        dfm = min(budget.donor_fields_max, num_fields, 3)  # 批量表示三字段槽上限
         cumulative = np.cumsum(counts)
         draws = rng.integers(int(cumulative[-1]), size=(num_groups, d))
         donors = np.searchsorted(cumulative, draws, side="right")
-        k = rng.integers(1, 3, size=(num_groups, d))
-        dfields = _distinct_fields(num_fields, num_groups * d, rng, 2)
-        dfields[:, 2] = _NO_FIELD
-        dfields[(k.ravel() < 2), 1] = _NO_FIELD
+        k = rng.integers(1, dfm + 1, size=(num_groups, d))
+        dfields = _distinct_fields(num_fields, num_groups * d, rng, dfm)
+        for slot in range(dfm, 3):
+            dfields[:, slot] = _NO_FIELD
+        kf = k.ravel()
+        for slot in range(1, dfm):
+            dfields[(kf <= slot), slot] = _NO_FIELD
         donor_flat = donors.ravel()
         values = np.full((num_groups * d, 3), _NO_FIELD, dtype=np.int32)
-        for slot in range(2):
+        for slot in range(3):
             live = dfields[:, slot] >= 0
-            values[live, slot] = codes_g[donor_flat[live], dfields[live, slot]]
+            if np.any(live):
+                values[live, slot] = codes_g[donor_flat[live], dfields[live, slot]]
         _push(np.repeat(gidx, d), dfields, values)
 
     # 三，联合修改，从查询涉及的多字段集合抽一个，各字段换替代值
