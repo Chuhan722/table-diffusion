@@ -435,7 +435,6 @@ def build_batch_kernel(
     probe_grid: int = 0,
     ref_shape: str = "uniform",
     path_factors: NDArray[np.float64] | None = None,
-    trim_delta: float = 0.0,
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
@@ -491,13 +490,6 @@ def build_batch_kernel(
     gains_flat = np.zeros(total, dtype=np.float64)
     gains_flat[path_pos] = gains_paths
     ref_flat = np.zeros(total, dtype=np.float64)
-    if trim_delta > 0.0 and path_factors is not None:
-        from .structure import trim_factors
-
-        # 决赛圈，增益已知后把圈外路径因子置零再统一改形归一
-        path_factors = trim_factors(
-            gains_paths, menu.offsets, menu.group, path_factors, trim_delta
-        )
     ref_src, ref_paths = _reference_arrays(
         menu, codes_g, grouped.counts.astype(np.float64),
         num_groups, stay_probability, ref_shape, path_factors,
@@ -892,7 +884,7 @@ def evolve_batch(
     struct_shaper 给出 StructShaper 时启用结构签筒两级机制，
     每个批量轮先量体温（独立生成器不碰引擎随机流），watch 模式只记录，
     jia 或 bing 模式体温低于门槛才把菜单路径的结构因子交给核构造改签筒，
-    ding 模式无门槛，体温为负即交因子并附决赛圈容差（体温即容差），
+    ding 模式无门槛，体温为负即交因子，偏置力度随烧度连续，
     体温逐轮记入返回值 temps（非批量轮记 nan），默认 None 零改变。
     """
     if num_rounds < 1:
@@ -945,7 +937,6 @@ def evolve_batch(
         elif plan.mode == "batch":
             probe_now = probe_interval > 0 and k % probe_interval == 0
             struct_factors = None
-            struct_trim = 0.0
             if struct_shaper is not None:
                 codes_now = plan_provider.codebook.sync()
                 codes_g_now = codes_now[plan.grouped.unique_ids]
@@ -954,9 +945,9 @@ def evolve_batch(
                 )
                 if struct_shaper.active(round_temp):
                     struct_factors = struct_shaper.path_factors(
-                        plan.menu, codes_g_now, plan.grouped.counts
+                        plan.menu, codes_g_now, plan.grouped.counts,
+                        temperature=round_temp,
                     )
-                    struct_trim = struct_shaper.trim_delta(round_temp)
             if backend == "gpu":
                 if gpu_ctx is None:
                     from .gpukernel import GpuBatchContext
@@ -973,7 +964,6 @@ def evolve_batch(
                     probe_grid=16 if probe_now else 0,
                     ref_shape=ref_shape,
                     path_factors=struct_factors,
-                    trim_delta=struct_trim,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
@@ -987,7 +977,6 @@ def evolve_batch(
                     probe_grid=16 if probe_now else 0,
                     ref_shape=ref_shape,
                     path_factors=struct_factors,
-                    trim_delta=struct_trim,
                 )
             if result.probe is not None:
                 probes.append(

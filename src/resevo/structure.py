@@ -16,12 +16,14 @@
 签筒改形每组离开质量精确保持，与距离签筒同一原则，同松紧只换形状，
 因此每组保持概率不变，随机矩阵约束与步长语义零改动。
 
-丁尺（决赛圈，工作笔记第三十一步）：丙尺的连续化升级，去掉 -0.05
-硬门槛，体温即容差——组内作业增益不足最优 (1-烧度) 的路径签作废，
-圈内路径按丙尺形状增量分签。烧度取负体温对 TRIM_CAP 封顶，
-体温非负时容差为零、圈退化为空操作，健康表自动逐位等基线；
-负增益组不切圈，交给 β 倾斜天然抑制。零新超参：容差直接读体温，
-封顶 0.25 是保险丝死值不参与调优。
+丁尺（连续恒温，工作笔记第三十一步）：丙尺的连续化升级，去掉 -0.05
+硬门槛开关，偏置力度随烧度连续——有效力度 boost^min(1, 烧度/满速刻度)，
+烧度取负体温，满速刻度继承原门槛绝对值 0.05：烧满刻度即丙尺满力度，
+浅烧按幂律降力度，体温非负力度归一（零干预），健康表自动逐位等基线。
+零新超参：boost 与刻度都继承丙尺已标定值。
+（第一版丁尺曾试决赛圈——按作业增益切圈后圈内偏好——nltcs 清 s1
+实测证伪：圈砍掉了结构好而作业次优的路径，偏好在同质圈内空转，
+半空间仅 -0.8%，全程深烧 -0.13 不退，已废弃，正确机制是全域乘性偏置。）
 """
 from __future__ import annotations
 
@@ -35,7 +37,6 @@ from .refine import EMBED_DIM, EMBED_SEED, HASH_SEED, KURT_GATE_DEFAULT
 STRUCT_BOOST_DEFAULT = 4.0
 BING_SEED = 1234
 BING_DIM = 128
-TRIM_CAP = 0.25  # 决赛圈容差保险丝，烧再重圈宽也钉死在此
 _CHUNK = 16384
 
 
@@ -104,38 +105,13 @@ def shape_reference(
     return shaped * scale[group]
 
 
-def trim_factors(
-    gains_paths: NDArray[np.float64],
-    offsets: NDArray[np.int64],
-    group: NDArray[np.int64],
-    factors: NDArray[np.float64],
-    delta: float,
-) -> NDArray[np.float64]:
-    """决赛圈，组内作业增益不足最优 (1-delta) 的路径因子置零。
-
-    只对组内最优增益为正的组生效，最优路径自身必在圈内，
-    因此切圈后每组仍有非零因子路径，shape_reference 组内归一
-    把作废签的质量还给圈内，离开质量精确守恒。
-    负增益组整组不切，签筒原样交给 β 倾斜天然抑制。
-    """
-    starts = np.minimum(offsets[:-1], len(gains_paths))
-    padded = np.r_[gains_paths, -np.inf]
-    g_star = np.maximum.reduceat(padded, starts)
-    g_star[np.diff(offsets) == 0] = 0.0
-    star_of = g_star[group]
-    cut = (star_of > 0.0) & (gains_paths < (1.0 - delta) * star_of)
-    out = factors.copy()
-    out[cut] = 0.0
-    return out
-
-
 class StructShaper:
     """结构签筒状态机，量体温，门内算因子，门外零干预。
 
     ruler 取 watch 只记体温不改签筒（侦察模式，轨迹与不装完全一致），
     取 jia 或 bing 时体温低于 gate 才产出路径因子，否则返回 None。
-    取 ding 时无门槛，体温为负即产出因子与决赛圈容差（体温即容差），
-    非负体温零干预。所有随机权重表构造一次复用，
+    取 ding 时无门槛，体温为负即产出因子，力度随烧度连续
+    （effective_boost），非负体温零干预。所有随机权重表构造一次复用，
     体温计自带独立生成器不碰引擎随机流。
     """
 
@@ -177,26 +153,37 @@ class StructShaper:
             return temperature < 0.0
         return self.ruler in ("jia", "bing") and temperature < self.gate
 
-    def trim_delta(self, temperature: float) -> float:
-        """决赛圈容差，体温即容差对 TRIM_CAP 封顶，非 ding 恒零。"""
+    def effective_boost(self, temperature: float) -> float:
+        """丁尺有效力度，boost 的幂律连续化，烧满刻度即满力度。
+
+        指数 min(1, 烧度/|gate|)，体温非负指数为零力度归一（零干预），
+        非 ding 恒返回满力度 boost。
+        """
         if self.ruler != "ding":
-            return 0.0
-        return float(min(max(0.0, -temperature), TRIM_CAP))
+            return self.boost
+        heat = max(0.0, -temperature)
+        return float(self.boost ** min(1.0, heat / abs(self.gate)))
 
     def path_factors(
-        self, menu, codes_g: NDArray[np.int32], counts
+        self, menu, codes_g: NDArray[np.int32], counts,
+        temperature: float | None = None,
     ) -> NDArray[np.float64]:
-        """每条菜单路径的签数因子，结构变好乘 boost，变坏除 boost。
+        """每条菜单路径的签数因子，结构变好乘力度，变坏除力度。
 
-        jia 用整行抱团增量，bing 与 ding 用表形状增量。
+        jia 用整行抱团增量，bing 与 ding 用表形状增量；
+        jia/bing 力度恒为 boost，ding 按体温连续调（effective_boost）。
         """
         if self.ruler == "jia":
             delta = self._jia_delta(menu, codes_g, counts)
         else:
             delta = self._bing_delta(menu, codes_g, counts)
+        strength = (
+            self.effective_boost(temperature)
+            if temperature is not None else self.boost
+        )
         factors = np.ones(menu.num_paths, dtype=np.float64)
-        factors[delta > 0] = self.boost
-        factors[delta < 0] = 1.0 / self.boost
+        factors[delta > 0] = strength
+        factors[delta < 0] = 1.0 / strength
         return factors
 
     def _jia_delta(self, menu, codes_g, counts) -> NDArray[np.int64]:
