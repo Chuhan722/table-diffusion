@@ -678,6 +678,7 @@ class GpuBatchContext:
         entry_budget: int = 0,
         probe_grid: int = 0,
         ref_shape: str = "uniform",
+        path_factors: np.ndarray | None = None,
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -734,14 +735,15 @@ class GpuBatchContext:
         mass_sum = _seg_sum(cp, menu_gpu["mass"], menu_gpu["offsets"])
         empty = cp.diff(menu_gpu["offsets"]) == 0
         mass_sum = cp.where(empty, 1.0, mass_sum)
-        if ref_shape == "distance":
-            # host 端同一实现算距离参考分布再上传，双后端逐位一致
-            from .batchkernel import _distance_reference
+        if path_factors is not None or ref_shape == "distance":
+            # host 端同一实现装配参考分布再上传，双后端逐位一致，
+            # 结构签筒改形也走 host，uniform 无因子时才留在卡上
+            from .batchkernel import _reference_arrays
 
-            ref_src_np, ref_paths_np = _distance_reference(
+            ref_src_np, ref_paths_np = _reference_arrays(
                 menu, codes[grouped.unique_ids],
                 grouped.counts.astype(np.float64),
-                num_groups, stay_probability,
+                num_groups, stay_probability, ref_shape, path_factors,
             )
             ref_flat[path_pos] = cp.asarray(ref_paths_np)
             ref_flat[seg_starts] = cp.asarray(ref_src_np)

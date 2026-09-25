@@ -270,6 +270,43 @@ def _distance_reference(
     return ref_src, ref_paths
 
 
+def _reference_arrays(
+    menu: BatchMenu,
+    codes_g: NDArray[np.int32],
+    counts: NDArray[np.float64],
+    num_groups: int,
+    stay_probability: float,
+    ref_shape: str,
+    path_factors: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """host 端参考分布装配，CPU 主路径与 GPU 结构签筒路径共用。
+
+    返回 (源概率 G 维, 路径概率 P 维)，path_factors 给出时按结构签筒
+    改形，每组离开质量精确保持，同松紧只换形状。
+    """
+    if ref_shape == "distance":
+        ref_src, ref_paths = _distance_reference(
+            menu, codes_g, counts, num_groups, stay_probability
+        )
+    elif ref_shape == "uniform":
+        mass_sum = np.add.reduceat(
+            np.r_[menu.mass, 0.0], np.minimum(menu.offsets[:-1], len(menu.mass))
+        )
+        empty = np.diff(menu.offsets) == 0
+        mass_sum[empty] = 1.0
+        ref_paths = (1 - stay_probability) * menu.mass / mass_sum[menu.group]
+        ref_src = np.where(empty, 1.0, stay_probability)
+    else:
+        raise ValueError(f"未知参考分布形状 {ref_shape}")
+    if path_factors is not None:
+        from .structure import shape_reference
+
+        ref_paths = shape_reference(
+            ref_paths, menu.offsets, menu.group, path_factors
+        )
+    return ref_src, ref_paths
+
+
 def _probe_beta_grid(
     gains_flat: NDArray[np.float64],
     ref_flat: NDArray[np.float64],
@@ -397,6 +434,7 @@ def build_batch_kernel(
     want_scores: bool = False,
     probe_grid: int = 0,
     ref_shape: str = "uniform",
+    path_factors: NDArray[np.float64] | None = None,
 ) -> BatchKernelResult:
     """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
 
@@ -452,23 +490,12 @@ def build_batch_kernel(
     gains_flat = np.zeros(total, dtype=np.float64)
     gains_flat[path_pos] = gains_paths
     ref_flat = np.zeros(total, dtype=np.float64)
-    mass_sum = np.add.reduceat(
-        np.r_[menu.mass, 0.0], np.minimum(menu.offsets[:-1], len(menu.mass))
+    ref_src, ref_paths = _reference_arrays(
+        menu, codes_g, grouped.counts.astype(np.float64),
+        num_groups, stay_probability, ref_shape, path_factors,
     )
-    empty = np.diff(menu.offsets) == 0
-    mass_sum[empty] = 1.0  # 退化组无路径，保持概率直接为 1
-    if ref_shape == "distance":
-        ref_src, ref_paths = _distance_reference(
-            menu, codes_g, grouped.counts.astype(np.float64),
-            num_groups, stay_probability,
-        )
-        ref_flat[path_pos] = ref_paths
-        ref_flat[seg_starts] = ref_src
-    elif ref_shape == "uniform":
-        ref_flat[path_pos] = (1 - stay_probability) * menu.mass / mass_sum[menu.group]
-        ref_flat[seg_starts] = np.where(empty, 1.0, stay_probability)
-    else:
-        raise ValueError(f"未知参考分布形状 {ref_shape}")
+    ref_flat[path_pos] = ref_paths
+    ref_flat[seg_starts] = ref_src
 
     counts = grouped.counts.astype(np.float64)
     tilt = calibrate_beta_flat(
@@ -822,6 +849,7 @@ def evolve_batch(
     progress_every: int = 0,
     probe_interval: int = 0,
     ref_shape: str = "uniform",
+    struct_shaper=None,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -853,6 +881,10 @@ def evolve_batch(
     probe_interval 为正时每该数轮的批量轮跑一次 beta 网格探针，
     记实际所用与网格最优的期望下降到旁路日志，探针纯只读确定性，
     不消耗抽样随机数不改演化路径，默认 0 关闭零改变。
+    struct_shaper 给出 StructShaper 时启用结构签筒两级机制，
+    每个批量轮先量体温（独立生成器不碰引擎随机流），watch 模式只记录，
+    jia 或 bing 模式体温低于门槛才把菜单路径的结构因子交给核构造改签筒，
+    体温逐轮记入返回值 temps（非批量轮记 nan），默认 None 零改变。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -885,6 +917,7 @@ def evolve_batch(
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
+    temps: list[float] | None = [] if struct_shaper is not None else None
     frozen_streak = 0
     window_best: float | None = None  # 本窗口内最优损失
     prev_window_best: float | None = None  # 上一窗口最优损失
@@ -893,6 +926,7 @@ def evolve_batch(
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
+        round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
         if plan.mode in ("rows", "rescue"):
             kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
             result = build_kernel(
@@ -901,6 +935,17 @@ def evolve_batch(
             )
         elif plan.mode == "batch":
             probe_now = probe_interval > 0 and k % probe_interval == 0
+            struct_factors = None
+            if struct_shaper is not None:
+                codes_now = plan_provider.codebook.sync()
+                codes_g_now = codes_now[plan.grouped.unique_ids]
+                round_temp = struct_shaper.temperature(
+                    codes_g_now, plan.grouped.counts
+                )
+                if struct_shaper.active(round_temp):
+                    struct_factors = struct_shaper.path_factors(
+                        plan.menu, codes_g_now, plan.grouped.counts
+                    )
             if backend == "gpu":
                 if gpu_ctx is None:
                     from .gpukernel import GpuBatchContext
@@ -916,6 +961,7 @@ def evolve_batch(
                     entry_budget=gpu_entry_budget,
                     probe_grid=16 if probe_now else 0,
                     ref_shape=ref_shape,
+                    path_factors=struct_factors,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
@@ -928,6 +974,7 @@ def evolve_batch(
                     want_scores=bool(getattr(plan_provider, "wants_scores", False)),
                     probe_grid=16 if probe_now else 0,
                     ref_shape=ref_shape,
+                    path_factors=struct_factors,
                 )
             if result.probe is not None:
                 probes.append(
@@ -953,6 +1000,8 @@ def evolve_batch(
                 result.max_gain_sum,
             )
         )
+        if temps is not None:
+            temps.append(round_temp)
         if progress_every > 0 and (
             plan.mode != "batch" or result.status != "ok"
             or k % progress_every == 0
@@ -971,7 +1020,9 @@ def evolve_batch(
                 if base <= 0.0 or (
                     (base - rescue_losses[-1]) / base < rescue_stop_tol
                 ):
-                    return EvolveResult(current, records, "rescue_exhausted", probes)
+                    return EvolveResult(
+                        current, records, "rescue_exhausted", probes, temps
+                    )
         if stop_threshold > 0.0:
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
@@ -987,13 +1038,16 @@ def evolve_batch(
                         current, records,
                         "noise_plateau" if armed else "loss_plateau",
                         probes,
+                        temps,
                     )
                 prev_window_best = window_best
                 window_best = None
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(current, records, "no_positive_direction", probes)
+                return EvolveResult(
+                    current, records, "no_positive_direction", probes, temps
+                )
             continue
         frozen_streak = 0
         if plan.mode == "rows":
@@ -1013,4 +1067,4 @@ def evolve_batch(
                 current[plan.rescue_sub_idx[moved]] = gids
         else:
             current = sample_batch_next(result, current, rng, registry)
-    return EvolveResult(current, records, "round_limit", probes)
+    return EvolveResult(current, records, "round_limit", probes, temps)

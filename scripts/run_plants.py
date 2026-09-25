@@ -211,6 +211,20 @@ def main() -> None:
         "--damping", type=float, default=1.0,
         help="步长阻尼系数，乘在解析最优步长与可行上限取小之后，1.0 为现状，须为正",
     )
+    parser.add_argument(
+        "--struct-ruler", type=str, default="off",
+        choices=["off", "watch", "jia", "bing"],
+        help="结构签筒第二级，off 现状零改变，watch 只逐轮记体温不干预，"
+        "jia 整行抱团尺，bing 表形状尺，需 --batched",
+    )
+    parser.add_argument(
+        "--struct-boost", type=float, default=4.0,
+        help="结构签数增幅，变好方向乘该数变坏除该数，须大于 1，默认 4",
+    )
+    parser.add_argument(
+        "--struct-gate", type=float, default=-0.05,
+        help="恒温开关门槛，体温计（嵌入峰度）低于该值才启用第二级，默认 -0.05",
+    )
     args = parser.parse_args()
     if args.gpu and not args.batched:
         parser.error("--gpu 只支持批量路径，请同时带 --batched")
@@ -255,6 +269,10 @@ def main() -> None:
         parser.error("--damping 必须为正")
     if args.damping != 1.0 and not args.batched:
         parser.error("--damping 只支持批量路径，请同时带 --batched")
+    if args.struct_ruler != "off" and not args.batched:
+        parser.error("--struct-ruler 只支持批量路径，请同时带 --batched")
+    if args.struct_boost <= 1.0:
+        parser.error("--struct-boost 必须大于 1")
 
     data_dir = DATA_ROOT / args.data
     schema, real_rows = load_table(str(data_dir / f"{args.data}.csv"))
@@ -363,6 +381,17 @@ def main() -> None:
     initial_loss = table_loss(registry.build_workload(y, w), ids)
     print(f"行数 {len(ids)}，查询数 {len(specs)}，初始损失 {initial_loss:.6f}")
 
+    shaper = None
+    if args.struct_ruler != "off":
+        from resevo.structure import StructShaper
+
+        shaper = StructShaper(
+            args.struct_ruler,
+            [len(d) for d in schema.domains],
+            boost=args.struct_boost,
+            gate=args.struct_gate,
+        )
+
     t0 = time.perf_counter()
     if args.batched:
         out = evolve_batch(
@@ -384,6 +413,7 @@ def main() -> None:
             ref_shape=args.ref_shape,
             stay_probability=args.stay,
             damping=args.damping,
+            struct_shaper=shaper,
         )
     elif args.grouped:
         out = evolve_grouped(
@@ -433,16 +463,22 @@ def main() -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                ["round", "old_loss", "beta", "direction_gain", "interaction", "step",
-                 "expected_loss", "status", "max_gain_sum"]
-            )
-            for r in out.records:
-                writer.writerow(
-                    [r.round_index, r.old_loss, r.beta, r.direction_gain,
-                     r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
-                )
-            writer.writerow(["final", final_loss, "", "", "", "", "", out.stop_reason, ""])
+            has_temp = out.temps is not None
+            header = ["round", "old_loss", "beta", "direction_gain", "interaction",
+                      "step", "expected_loss", "status", "max_gain_sum"]
+            if has_temp:
+                header.append("temp")
+            writer.writerow(header)
+            for i, r in enumerate(out.records):
+                row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
+                       r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
+                if has_temp:
+                    row.append(out.temps[i])
+                writer.writerow(row)
+            final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
+            if has_temp:
+                final_row.append("")
+            writer.writerow(final_row)
         print(f"曲线已写入 {out_path}")
         if out.probes:
             probe_path = out_path.with_name(out_path.stem + "_probe.csv")
