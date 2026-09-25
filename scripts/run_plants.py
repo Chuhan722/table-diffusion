@@ -213,9 +213,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--struct-ruler", type=str, default="off",
-        choices=["off", "watch", "jia", "bing"],
+        choices=["off", "watch", "jia", "bing", "ding"],
         help="结构签筒第二级，off 现状零改变，watch 只逐轮记体温不干预，"
-        "jia 整行抱团尺，bing 表形状尺，需 --batched",
+        "jia 整行抱团尺，bing 表形状尺，ding 决赛圈（bing 连续化，"
+        "无门槛体温即容差，--struct-gate 对其无效），需 --batched",
     )
     parser.add_argument(
         "--struct-boost", type=float, default=4.0,

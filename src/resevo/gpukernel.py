@@ -679,6 +679,7 @@ class GpuBatchContext:
         probe_grid: int = 0,
         ref_shape: str = "uniform",
         path_factors: np.ndarray | None = None,
+        trim_delta: float = 0.0,
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -737,9 +738,17 @@ class GpuBatchContext:
         mass_sum = cp.where(empty, 1.0, mass_sum)
         if path_factors is not None or ref_shape == "distance":
             # host 端同一实现装配参考分布再上传，双后端逐位一致，
-            # 结构签筒改形也走 host，uniform 无因子时才留在卡上
+            # 结构签筒改形也走 host，uniform 无因子时才留在卡上；
+            # 决赛圈增益下载回 host 切圈，与 CPU 核同一实现同一浮点
             from .batchkernel import _reference_arrays
 
+            if trim_delta > 0.0 and path_factors is not None:
+                from .structure import trim_factors
+
+                path_factors = trim_factors(
+                    cp.asnumpy(gains_paths), menu.offsets, menu.group,
+                    path_factors, trim_delta,
+                )
             ref_src_np, ref_paths_np = _reference_arrays(
                 menu, codes[grouped.unique_ids],
                 grouped.counts.astype(np.float64),

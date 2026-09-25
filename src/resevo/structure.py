@@ -15,6 +15,13 @@
 
 签筒改形每组离开质量精确保持，与距离签筒同一原则，同松紧只换形状，
 因此每组保持概率不变，随机矩阵约束与步长语义零改动。
+
+丁尺（决赛圈，工作笔记第三十一步）：丙尺的连续化升级，去掉 -0.05
+硬门槛，体温即容差——组内作业增益不足最优 (1-烧度) 的路径签作废，
+圈内路径按丙尺形状增量分签。烧度取负体温对 TRIM_CAP 封顶，
+体温非负时容差为零、圈退化为空操作，健康表自动逐位等基线；
+负增益组不切圈，交给 β 倾斜天然抑制。零新超参：容差直接读体温，
+封顶 0.25 是保险丝死值不参与调优。
 """
 from __future__ import annotations
 
@@ -28,6 +35,7 @@ from .refine import EMBED_DIM, EMBED_SEED, HASH_SEED, KURT_GATE_DEFAULT
 STRUCT_BOOST_DEFAULT = 4.0
 BING_SEED = 1234
 BING_DIM = 128
+TRIM_CAP = 0.25  # 决赛圈容差保险丝，烧再重圈宽也钉死在此
 _CHUNK = 16384
 
 
@@ -96,12 +104,39 @@ def shape_reference(
     return shaped * scale[group]
 
 
+def trim_factors(
+    gains_paths: NDArray[np.float64],
+    offsets: NDArray[np.int64],
+    group: NDArray[np.int64],
+    factors: NDArray[np.float64],
+    delta: float,
+) -> NDArray[np.float64]:
+    """决赛圈，组内作业增益不足最优 (1-delta) 的路径因子置零。
+
+    只对组内最优增益为正的组生效，最优路径自身必在圈内，
+    因此切圈后每组仍有非零因子路径，shape_reference 组内归一
+    把作废签的质量还给圈内，离开质量精确守恒。
+    负增益组整组不切，签筒原样交给 β 倾斜天然抑制。
+    """
+    starts = np.minimum(offsets[:-1], len(gains_paths))
+    padded = np.r_[gains_paths, -np.inf]
+    g_star = np.maximum.reduceat(padded, starts)
+    g_star[np.diff(offsets) == 0] = 0.0
+    star_of = g_star[group]
+    cut = (star_of > 0.0) & (gains_paths < (1.0 - delta) * star_of)
+    out = factors.copy()
+    out[cut] = 0.0
+    return out
+
+
 class StructShaper:
     """结构签筒状态机，量体温，门内算因子，门外零干预。
 
     ruler 取 watch 只记体温不改签筒（侦察模式，轨迹与不装完全一致），
     取 jia 或 bing 时体温低于 gate 才产出路径因子，否则返回 None。
-    所有随机权重表构造一次复用，体温计自带独立生成器不碰引擎随机流。
+    取 ding 时无门槛，体温为负即产出因子与决赛圈容差（体温即容差），
+    非负体温零干预。所有随机权重表构造一次复用，
+    体温计自带独立生成器不碰引擎随机流。
     """
 
     def __init__(
@@ -111,7 +146,7 @@ class StructShaper:
         boost: float = STRUCT_BOOST_DEFAULT,
         gate: float = KURT_GATE_DEFAULT,
     ):
-        if ruler not in ("watch", "jia", "bing"):
+        if ruler not in ("watch", "jia", "bing", "ding"):
             raise ValueError(f"未知结构刻度 {ruler}")
         if boost <= 1.0:
             raise ValueError("签数增幅必须大于 1")
@@ -125,7 +160,7 @@ class StructShaper:
             self._keys = hk.integers(
                 1, 2**63, size=(len(sizes), max(sizes)), dtype=np.uint64
             )
-        elif ruler == "bing":
+        elif ruler in ("bing", "ding"):
             bw = _field_weights(sizes, BING_DIM, BING_SEED)
             # padded 张量供逐路径花式索引，字段真实域宽之外恒零不被引用
             self._bing_w = np.zeros((len(sizes), BING_DIM, max(sizes)))
@@ -137,13 +172,24 @@ class StructShaper:
         return _weighted_kurtosis(_embed_scores(codes_g, self._thermo_w), counts)
 
     def active(self, temperature: float) -> bool:
-        """恒温开关，只有病表（体温低于门槛）才启用第二级。"""
+        """恒温开关，jia/bing 看门槛，ding 无门槛体温为负即启用。"""
+        if self.ruler == "ding":
+            return temperature < 0.0
         return self.ruler in ("jia", "bing") and temperature < self.gate
+
+    def trim_delta(self, temperature: float) -> float:
+        """决赛圈容差，体温即容差对 TRIM_CAP 封顶，非 ding 恒零。"""
+        if self.ruler != "ding":
+            return 0.0
+        return float(min(max(0.0, -temperature), TRIM_CAP))
 
     def path_factors(
         self, menu, codes_g: NDArray[np.int32], counts
     ) -> NDArray[np.float64]:
-        """每条菜单路径的签数因子，结构变好乘 boost，变坏除 boost。"""
+        """每条菜单路径的签数因子，结构变好乘 boost，变坏除 boost。
+
+        jia 用整行抱团增量，bing 与 ding 用表形状增量。
+        """
         if self.ruler == "jia":
             delta = self._jia_delta(menu, codes_g, counts)
         else:

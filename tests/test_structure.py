@@ -16,6 +16,7 @@ from resevo.refine import embed_kurtosis
 from resevo.structure import (
     BING_DIM,
     BING_SEED,
+    TRIM_CAP,
     StructShaper,
     _field_weights,
     _moments_kurt,
@@ -211,3 +212,81 @@ def test_shaper_validation():
         StructShaper("bogus", [2, 2])
     with pytest.raises(ValueError):
         StructShaper("jia", [2, 2], boost=1.0)
+
+
+def test_ding_trim_delta_and_active():
+    """丁尺体温即容差对 0.25 封顶，无门槛体温为负即启用，非丁尺恒零。"""
+    ding = StructShaper("ding", [2, 3])
+    assert ding.trim_delta(0.1) == 0.0
+    assert ding.trim_delta(0.0) == 0.0
+    np.testing.assert_allclose(ding.trim_delta(-0.1), 0.1)
+    np.testing.assert_allclose(ding.trim_delta(-0.036), 0.036)
+    assert ding.trim_delta(-0.5) == TRIM_CAP
+    assert ding.trim_delta(-2.0) == TRIM_CAP
+    assert ding.active(-1e-9) and not ding.active(0.0) and not ding.active(0.1)
+    # gate 对丁尺无效，门槛设死也拦不住
+    gated = StructShaper("ding", [2, 3], gate=-999.0)
+    assert gated.active(-0.01)
+    for ruler in ("watch", "jia", "bing"):
+        assert StructShaper(ruler, [2, 3]).trim_delta(-1.0) == 0.0
+
+
+def test_trim_factors_manual():
+    """决赛圈手工例，正增益组切圈外，负增益组整组不动，边界算圈内。"""
+    from resevo.structure import trim_factors
+
+    offsets = np.array([0, 3, 5], dtype=np.int64)
+    group = np.array([0, 0, 0, 1, 1], dtype=np.int64)
+    gains = np.array([10.0, 9.6, 5.0, -1.0, -2.0])
+    factors = np.ones(5)
+    out = trim_factors(gains, offsets, group, factors, 0.1)
+    np.testing.assert_array_equal(out, [1.0, 1.0, 0.0, 1.0, 1.0])
+    # 边界：增益恰等于 (1-delta)*g_star 保留在圈内
+    out2 = trim_factors(gains, offsets, group, factors, 0.5)
+    np.testing.assert_array_equal(out2, [1.0, 1.0, 1.0, 1.0, 1.0])
+    # 原 factors 不被就地修改，圈内因子原样保留
+    mixed = np.array([4.0, 0.25, 4.0, 0.25, 4.0])
+    out3 = trim_factors(gains, offsets, group, mixed, 0.1)
+    np.testing.assert_array_equal(out3, [4.0, 0.25, 0.0, 0.25, 4.0])
+    np.testing.assert_array_equal(mixed, [4.0, 0.25, 4.0, 0.25, 4.0])
+
+
+def test_trim_factors_empty_group():
+    """空组无路径天然跳过，最优路径必在圈内。"""
+    from resevo.structure import trim_factors
+
+    offsets = np.array([0, 2, 2, 3], dtype=np.int64)
+    group = np.array([0, 0, 2], dtype=np.int64)
+    gains = np.array([3.0, 1.0, 7.0])
+    out = trim_factors(gains, offsets, group, np.ones(3), 0.5)
+    np.testing.assert_array_equal(out, [1.0, 0.0, 1.0])
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_kernel_trim_valid_and_effective(seed):
+    """带决赛圈的核仍是合法随机矩阵，圈真切签，只读量不受影响。"""
+    _, _, grouped, codes, menu, qs, workload, sizes = _menu_scene(seed)
+    ones = np.ones(menu.num_paths)
+    base = build_batch_kernel(workload, grouped, menu, qs, codes)
+    got = build_batch_kernel(
+        workload, grouped, menu, qs, codes,
+        path_factors=ones, trim_delta=0.2,
+    )
+    assert got.status == base.status
+    np.testing.assert_allclose(got.old_loss, base.old_loss, rtol=1e-12)
+    assert got.max_gain_sum == base.max_gain_sum  # 增益只看残差，圈不碰
+    for g in range(grouped.num_groups):
+        lo, hi = int(got.offsets[g]), int(got.offsets[g + 1])
+        np.testing.assert_allclose(got.probabilities[lo:hi].sum(), 1.0, rtol=1e-9)
+        assert (got.probabilities[lo:hi] >= 0).all()
+    if base.status == "ok":
+        assert not np.allclose(got.probabilities, base.probabilities)
+
+
+def test_ding_evolve_runs_and_records_temps():
+    """丁尺演化全程跑通，批量轮体温有限，轨迹合法。"""
+    registry, ids, weights, rng = _scene(9, num_rows=30)
+    sizes = [len(d) for d in registry.schema.domains]
+    out = _run_evolve(registry, ids, StructShaper("ding", sizes), rounds=8)
+    assert out.temps is not None and len(out.temps) == len(out.records)
+    assert all(np.isfinite(t) for t in out.temps)
