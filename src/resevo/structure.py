@@ -38,6 +38,7 @@ STRUCT_BOOST_DEFAULT = 4.0
 BING_SEED = 1234
 BING_DIM = 128
 _CHUNK = 16384
+_CHUNK_DEV = 65536  # GPU 版分块，显存 1GB 级
 
 
 def _field_weights(
@@ -142,6 +143,7 @@ class StructShaper:
             self._bing_w = np.zeros((len(sizes), BING_DIM, max(sizes)))
             for f, w in enumerate(bw):
                 self._bing_w[f, :, : w.shape[1]] = w
+            self._bing_w_dev = None  # GPU 权重表懒上传缓存
 
     def temperature(self, codes_g: NDArray[np.int32], counts) -> float:
         """体温计读数，refine.embed_kurtosis 同刻度的加权实现。"""
@@ -182,6 +184,69 @@ class StructShaper:
             if temperature is not None else self.boost
         )
         factors = np.ones(menu.num_paths, dtype=np.float64)
+        factors[delta > 0] = strength
+        factors[delta < 0] = 1.0 / strength
+        return factors
+
+    def path_factors_dev(
+        self, menu_dev: dict, codes_g_dev, counts_dev,
+        temperature: float | None = None,
+    ):
+        """路径因子的 GPU 版，bing/ding 专用，全程留在卡上。
+
+        输入为 gpukernel 已上传的菜单字典与组码/组重数组，权重表
+        首次调用懒上传后缓存。数学与 host 版相同，浮点求和顺序
+        不同导致数值边缘（delta≈0）的路径符号可能与 host 不一致，
+        属跨后端统计等价口径（工作笔记第三十一步拍板），同后端
+        确定性不受影响。jia 的哈希查表不搬卡，调用方走 host 老路。
+        """
+        if self.ruler not in ("bing", "ding"):
+            raise ValueError("GPU 因子只支持 bing/ding 刻度")
+        import cupy as cp
+
+        if self._bing_w_dev is None:
+            self._bing_w_dev = cp.asarray(self._bing_w)
+        bw = self._bing_w_dev
+        w = counts_dev.astype(cp.float64)
+        n = float(w.sum())
+        num_fields = codes_g_dev.shape[1]
+        scores = cp.zeros((codes_g_dev.shape[0], BING_DIM))
+        for f in range(num_fields):
+            scores += bw[f].T[codes_g_dev[:, f]]
+        mom = cp.stack(
+            [(scores ** (p + 1) * w[:, None]).sum(axis=0) for p in range(4)]
+        )
+        cur = float(_moments_kurt(mom, n))
+        num_paths = int(menu_dev["num_paths"])
+        delta = cp.empty(num_paths, dtype=cp.float64)
+        for lo in range(0, num_paths, _CHUNK_DEV):
+            hi = min(lo + _CHUNK_DEV, num_paths)
+            grp = menu_dev["group"][lo:hi]
+            s_old = scores[grp]
+            s_new = s_old.copy()
+            for s in range(menu_dev["fields"].shape[1]):
+                fld = menu_dev["fields"][lo:hi, s]
+                mask = fld >= 0
+                f = fld[mask]
+                new = menu_dev["values"][lo:hi][mask, s]
+                old = codes_g_dev[grp[mask], f]
+                s_new[mask] += bw[f, :, new] - bw[f, :, old]
+            m_new = cp.broadcast_to(
+                mom, (hi - lo, 4, BING_DIM)
+            ).copy()
+            po = s_old.copy()
+            pn = s_new.copy()
+            for p in range(4):
+                m_new[:, p, :] += pn - po
+                if p < 3:
+                    po = po * s_old
+                    pn = pn * s_new
+            delta[lo:hi] = _moments_kurt(m_new, n) - cur
+        strength = (
+            self.effective_boost(temperature)
+            if temperature is not None else self.boost
+        )
+        factors = cp.ones(num_paths, dtype=cp.float64)
         factors[delta > 0] = strength
         factors[delta < 0] = 1.0 / strength
         return factors

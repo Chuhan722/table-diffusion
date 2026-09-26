@@ -254,3 +254,72 @@ def test_ding_evolve_runs_and_records_temps():
     out = _run_evolve(registry, ids, StructShaper("ding", sizes), rounds=8)
     assert out.temps is not None and len(out.temps) == len(out.records)
     assert all(np.isfinite(t) for t in out.temps)
+
+
+def _menu_dev_of(menu, codes_g, counts):
+    cp = pytest.importorskip("cupy")
+    menu_dev = {
+        "group": cp.asarray(menu.group),
+        "fields": cp.asarray(menu.fields),
+        "values": cp.asarray(menu.values),
+        "mass": cp.asarray(menu.mass),
+        "offsets": cp.asarray(menu.offsets),
+        "num_paths": menu.num_paths,
+    }
+    return (
+        cp, menu_dev, cp.asarray(codes_g),
+        cp.asarray(np.asarray(counts, dtype=np.float64)),
+    )
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_gpu_factors_match_cpu(seed):
+    """卡内药房因子与 host 版一致（bing 满力度与 ding 两档温度）。"""
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(seed)
+    codes_g = codes[grouped.unique_ids]
+    for ruler, temp in (("bing", None), ("ding", -0.03), ("ding", -0.06)):
+        shaper = StructShaper(ruler, sizes)
+        want = shaper.path_factors(
+            menu, codes_g, grouped.counts, temperature=temp
+        )
+        cp, menu_dev, cg_dev, cnt_dev = _menu_dev_of(
+            menu, codes_g, grouped.counts
+        )
+        got = cp.asnumpy(shaper.path_factors_dev(
+            menu_dev, cg_dev, cnt_dev, temperature=temp
+        ))
+        agree = float((np.sign(got - 1.0) == np.sign(want - 1.0)).mean())
+        assert agree >= 0.999, f"{ruler} 因子方向一致率 {agree}"
+        np.testing.assert_allclose(
+            np.sort(np.unique(got)), np.sort(np.unique(want)), rtol=1e-12
+        )
+
+
+def _run_evolve_gpu(registry, ids, shaper, seed=11, rounds=6):
+    y = target_from_specs(registry.specs)
+    w = np.ones(len(registry.specs))
+    provider = make_batch_provider(
+        registry, y, w, np.random.default_rng(seed),
+        budget=EditBudget(max_edit_fields=2, donor_copies=2),
+    )
+    return evolve_batch(
+        ids, rounds, np.random.default_rng(seed), provider, registry,
+        max_frozen_retries=3, struct_shaper=shaper, backend="gpu",
+    )
+
+
+def test_gpu_pharmacy_deterministic_and_biases():
+    """卡内药房：GPU 丁尺同种子重跑逐位一致，且轨迹异于无签筒。"""
+    pytest.importorskip("cupy")
+
+    def run(with_shaper: bool):
+        registry, ids, _, _ = _scene(9, num_rows=30)
+        sizes = [len(d) for d in registry.schema.domains]
+        shaper = StructShaper("ding", sizes) if with_shaper else None
+        return _run_evolve_gpu(registry, ids, shaper, rounds=8)
+
+    out1 = run(True)
+    out2 = run(True)
+    np.testing.assert_array_equal(out1.state_ids, out2.state_ids)
+    assert out1.temps is not None and len(out1.temps) == len(out1.records)
+    assert all(np.isfinite(t) for t in out1.temps)

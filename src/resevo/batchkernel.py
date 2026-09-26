@@ -937,6 +937,7 @@ def evolve_batch(
         elif plan.mode == "batch":
             probe_now = probe_interval > 0 and k % probe_interval == 0
             struct_factors = None
+            struct_dev_args: dict = {}
             if struct_shaper is not None:
                 codes_now = plan_provider.codebook.sync()
                 codes_g_now = codes_now[plan.grouped.unique_ids]
@@ -944,10 +945,22 @@ def evolve_batch(
                     codes_g_now, plan.grouped.counts
                 )
                 if struct_shaper.active(round_temp):
-                    struct_factors = struct_shaper.path_factors(
-                        plan.menu, codes_g_now, plan.grouped.counts,
-                        temperature=round_temp,
+                    on_gpu_pharmacy = (
+                        backend == "gpu"
+                        and struct_shaper.ruler in ("bing", "ding")
+                        and ref_shape == "uniform"
                     )
+                    if on_gpu_pharmacy:
+                        # 卡内药房：因子与装配都在 GPU 里做，免 host 慢路
+                        struct_dev_args = dict(
+                            struct_shaper=struct_shaper,
+                            struct_temp=round_temp,
+                        )
+                    else:
+                        struct_factors = struct_shaper.path_factors(
+                            plan.menu, codes_g_now, plan.grouped.counts,
+                            temperature=round_temp,
+                        )
             if backend == "gpu":
                 if gpu_ctx is None:
                     from .gpukernel import GpuBatchContext
@@ -964,6 +977,7 @@ def evolve_batch(
                     probe_grid=16 if probe_now else 0,
                     ref_shape=ref_shape,
                     path_factors=struct_factors,
+                    **struct_dev_args,
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)

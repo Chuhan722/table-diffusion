@@ -679,6 +679,8 @@ class GpuBatchContext:
         probe_grid: int = 0,
         ref_shape: str = "uniform",
         path_factors: np.ndarray | None = None,
+        struct_shaper=None,
+        struct_temp: float = float("nan"),
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
         cp = self.cp
@@ -736,8 +738,8 @@ class GpuBatchContext:
         empty = cp.diff(menu_gpu["offsets"]) == 0
         mass_sum = cp.where(empty, 1.0, mass_sum)
         if path_factors is not None or ref_shape == "distance":
-            # host 端同一实现装配参考分布再上传，双后端逐位一致，
-            # 结构签筒改形也走 host，uniform 无因子时才留在卡上
+            # host 端同一实现装配参考分布再上传（CPU 算好的因子或
+            # distance 形状走这里），uniform 无因子时留在卡上
             from .batchkernel import _reference_arrays
 
             ref_src_np, ref_paths_np = _reference_arrays(
@@ -748,9 +750,22 @@ class GpuBatchContext:
             ref_flat[path_pos] = cp.asarray(ref_paths_np)
             ref_flat[seg_starts] = cp.asarray(ref_src_np)
         elif ref_shape == "uniform":
-            ref_flat[path_pos] = (
+            ref_paths_dev = (
                 (1 - stay_probability) * menu_gpu["mass"] / mass_sum[menu_gpu["group"]]
             )
+            if struct_shaper is not None:
+                # 卡内药房：因子与签筒改形全在 GPU，免 host 往返
+                factors_dev = struct_shaper.path_factors_dev(
+                    menu_gpu, codes_g, counts, temperature=struct_temp,
+                )
+                shaped = ref_paths_dev * factors_dev
+                orig = _seg_sum(cp, ref_paths_dev, menu_gpu["offsets"])
+                new = _seg_sum(cp, shaped, menu_gpu["offsets"])
+                orig = cp.where(empty, 1.0, orig)
+                new = cp.where(empty, 1.0, new)
+                scale = cp.where(new > 0, orig / cp.where(new > 0, new, 1.0), 1.0)
+                ref_paths_dev = shaped * scale[menu_gpu["group"]]
+            ref_flat[path_pos] = ref_paths_dev
             ref_flat[seg_starts] = cp.where(empty, 1.0, stay_probability)
         else:
             raise ValueError(f"未知参考分布形状 {ref_shape}")
