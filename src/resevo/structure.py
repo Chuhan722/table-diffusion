@@ -132,6 +132,7 @@ class StructShaper:
         self.gate = float(gate)
         sizes = [int(k) for k in domain_sizes]
         self._thermo_w = _field_weights(sizes, EMBED_DIM, EMBED_SEED)
+        self._thermo_w_dev = None  # GPU 体温计权重懒上传缓存
         if ruler == "jia":
             hk = np.random.default_rng(HASH_SEED)
             self._keys = hk.integers(
@@ -148,6 +149,29 @@ class StructShaper:
     def temperature(self, codes_g: NDArray[np.int32], counts) -> float:
         """体温计读数，refine.embed_kurtosis 同刻度的加权实现。"""
         return _weighted_kurtosis(_embed_scores(codes_g, self._thermo_w), counts)
+
+    def temperature_dev(self, cp, codes_g_dev, counts_dev) -> float:
+        """体温计 GPU 版，与 host 版统计等价（浮点求和顺序不同）。
+
+        权重表首调上传后缓存，逐字段花式索引累加嵌入分数，
+        加权四矩全程在卡上算，只回传一个标量。跨后端读数差在
+        1e-15 量级，同后端同种子逐位确定（工作笔记第三十二步口径）。
+        """
+        if self._thermo_w_dev is None:
+            self._thermo_w_dev = [
+                cp.asarray(np.ascontiguousarray(w.T)) for w in self._thermo_w
+            ]
+        scores = cp.zeros((codes_g_dev.shape[0], EMBED_DIM))
+        for f, w_t in enumerate(self._thermo_w_dev):
+            scores += w_t[codes_g_dev[:, f]]
+        w = counts_dev.astype(cp.float64)
+        n = w.sum()
+        mean = (scores * w[:, None]).sum(axis=0) / n
+        d = scores - mean
+        var = (d * d * w[:, None]).sum(axis=0) / n
+        sd = cp.sqrt(var)
+        z = d / cp.where(sd > 0, sd, 1.0)
+        return float(((z**4 * w[:, None]).sum(axis=0) / n).mean() - 3.0)
 
     def active(self, temperature: float) -> bool:
         """恒温开关，jia/bing 看门槛，ding 无门槛体温为负即启用。"""

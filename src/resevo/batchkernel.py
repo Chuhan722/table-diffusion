@@ -626,8 +626,7 @@ def sample_batch_next(
                     break
                 edited[j] = schema.domains[j][int(menu.values[p, slot])]
             uid = registry.register_edit(base_id, tuple(edited))
-            for i in rows[pos : pos + int(c)]:
-                out[i] = uid
+            out[rows[pos : pos + int(c)]] = uid
             pos += int(c)
     return out
 
@@ -941,9 +940,17 @@ def evolve_batch(
             if struct_shaper is not None:
                 codes_now = plan_provider.codebook.sync()
                 codes_g_now = codes_now[plan.grouped.unique_ids]
-                round_temp = struct_shaper.temperature(
-                    codes_g_now, plan.grouped.counts
-                )
+                if backend == "gpu":
+                    import cupy as _cp  # backend 校验已保证可用
+
+                    round_temp = struct_shaper.temperature_dev(
+                        _cp, _cp.asarray(codes_g_now),
+                        _cp.asarray(plan.grouped.counts),
+                    )
+                else:
+                    round_temp = struct_shaper.temperature(
+                        codes_g_now, plan.grouped.counts
+                    )
                 if struct_shaper.active(round_temp):
                     on_gpu_pharmacy = (
                         backend == "gpu"

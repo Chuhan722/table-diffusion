@@ -65,7 +65,10 @@ def test_group_state_ids_partitions_rows():
     grouped = group_state_ids(s)
     assert grouped.unique_ids.tolist() == [0, 1, 2]
     assert grouped.counts.tolist() == [2, 1, 3]
-    assert grouped.row_lists == ((1, 4), (3,), (0, 2, 5))
+    assert all(
+        np.array_equal(got, want)
+        for got, want in zip(grouped.row_lists, ((1, 4), (3,), (0, 2, 5)))
+    )
     assert grouped.num_rows == 6
 
 

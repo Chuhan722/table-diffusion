@@ -44,7 +44,7 @@ class GroupedTable:
 
     unique_ids: NDArray[np.int64]  # G，每组的状态编号
     counts: NDArray[np.int64]  # G，每组的行数
-    row_lists: tuple[tuple[int, ...], ...]  # 每组的原行索引
+    row_lists: tuple[NDArray[np.int64], ...]  # 每组的原行索引，组内升序
 
     @property
     def num_groups(self) -> int:
@@ -61,13 +61,13 @@ def group_state_ids(state_ids) -> GroupedTable:
     if s.ndim != 1 or s.size == 0 or not np.issubdtype(s.dtype, np.integer):
         raise ValueError("state_ids 必须是非空一维整数向量")
     uniq, inverse, counts = np.unique(s, return_inverse=True, return_counts=True)
-    lists: list[list[int]] = [[] for _ in range(len(uniq))]
-    for i, g in enumerate(inverse):
-        lists[int(g)].append(i)
+    # 稳定排序按组聚拢行索引，组内保持原行升序，与逐行 append 版逐位同序
+    order = np.argsort(inverse, kind="stable").astype(np.int64)
+    splits = np.split(order, np.cumsum(counts[:-1]))
     return GroupedTable(
         uniq.astype(np.int64),
         counts.astype(np.int64),
-        tuple(tuple(rows) for rows in lists),
+        tuple(splits),
     )
 
 

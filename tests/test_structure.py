@@ -323,3 +323,21 @@ def test_gpu_pharmacy_deterministic_and_biases():
     np.testing.assert_array_equal(out1.state_ids, out2.state_ids)
     assert out1.temps is not None and len(out1.temps) == len(out1.records)
     assert all(np.isfinite(t) for t in out1.temps)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_gpu_thermometer_matches_cpu(seed):
+    """GPU 体温计与 host 读数一致（统计等价口径，容差 1e-10）。"""
+    cp = pytest.importorskip("cupy")
+    _, _, grouped, codes, _, _, _, sizes = _menu_scene(seed)
+    codes_g = codes[grouped.unique_ids]
+    shaper = StructShaper("ding", sizes)
+    want = shaper.temperature(codes_g, grouped.counts)
+    got = shaper.temperature_dev(
+        cp, cp.asarray(codes_g), cp.asarray(grouped.counts)
+    )
+    assert abs(got - want) <= 1e-10 * max(1.0, abs(want))
+    got2 = shaper.temperature_dev(
+        cp, cp.asarray(codes_g), cp.asarray(grouped.counts)
+    )
+    assert got == got2  # 权重缓存后重读逐位确定
