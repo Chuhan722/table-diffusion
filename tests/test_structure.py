@@ -341,3 +341,24 @@ def test_gpu_thermometer_matches_cpu(seed):
         cp, cp.asarray(codes_g), cp.asarray(grouped.counts)
     )
     assert got == got2  # 权重缓存后重读逐位确定
+
+
+def test_ding_diagnose_gate():
+    """初诊门：比钟形基准塌逾 |gate| 才收治。"""
+    shaper = StructShaper("ding", [3, 4, 5])
+    assert shaper.diagnose(-0.06)
+    assert not shaper.diagnose(-0.04)  # adult 型低烧不收治
+    assert not shaper.diagnose(0.1)
+
+
+def test_ding_admission_gate_blocks_all_treatment():
+    """初诊不过门时全程零干预，轨迹与不装签筒逐位一致。"""
+    registry, ids, _, _ = _scene(6, num_rows=30)
+    out0 = _run_evolve(registry, ids, None)
+    registry2, ids2, _, _ = _scene(6, num_rows=30)
+    sizes = [len(d) for d in registry2.schema.domains]
+    # 门压到 -100，任何体温都不过门，资格制必须拦下所有给药
+    shaper = StructShaper("ding", sizes, gate=-100.0)
+    out1 = _run_evolve(registry2, ids2, shaper)
+    np.testing.assert_array_equal(out0.state_ids, out1.state_ids)
+    assert out1.temps is not None and all(np.isfinite(t) for t in out1.temps)

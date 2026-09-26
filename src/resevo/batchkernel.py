@@ -923,6 +923,7 @@ def evolve_batch(
     prev_window_best: float | None = None  # 上一窗口最优损失
     rescue_losses: list[float] = []  # 各救援轮起点损失，衰竭判据用
     last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
+    ding_admitted: bool | None = None  # 丁尺初诊资格，None 表示未初诊
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
@@ -951,7 +952,14 @@ def evolve_batch(
                     round_temp = struct_shaper.temperature(
                         codes_g_now, plan.grouped.counts
                     )
-                if struct_shaper.active(round_temp):
+                if struct_shaper.ruler == "ding":
+                    # 丙门+丁药：首个批量轮初诊定资格，未收治全程零干预
+                    if ding_admitted is None:
+                        ding_admitted = struct_shaper.diagnose(round_temp)
+                    treat = ding_admitted and struct_shaper.active(round_temp)
+                else:
+                    treat = struct_shaper.active(round_temp)
+                if treat:
                     on_gpu_pharmacy = (
                         backend == "gpu"
                         and struct_shaper.ruler in ("bing", "ding")
