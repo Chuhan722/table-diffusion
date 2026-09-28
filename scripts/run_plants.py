@@ -133,6 +133,11 @@ def main() -> None:
         help="平台早停窗口轮数，每窗比一次窗口内最优损失",
     )
     parser.add_argument(
+        "--treat-stop-tol", type=float, default=0.0,
+        help="治疗平台门阈值，平台停触发时在治尺病情深度窗口间改善"
+        "不少于该值即放行续跑，0 关门，需结构尺在场",
+    )
+    parser.add_argument(
         "--rescue-stop-window", type=int, default=0,
         help="救援衰竭早停窗口，按救援次数开窗审计性价比，0 关闭，需 --batched",
     )
@@ -465,6 +470,7 @@ def main() -> None:
             stay_probability=args.stay,
             damping=args.damping,
             struct_shaper=shaper,
+            treat_stop_tol=args.treat_stop_tol,
         )
     elif args.grouped:
         out = evolve_grouped(

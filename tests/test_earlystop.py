@@ -117,3 +117,68 @@ def test_noise_floor_validation():
             registry, ids, weights, stop_threshold=0.0,
             noise_floor=1.0, stop_threshold_noisy=1.0,
         )
+
+
+class _FakeSickShaper:
+    """假尺：恒确诊全一因子零偏置，病情深度按查表递减，专测治疗平台门。"""
+
+    ruler = "ji"
+
+    def __init__(self, sev_seq):
+        self.sev_seq = list(sev_seq)
+        self.calls = 0
+
+    def temperature(self, codes_g, counts):
+        i = min(self.calls, len(self.sev_seq) - 1)
+        self.calls += 1
+        return -self.sev_seq[i]
+
+    def diagnose(self, temperature):
+        return True
+
+    def active(self, temperature):
+        return temperature != 0.0
+
+    def treatment_severity(self, temperature):
+        return abs(temperature) if self.active(temperature) else 0.0
+
+    def path_factors(self, menu, codes_g, counts, temperature=None):
+        return np.ones(menu.num_paths, dtype=np.float64)
+
+
+def test_treat_gate_releases_plateau_while_improving():
+    """病情持续好转时治疗平台门放行，跑过门关时的平台停点。"""
+    seq = [1.0 - 0.02 * i for i in range(40)]
+    r1, ids1, w1, _ = _scene(3, num_rows=30)
+    closed = _evolve(
+        r1, ids1, w1, rounds=40, stop_threshold=1.0, stop_lag=5,
+        struct_shaper=_FakeSickShaper(seq),
+    )
+    assert closed.stop_reason == "loss_plateau"
+    n_closed = len(closed.records)
+    r2, ids2, w2, _ = _scene(3, num_rows=30)
+    opened = _evolve(
+        r2, ids2, w2, rounds=40, stop_threshold=1.0, stop_lag=5,
+        struct_shaper=_FakeSickShaper(seq), treat_stop_tol=0.01,
+    )
+    assert len(opened.records) > n_closed
+
+
+def test_treat_gate_stops_when_treatment_stalls():
+    """病情深度停滞时门不放行，平台停照常触发。"""
+    registry, ids, weights, _ = _scene(3, num_rows=30)
+    out = _evolve(
+        registry, ids, weights, rounds=40, stop_threshold=1.0, stop_lag=5,
+        struct_shaper=_FakeSickShaper([0.5] * 40), treat_stop_tol=0.01,
+    )
+    assert out.stop_reason == "loss_plateau"
+    assert len(out.records) == 10
+
+
+def test_treat_gate_validation():
+    """负阈值报错，开门无尺报错。"""
+    registry, ids, weights, _ = _scene(2, num_rows=20)
+    with pytest.raises(ValueError):
+        _evolve(registry, ids, weights, rounds=5, treat_stop_tol=-0.1)
+    with pytest.raises(ValueError):
+        _evolve(registry, ids, weights, rounds=5, treat_stop_tol=0.5)

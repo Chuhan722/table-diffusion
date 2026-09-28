@@ -234,6 +234,21 @@ class StructShaper:
             return temperature < 0.0
         return self.ruler in ("jia", "bing") and temperature < self.gate
 
+    def treatment_severity(self, temperature: float) -> float:
+        """在治病情深度，治疗平台门用，向零走即好转。
+
+        己尺深度为聚簇偏差绝对值（过冲后回拉同样计好转），
+        丁尺深度为烧度（体温非负即痊愈深度零），其余刻度不参与
+        治疗平台门恒返零。未在治（active 假）深度为零。
+        """
+        if not self.active(temperature):
+            return 0.0
+        if self.ruler == "ji":
+            return abs(temperature)
+        if self.ruler == "ding":
+            return max(0.0, -temperature)
+        return 0.0
+
     def effective_boost(self, temperature: float) -> float:
         """连续药力，boost 的幂律连续化，烧满刻度即满力度。
 
@@ -456,6 +471,18 @@ class CompositeShaper:
 
     def active(self, temperature: tuple) -> bool:
         return any(self._treating(temperature))
+
+    def treatment_severity(self, temperature: tuple) -> float:
+        """各在治尺病情深度之和，治疗平台门用，任何一把仍在好转都算数。"""
+        return float(
+            sum(
+                s.treatment_severity(t)
+                for on, s, t in zip(
+                    self._treating(temperature), self.shapers, temperature
+                )
+                if on
+            )
+        )
 
     def path_factors(
         self, menu, codes_g: NDArray[np.int32], counts,

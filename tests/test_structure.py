@@ -16,6 +16,7 @@ from resevo.refine import embed_kurtosis
 from resevo.structure import (
     BING_DIM,
     BING_SEED,
+    CompositeShaper,
     StructShaper,
     _field_weights,
     _moments_kurt,
@@ -512,3 +513,31 @@ def test_composite_ruler_stops_independently():
     want = ding.path_factors(menu, codes_g, grouped.counts, temperature=temp[0])
     np.testing.assert_allclose(got, want, rtol=1e-12)
     assert not comp.active((0.1, 0.0))  # 双双到站，全停
+
+
+def test_treatment_severity_single_rulers():
+    """病情深度：己尺偏差绝对值，丁尺烧度，到站归零，其余刻度恒零。"""
+    sizes = [4, 4, 4]
+    ji = StructShaper("ji", sizes, ji_target=0.5)
+    assert ji.treatment_severity(-0.8) == pytest.approx(0.8)
+    assert ji.treatment_severity(0.3) == pytest.approx(0.3)
+    assert ji.treatment_severity(0.0) == 0.0
+    ding = StructShaper("ding", sizes)
+    assert ding.treatment_severity(-0.2) == pytest.approx(0.2)
+    assert ding.treatment_severity(0.1) == 0.0
+    assert StructShaper("jia", sizes).treatment_severity(-9.9) == 0.0
+
+
+def test_treatment_severity_composite_sums_treating_only():
+    """组合尺深度为在治尺之和，未收治尺不计，全到站归零。"""
+    sizes = [4, 4]
+    comp = CompositeShaper([
+        StructShaper("ding", sizes),
+        StructShaper("ji", sizes, ji_target=0.5),
+    ])
+    comp._admitted = [True, True]
+    assert comp.treatment_severity((-0.2, -0.8)) == pytest.approx(1.0)
+    comp._admitted = [False, True]
+    assert comp.treatment_severity((-0.2, -0.8)) == pytest.approx(0.8)
+    comp._admitted = [True, True]
+    assert comp.treatment_severity((0.1, 0.0)) == 0.0

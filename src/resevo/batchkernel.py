@@ -849,6 +849,7 @@ def evolve_batch(
     probe_interval: int = 0,
     ref_shape: str = "uniform",
     struct_shaper=None,
+    treat_stop_tol: float = 0.0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -885,6 +886,12 @@ def evolve_batch(
     jia 或 bing 模式体温低于门槛才把菜单路径的结构因子交给核构造改签筒，
     ding 模式无门槛，体温为负即交因子，偏置力度随烧度连续，
     体温逐轮记入返回值 temps（非批量轮记 nan），默认 None 零改变。
+    treat_stop_tol 大于零启用治疗平台门（组合尺战役加噪 s1 验尸定案，
+    平台停出口不问治疗进度，药没喂完被赶下课到站凭运气）：损失平台
+    触发时读在治尺病情深度（treatment_severity，丁烧度己偏差绝对值，
+    多尺相加），本窗口深度比上窗结算点改善不少于该阈值即放行续跑，
+    只拦平台停不拦连败停与救援衰竭停（引擎无棋可走拦也无用），
+    放行打印一行审计，轮数硬顶兜底，默认 0 关门零改变。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -914,6 +921,10 @@ def evolve_batch(
         raise ValueError("探针间隔不能为负")
     if ref_shape not in ("uniform", "distance"):
         raise ValueError(f"未知参考分布形状 {ref_shape}")
+    if treat_stop_tol < 0.0:
+        raise ValueError("治疗平台门阈值不能为负")
+    if treat_stop_tol > 0.0 and struct_shaper is None:
+        raise ValueError("治疗平台门须配合结构尺使用")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -924,6 +935,8 @@ def evolve_batch(
     rescue_losses: list[float] = []  # 各救援轮起点损失，衰竭判据用
     last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
     ding_admitted: bool | None = None  # 确诊制初诊资格（丁/己尺），None 表示未初诊
+    last_sev: float | None = None  # 最近批量轮在治病情深度，治疗平台门用
+    prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
@@ -958,6 +971,9 @@ def evolve_batch(
                     if ding_admitted is None:
                         ding_admitted = struct_shaper.diagnose(round_temp)
                     treat = ding_admitted and struct_shaper.active(round_temp)
+                    if ding_admitted:
+                        # 治疗平台门读数：在治病情深度，到站自动归零
+                        last_sev = struct_shaper.treatment_severity(round_temp)
                 else:
                     treat = struct_shaper.active(round_temp)
                 if treat:
@@ -1061,11 +1077,27 @@ def evolve_batch(
             if (k + 1) % stop_lag == 0:
                 armed = noise_floor > 0.0 and window_best <= noise_floor
                 threshold = stop_threshold_noisy if armed else stop_threshold
-                if prev_window_best is not None and (
+                plateau = prev_window_best is not None and (
                     prev_window_best <= 0.0
                     or (prev_window_best - window_best) / prev_window_best
                     < threshold
+                )
+                if (
+                    plateau
+                    and treat_stop_tol > 0.0
+                    and last_sev is not None
+                    and prev_gate_sev is not None
+                    and prev_gate_sev - last_sev >= treat_stop_tol
                 ):
+                    # 治疗平台门：药还在起效（病情深度仍在明显好转），
+                    # 平台停放行续跑，治疗自身也平台才准停
+                    print(
+                        f"轮 {k} 治疗平台门放行 深度 "
+                        f"{prev_gate_sev:.4f}->{last_sev:.4f}",
+                        flush=True,
+                    )
+                    plateau = False
+                if plateau:
                     return EvolveResult(
                         current, records,
                         "noise_plateau" if armed else "loss_plateau",
@@ -1074,6 +1106,7 @@ def evolve_batch(
                     )
                 prev_window_best = window_best
                 window_best = None
+                prev_gate_sev = last_sev
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
