@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 import time
 from pathlib import Path
@@ -213,18 +214,30 @@ def main() -> None:
     )
     parser.add_argument(
         "--struct-ruler", type=str, default="off",
-        choices=["off", "watch", "jia", "bing", "ding"],
+        choices=["off", "watch", "jia", "bing", "ding", "ji", "ding+ji"],
         help="结构签筒第二级，off 现状零改变，watch 只逐轮记体温不干预，"
         "jia 整行抱团尺，bing 表形状尺，ding 连续恒温尺（bing 无门槛版，"
-        "力度随烧度连续，--struct-gate 转义为满速刻度），需 --batched",
+        "力度随烧度连续，--struct-gate 转义为满速刻度），ji 己尺聚簇尺"
+        "（jia 刻度+确诊制+双向连续药力，基准为真表 Simpson，"
+        "零噪场精确值，加噪场须另花预算买），ding+ji 组合尺"
+        "（两尺各自确诊各自停药，签数因子相乘），需 --batched",
     )
     parser.add_argument(
         "--struct-boost", type=float, default=4.0,
         help="结构签数增幅，变好方向乘该数变坏除该数，须大于 1，默认 4",
     )
     parser.add_argument(
+        "--struct-boost2", type=float, default=0.0,
+        help="组合尺第二把（己尺）的签数增幅，0 时沿用 --struct-boost",
+    )
+    parser.add_argument(
         "--struct-gate", type=float, default=-0.05,
         help="恒温开关门槛，体温计（嵌入峰度）低于该值才启用第二级，默认 -0.05",
+    )
+    parser.add_argument(
+        "--ji-rho", type=float, default=0.0,
+        help="己尺基准的 zCDP 预算，>0 时对真表 Simpson 加高斯噪"
+        "（单行敏感度 2/n），默认 0 为零噪场精确口径",
     )
     args = parser.parse_args()
     if args.gpu and not args.batched:
@@ -386,12 +399,49 @@ def main() -> None:
     if args.struct_ruler != "off":
         from resevo.structure import StructShaper
 
-        shaper = StructShaper(
-            args.struct_ruler,
-            [len(d) for d in schema.domains],
-            boost=args.struct_boost,
-            gate=args.struct_gate,
-        )
+        ji_target = None
+        if args.struct_ruler in ("ji", "ding+ji"):
+            # 己尺基准：真表 Simpson 集中度。--ji-rho 0 为零噪场精确值；
+            # >0 为部署口径，高斯机制买带噪标量（敏感度 2/n）
+            from collections import Counter
+
+            cnts = np.array(list(Counter(real_rows).values()), dtype=np.float64)
+            ji_target = float((cnts**2).sum() / (len(real_rows) ** 2))
+            if args.ji_rho > 0.0:
+                sigma = (2.0 / len(real_rows)) / math.sqrt(2.0 * args.ji_rho)
+                noise_rng = np.random.default_rng(77000 + args.init_seed)
+                noisy = ji_target + float(noise_rng.normal(0.0, sigma))
+                # 物理下界：全行唯一表的 Simpson，防负基准
+                ji_target = max(noisy, 1.0 / len(real_rows))
+                print(
+                    f"己尺基准（买入口径）ρ={args.ji_rho:.4e} σ={sigma:.3e} "
+                    f"S*={ji_target:.6e}"
+                )
+            else:
+                print(f"己尺基准（零噪精确口径）S*={ji_target:.6e}")
+        if args.struct_ruler == "ding+ji":
+            from resevo.structure import CompositeShaper
+
+            sizes = [len(d) for d in schema.domains]
+            shaper = CompositeShaper([
+                StructShaper(
+                    "ding", sizes,
+                    boost=args.struct_boost, gate=args.struct_gate,
+                ),
+                StructShaper(
+                    "ji", sizes,
+                    boost=args.struct_boost2 or args.struct_boost,
+                    gate=args.struct_gate, ji_target=ji_target,
+                ),
+            ])
+        else:
+            shaper = StructShaper(
+                args.struct_ruler,
+                [len(d) for d in schema.domains],
+                boost=args.struct_boost,
+                gate=args.struct_gate,
+                ji_target=ji_target,
+            )
 
     t0 = time.perf_counter()
     if args.batched:
@@ -474,7 +524,11 @@ def main() -> None:
                 row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
                        r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
                 if has_temp:
-                    row.append(out.temps[i])
+                    t = out.temps[i]
+                    row.append(
+                        "|".join(f"{x:.6f}" for x in t)
+                        if isinstance(t, tuple) else t
+                    )
                 writer.writerow(row)
             final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
             if has_temp:

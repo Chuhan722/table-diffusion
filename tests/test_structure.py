@@ -362,3 +362,153 @@ def test_ding_admission_gate_blocks_all_treatment():
     out1 = _run_evolve(registry2, ids2, shaper)
     np.testing.assert_array_equal(out0.state_ids, out1.state_ids)
     assert out1.temps is not None and all(np.isfinite(t) for t in out1.temps)
+
+
+def test_ji_dev_reading_matches_brute_force():
+    """己温读数：组重版 Simpson 相对偏差与展开表暴力值一致。"""
+    _, _, grouped, codes, _, _, _, sizes = _menu_scene(3)
+    codes_g = codes[grouped.unique_ids]
+    rows = _expand(codes_g, grouped.counts)
+    _, cnt = np.unique(rows, axis=0, return_counts=True)
+    s_brute = float(((cnt / len(rows)) ** 2).sum())
+    target = 0.7 * s_brute
+    shaper = StructShaper("ji", sizes, ji_target=target)
+    got = shaper.temperature(codes_g, grouped.counts)
+    assert got == pytest.approx((s_brute - target) / target, rel=1e-12)
+
+
+def test_ji_requires_target_and_direction():
+    """己尺必须给正基准；无己温调因子必须报错。"""
+    with pytest.raises(ValueError):
+        StructShaper("ji", [3, 4, 5])
+    with pytest.raises(ValueError):
+        StructShaper("ji", [3, 4, 5], ji_target=0.0)
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(4)
+    shaper = StructShaper("ji", sizes, ji_target=0.01)
+    with pytest.raises(ValueError):
+        shaper.path_factors(menu, codes[grouped.unique_ids], grouped.counts)
+
+
+def test_ji_factors_flip_with_dev_sign():
+    """双向药：聚不够促聚，过聚同一路径翻转为抑聚，力度随 |dev| 连续。"""
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(5)
+    codes_g = codes[grouped.unique_ids]
+    shaper = StructShaper("ji", sizes, ji_target=0.01)
+    delta = shaper._jia_delta(menu, codes_g, grouped.counts)
+    f_under = shaper.path_factors(menu, codes_g, grouped.counts, temperature=-0.6)
+    f_over = shaper.path_factors(menu, codes_g, grouped.counts, temperature=0.6)
+    s_full = shaper.boost  # |dev|>=己门，满力度
+    assert np.all(f_under[delta > 0] == s_full)
+    assert np.all(f_under[delta < 0] == 1.0 / s_full)
+    assert np.all(f_over[delta > 0] == 1.0 / s_full)
+    assert np.all(f_over[delta < 0] == s_full)
+    assert np.all(f_under[delta == 0] == 1.0)
+    # 连续药力：偏差减半，力度为 boost 的平方根
+    f_half = shaper.path_factors(menu, codes_g, grouped.counts, temperature=-0.25)
+    assert np.all(
+        f_half[delta > 0] == pytest.approx(shaper.boost**0.5, rel=1e-12)
+    )
+
+
+def test_ji_diagnose_gate_and_taper():
+    """己门初诊：缺口过半才收治；药力达标趋一。"""
+    shaper = StructShaper("ji", [3, 4, 5], ji_target=0.01)
+    assert shaper.diagnose(-0.96)  # plants 型大缺口收治
+    assert shaper.diagnose(0.96)  # 过聚同样收治
+    assert not shaper.diagnose(-0.097)  # adult 型小偏差不收治
+    assert shaper.effective_boost(0.0) == pytest.approx(1.0)
+    assert shaper.effective_boost(-1.0) == pytest.approx(shaper.boost)
+    assert shaper.effective_boost(0.25) == pytest.approx(shaper.boost**0.5)
+    assert not shaper.active(0.0)
+    assert shaper.active(-0.3)
+
+
+def test_ji_admission_gate_blocks_all_treatment():
+    """己尺初诊不过门时全程零干预，轨迹与不装签筒逐位一致。"""
+    registry, ids, _, _ = _scene(7, num_rows=30)
+    out0 = _run_evolve(registry, ids, None)
+    registry2, ids2, _, _ = _scene(7, num_rows=30)
+    sizes = [len(d) for d in registry2.schema.domains]
+    # 基准取当前表精确 Simpson 的近旁：初诊偏差远小于己门，必不收治
+    grouped = group_state_ids(ids2)
+    cnt = np.asarray(grouped.counts, dtype=np.float64)
+    s_now = float((cnt**2).sum() / cnt.sum() ** 2)
+    shaper = StructShaper("ji", sizes, ji_target=s_now)
+    out1 = _run_evolve(registry2, ids2, shaper)
+    np.testing.assert_array_equal(out0.state_ids, out1.state_ids)
+    assert out1.temps is not None and all(np.isfinite(t) for t in out1.temps)
+
+
+def test_ji_admitted_changes_trajectory():
+    """己尺收治后（大缺口基准）轨迹须与基线不同，药真的下场了。"""
+    registry, ids, _, _ = _scene(8, num_rows=30)
+    out0 = _run_evolve(registry, ids, None, rounds=8)
+    registry2, ids2, _, _ = _scene(8, num_rows=30)
+    sizes = [len(d) for d in registry2.schema.domains]
+    grouped = group_state_ids(ids2)
+    cnt = np.asarray(grouped.counts, dtype=np.float64)
+    s_now = float((cnt**2).sum() / cnt.sum() ** 2)
+    # 基准放到当前值的 40 倍：初诊 dev≈-0.975 过门收治，全程促聚
+    shaper = StructShaper("ji", sizes, ji_target=40.0 * s_now)
+    out1 = _run_evolve(registry2, ids2, shaper, rounds=8)
+    assert not np.array_equal(out0.state_ids, out1.state_ids)
+
+
+def test_composite_requires_two_and_multiplies_factors():
+    """组合尺至少两把；双在治时因子等于各尺因子之积。"""
+    from resevo.structure import CompositeShaper
+
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(6)
+    codes_g = codes[grouped.unique_ids]
+    ding = StructShaper("ding", sizes, boost=4.0)
+    ji = StructShaper("ji", sizes, boost=8.0, ji_target=0.01)
+    with pytest.raises(ValueError):
+        CompositeShaper([ding])
+    comp = CompositeShaper([ding, ji])
+    temp = (-0.4, -0.8)  # 丁发烧、己大缺口，双双确诊在治
+    assert comp.diagnose(temp)
+    assert comp.active(temp)
+    got = comp.path_factors(menu, codes_g, grouped.counts, temperature=temp)
+    want = ding.path_factors(
+        menu, codes_g, grouped.counts, temperature=temp[0]
+    ) * ji.path_factors(menu, codes_g, grouped.counts, temperature=temp[1])
+    np.testing.assert_allclose(got, want, rtol=1e-12)
+    with pytest.raises(ValueError):
+        comp.path_factors(menu, codes_g, grouped.counts)
+
+
+def test_composite_admission_is_per_ruler():
+    """初诊逐尺独立：丁不收治己收治时，因子只含己尺贡献。"""
+    from resevo.structure import CompositeShaper
+
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(7)
+    codes_g = codes[grouped.unique_ids]
+    ding = StructShaper("ding", sizes, boost=4.0)
+    ji = StructShaper("ji", sizes, boost=8.0, ji_target=0.01)
+    comp = CompositeShaper([ding, ji])
+    temp0 = (0.2, -0.9)  # 丁体温正常（不过门），己大缺口收治
+    assert comp.diagnose(temp0)
+    assert comp._admitted == [False, True]
+    # 丁尺此后即便发烧也不干预（未收治）
+    temp1 = (-0.4, -0.9)
+    got = comp.path_factors(menu, codes_g, grouped.counts, temperature=temp1)
+    want = ji.path_factors(menu, codes_g, grouped.counts, temperature=temp1[1])
+    np.testing.assert_allclose(got, want, rtol=1e-12)
+
+
+def test_composite_ruler_stops_independently():
+    """在治尺到站自动停药：己温归零后因子只剩丁尺贡献。"""
+    from resevo.structure import CompositeShaper
+
+    _, _, grouped, codes, menu, _, _, sizes = _menu_scene(8)
+    codes_g = codes[grouped.unique_ids]
+    ding = StructShaper("ding", sizes, boost=4.0)
+    ji = StructShaper("ji", sizes, boost=8.0, ji_target=0.01)
+    comp = CompositeShaper([ding, ji])
+    comp.diagnose((-0.4, -0.9))  # 双双收治
+    temp = (-0.4, 0.0)  # 己到站
+    assert comp.active(temp)  # 丁还在治
+    got = comp.path_factors(menu, codes_g, grouped.counts, temperature=temp)
+    want = ding.path_factors(menu, codes_g, grouped.counts, temperature=temp[0])
+    np.testing.assert_allclose(got, want, rtol=1e-12)
+    assert not comp.active((0.1, 0.0))  # 双双到站，全停

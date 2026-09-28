@@ -42,6 +42,7 @@ from .refine import EMBED_DIM, EMBED_SEED, HASH_SEED, KURT_GATE_DEFAULT
 STRUCT_BOOST_DEFAULT = 4.0
 BING_SEED = 1234
 BING_DIM = 128
+JI_GATE_DEFAULT = 0.5  # 己尺初诊门，聚簇缺口过半才收治（体检三卷分割证据见类 docstring）
 _CHUNK = 16384
 _CHUNK_DEV = 65536  # GPU 版分块，显存 1GB 级
 
@@ -119,6 +120,18 @@ class StructShaper:
     取 ding 时无门槛，体温为负即产出因子，力度随烧度连续
     （effective_boost），非负体温零干预。所有随机权重表构造一次复用，
     体温计自带独立生成器不碰引擎随机流。
+
+    ruler 取 ji 为己尺（聚簇尺）：刻度复用 jia 的整行抱团增量
+    （哈希差分查目标模式计数，Σc² 精确量非投影，无自我欺骗问题），
+    读数改为 Simpson 集中度对买来基准 ji_target 的相对偏差
+    dev=(S-S*)/S*，负为聚不够正为过聚。与当年落选的 jia 裸尺
+    （无基准盲促、恒力、方向永远朝聚）的区别是三味药理全数移植：
+    确诊制（初诊 |dev| 过 JI_GATE_DEFAULT 才收治——体检实测初始表
+    缺口 nltcs -99% / plants -96% 对 adult -9.7%，门在 0.1~0.9 之间
+    取值分割结论不变）、双向药（dev 正负翻转好坏方向，冲过基准
+    自动回拉）、连续药力（boost^min(1,|dev|/门)，达标即停）。
+    基准 S* 部署口径花隐私预算买（Simpson 单行敏感度 2/n 无高阶
+    放大，非乙案 2C^4/n 之覆辙），零噪场退化为精确真值。
     """
 
     def __init__(
@@ -127,18 +140,22 @@ class StructShaper:
         domain_sizes: Sequence[int],
         boost: float = STRUCT_BOOST_DEFAULT,
         gate: float = KURT_GATE_DEFAULT,
+        ji_target: float | None = None,
     ):
-        if ruler not in ("watch", "jia", "bing", "ding"):
+        if ruler not in ("watch", "jia", "bing", "ding", "ji"):
             raise ValueError(f"未知结构刻度 {ruler}")
         if boost <= 1.0:
             raise ValueError("签数增幅必须大于 1")
+        if ruler == "ji" and (ji_target is None or ji_target <= 0.0):
+            raise ValueError("己尺必须给正的聚簇基准 ji_target")
         self.ruler = ruler
         self.boost = float(boost)
         self.gate = float(gate)
+        self.ji_target = float(ji_target) if ji_target is not None else None
         sizes = [int(k) for k in domain_sizes]
         self._thermo_w = _field_weights(sizes, EMBED_DIM, EMBED_SEED)
         self._thermo_w_dev = None  # GPU 体温计权重懒上传缓存
-        if ruler == "jia":
+        if ruler in ("jia", "ji"):
             hk = np.random.default_rng(HASH_SEED)
             self._keys = hk.integers(
                 1, 2**63, size=(len(sizes), max(sizes)), dtype=np.uint64
@@ -152,8 +169,17 @@ class StructShaper:
             self._bing_w_dev = None  # GPU 权重表懒上传缓存
 
     def temperature(self, codes_g: NDArray[np.int32], counts) -> float:
-        """体温计读数，refine.embed_kurtosis 同刻度的加权实现。"""
+        """体温计读数；己尺改读聚簇偏差，其余刻度为嵌入峰度。"""
+        if self.ruler == "ji":
+            return self._ji_dev(counts)
         return _weighted_kurtosis(_embed_scores(codes_g, self._thermo_w), counts)
+
+    def _ji_dev(self, counts) -> float:
+        """己温：Simpson 集中度对买来基准的相对偏差 (S-S*)/S*。"""
+        c = np.asarray(counts, dtype=np.float64)
+        n = c.sum()
+        s = float((c * c).sum() / (n * n))
+        return (s - self.ji_target) / self.ji_target
 
     def temperature_dev(self, cp, codes_g_dev, counts_dev) -> float:
         """体温计 GPU 版，与 host 版统计等价（浮点求和顺序不同）。
@@ -161,7 +187,13 @@ class StructShaper:
         权重表首调上传后缓存，逐字段花式索引累加嵌入分数，
         加权四矩全程在卡上算，只回传一个标量。跨后端读数差在
         1e-15 量级，同后端同种子逐位确定（工作笔记第三十二步口径）。
+        己尺分支只做组重平方和，天然逐位无悬念。
         """
+        if self.ruler == "ji":
+            c = counts_dev.astype(cp.float64)
+            n = float(c.sum())
+            s = float((c * c).sum()) / (n * n)
+            return (s - self.ji_target) / self.ji_target
         if self._thermo_w_dev is None:
             self._thermo_w_dev = [
                 cp.asarray(np.ascontiguousarray(w.T)) for w in self._thermo_w
@@ -179,28 +211,38 @@ class StructShaper:
         return float(((z**4 * w[:, None]).sum(axis=0) / n).mean() - 3.0)
 
     def diagnose(self, temperature: float) -> bool:
-        """丁尺初诊，首个批量轮体温过门（比钟形基准塌逾 |gate|）才收治。
+        """初诊定资格，丁尺读体温过绝对门，己尺读聚簇缺口过半门。
 
         丙门+丁药确诊制（工作笔记第三十三步）：个人基准的私有化在
         ε=1 预算与万行级表下定价不可行（四阶量单行敏感度 2C^4/n 与
         判断线同量级），退回通用刻度——初诊读初始表体温（后处理免费
         合规），过绝对门定资格，杜绝 adult 型低烧误诊；收治后连续调药
-        照旧。门与丙尺同值零新参数。
+        照旧。门与丙尺同值零新参数。己尺的基准已花钱买到（Simpson
+        敏感度 2/n 定价可行），初诊改判 |dev| 过 JI_GATE_DEFAULT，
+        体检实测健康表缺口 -9.7% 病表 -96%~-99%，门不敏感。
         """
+        if self.ruler == "ji":
+            return abs(temperature) > JI_GATE_DEFAULT
         return temperature < self.gate
 
     def active(self, temperature: float) -> bool:
-        """恒温开关，jia/bing 看门槛，ding 无门槛体温为负即启用。"""
+        """恒温开关，jia/bing 看门槛，ding 无门槛体温为负即启用，
+        己尺偏差非零即启用（药力随偏差连续归零，达标自停）。"""
+        if self.ruler == "ji":
+            return temperature != 0.0
         if self.ruler == "ding":
             return temperature < 0.0
         return self.ruler in ("jia", "bing") and temperature < self.gate
 
     def effective_boost(self, temperature: float) -> float:
-        """丁尺有效力度，boost 的幂律连续化，烧满刻度即满力度。
+        """连续药力，boost 的幂律连续化，烧满刻度即满力度。
 
-        指数 min(1, 烧度/|gate|)，体温非负指数为零力度归一（零干预），
-        非 ding 恒返回满力度 boost。
+        丁尺指数 min(1, 烧度/|gate|)，体温非负指数为零力度归一；
+        己尺指数 min(1, |dev|/己门)，偏差趋零药力趋一（零干预），
+        冲过基准后好坏方向翻转形成回拉。其余刻度恒返回满力度。
         """
+        if self.ruler == "ji":
+            return float(self.boost ** min(1.0, abs(temperature) / JI_GATE_DEFAULT))
         if self.ruler != "ding":
             return self.boost
         heat = max(0.0, -temperature)
@@ -212,11 +254,18 @@ class StructShaper:
     ) -> NDArray[np.float64]:
         """每条菜单路径的签数因子，结构变好乘力度，变坏除力度。
 
-        jia 用整行抱团增量，bing 与 ding 用表形状增量；
-        jia/bing 力度恒为 boost，ding 按体温连续调（effective_boost）。
+        jia 与 ji 用整行抱团增量，bing 与 ding 用表形状增量；
+        jia/bing 力度恒为 boost，ding/ji 按读数连续调（effective_boost）。
+        ji 的好坏方向由己温符号定：聚不够（dev<0）促聚为好，
+        过聚（dev>0）翻转为抑聚，冲过基准自动回拉。
         """
-        if self.ruler == "jia":
-            delta = self._jia_delta(menu, codes_g, counts)
+        if self.ruler in ("jia", "ji"):
+            delta = self._jia_delta(menu, codes_g, counts).astype(np.float64)
+            if self.ruler == "ji":
+                if temperature is None:
+                    raise ValueError("己尺路径因子必须给当前己温定方向")
+                if temperature > 0.0:
+                    delta = -delta
         else:
             delta = self._bing_delta(menu, codes_g, counts)
         strength = (
@@ -359,3 +408,65 @@ class StructShaper:
                     pn = pn * s_new
             out[lo:hi] = _moments_kurt(m_new, n) - cur
         return out
+
+
+class CompositeShaper:
+    """组合尺：多把尺子同岗，各自确诊、各自连续调药、签数因子相乘。
+
+    设计（组合尺战役）：丁尺方差小（三阶方向稳）、己尺上限高（聚簇
+    总量能对准买来的 S*），单尺各有短板；组合让每条菜单路径的因子
+    取各在治尺子因子之积——两尺同判好则强促，判断相反则互相抵消，
+    等价于"会诊一致才下猛药"。确诊制逐尺独立：初诊各自定资格
+    （丁读体温过绝对门，己读聚簇缺口过半门），未收治的尺全程零干预，
+    在治尺到站（active 归零）即自动停药，不影响另一把。读数为各尺
+    读数元组。ruler="composite" 不入 GPU 药房白名单（jia 哈希键
+    不搬卡），因子走 host 药房，读数走各尺原生 GPU/host 路径。
+    """
+
+    ruler = "composite"
+
+    def __init__(self, shapers: list[StructShaper]):
+        if len(shapers) < 2:
+            raise ValueError("组合尺至少两把尺子")
+        self.shapers = list(shapers)
+        self._admitted: list[bool] | None = None
+
+    def temperature(self, codes_g: NDArray[np.int32], counts) -> tuple:
+        return tuple(s.temperature(codes_g, counts) for s in self.shapers)
+
+    def temperature_dev(self, cp, codes_g_dev, counts_dev) -> tuple:
+        return tuple(
+            s.temperature_dev(cp, codes_g_dev, counts_dev) for s in self.shapers
+        )
+
+    def diagnose(self, temperature: tuple) -> bool:
+        """初诊逐尺定资格并记名，任一收治即开确诊档。"""
+        if self._admitted is None:
+            self._admitted = [
+                s.diagnose(t) for s, t in zip(self.shapers, temperature)
+            ]
+        return any(self._admitted)
+
+    def _treating(self, temperature: tuple) -> list[bool]:
+        admitted = self._admitted or [True] * len(self.shapers)
+        return [
+            adm and s.active(t)
+            for adm, s, t in zip(admitted, self.shapers, temperature)
+        ]
+
+    def active(self, temperature: tuple) -> bool:
+        return any(self._treating(temperature))
+
+    def path_factors(
+        self, menu, codes_g: NDArray[np.int32], counts,
+        temperature: tuple | None = None,
+    ) -> NDArray[np.float64]:
+        if temperature is None:
+            raise ValueError("组合尺路径因子必须给各尺读数元组")
+        factors = np.ones(menu.num_paths, dtype=np.float64)
+        for on, s, t in zip(
+            self._treating(temperature), self.shapers, temperature
+        ):
+            if on:
+                factors *= s.path_factors(menu, codes_g, counts, temperature=t)
+        return factors
