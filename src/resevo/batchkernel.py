@@ -877,6 +877,7 @@ def evolve_batch(
     ref_shape: str = "uniform",
     struct_shaper=None,
     treat_stop_tol: float = 0.0,
+    stop_floor: float = 0.0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -938,6 +939,8 @@ def evolve_batch(
         raise ValueError("条目流分块预算不能为负")
     if noise_floor < 0.0:
         raise ValueError("噪声地板不能为负")
+    if stop_floor < 0.0:
+        raise ValueError("硬地板不能为负")
     if stop_threshold_noisy < 0.0:
         raise ValueError("追噪区粗阈值不能为负")
     if (noise_floor > 0.0) != (stop_threshold_noisy > 0.0):
@@ -1087,6 +1090,15 @@ def evolve_batch(
                 f"{result.old_loss - result.expected_loss:.2f} "
                 f"{result.status} 连败 {frozen_streak}",
                 flush=True,
+            )
+        if stop_floor > 0.0 and result.old_loss <= stop_floor:
+            # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
+            # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
+            # 地板由公开机制参数外算（0.5×格子数×计数 sigma²，
+            # 恰为真表对理顺卷损失的理论锚点），压得更深即背错题。
+            # 触发轮只记账不落表，与平台停同语义，默认 0 关闭零改变。
+            return EvolveResult(
+                current, records, "floor_reached", probes, temps
             )
         if rescue_stop_window > 0 and plan.mode == "rescue":
             rescue_losses.append(result.old_loss)

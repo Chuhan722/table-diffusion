@@ -182,3 +182,25 @@ def test_treat_gate_validation():
         _evolve(registry, ids, weights, rounds=5, treat_stop_tol=-0.1)
     with pytest.raises(ValueError):
         _evolve(registry, ids, weights, rounds=5, treat_stop_tol=0.5)
+
+
+def test_stop_floor_triggers_and_default_off():
+    """硬地板停，损失不高于地板即收工，原因 floor_reached；0 关闭零改变。"""
+    registry, ids, weights, _ = _scene(9, num_rows=30)
+    hit = _evolve(registry, ids, weights, rounds=40, stop_floor=1e18)
+    assert hit.stop_reason == "floor_reached"
+    assert len(hit.records) == 1  # 首轮损失即低于天价地板
+    r1, ids1, w1, _ = _scene(9, num_rows=30)
+    r2, ids2, w2, _ = _scene(9, num_rows=30)
+    base = _evolve(r1, ids1, w1)
+    off = _evolve(r2, ids2, w2, stop_floor=0.0)
+    assert [r.old_loss for r in base.records] == [r.old_loss for r in off.records]
+    assert np.array_equal(base.state_ids, off.state_ids)
+
+
+def test_stop_floor_validation():
+    """硬地板为负拒收。"""
+    registry, ids, weights, _ = _scene(9, num_rows=30)
+    import pytest
+    with pytest.raises(ValueError):
+        _evolve(registry, ids, weights, stop_floor=-1.0)

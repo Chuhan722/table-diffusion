@@ -138,6 +138,11 @@ def main() -> None:
         "不少于该值即放行续跑，0 关门，需结构尺在场",
     )
     parser.add_argument(
+        "--stop-floor", type=float, default=0.0,
+        help="硬地板停，损失不高于该值直接收工（一致化卷防背错题，"
+        "地板按公开机制参数外算），0 关闭",
+    )
+    parser.add_argument(
         "--tree-every", type=int, default=0,
         help="树采样输血轮周期，每该数轮走一次带树行候选的小注册表配对轮，"
         "树由考卷二阶答案搭 Chow-Liu 骨架，0 关闭，需 --batched --gpu "
@@ -495,6 +500,7 @@ def main() -> None:
             damping=args.damping,
             struct_shaper=shaper,
             treat_stop_tol=args.treat_stop_tol,
+            stop_floor=args.stop_floor,
         )
     elif args.grouped:
         out = evolve_grouped(
