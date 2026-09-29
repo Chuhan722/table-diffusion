@@ -157,6 +157,16 @@ def main() -> None:
         help="每行候选混入的树行数",
     )
     parser.add_argument(
+        "--nullswap-every", type=int, default=0,
+        help="零空间换位相位周期，每该数轮轮首跑一场保二阶四行换位"
+        "（恒温器峰度门槛 -0.05 与接受率自熄内置），损失逐位不变"
+        "只修高阶聚簇，0 关闭，需 --batched",
+    )
+    parser.add_argument(
+        "--nullswap-after", type=int, default=0,
+        help="换位相位暖场轮数，此前不开场，默认 0 即从首个周期点开始",
+    )
+    parser.add_argument(
         "--rescue-stop-window", type=int, default=0,
         help="救援衰竭早停窗口，按救援次数开窗审计性价比，0 关闭，需 --batched",
     )
@@ -286,6 +296,10 @@ def main() -> None:
         parser.error("--stop-threshold 只支持批量路径，请同时带 --batched")
     if args.rescue_stop_window > 0 and not args.batched:
         parser.error("--rescue-stop-window 只支持批量路径，请同时带 --batched")
+    if args.nullswap_every > 0 and not args.batched:
+        parser.error("--nullswap-every 只支持批量路径，请同时带 --batched")
+    if args.nullswap_after > 0 and args.nullswap_every <= 0:
+        parser.error("--nullswap-after 需要 --nullswap-every 为正")
     if not (0 < args.alpha < 1):
         parser.error("--alpha 必须落在 (0,1)")
     if args.probe_interval > 0 and not args.batched:
@@ -389,6 +403,12 @@ def main() -> None:
 
             tree_sampler = TreeRowSampler().fit(specs, schema)
             print(f"树采样器就绪，骨架边 {len(tree_sampler.cpt)} 条")
+        nullswap = None
+        if args.nullswap_every > 0:
+            from resevo.nullswap import NullSwapPhase
+
+            nullswap = NullSwapPhase(schema)
+            print("换位相位就绪，门槛 -0.05 地板 0.6%")
         provider = make_batch_provider(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
@@ -501,6 +521,9 @@ def main() -> None:
             struct_shaper=shaper,
             treat_stop_tol=args.treat_stop_tol,
             stop_floor=args.stop_floor,
+            nullswap_phase=nullswap,
+            nullswap_every=args.nullswap_every,
+            nullswap_after=args.nullswap_after,
         )
     elif args.grouped:
         out = evolve_grouped(

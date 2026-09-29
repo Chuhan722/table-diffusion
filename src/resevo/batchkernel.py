@@ -878,6 +878,9 @@ def evolve_batch(
     struct_shaper=None,
     treat_stop_tol: float = 0.0,
     stop_floor: float = 0.0,
+    nullswap_phase=None,
+    nullswap_every: int = 0,
+    nullswap_after: int = 0,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -920,6 +923,12 @@ def evolve_batch(
     多尺相加），本窗口深度比上窗结算点改善不少于该阈值即放行续跑，
     只拦平台停不拦连败停与救援衰竭停（引擎无棋可走拦也无用），
     放行打印一行审计，轮数硬顶兜底，默认 0 关门零改变。
+    nullswap_phase 配 nullswap_every 为正启用零空间换位相位（第四十一步）：
+    每该数轮的轮首把当前表码矩阵交给 NullSwapPhase 跑一场保二阶四行
+    换位（恒温器门槛与接受率自熄内置在相位对象里），动过的行注册回
+    全局注册表落回原位。换位构造性不动全部一阶二阶，损失逐位不变，
+    不产轮记录不碰引擎随机流；相位仅批量提供器可用（需码本）。
+    nullswap_after 为暖场轮数，此前不开场。默认 None 加 0 关闭零改变。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -955,6 +964,12 @@ def evolve_batch(
         raise ValueError("治疗平台门阈值不能为负")
     if treat_stop_tol > 0.0 and struct_shaper is None:
         raise ValueError("治疗平台门须配合结构尺使用")
+    if nullswap_every < 0:
+        raise ValueError("换位相位周期不能为负")
+    if nullswap_after < 0:
+        raise ValueError("换位相位暖场轮数不能为负")
+    if (nullswap_phase is not None) != (nullswap_every > 0):
+        raise ValueError("换位相位对象与周期须同时给出")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -969,6 +984,36 @@ def evolve_batch(
     prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
     for k in range(num_rounds):
+        if (
+            nullswap_phase is not None
+            and k > 0
+            and k >= nullswap_after
+            and k % nullswap_every == 0
+            and not nullswap_phase.dead
+        ):
+            codebook = getattr(plan_provider, "codebook", None)
+            if codebook is None:
+                raise ValueError("换位相位需要批量提供器的码本")
+            codes_now = np.asarray(codebook.sync())[current]
+            new_codes, ns_stats = nullswap_phase.run(codes_now)
+            if new_codes is not None:
+                moved = (new_codes != codes_now).any(axis=1)
+                schema_ns = registry.schema
+                moved_tuples = [
+                    tuple(schema_ns.domains[f][int(c)] for f, c in enumerate(row))
+                    for row in new_codes[moved]
+                ]
+                gids = registry.register_table(moved_tuples)
+                current = current.copy()
+                current[np.flatnonzero(moved)] = gids
+            if progress_every > 0 and "skipped" not in ns_stats:
+                print(
+                    f"轮 {k} 换位相 峰度 {ns_stats['kurt']:.3f}"
+                    f"->{ns_stats.get('kurt_after', ns_stats['kurt']):.3f} "
+                    f"提议 {ns_stats['proposals']} 接受 {ns_stats['accepts']}"
+                    f"{' 熄火' if ns_stats['dead'] else ''}",
+                    flush=True,
+                )
         plan = plan_provider(current, k, frozen_streak)
         round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
         if plan.mode in ("rows", "rescue", "tree"):
