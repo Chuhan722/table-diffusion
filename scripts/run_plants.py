@@ -138,6 +138,20 @@ def main() -> None:
         "不少于该值即放行续跑，0 关门，需结构尺在场",
     )
     parser.add_argument(
+        "--tree-every", type=int, default=0,
+        help="树采样输血轮周期，每该数轮走一次带树行候选的小注册表配对轮，"
+        "树由考卷二阶答案搭 Chow-Liu 骨架，0 关闭，需 --batched --gpu "
+        "--pairing 且 --pair-rescue-rows 为正",
+    )
+    parser.add_argument(
+        "--tree-pool", type=int, default=256,
+        help="每个输血轮的树采样池行数",
+    )
+    parser.add_argument(
+        "--tree-per-row", type=int, default=2,
+        help="每行候选混入的树行数",
+    )
+    parser.add_argument(
         "--rescue-stop-window", type=int, default=0,
         help="救援衰竭早停窗口，按救援次数开窗审计性价比，0 关闭，需 --batched",
     )
@@ -364,6 +378,12 @@ def main() -> None:
         donor_copies=args.donor_copies, donor_fields_max=args.donor_fields_max,
     )
     if args.batched:
+        tree_sampler = None
+        if args.tree_every > 0:
+            from resevo.rowtree import TreeRowSampler
+
+            tree_sampler = TreeRowSampler().fit(specs, schema)
+            print(f"树采样器就绪，骨架边 {len(tree_sampler.cpt)} 条")
         provider = make_batch_provider(
             registry, y, w,
             np.random.default_rng(args.menu_seed),
@@ -381,6 +401,10 @@ def main() -> None:
             select_rng=np.random.default_rng(args.select_seed),
             work_below_step=args.work_below,
             retry_select=args.retry_select,
+            tree_sampler=tree_sampler,
+            tree_every=args.tree_every,
+            tree_pool=args.tree_pool,
+            tree_per_row=args.tree_per_row,
         )
     elif args.grouped:
         provider = make_grouped_provider(

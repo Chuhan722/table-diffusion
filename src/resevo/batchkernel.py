@@ -635,7 +635,7 @@ def sample_batch_next(
 class BatchRoundPlan:
     """批量提供器每轮的计划，批量路径行级回退路径或子集救援路径三选一。"""
 
-    mode: str  # "batch" 或 "rows" 或 "rescue"
+    mode: str  # "batch" 或 "rows" 或 "rescue" 或 "tree"
     workload: Workload
     grouped: GroupedTable | None = None
     menu: BatchMenu | None = None
@@ -664,6 +664,10 @@ def make_batch_provider(
     select_rng: np.random.Generator | None = None,
     work_below_step: float = 0.0,
     retry_select: bool = False,
+    tree_sampler=None,
+    tree_every: int = 0,
+    tree_pool: int = 256,
+    tree_per_row: int = 2,
 ):
     """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
 
@@ -699,6 +703,13 @@ def make_batch_provider(
         raise ValueError("救援行数不能为负")
     if rescue_after < 1:
         raise ValueError("救援门槛必须为正")
+    if tree_every < 0 or tree_pool < 1 or tree_per_row < 1:
+        raise ValueError("树采样轮参数必须为正")
+    if tree_every > 0:
+        if tree_sampler is None:
+            raise ValueError("开树采样轮必须给树采样器")
+        if not (pairing and defer_workload and pair_rescue_rows > 0):
+            raise ValueError("树采样轮复用子集救援管线，需要惰性配对与救援行数")
     if not (0.0 <= work_random_frac <= 1.0):
         raise ValueError("随机名额比例必须落在 [0,1]")
     sel_rng = select_rng if select_rng is not None else np.random.default_rng(0)
@@ -772,14 +783,30 @@ def make_batch_provider(
             frozen_streak >= rescue_after
             and (frozen_streak - rescue_after) % pairing_backoff == 0
         )
-        if (pairing and defer_workload and pair_rescue_rows > 0 and rescue_turn):
+        # 树采样输血轮（整行采样棋步战役）：平台场景批量轮每轮微降
+        # 永不连败，救援重炮全程没有出场机会，输血轮按轮数周期强制
+        # 上场，不等连败。轮走救援同一条小注册表配对管线，候选在编辑
+        # 菜单之外混入树采样整行，接受照旧看残差核算，引擎不想吃自然
+        # 全落回保持。撞上真救援轮时合并出场并记名救援，衰竭账本不缺账。
+        tree_turn = (
+            tree_every > 0
+            and round_index > 0
+            and round_index % tree_every == 0
+        )
+        if (
+            pairing and defer_workload and pair_rescue_rows > 0
+            and (rescue_turn or tree_turn)
+        ):
+            extra = tree_sampler.sample(menu_rng, tree_pool) if tree_turn else None
             small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
                 registry, state_ids, target, weights, menu_rng,
                 pair_rescue_rows, budget, joint_field_sets, pairing_budget,
                 use_gpu=rescue_gpu,
+                extra_rows=extra, extra_per_row=tree_per_row,
             )
             return BatchRoundPlan(
-                "rescue", wl, supports=sups, rescue_ids=sub_ids,
+                "rescue" if rescue_turn else "tree",
+                wl, supports=sups, rescue_ids=sub_ids,
                 rescue_sub_idx=sub_idx, rescue_registry=small,
             )
         if not structure_box:
@@ -941,7 +968,7 @@ def evolve_batch(
     for k in range(num_rounds):
         plan = plan_provider(current, k, frozen_streak)
         round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
-        if plan.mode in ("rows", "rescue"):
+        if plan.mode in ("rows", "rescue", "tree"):
             kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
             result = build_kernel(
                 plan.workload, kernel_ids, plan.supports,
@@ -1117,7 +1144,7 @@ def evolve_batch(
         frozen_streak = 0
         if plan.mode == "rows":
             current = sample_next(result, current, rng)
-        elif plan.mode == "rescue":
+        elif plan.mode in ("rescue", "tree"):
             # 小注册表编号抽样，动过的行翻译回全局编号落回全表对应位置，
             # 全局注册仍走惰性路径不物化特征，小注册表出作用域即弃
             new_small = sample_next(result, plan.rescue_ids, rng)

@@ -717,6 +717,33 @@ def make_paired_provider(
     return provider
 
 
+def _inject_extra_rows(
+    singles: list[BlockSupport],
+    pool_ids,
+    per_row: int,
+    rng: np.random.Generator,
+) -> list[BlockSupport]:
+    """把外援整行状态混进每行候选，树采样棋步的入场通道。
+
+    每行从外援池不放回抽 per_row 个整行状态追加为候选后继，
+    迁移率与生成路径同为 1 份，与编辑候选完全平权，
+    重复候选与落回源状态由规范化阶段照旧合并丢弃。
+    候选生成不看残差的红线不破，外援池在上游由考卷统计量生成。
+    """
+    k = min(int(per_row), len(pool_ids))
+    if k < 1:
+        return singles
+    out = []
+    for sp in singles:
+        pick = rng.choice(len(pool_ids), size=k, replace=False)
+        extra = tuple((int(pool_ids[int(j)]),) for j in pick)
+        mob = sp.mobility if sp.mobility is not None else (1.0,) * len(sp.outcomes)
+        out.append(
+            BlockSupport(sp.rows, sp.outcomes + extra, tuple(mob) + (1.0,) * k)
+        )
+    return out
+
+
 def build_rescue_menu(
     registry: StateRegistry,
     state_ids,
@@ -728,6 +755,8 @@ def build_rescue_menu(
     joint_field_sets: list[tuple[int, ...]] | None = None,
     pairing_budget: PairingBudget | None = None,
     use_gpu: bool = False,
+    extra_rows: list[tuple[str, ...]] | None = None,
+    extra_per_row: int = 2,
 ):
     """冻结救援轮的子集配对菜单，临时小注册表隔离特征物化。
 
@@ -757,6 +786,11 @@ def build_rescue_menu(
         tuples_from_ids(small, sub_ids), small.schema, small, rng,
         budget, joint_field_sets,
     )
+    if extra_rows:
+        # 外援行注册进小注册表成合法状态，随后与编辑候选同台配对，
+        # extra_rows 为 None 不碰随机流，旧救援轮逐位不变
+        pool_ids = small.register_table(list(extra_rows))
+        singles = _inject_extra_rows(singles, pool_ids, extra_per_row, rng)
     menu = build_paired_supports(
         sub_ids, singles, small, y_prime, weights, rng, pairing_budget,
     )
