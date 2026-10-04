@@ -75,9 +75,19 @@ def main() -> None:
     parser.add_argument("--epsilon", type=float, required=True)
     parser.add_argument("--delta", type=float, default=1e-5)
     parser.add_argument("--noise-seed", type=int, required=True)
+    parser.add_argument(
+        "--reserve-rho", type=float, default=0.0,
+        help="从总预算预留给结构基准 S* 购买的 rho（统一账本口径），考卷只分剩余预算",
+    )
+    parser.add_argument(
+        "--tag", default="",
+        help="目录名标记，插在 eps 段后，如 u 得 <data>_eps1u_s<seed>，防覆盖旧卷",
+    )
     args = parser.parse_args()
     if args.epsilon <= 0 or not (0 < args.delta < 1):
         raise SystemExit("epsilon 须为正，delta 须落在 (0,1)")
+    if args.reserve_rho < 0:
+        raise SystemExit("reserve-rho 须非负")
 
     src_dir = REPO / "data" / args.data
     found = sorted(src_dir.glob("measured_*query.json"))
@@ -98,7 +108,10 @@ def main() -> None:
     pairs = list(dict.fromkeys(pair_of))
     m = len(pairs)
 
-    rho = float(cdp_rho(epsilon=args.epsilon, delta=args.delta))
+    rho_total = float(cdp_rho(epsilon=args.epsilon, delta=args.delta))
+    rho = rho_total - args.reserve_rho
+    if rho <= 0:
+        raise SystemExit("预留后考卷预算须为正")
     rho_per = rho / m
     sensitivity = np.sqrt(2.0) / n_rows
     sigma = float(np.sqrt(sensitivity**2 / (2.0 * rho_per)))
@@ -110,16 +123,20 @@ def main() -> None:
     noisy_freq = np.clip(raw, 0.0, 1.0)
 
     eps_txt = f"{args.epsilon:g}".replace(".", "p")
-    out_name = f"{args.data}_eps{eps_txt}_s{args.noise_seed}"
+    out_name = f"{args.data}_eps{eps_txt}{args.tag}_s{args.noise_seed}"
     out_dir = REPO / "data" / out_name
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src_dir / f"{args.data}.csv", out_dir / f"{out_name}.csv")
 
     for q, nf in zip(queries, noisy_freq):
         q["result"] = float(nf * n_rows)
+    reserve_txt = (
+        f"总 rho {rho_total:.6g} 预留 {args.reserve_rho:.6g} 给 S* 购买，考卷 rho {rho:.6g}，"
+        if args.reserve_rho > 0 else f"rho {rho:.6g}，"
+    )
     payload["description"] = (
         payload.get("description", "")
-        + f" 噪声版，epsilon {args.epsilon} delta {args.delta} rho {rho:.6g}，"
+        + f" 噪声版，epsilon {args.epsilon} delta {args.delta} {reserve_txt}"
         f"每边际 rho {rho_per:.6g}，频率 sigma {sigma:.6g}，噪声种子 {args.noise_seed}，"
         "高斯加噪后频率裁剪到零一乘 N 回计数，口径同官方 GSD oneshot。"
     )
@@ -132,7 +149,8 @@ def main() -> None:
         fh.write(
             f"# {out_name} 噪声考卷\n\n"
             f"1. 来源，data/{args.data} 的训练卷加高斯噪声，表原样复制，md5 {md5}。\n"
-            f"2. 口径，epsilon {args.epsilon}，delta {args.delta}，cdp_rho 换算 rho {rho:.6g}，"
+            f"2. 口径，epsilon {args.epsilon}，delta {args.delta}，cdp_rho 换算总 rho {rho_total:.6g}，"
+            f"预留 {args.reserve_rho:.6g} 给结构基准 S* 购买，考卷 rho {rho:.6g}，"
             f"边际数 {m} 均分，每边际 rho {rho_per:.6g}，灵敏度 根号2/{n_rows}，"
             f"频率 sigma {sigma:.6g}，计数 sigma {sigma * n_rows:.4f}。\n"
             f"3. 噪声种子 {args.noise_seed}，numpy default_rng，按考卷条目顺序逐格一次生成。\n"

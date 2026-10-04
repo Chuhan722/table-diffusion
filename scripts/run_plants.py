@@ -210,6 +210,11 @@ def main() -> None:
         help="供体复制每条路径最多复制的字段数，批量路径表示上限 3，默认 2 为现状",
     )
     parser.add_argument(
+        "--donor-rule", action="store_true",
+        help="供体档位规则：复用已结算 S*（同一笔学费），过信噪比门且 S*>1/32"
+             "（抄 32 份期望命中≥1 份的机理阈值）则自动加码 d32/dfm3，否则守默认",
+    )
+    parser.add_argument(
         "--max-edit-fields", type=int, default=8,
         help="单属性修改每组抽的字段数上限，0 关闭单字段路径只留保结构编辑，默认 8 为现状",
     )
@@ -390,6 +395,40 @@ def main() -> None:
         init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
     ids = registry.register_table(init_rows)
 
+    # 己尺基准 S* 统一结算（买断一次，己尺与供体档位共用同一读数）：
+    # --ji-rho 0 为零噪场精确值；>0 为部署口径，高斯机制买带噪标量（敏感度 2/n）
+    ji_target = None
+    if args.struct_ruler in ("ji", "ding+ji") or args.donor_rule:
+        from collections import Counter
+
+        cnts = np.array(list(Counter(real_rows).values()), dtype=np.float64)
+        ji_target = float((cnts**2).sum() / (len(real_rows) ** 2))
+        if args.ji_rho > 0.0:
+            sigma = (2.0 / len(real_rows)) / math.sqrt(2.0 * args.ji_rho)
+            noise_rng = np.random.default_rng(77000 + args.init_seed)
+            noisy = ji_target + float(noise_rng.normal(0.0, sigma))
+            # 物理下界：全行唯一表的 Simpson，防负基准
+            ji_target = max(noisy, 1.0 / len(real_rows))
+            snr = ji_target / sigma
+            print(
+                f"己尺基准（买入口径）ρ={args.ji_rho:.4e} σ={sigma:.3e} "
+                f"S*={ji_target:.6e} 信噪比={snr:.2f}"
+            )
+            # 信噪比门：买到的基准须统计显著（S* > 3σ）才可信，
+            # 判据只依赖已购标量与公开 σ，零额外预算；不过门弃用己尺
+            if snr <= 3.0:
+                ji_target = None
+                print("信噪比门：S* ≤ 3σ，基准不可信，己尺弃用（学费沉没）")
+        else:
+            print(f"己尺基准（零噪精确口径）S*={ji_target:.6e}")
+    if args.donor_rule:
+        if ji_target is not None and ji_target > 1.0 / 32.0:
+            args.donor_copies = 32
+            args.donor_fields_max = 3
+            print(f"供体档位门：S*={ji_target:.4e} > 1/32，高重复表，供体加码 d32/dfm3")
+        else:
+            print("供体档位门：S* 不可信或低重复，供体守默认档")
+
     factory = make_paired_provider if args.pairing else make_edit_provider
     pairing_budget = PairingBudget(max_pairs=args.max_pairs)
     edit_budget = EditBudget(
@@ -453,27 +492,12 @@ def main() -> None:
     if args.struct_ruler != "off":
         from resevo.structure import StructShaper
 
-        ji_target = None
-        if args.struct_ruler in ("ji", "ding+ji"):
-            # 己尺基准：真表 Simpson 集中度。--ji-rho 0 为零噪场精确值；
-            # >0 为部署口径，高斯机制买带噪标量（敏感度 2/n）
-            from collections import Counter
-
-            cnts = np.array(list(Counter(real_rows).values()), dtype=np.float64)
-            ji_target = float((cnts**2).sum() / (len(real_rows) ** 2))
-            if args.ji_rho > 0.0:
-                sigma = (2.0 / len(real_rows)) / math.sqrt(2.0 * args.ji_rho)
-                noise_rng = np.random.default_rng(77000 + args.init_seed)
-                noisy = ji_target + float(noise_rng.normal(0.0, sigma))
-                # 物理下界：全行唯一表的 Simpson，防负基准
-                ji_target = max(noisy, 1.0 / len(real_rows))
-                print(
-                    f"己尺基准（买入口径）ρ={args.ji_rho:.4e} σ={sigma:.3e} "
-                    f"S*={ji_target:.6e}"
-                )
-            else:
-                print(f"己尺基准（零噪精确口径）S*={ji_target:.6e}")
-        if args.struct_ruler == "ding+ji":
+        if args.struct_ruler == "ding+ji" and ji_target is None and args.ji_rho > 0.0:
+            shaper = StructShaper(
+                "ding", [len(d) for d in schema.domains],
+                boost=args.struct_boost, gate=args.struct_gate,
+            )
+        elif args.struct_ruler == "ding+ji":
             from resevo.structure import CompositeShaper
 
             sizes = [len(d) for d in schema.domains]
