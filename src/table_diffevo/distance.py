@@ -285,17 +285,19 @@ def _pairwise_distance_torch(
 
         else:
             # 类别块：相同为 0，不同为 1
-            # 字符串无法直接转 tensor，需要先映射为整数
+            # 字符串无法直接转 tensor，需要先映射为整数。
+            # 用 pd.factorize（C 实现哈希表）向量化编码，替代逐元素 Python
+            # 字典查询（旧实现在 16181 行 × 16 属性下每轮 ~26 万次查询，
+            # 占距离段 92% 耗时）。整数标签仅用于 != 比较，任何单射编码
+            # 给出相同的 0/1 结果，因此输出与旧实现逐位一致。
             values_current = rows[attr.name].values  # (N,)
             values_donors = donor_rows[attr.name].values  # (M,)
 
-            # 创建值到整数的映射
-            unique_vals = list(set(values_current) | set(values_donors))
-            val_to_int = {v: i for i, v in enumerate(unique_vals)}
-
-            # 映射为整数
-            current_ints = np.array([val_to_int[v] for v in values_current])
-            donor_ints = np.array([val_to_int[v] for v in values_donors])
+            combined_codes, _ = pd.factorize(
+                np.concatenate([values_current, values_donors])
+            )
+            current_ints = combined_codes[: len(values_current)].astype(np.int32)
+            donor_ints = combined_codes[len(values_current):].astype(np.int32)
 
             # 转为 tensor
             values_current_t = torch.tensor(current_ints, dtype=torch.int32, device=device)

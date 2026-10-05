@@ -2,7 +2,39 @@
 
 ## 当前阶段
 
-### 最新暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
+### 最新暂停点：PR #73 审查回应——值引导核合同据实与审计防伪（2026-09-09 中午）
+
+PR #73（值引导核 + GSD 无噪声基线，base=master 全链视图）收到审查（CHANGES_REQUESTED），
+本节记录处置（HEAD 23fd211）：
+
+- **F1（合同伪造，审查复现属实）**：`value_guidance_strength>0` 让残差经逐格增益进入转移核
+  值分布，但产物合同仍硬编码 `transition_kernel='blind_independent'`、
+  `residual_driving_channels=['fitness']`，审计器照常放行——fail-closed 合同失真。修复：
+  - 合同生成据实（`evolution.py`）：λ>0 追加 `'value_guidance'` 通道、核名 `'value_guided'`；
+    块倾斜同族问题一并修（`block_score_tilt_strength>0` → `'block_score_tilt'` 通道、
+    核名 `'block_score_tilted'`）。
+  - 审计器（`fitness_only.py`）按请求配置重算期望合同逐字段对拍，伪造声明记 failure；
+    补 `value_guidance_strength` 的 params 对拍与 `value_guidance` 诊断段核验（此前缺失）。
+  - 引导核下 equal 对照臂无法定义（equal 禁用一切残差信号），单臂 equal 与配对归因入口
+    fail-closed 拒绝；模块 docstring 据实声明两类核边界。
+  - 新增 `tests/test_fitness_only_contract_guided.py` 10 项（据实合同/防伪/λ 谎报/诊断缺失/
+    adaptive_scale 与 tilt bounds 谎报/equal 与配对拒绝/λ=0 回归锚）。审计器另补值引导全参数
+    （adaptive_scale/drop_donor/warmup）与 tilt bounds 的 params+诊断段对拍——归一化方式是
+    V9 型运行的科学口径核心，谎报会让不同实验设定的产物不可分辨。历史正式产物全部 λ=0，
+    合同口径逐字段不变。
+- **定位声明**：值引导核**不是 fitness-only**，是"生成前分布塑形"路线——与"残差只经适应度
+  驱动选择"是两条不同假说，正式定位在 Issue #53 归档；PR 正文已加定位声明节。
+- **F2（基线环境 89 failed）**：审查测的旧 head 未含前置栈修复；当前 head 已 merge #71
+  最新并补齐漏网（#72 节），四态矩阵全绿，数字见 PR #73 回复。
+- **F3**：GSD runner 个人硬编码路径改 `TD_GSD_REPO`/`TD_GSD_PYTHON` 环境变量可配，
+  上游 commit 与补丁 SHA 对拍不变。
+- **科学定位（采纳）**："不可微/自定义查询差异化"对 GSD 零阶方法不成立（仅相对梯度系
+  maxent/图模型有效）；无门控设计剩余假说空间在 DP 加噪赛道；V9(max) 6.57e-5 为单种子
+  （9908）诊断值。正文对应改写。
+- **结构**：#73 与 #72 共享 head，历史交织不改写；按审查建议转 Draft 作为 GSD/值引导主题
+  审查窗口，前置栈 #69→#76→#70→#71→#72 合入后自动瘦身再转 Ready。
+
+### 上一暂停点：Stage 6E 三核自动停止正式比较已收口，PR #69 审查修复完成，gap_l1 缺口核研究线收束（2026-09-08）
 
 > 本节把此前只存在于 PR #69 正文的 Stage 6E 正式结果与证据身份落入仓库文档（审查阻塞项 B4），
 > 记录本轮审查修复（B1--B5）的处置与理由，并声明剩余缺口核（gap_l1 B+C）研究线的最终定位：
@@ -67,6 +99,1110 @@ PR #69 审查修复记录（对应审查阻塞项）：
 
 真正下一步：以上修复经用户过目批准后提交并回复 PR #69；值引导主线（V12 配对塑形设计）继续在
 PR #73 工作区推进。
+
+---
+
+
+### 上一暂停点：距离编码向量化落地——稳态单轮 42ms→24.9ms（累计 8.2×），全设备逐位一致（2026-09-06 晚9）
+
+> 结论一句话：`_pairwise_distance_torch` 类别块编码由"每轮 Python set/dict
+> 逐元素映射（16 属性 × 16181 行 ≈ 26 万次字典查询，实测 17.9ms，占距离段
+> 92%）"改为 `pd.factorize` 向量化（C 哈希表）。整数标签仅参与 `!=` 比较，
+> 任何单射编码结果相同 → **新旧实现逐位一致**（git HEAD 旧实现 vs 新实现，
+> cpu/cuda/numpy 三设备 × 子集 (16,16181) / legacy 全表 (2000,2000) 两形状
+> 全部 `torch.equal`/`array_equal` 为 True；numpy 路径本次未改动）。方案由
+> 用户拍板（原计划"编码缓存+增量更新"实测 2.4ms 反而慢于无状态 factorize
+> 1.8ms 且复杂得多，故弃用）。**实测提速**（同计时脚本、正式 all2way-pool
+> 配置、稳态 ρ=0.001、GPU 1）：距离段 19.1ms → 2.2ms，稳态单轮 42ms →
+> **24.9ms**，相对最初 204ms 累计 **8.2×**。7000 轮正式跑预计 ~3 分钟。
+> 剩余大头：Python/pandas 杂项 13.2ms（53%）、查询评估 6.3ms（25%）。
+
+**实现**：
+- `distance.py`：torch 路径类别块 set/dict Python 循环 → `pd.factorize`
+  （约 10 行，无状态、无缓存、不依赖 schema values、任意值可编码）。
+- 验证：距离/lottery 相关 29 项 + 相邻回归 574 项全过（含 lottery 12 项
+  等价合同）；HEAD 8 个历史遗留守卫失败与本次无关。
+
+### 上一暂停点：先抽签后选供体落地——稳态单轮 204ms→42ms（4.9×），numpy 逐位 / CUDA 数值等价（2026-09-06 晚8）
+
+> 结论一句话：`lottery_first_donor_selection` 开关实现并全量验证——同种子下
+> numpy/torch-cpu 与旧路径**逐位一致**（终表 sha、loss 轨迹、主 RNG 终态；
+> nltcs 16181 行全规模 numpy 3 轮复核通过）；CUDA 为**平行轨迹等价**（随机流
+> 终态、初始表、rho 时间表、逐轮中签行集合逐位一致；loss 轨迹自首分歧起
+> 按混沌动力学指数分离，**相对差随轮数增长无上界**——nltcs 60 轮实测
+> ≤4.4e-4 仅为该短视界下的观测值，外部审查 400 轮实测最大 1.57%，不构成
+> 阈值承诺）——float32
+> 行归约切块顺序随矩阵形状变化（(P,N) 子集 vs (N,N) 全表），属 Stage 6
+> "numpy 逐位 + cuda 数值等价"既有惯例，用户已拍板接受。**实测提速**（同
+> 计时脚本、正式 all2way-pool 配置、稳态 ρ=0.001、GPU 1）：稳态单轮
+> 204ms → 42ms（4.9×），供体机制 171ms → 20ms；剩余大头是长方形距离的
+> 全表 one-hot 编码（19ms）与 Python/pandas 杂项（13ms）。7000 轮正式跑
+> 预计 22 分钟 → **~5 分钟**。
+
+**实现**：
+- `sampling.py`：`compute_sampling_probs` 加 `self_indices`（长方形子集 +
+  显式自身列屏蔽）；`sample_donors` 加 `uniforms`（预抽均匀数，不耗随机流）。
+- `update.py`：`sample_update_random_plan`/`evolve_step` 加可选 `participate`
+  （外部参与签，调用方须同流同槽位抽取）。
+- `evolution.py`：`run_evolution` 加 `lottery_first_donor_selection`
+  （fail-closed：要求 max_retries=0、无方向倾斜、gap/gibbs 均 0）；主循环
+  新分支按原槽位先抽 u_donor、参与签，再只对中签行算距离/概率/供体，
+  非中签行填身份供体；诊断口径 participants_only（`params` 带
+  `donor_diagnostics_scope` 标记），零中签轮记 None。
+- `fitness_only.py`：config 字段 + validate + kwargs 透传 + 审计（equal 臂
+  None 容忍 + params 一致性检查）。
+- 测试：`tests/test_lottery_first_donor_selection.py` 12 项（numpy/cpu 逐位、
+  cuda 不变量合同【2026-09-09 审查修订：不再对 loss 差设阈值，改为初始表/
+  RNG 终态/rho 时间表/逐轮中签行集合四项逐位断言 + loss 有限性】、零中签、
+  守卫、口径、子集概率/均匀数/参与签单元）。
+- 守卫更新（用户批准，循 93ec152 先例）：stage6c/6d/6e 三个冻结指纹测试的
+  预期漂移清单加入 `shared_update_plan`（update.py 合法演进）。
+- 相邻回归：sampling/update/evolution/fitness_only/退火/MW/守卫等 446 项全过；
+  HEAD 上另有 8 个守卫失败为历史遗留（r8 screen + stage6e recovery），与本次无关。
+
+**下一步（等用户指令）**：正式跑是否切换 lottery 模式重跑基线（CUDA 数值
+等价意味着新轨迹是"平行世界"，不可与旧 report 逐位比对，只能整跑替换）；
+以及是否继续压缩剩余 42ms（全表 one-hot 编码缓存是下一个候选）。
+
+### 上一暂停点：单轮分段计时实测——供体机制占 84%，"先抽签后选供体"预期 ~7×（2026-09-06 晚7）
+
+> 结论一句话：用计时脚本（`scripts/profile_round_segments.py`，
+> monkeypatch 同步计时、不改主代码）按正式 all2way-pool 配置（nltcs 16181 行、
+> 512 池查询、cuda、rho=稳态地板 0.001）实测 60 轮：**稳态单轮 ≈ 205ms**
+> （与正式跑 1332s/7000 轮 ≈ 190ms/轮吻合）。**供体机制合计 171ms（84%）**：
+> N×N 距离 126ms + softmax 36ms + 抽样 9ms；查询评估仅 7ms（3%，7 月向量化
+> 已解决）；其他 Python/诊断 24ms（12%，含 N×N 逐行熵诊断与 donors 行收集）。
+
+**优化方案（用户提出，已确认方向、尚未实现）**：把"先给全表选供体、再抽
+ρ 签"换位成"先抽 ρ 签、只给中签行选供体"。ρ 抽签与供体身份独立，联合分布
+不变；随机数流按原顺序照抽可保逐位一致。稳态 ρ=0.001 → 每轮仅 ~16 行参与，
+供体机制从 N×N 降到 ρN×N（÷1000），预期单轮 205ms → ~25-30ms，
+全程 22 分钟 → **~3 分钟（~7×）**。
+
+**已拍板**：donor 诊断历史（donor_fitness/distance/self_rate、逐行熵等）
+直接改口径为"只统计中签行"，报告注明新旧曲线不可直接对比。
+
+**下一步**：实现换位核 + 逐位等价验证（随机数流顺序不变）+ 用同一计时
+脚本复测分段耗时。
+
+### 上一暂停点：GSD plants 局收官——16.5 分钟吃完 PGM 吃不下的饭，拟合+外推双赢引擎（2026-09-06 晚6）
+
+> 结论一句话：GSD 官方内核在 plants all-2way 全家族 9522 格（PGM 结构性
+> 缺席的那顿饭，零噪声同餐）上 **991 秒早停收工**——家族内 **1.4e-05
+> （92× 碾压引擎 0.001292）**、一维精确归零、heldout **0.003514 比引擎
+> 0.006171 好 43%**。nltcs 上的"外推平手"在 plants 上变成明显败退，
+> "GSD 只强在小数据"的候补解释被推翻。**无噪声零阶赛道 GSD 是全面强者**
+> ——诚实记录。引擎剩余硬差异化：半空间等不可微/自定义查询（GSD 官方
+> 统计模块只有 marginal 系）+ 正式赛道是加噪 DP 场景（GSD 有自家 DP 壳，
+> 同壳对比才算数）。
+>
+> 出席对决：GSD ✓（16.5 分钟）、引擎 ✓（23 分钟）、PGM ✗（2^69 收据）。
+
+**协议与产物**：生成脚本 `scripts/gsd_generate_all2way_noisefree_plants.py`
+（SHA `304beeee…`）；runner `scripts/run_baseline_gsd_all2way_plants_diagnostic.py`
+（协议 SHA `46c1459a…`；引擎报告 `82d85b85…`+PGM 收据 `9e2a5b0d…`+补丁+
+upstream 全钉死）；测试 13 项新增全绿+相邻回归 43 项全绿；报告
+`outputs/baseline_gsd_all2way_plants_v1/report.json`。
+
+**P1-P6 对账**：P1 出席 ✓；P2 fit 991.2s（~200 万代早停）；P3 家族内
+GSD 1.4e-05 vs 引擎 0.001292；P4 heldout 3way 0.003360 vs 0.005712、
+4way 0.003669 vs 0.006630、comb 0.003514 vs 0.006171；P5 一维 GSD 精确
+0 vs 0.000257；P6 零噪声断言 0.0、9522 格、SHA 链全过。
+
+**下一步候选**：(a) halfspace 出席对决（GSD 官方模块吃不了半空间=缺席
+收据局）；(b) 直接进壳子阶段；(c) 请示提交推送 GSD 两局。
+
+### 上一暂停点：GSD 无噪声横评 nltcs 局收官——61 秒早停，拟合碾压、外推追平引擎（2026-09-06 晚4）
+
+> 结论一句话：官方 private_gsd（ICML'23 遗传搜索）吃与引擎/PGM 完全同餐的
+> 512 格（480 二维 + 32 一维，零噪声 rho=inf 逐格断言 diff=0），官方默认
+> 零调参（5000 万代上限+早停 1e-4），**61 秒早停收工**——家族内拟合
+> **1.03e-06 碾压**（引擎 0.000135 的 131×、PGM 0.000357 的 347×）、一维
+> **精确归零**；heldout 同餐对决 **GSD 0.001858 险胜引擎 0.001894（2%）**，
+> PGM 0.001431 仍是外推王。**冒烟剧透被推翻**（冒烟 0.00246 最差是因为
+> 没喂一维+没跑到早停）。三方故事正式版：拟合力 GSD≫引擎>PGM，外推力
+> PGM > GSD ≈ 引擎——nltcs 纯二维同餐考不出引擎"什么都能吃"的能力面，
+> 诚实记录不占优。
+
+**协议与产物**：生成脚本 `scripts/gsd_generate_all2way_noisefree.py`
+（SHA `331c446b…`，GSD venv subprocess 执行，零噪声断言 fail-closed）；
+runner `scripts/run_baseline_gsd_all2way_nltcs_diagnostic.py`（协议 SHA
+`ca51218c…`；GSD upstream `f6150d7`+两补丁文件 SHA+生成脚本 SHA+两对照
+报告 SHA 全钉死）；测试 11 项新增全绿+相邻回归共 34 项全绿；报告
+`outputs/baseline_gsd_all2way_nltcs_v1/report.json`。
+
+**G1-G5 对账**：G1 61.4s 早停（~13-16 万代量级，5000 万上限摆设）；
+G2 家族内 480 格 GSD 1.03e-06 vs 引擎 0.000135 vs PGM 0.000357；
+G3 heldout：3way PGM 0.001368 < 引擎 0.001638 < GSD 0.001806，4way
+PGM 0.001494 < GSD 0.001909 < 引擎 0.002151，comb PGM 0.001431 <
+GSD 0.001858 < 引擎 0.001894；G4 一维 GSD 0.000000 精确；G5 审计全过。
+注意：manifest 未记实际停代数（plants 局生成脚本可补记）。
+
+**下一步**：plants GSD 局（9384 格 69 列——PGM 结构性吃不下的那格，真正的
+能力面对决）→ 对账 → 请示提交推送；然后壳子阶段。
+
+### 上一暂停点：决胜局收官——纯二维同餐对决各有胜场，引擎卖点定位清晰（2026-09-06 晚）
+
+> 结论一句话：引擎与 PGM 吃完全同一份饭（480 格 all-2way + 32 格一维，真答案）
+> 在冻结三维/四维 heldout 上正面对决——**PGM 高阶外推略强 ~30-40%**
+> （heldout_combined 0.001431 vs 引擎 0.001894，同量级），**引擎池内拟合 2.6× 胜**
+> （0.000135 vs 0.000357）、**一维 3× 胜**（0.000062 vs 0.000185）。四局战局
+> 盘点定调（相对 maxent/图模型系基线的差异化，非一般卖点）：相对 PGM/AIM
+> 一族，引擎赢在"什么都能吃"（任意阶/不可微/大属性数——图模型系受连接树
+> 结构约束、吃不了半空间类查询），不赢在无信息外推；maxent 是更好的无信息
+> 先验，引擎是更好的信息吸收器——选择测量壳子正是把"能吃"变成"吃得聪明"
+> 的机制。注：零阶遗传搜索类方法（如 GSD）同样以"任意统计量、无需可微"为
+> 设计目标，"能吃"不是对全体基线的独占卖点；该定位待 GSD 横评（#73 线）后
+> 复核重写。
+
+**协议与产物**：runner `scripts/run_fitness_only_all2way_pool_nltcs_diagnostic.py`
+（SHA `e11ea5b2…`；池 512=480+32，479 旧二维收编+522 旧三维出池双对账；
+对照五份全钉死含 PGM-all2way 公平组 `b7760bab…`）；测试 11 项新增全绿；
+报告 `outputs/fitness_only_all2way_pool_nltcs_seed9908_v1/report.json`；
+跑满 7000 轮 resource_cap_reached，23 分钟。
+
+**O2-O6 对账**：
+
+- O2 同餐 heldout：引擎 3way 0.001638 / 4way 0.002151 / comb 0.001894 vs
+  PGM 0.001368 / 0.001494 / 0.001431——纯二维日粮下 maxent 外推略强；
+- O3 纯日粮代价：引擎 heldout 0.000575（polish 含三维）→0.001894（3.3×），
+  PGM 0.000762→0.001431（1.9×）——两边都付代价，引擎付更多；
+- O4 出池三维探针 ✓：522 三维出池后 0.001525 ≈ heldout 水平（非旧拟合 0.000189），
+  覆盖机制自洽；
+- O5 一维安全 ✓：0.000062 守住 polish 水平且胜 PGM 同餐 0.000185；
+- O6 家族内直比：引擎 0.000135 vs PGM 0.000357（同格同答案，2.6×）。
+
+**四局战局（诚实定位）**：① 纯二维同餐 PGM 外推略强；② 混合日粮（含三维）
+引擎 0.000575 < PGM-980 0.000762；③ plants all-2way PGM 结构性不可行
+（2^69 收据），引擎照吃全面领先；④ 半空间 PGM 缺席，引擎 2.4×/3.1× 压裸猜。
+
+**下一步**：可选 GSD 无噪声横评；然后壳子阶段（加噪 + 选择测量 + 停止规则
+打包，用户明示到时候商量）。
+
+### 上一暂停点：PGM-on-all2way 重拟合收官——信息不对称修正后 PGM 高阶反而更差（2026-09-06 晚）
+
+> 结论一句话：把 nltcs 480 格 all-2way 全家族原样喂给 PGM 重拟合（修"引擎吃
+> 全家族、PGM 只吃 980 题"的喂料不对称质疑）——PGM 家族内拟合很好
+> （measured 0.000357），但**高阶 heldout 反而比旧 980 局差近 2 倍**
+> （heldout_combined 0.001431 vs 0.000762）：旧考卷里混着 522 道三维题=喂过
+> 高阶信息，纯二维日粮下最大熵外推撑不住。**质疑被反转：信息量不在格子数，
+> 在阶数。** plants 侧出具结构性不可行收据（2^69 格=4096 艾字节，超上限
+> 1.1e12 倍），PGM 系"选择测量"的存在理由拿到正式钉死凭证。
+
+**协议与产物**：nltcs 重拟合 runner
+`scripts/run_baseline_pgm_all2way_nltcs_diagnostic.py`（SHA `a80a73d2…`）+
+plants 收据 runner `scripts/run_baseline_pgm_all2way_plants_feasibility_diagnostic.py`
+（SHA `89f5ae06…`）；考卷=新冻结 `configs/nltcs/all2way_issue53_v1.json` 480 格
+（SHA `5821fa4e…`，生成器 gen_plants_all2way_queries.py → `gen_all2way_queries.py`
+参数化双数据集，plants 逐字重建 SHA 不变）；测试 20 项新增全绿；报告
+`outputs/baseline_pgm_all2way_nltcs_v1/report.json` +
+`outputs/baseline_pgm_all2way_plants_feasibility_v1/report.json`。
+
+**nltcs 数字（normalized_l1_mean；PGM-all2way vs 旧 PGM-980 vs 引擎 polish）**：
+
+- measured 家族内：0.000357（锚点，考卷不同不直接比：旧 PGM 在 1001 卷 0.000550、
+  引擎 polish 在 1001 卷 0.000177）；
+- **heldout_combined：0.001431 vs 0.000762 vs 0.000575**（3way：0.001368 vs
+  0.000725 vs 0.000433；4way：0.001494 vs 0.000798 vs 0.000716）；
+- one-way：0.000185 vs 0.000467（改善，全一维喂饱的自然结果）；
+- 运行 18 秒 CPU（估计 2.5s+采样 15.5s），120 clique×4 格，单 2^16 clique 0.5MB。
+
+**plants 收据**：verdict=`baseline_infeasible_no_estimation_attempted`；2346 对
+全连图 K69→连接树单 69 列 clique=2^69 格=**4.504e15 MB**，超 4096MB 上限
+**1.1e12 倍**；对照：旧 980 考卷可行仅 1.06MB；预检 0.25 秒。
+
+**诚实边界**：引擎 polish 也吃过 1001 卷里的 522 道三维题，"两边都只吃纯二维"
+的苹果对苹果还没跑——排队中的 **nltcs 纯 all-2way 池引擎局成为决胜局**
+（考卷已冻结 5821fa4e…）：零阶引导外推 vs 最大熵外推，正面对决三维/四维 heldout。
+
+**下一步**：nltcs 纯二维池引擎局（决胜局，镜像 plants all2way runner）；可选
+GSD 无噪声横评；然后壳子阶段（加噪+选择测量+停止规则打包，用户明示到时候商量）。
+
+### 上一暂停点：半空间不可微查询能力线双数据集收官——H1-H4 四问全过（2026-09-06 傍晚）
+
+> 结论一句话：把冻结半空间考卷的 measured 档追加进各自演化池（plants
+> 9522+64=9586、nltcs 1033+40=1073），κ=1 配方逐位不变——**H1 硬阈值不可微
+> 查询确实可被零阶引导优化**（in-pool vs 裸猜地板：plants 2.4×、nltcs 3.1×），
+> H2 有真泛化迁移（heldout：plants 2.0×、nltcs 1.4×），H3 普通组零回退
+> （plants heldout3/4 反而 -30%/-38% 意外之喜），H4 定位能力边界=稀疏随机
+> 方向的 heldout 半空间最硬。"适应度只要掩码不要梯度"的卖点在两个数据集的
+> 单种子诊断下成立（diagnostic-only，不构成"已验证"声明）。
+
+**协议与产物**（runner `scripts/run_fitness_only_halfspace_pool_{plants,nltcs}_diagnostic.py`，
+协议 SHA plants `41831179…` / nltcs `29a9fa80…`；考卷 plants 127 题 SHA `5ee4f681…` /
+nltcs 80 题 SHA `40159977…`（本轮新冻结，A 档 rowsum 16 + B 档 general k=8 64）；
+报告 plants `outputs/fitness_only_halfspace_pool_plants_seed9908_v1/report.json`
+SHA `2205451b…` / nltcs `…nltcs_seed9908_v1/report.json` SHA `1875d232…`）：
+构造器参数化双数据集（B 档 k：plants 16 / nltcs 8，k=4 投影仅 9 档太粗）；
+裸猜地板=各自旧终表只读评价（从未见过半空间题，免费无重跑）：plants=all2way
+终表 `1849…`、nltcs=polish 终表 `2ec0…`；测试 26 项新增 + 相关回归 122 项全绿。
+
+**H1-H4 对账**：
+
+- H1 ✓ **可优化性（主问题）**：in-pool 半空间 vs 裸猜——plants 0.010284 vs
+  0.024565（2.4×）、nltcs 0.001040 vs 0.003271（3.1×）；
+- H2 ✓ 泛化：heldout（从未进池）vs 裸猜——plants 0.013950 vs 0.027936（2.0×）、
+  nltcs 0.002738 vs 0.003801（1.4×，polish 终表太强地板天生低）；
+- H3 ✓✓ 无回退：nltcs 四指标漂移 ±0.00005 内；plants measured +0.000114 /
+  one-way -0.000039 / all2way_pool 0.001292→0.001321 均噪声级，且
+  **heldout3 0.005712→0.003986（-30%）、heldout4 0.006630→0.004101（-38%）**
+  ——64 道全局投影题帮了高阶泛化（单种子 observation-only）；
+- H4 ✓ 难度档两数据集方向相反：nltcs 全列 rowsum（17 档）比 k=8 难；plants
+  heldout A 档 rowsum 0.0072 远好于 B 档 general k=16 0.0205（裸猜只压 1.6×）
+  ——**稀疏随机方向 heldout 半空间=最硬一档**。
+
+**运行形态**：nltcs 24min 跑满 7000（resource_cap_reached，预算贴身如预期）；
+plants 59min 早停 3805/27000（最优 ~3127，与 all2way 3506 同款）；墙钟冒烟
+946ms/219ms 每轮兑现（64 道半空间走 fallback 慢路径只贵 9%）。
+
+**边界注记**：θ 看了源投影谱（非 result-blind），diagnostic_only 能力考卷，正式
+赛道须换公共信息选题规则（GSD θ~N(0,1) 即一例）；PGM 设计上缺席（吃不了半空间）；
+nltcs 池基底=polish 局（含 522 in-pool 三维题），纯 all-2way 池版排队。
+
+**下一步**：无噪声阶段清单顺次——PGM-on-all2way 重拟合基线；nltcs 纯二维池
+（消 522 三维沾光、统一 one-shot 口径）；可选 GSD 无噪声横评；然后壳子阶段
+（加噪 + 选择测量 + 停止规则打包，用户明示到时候商量）。
+
+### 上一暂停点：plants all-2way 全家族考卷收官——病③元凶=考卷覆盖坐实，非引擎瓶颈（2026-09-06 下午）
+
+> 结论一句话：把 plants 演化池从 980 稀疏考卷（2-way 覆盖 4.9%）换成 all-2way
+> 全家族 9384 格（覆盖 100%，GSD 对齐），κ=1 配方逐位不变——heldout3
+> 0.032006→**0.005712**（5.6× 改善，0.38× PGM-context）、heldout4
+> 0.024527→**0.006630**（3.7×，0.52×）。病③（heldout 卡 2×PGM）**不是引擎
+> 泛化瓶颈，是考卷覆盖不足**；plants 泛化病治愈，两数据集全指标恢复全面领先。
+
+**背景（AIM/GSD 查询池调研定稿，论文原文+官方代码核实）**：领域标准考卷=全体
+k-way 边缘家族，AIM/GSD 评估都在考卷内（无 heldout 泛化轴，我们更严）；GSD 分类
+主实验=all-2way one-shot（一次性全测，无选择壳）；GSD 初始化=纯均匀随机（我们的
+marginal init 已更聪明）。旧 980 考卷 4.9% 覆盖是自设非标准苛刻局。
+
+**协议与产物**（runner `scripts/run_fitness_only_all2way_pool_plants_diagnostic.py`，
+协议 SHA `16f03797…`；考卷 `configs/plants/all2way_issue53_v1.json` 9384 条 SHA
+`9dc37994…`；报告 `outputs/fitness_only_all2way_pool_plants_seed9908_v1/report.json`
+SHA `82d85b8516a6948563f0…`）：池 9522 = all2way 9384 + one-way 138；旧 980 考卷
+保留为评估延续组（460 double 被全家族吸收，520 triple 出池变泛化探针）；预算
+逐位从 polish 导入（cap 27000 / 时刻表 4050/2700 / patience 6）；测试 11 项新增
++ 相关回归 72 项全绿。
+
+**O1-O5 对账（对照 polish 980 池报告 `fef4fb5e…`）**：
+
+- O1 ✓ `early_stopped` 3506/27000（省 87%），最优 2902 轮；审计一次过；
+  墙钟 49 分钟（868ms/轮，池 8.5× 只慢 1.24×——开销在行数不在查询数）；
+- O2 ✓✓ **主问题大捷**：heldout3 0.005712（polish 0.032006 → 5.6× 改善；
+  PGM-context 0.015229 → 0.38×）、heldout4 0.006630（0.024527 → 3.7×；
+  PGM 0.012866 → 0.52×）——远超"收向 ≤~1×PGM"的预注册假设；
+- O3 ✓ 出池 520 triple 探针 0.002466（polish 时代 in-pool 0.001646 只涨 1.5×，
+  远低于旧 heldout3 0.032）——三维格被全家族二维覆盖撑住，覆盖机制再证；
+- O4 ✓ one-way 安全 0.000257（治愈线 0.004230 的 6%；polish 0.002007 再改善 7.8×）；
+- O5 ✓ all2way 工作负载首测锚点：mean 0.001292 / median 0.000976 / max 0.0312；
+  980 延续组 measured 0.002273（vs polish 0.001456，旧题不再被专门优化，符合预期）。
+
+**caveat**：PGM 基线是 980 池拟合的（信息不对称，本跑吃全家族真答案），PGM 倍数
+只作 context；PGM-on-all2way 重拟合基线排队为独立工作。本跑无噪声（diagnostic_only），
+加噪 one-shot 正式跑是下一件。
+
+**下一步**：加噪件（Gaussian one-shot，一维从噪声二维推平均降噪的小设计点）；
+PGM-on-all2way 重拟合基线；半空间赛道（GSD 式固定种子随机池）；all-3way 自适应
+赛道押后（要外层壳子，停止规则用户明示到时候再商量）；本轮新文件待提交
+（考卷生成器 + config + runner + 测试）。
+
+### 上一暂停点：统一配方双数据集单种子诊断一致（plants 早停省 78% / nltcs 触顶零回归）；主线转泛化机制（2026-09-06 中午）
+
+> 结论一句话：κ=1 统一配方（M=列数解最小轮数、上限取整到千、patience=6 早停）
+> 在两个数据集的单种子诊断中画像一致（diagnostic-only，未做多种子验证，
+> 不构成"配方已验证"声明）——plants 早停 6022/27000（省 78%，measured 差距
+> 4.7×→1.87×，heldout 纹丝不动→病③隔离）；nltcs 触顶 7000/7000 零回归
+> （全面超 PGM 战绩保住，one-way 再改善 36%）。主线转向泛化机制设计（病③）。
+
+**nltcs 统一配方结果（4090 GPU1，报告
+`outputs/fitness_only_polish_budget_nltcs_seed9908_v1/report.json`，
+SHA `919b418059c62147…`，协议 SHA `ee426947…`）**：
+
+- O1 ✓ 触顶 `resource_cap_reached`（7000/7000）如几何账预测（地板段 5250 <
+  6 tick 窗口 6000）；κ=1.156 全额实现；最优在 6566 轮贴近上限还在刷新
+  ——预算贴身实锤；修复后审计一次通过；墙钟 23 分钟；
+- O2-O5 ✓ 零回归：measured 0.000177（+6.3%，0.32×PGM）、heldout3 0.000433
+  （+5.8%，0.60×PGM）、heldout4 0.000716（-1.5%，0.90×PGM）、
+  one-way 0.000070（-35.7% 再改善，0.15×PGM）；±6% 属小数值噪声
+  （时刻表整条重排非同轨延长）；全面超 PGM 保持。
+
+**审计烏龍与修复（第一跑 fail-closed 拦下，已修）**：
+
+- 病根：`_audit_fitness_only_run` 早停分支允许集合写错——引擎 A/B/C 全集是
+  `fit_target_reached / early_stopped / resource_cap_reached`（触顶不叫
+  max_rounds）；stopped_early 映射同错；plants 走 early_stopped 未踩中，
+  测试未盖"开早停+跑满"路径；
+- 修复：fitness_only.py 允许集合改引擎真实三标签 + 触顶强制 rounds_run==上限 +
+  stopped_early↔{fit_target_reached, early_stopped}；测试改语义并新增
+  `test_early_stopping_enabled_cap_hit_is_resource_cap_reached`；nltcs 协议
+  contract_amendment 文本诚实化重钉 SHA；50 项全绿（引擎 28+nltcs 11+plants 11）。
+
+**下一步**：泛化机制设计讨论（主线，病③：plants heldout 卡 PGM ~2×，机制性差距）；
+半空间线 3、4 步；PR 挂账（追加 fitness_only.py 审计修复 + nltcs runner/测试 +
+两份新报告）；外层壳子（选择→测量，隐私预算）设计与外层停止规则——用户明示到时候再商量。
+
+### 上一暂停点：plants κ=1 长跑收官——预算病治愈、泛化病隔离；nltcs 统一配方跑准备中（2026-09-06 上午）
+
+> 结论一句话：早停 6022/27000 轮合规触发（墙钟 1.18h），loss 收敛后才停——
+> 病②预算截断治愈；measured 对 PGM 差距 4.7×→1.87× 达标进 2× 以内，
+> 但 heldout 纹丝不动（仍 ~2× PGM）——病③泛化机制缺失被干净隔离成
+> 唯一剩余病：是机制问题，不是预算/调参问题。
+
+**plants κ=1 长跑结果（4090 GPU0，报告
+`outputs/fitness_only_polish_budget_plants_seed9908_v1/report.json`，
+SHA `fef4fb5e999722775f9e2013a312009a5db5d24c847ec7fbccd9cdcaad54fd29`）**：
+
+- 早停 6022/27000 轮（`early_stopped`）；最优在 4470 轮，其后 6 个打磨单位
+  零刷新合规掐停；实际打磨 Σrho=50.05（κ=0.725 就收敛，没用满 69）；
+  墙钟 1.18h（跑满预估 6-7h，早停省 ~80%）。
+- loss best 8.92e5 / final 9.21e5——同在 ~6000 轮，昨晚旧时刻表 4.23e6
+  （新时刻表好 4.6×：热身期 900→4050 拉长让粗磨充分）。
+- O1 ✓ 截断解除（loss 到平台才停，非预算硬掐）；
+- O2 ✓ measured 0.001456（进池 R 0.003634 再降 60%）；PGM 差距 **4.7×→1.87×**；
+- **O3 ✗ heldout 纹丝不动**：3way 0.032006（+0.9%）、4way 0.024527（+4.3%），
+  对 PGM 仍 2.10×/1.91×；
+- O4 ✓ one-way 0.002007（再降 53%；PGM 3.41×）；O5 ✓ measured 零挤占。
+- 解读：loss 已收敛 + 目标已完备 + 打磨已到顶——考题内逼近 PGM、考题外
+  一分没涨。剩余 2× 差距要靠设计层泛化机制（PGM 拟合的是分布，图结构自带
+  跨边缘平滑；我们的引擎逐题拟合考题）。
+
+**进行中：nltcs 统一配方归档跑（已发射，在跑）**：
+
+- 统一配方 = κ=1（M=属性数）+ 上限取整到千 + patience=6（引擎默认零调参）；
+- nltcs M=16 → 解最小 T=6057（6056 只有 15.995 不够）→ 上限 7000，
+  时刻表 (1050, 700)，κ(7000)=1.156；
+- runner + 11 测试完成，协议 SHA `ee426947…`；第一跑触发审计烏龍（我的允许集合
+  漏了引擎触顶标签 `resource_cap_reached`，fail-closed 拦下无报告）——已修
+  fitness_only.py 审计分支 + 补触顶测试，50 项全绿后 10:50 重发（4090 GPU1）；
+- 几何账：nltcs 地板段 5250 轮 < 6 tick 窗口 ~6000 轮，B 物理开不了枪，预期触顶收尾；
+- 早停机制定位定稿：大预算省时器 + 收敛证书，小预算触顶兜底，不动耐心值（零调参）。
+
+**下一步**：nltcs 归档跑 → 泛化机制设计讨论（主线，病③）；半空间线 3、4 步；
+未提交内容 PR 安排挂账。
+
+### 上一暂停点：one-way 进池全达标 + 打磨密度定标（κ=1）plants 长跑发射（2026-09-05 深夜）
+
+> 用户方向：plants "还不够好"的病因实锤为**预算截断**（R 臂 loss 6000 轮仍以
+> 每 500 轮 -19% 下降，远未收敛被硬掐；预算当年按 nltcs 绝对轮数抄写，
+> 每格打磨密度 κ 仅 0.23 vs nltcs 0.991）。用户提出**打磨密度定标原则**：
+> 每行被修改 M 次、M=属性数 ⇔ κ=Σrho_t/M=1；解最小轮数后上限取整到千。
+
+**one-way 进池双实验结果（A6000，两份报告已回本地）**：
+
+- plants（`outputs/fitness_only_oneway_pool_plants_seed9908_v1/report.json`，
+  SHA `30fe3cd2…`）：P1 one-way 自愈 10×（0.0410→0.00423）；P2 heldout -15~-19%；
+  P3 measured 反而改善 31% 零挤占；P4 R-E 倒挂翻转；E1 equal 逐字节一致。
+- nltcs：N1 零回归（四指标全微幅改善）；E1 同铁证；**意外之喜：nltcs 进池 R
+  全面超 PGM**（measured 3.3× 优、heldout/one-way 全胜）——κ≈1 的数据集赢 PGM，
+  κ=0.23 的 plants 还差 ~2×，正是打磨密度故事的最硬对照。
+
+**合同修订（引擎，测试 27+126+174+11 全绿）**：
+
+- fitness-only 合同放行 **A/B/C 早停成套开**（`stop_on_exact_residual` +
+  `inner_early_stopping_patience_ticks` 必须成对；单开报错；配对归因禁早停）；
+- 审计分支：早停开时允许 rounds_run ≤ 上限，账目自洽强制（候选数=实际轮数、
+  stopped_early ↔ 终止原因、rho 历史长度=实际轮数）；`termination_rule` 标签
+  诚实化（`inner_early_stopping_a_b_c` / `fixed_n_rounds`）；
+- 早停零件"只看不摸"（不碰提案/随机流/状态）：开与不开每轮逐位一致，
+  唯一区别是停点——预算效应归因不糊。
+
+**打磨密度长跑协议（已冻结，正在 4090 GPU0 运行）**：
+
+- `scripts/run_fitness_only_polish_budget_plants_diagnostic.py`
+  SHA `4b7c97105ab7f19824defb0b2cc7213b5f6c2dcb38d577befe91f3354a63874e`；
+- M=69 → 解最小 T=26126 → **上限 C=27000**（取整到千，用户定稿），时刻表挂 C
+  （冷却 4050 起 2700 轮，15%/10%），κ(C)=1.033；patience=6（引擎默认零调参）；
+- 单 R 臂（equal 砍掉——双数据集 E1 铁证，盲臂数字引用今晚报告）；
+  池/种子/评价口径与 one-way 进池逐字一致；预算三重自检（最小性/取整/上限量）；
+- 预注册观察点：O1 截断解除；O2 measured 差距（原 4.7×）；O3 heldout 差距
+  （原 ~2×）；O4 one-way 不回退（≤0.00423）；O5 measured 不挤占（≤0.00363）；
+- 对照三把尺：今晚进池 R（主对照，纯预算效应）/ 冻结 v1 R / PGM；
+- 测试 `tests/test_fitness_only_polish_budget_plants_diagnostic.py` 11 项全过。
+
+**下一步**：长跑收报告后按 O1-O5 对账；半空间线协议 + runner（池基底=进池版，
+已可动工）；未提交内容 PR 安排挂账。
+
+### 上一暂停点：半空间不可微查询能力线——引擎扩展与冻结考卷完成（2026-09-05）
+
+> 用户方向：关键落点之一"处理不可微查询"从未被检验。逐类判定标准查询清单
+> （类别/范围/混合边缘、前缀和、条件前缀和、半空间）：前五类对 one-hot 都是
+> 线性可微（对手主场），**唯有半空间 w·x≥θ 是硬阈值不可微**（row-sum 是
+> 权重全 1 特例）。用户拍板主打半空间；本线暂不与 PGM 对比。
+> 设计稿：`docs/设计/半空间不可微查询能力线设计稿.md`（预注册 H1-H4）。
+
+**已完成（未运行任何实验）：**
+
+- **引擎扩展（第一档，保正确）**：
+  - `queries.py`：新增 `eval_halfspace_mask`（fail-closed 校验 + float64
+    精确投影），`eval_query_mask` 按 `type == "halfspace"` 分派——fitness
+    与计数共用同一掩码接口，机制零改动；
+  - `quality.py`：`canonical_query_payload` 支持 halfspace（独立命名空间
+    `{"halfspace": {"terms": 排序项, "theta": float}}`，与合取指纹永不碰撞，
+    int/float 权重归一，重复属性拒绝）；
+  - `vectorized_eval.py`：halfspace 整条进回退组（旧路径精确评价，计数与
+    fitness 贡献都对），verbose 提示标注 `type=halfspace`，不崩溃；
+    将来若成瓶颈可按白名单机制补向量化（本质一次矩阵乘）。
+  - 测试 `tests/test_halfspace_queries.py` 19 项全过：掩码对拍朴素实现、
+    混合池向量化 vs legacy 逐位一致、分块不变性、方向势能回退、指纹语义、
+    fail-closed；受影响模块回归（queries/vectorized/fitness/quality）48 项全过。
+- **冻结考卷** `configs/plants/halfspace_issue53_v1.json`
+  （SHA256 `5ee4f6817a49705149557f782a533ce58484a3d62b846859a0b692595ee16012`，
+  `--verify-existing` 确定性重建复核通过）：
+  - 127 题 = A 档 row-sum 63（θ 3..65 全谱非退化格点，升序交替 32 M / 31 H）
+    + B 档一般半空间 64（seed 20260905、k=16、±1 权重、θ 投影分位点，32 M / 32 H）；
+  - 全部题目 result 非退化（91..16563，N=17412，两端各留 0.5% 边距）；
+  - 构造器 `scripts/build_issue53_halfspace_workload.py` +
+    测试 `tests/test_build_issue53_halfspace_workload.py` 10 项全过；
+  - **边界注记（明示不藏）**：选择依赖源表投影谱（非 result-blind），
+    诊断线专用；进正式 DP 管道前必须换成公共信息选择规则。
+
+**下一步**：今晚先跑 one-way 进池双实验（见下一节暂停点，等用户发令）；
+半空间线等 one-way 结果落地定演化池基底后，再写结果前协议 + runner
+（工程顺序第 3、4 步），用户授权后运行。
+
+### 上一暂停点：Private-PGM 外部基线校准完成——nltcs 我方全胜、plants 被 PGM 全面碾压（2026-09-05）
+
+> 用户方向：fitness-only 线先整理成 PR（已完成，见 PR #70），再引入其他方法的
+> 生成部分做达标校准。基线选 Private-PGM（MST/AIM 的生成器，mbi 库，
+> SSH 克隆 commit 07635f9 装入 .venv，JAX CPU 后端）。口径：信息对等——
+> 同 980/812 查询精确答案 + 同 one-way 边缘作 LinearMeasurement，
+> MirrorDescent 1000 轮零调参，synthetic_data 受控舍入，同评价函数
+> （复用 run_fitness_only_attribution 的 _grouped_error_metrics），
+> 我方臂用冻结报告数字不重跑。diagnostic_only，两套三件套均 fail-closed。
+
+**nltcs 结果**（`outputs/baseline_pgm_nltcs_v1/report.json`，推断 13.7s + 采样 58.7s）：
+
+```text
+measured   PGM 0.000550 vs 我方R 0.000179   —— 我方 3.1× 优 ✓
+heldout3   PGM 0.000725 vs 我方R 0.000419   —— 我方 1.7× 优 ✓
+heldout4   PGM 0.000798 vs 我方R 0.000769   —— 持平略优 ✓（中位数 PGM 反超）
+one-way    PGM 0.000467 vs 我方R 0.000112   —— 我方 4.2× 优 ✓
+```
+
+**plants 结果**（`outputs/baseline_pgm_plants_v1/report.json`，推断 11.0s + 采样 18.6s，
+JT 实测 1.06MB / 最大团 14 属性 16384 格——treewidth 爆炸剧本落空）：
+
+```text
+measured   PGM 0.000779 vs 我方R 0.005249 / E 0.068868   —— PGM 6.7× 优 ✗
+heldout3   PGM 0.015229 vs 我方R 0.039262 / E 0.033184   —— PGM 2.6× 优 ✗
+heldout4   PGM 0.012866 vs 我方R 0.027691 / E 0.022497   —— PGM 2.2× 优 ✗
+one-way    PGM 0.000589 vs 我方R 0.040966 / E 0.040378   —— PGM 70× 优 ✗✗
+```
+
+**校准结论：**
+1. **nltcs 的全胜是密覆盖小域的例外，不是规律**——plants（69 属性、
+   覆盖 2-way 4.9%/3-way 0.5%）上 PGM 拿同样的信息把 heldout 误差压到
+   我方 1/2.2~1/2.6，达标线有了实数：heldout3 ~0.015 量级。
+2. **one-way 差 70× 是最扎眼的病灶**：一阶边缘明明喂给了我方
+   （init marginals），演化过程守不住；PGM 把同样的边缘当测量几乎完美复现。
+   方向：把 one-way（及覆盖补全）纳入 fitness——与 plants 诊断的
+   候选 b 收敛到同一处。
+3. **PGM 在两个数据集上都又快又稳**（30s~72s 纯 CPU vs 我方单臂 20~70min GPU），
+   其优势来自图模型推断在低 treewidth workload 上的结构利用；
+   我方无图结构假设的卖点须靠"PGM 不可行的场景"或质量反超来兑现。
+
+产物（本地未提交，成 PR 安排待定——当前分支已被 PR #70 占用）：
+- `docs/设计/PGM基线nltcs生成对比结果前协议.md` + `scripts/run_baseline_pgm_nltcs_diagnostic.py`
+  （协议 SHA 91b2feb8…）+ `tests/test_baseline_pgm_nltcs_diagnostic.py`（10 项全过）
+- `docs/设计/PGM基线plants生成对比结果前协议.md` + `scripts/run_baseline_pgm_plants_diagnostic.py`
+  （协议 SHA 06dbbb90…，含 JT 可行性预检 cap 4096MB）
+  + `tests/test_baseline_pgm_plants_diagnostic.py`（10 项全过）
+- 两份冻结报告在 outputs/（gitignored），输入 SHA 与对照冻结报告 SHA 均钉死在 runner 内
+
+下一步候选（等用户拍板）：
+  a. 覆盖补全进 fitness（one-way + 加密 2-way），plants 上正面追 PGM
+  b. plants 加预算重跑（24000 轮）看收敛后能追回多少
+  c. 找 PGM 不可行的 workload（高 treewidth）建立差异化卖点
+（单 seed、diagnostic_only，不作正式声明。）
+
+---
+
+### 上一暂停点：plants 中等规模真实基准诊断已运行——复现覆盖受限画像且预算截断（2026-09-05）
+
+> 用户方向：小数据（test_300x10）不进最终对比，转向未用过的 plants
+> （17412×69 二值，"twenty datasets" 基准）。用户授权 GPU 运行。
+> 权重路线同日已由用户关闭（残差已是相对域，再按残差调权重属重复）。
+
+准备工作（全部入库）：
+- `configs/plants/heldout_issue53_v1.json`：冻结构造器新增 plants 条目
+  生成（512×3way + 512×4way，哈希排序确定性选择，与 measured 无交集），
+  SHA `d65401761bade19ad40d9588eaa57609de0bdbc3c26835a5343ab8cc332eca85`；
+  nltcs/test 旧文件 `--verify-existing` 逐字节可重建（构造器改动零漂移）。
+- `scripts/run_fitness_only_plants_diagnostic.py`：单数据集诊断 runner，
+  v3 冻结配置原样（6000 轮、rho 0.01→0.001@900+600、eta 0.5、alpha 16、
+  relative/floor 8、seed 9908、residual/equal 配对、cuda），
+  协议 SHA `67d6a5b0128caa7536c4aa91736eb6b5332dc1ed871ca0a0dfc75115ba6f9861`，
+  diagnostic_only / formal_claim_allowed=false / fail-closed 输出。
+- 测试：test_plants_workload + test_issue53_heldout_workloads 13/13 过。
+
+结果（`outputs/fitness_only_plants_diagnostic_seed9908_v1/report.json`，
+GPU1 11:26-13:47，单臂 70 分钟，rho 审计通过，6000 轮走满）：
+
+```text
+measured   R 0.005249 vs E 0.068868（差值 -0.0636，优 13×）✓
+heldout3   R 0.039262 vs E 0.033184（+0.0061 ✗）均值劣、中位数持平
+heldout4   R 0.027691 vs E 0.022497（+0.0052 ✗）中位数 R 反而优（0.0103 vs 0.0126）
+one-way    R 0.040966 vs E 0.040378（+0.0006 ≈中性）
+           但分布迥异：R 中位 173 行/max 5613；E 中位 732/max 902（重尾 vs 均庸）
+drift      1.0004（nltcs 的 1.16 回摆现象完全缺席）
+形态       6000 轮仍在下降（last best @5990，732M→7.4M 未收敛）——预算截断
+```
+
+**两个新事实：**
+1. **覆盖受限画像不是小数据伪影**：plants 复现 test_300x10 模式
+   （measured 大胜、heldout 均值劣）。根因量化——workload 覆盖密度：
+   nltcs 2-way 100%/3-way 64%；plants 2-way 4.9%/3-way 0.5%；
+   test_300x10 同为稀疏。nltcs 是例外（密覆盖），不是规律。
+   均值劣由重尾驱动（p90：R 0.089 vs E 0.077），中位数不输。
+2. **v3 预算是按 nltcs 尺度标定的**：plants 6000 轮远未收敛
+   （残差臂终点 loss 7.4M，仍在最速下降段尾部）。规模每上一档，
+   固定 6000 轮就截断一次——预算需按数据集尺度重标定（这不是
+   v3 truncation 判定的推翻：nltcs 上 v3 结论不变）。
+
+下一步候选（等用户拍板）：
+  a. plants 加预算重跑（如 24000 轮，~4.7h/臂）看收敛后画像
+  b. 覆盖补全方向（对 plants 补 one-way + 加密 2-way 进 fitness）
+  c. 两者结合的结果前协议
+（本诊断单 seed、diagnostic_only，不作正式声明。）
+
+---
+
+### 上一暂停点：v6 MW 乘性权重聚合已运行，护栏双爆——聚合路线关闭，等权聚合定稿（2026-09-04）
+
+> 用户授权在本机 4090（GPU1）运行。23:24-23:52（nltcs 生成 1182.3s，
+> test 76.0s），6000 轮走满，rho/eta 时间表 v3 原样逐轮匹配，**前缀
+> 审计通过**（前 1501 轮 loss/rho/state metrics/初表/RNG 五项与 v3
+> residual 臂逐位一致；保温段权重恒全 1）——MW 实现无扰动，分叉
+> 纯粹是机制效果。单臂设计：equal 臂复用 v3 冻结产物（frame SHA
+> 链闭合）。协议 manifest SHA b3cc455ca19b4e3f…f0da8717。
+
+结果（`outputs/fitness_only_mw_dev_seed9908_v6/report.json`）：
+
+```text
+护栏1：nltcs held-out 配对差 -0.061138/-0.037092 ≤ -0.050/-0.030 ✓（优势保住）
+护栏2：nltcs L1 0.000466 ≤ 0.000197 ✗（2.60×v3——严重恶化）
+        test  L1 0.003800 ≤ 0.002640 ✗（1.58×v3——严重恶化）
+主判据：test held-out 配对差 3way +0.003288（v3 +0.003340，持平）
+        4way +0.001107（v3 +0.000996，反恶化 11%）——即便无护栏也是 rejected
+drift ：nltcs 5.1717（v3 1.1639——爆炸 4.4 倍）；test 2.7872（v3 2.2400）
+best  ：nltcs 11126.5@r1474——MW 开启（r1500）前 26 轮，开启后 4500 轮零改进
+判定  ：quality_regression_under_mw
+```
+
+**退化机理（只读权重轨迹诊断，协议 §7 预绑定动作）**：
+
+```text
+r1500 开启 → r1800 已 26 个顶格(8×) → r2000-2500 雪崩：沉底 0→535
+→ 终态稳定极化：37 顶格 / 637 沉底（63.7% 查询只剩 1/8 权重）
+loss 分段：[1500,2500) 2.84×v3 → [3000,4000) 7.38×v3（开启即恶化，单调加深）
+```
+
+死账户独裁死锁：nltcs 重尾欠账（目标计数 13-42 的稀有查询）是**量子化
+不可修**的——差半行就是大相对残差，注意力再多也修不平。乘性复利
+（exp(0.002×8)≈1.6%/轮）让这些死账 200 轮内顶格；归一化跷跷板把 62%
+正常查询压到地板 → 大盘失守（L1 恶化 2.6×）；fitness 被 40 个修不平的
+目标主导 → 系统反复搬行追死账 → drift 爆炸。**MW 的隐含假设"多注意=
+能修好"对量子化死账不成立**，机制退化为把资源永久锁死在不可修目标上。
+
+**科学结论（聚合路线关闭）**：等权聚合定稿（v3 配置）。fitness 聚合
+缺口（test held-out 配对差为正）如实报告为方法局限/future work——
+MW 记录为已排除方向。按协议 §8：不做剂量下探（cap/eta/start 修订=
+新协议，且机理性死锁不是剂量问题）。
+
+六代记录并列（全部结果前冻结、前缀审计通过、不重跑）：
+v2 unsupported / v3 rejected(truncation) / v4 quality_regression(floor) /
+v5 quality_regression(eta) / v6 quality_regression(MW)。
+**v3 配置 = 实证质量最优点**，温度路线与聚合路线双关闭。
+
+下一步（§7 预绑定）：回 v3 配置；5-seed 确认屏（v3 配置）成为下一个
+待议协议。
+
+> **2026-09-05 上午修正**：用户判断权重路线仍可行，5-seed 暂缓。
+> 只读深挖已完成（三层死因：相对域记账 vs 绝对域结算的货币错位 /
+> 量子化死账零改善 / 零和跷跷板株连占恶化 82%；nltcs 尚有 291 个
+> >3 行可修大账户，test 已到本底无钱可赚）。待议：纸面模拟 v7
+> 结构手术（信号换绝对域+量子化免记+去零和），详见工作笔记
+> 2026-09-05 接续点。
+
+---
+
+### 上一暂停点：v5 eta 降温已运行，质量门失败且 drift 恶化——"降温"全路线关闭（2026-09-04）
+
+> 用户授权运行。GPU1，19:25-20:30（nltcs 生成 3614.7s），9000 轮走满，
+> 双时间表审计逐轮匹配，**前缀审计通过**（前 1501 轮与 v3 四条轨迹
+> 逐位一致——eta 退火实现未扰动随机流，等价性合同在真实规模上成立）。
+
+结果（`outputs/fitness_only_eta_cooling_dev_seed9908_v5/report.json`）：
+
+```text
+质量门：nltcs L1 0.000193 ≤ 0.000197 ✓（v3 0.000179，略差）
+        test  L1 0.003267 ≤ 0.002640 ✗（v3 0.002400，倒退 36%，比 v4 更糟）
+drift ：nltcs 1.3664（v3 1.1639、v4 1.1754——不降反升 17%！）
+        test 1.9787（观察项，反而比 v3 2.24 略窄）
+形态  ：非 descending；best 7553@r3970 后横盘于 ~9200-10900 带
+        （震荡带中心上移且更宽：v3 稳态带 ~8000-8600）
+判定  ：quality_regression_under_eta_cooling
+held-out：nltcs 配对优势保持（-0.061458/-0.037278，与 v3 持平）
+```
+
+**核心科学结论（v3+v4+v5 机制排除三部曲完成）**：
+
+eta 不只控制"单步跳多大"，同时控制"修复多快"——两者不可分。降 eta
+后单步修复量减半，而破坏源（mu 突变、随机漂移）强度不变，稳态
+修复-破坏平衡点上移：损失带从 ~8300 抬到 ~10300，带宽反而变宽。
+
+三部曲总结（全部结果前冻结、前缀审计通过、记录并列）：
+1. v3 预算加倍 → rejected：drift≈1.16 是稳态本底，非预算问题
+2. v4 频率减半（rho 0.001→0.0005）→ quality_regression：本底未收窄
+   （1.1639→1.1754）+ 小表冻伤
+3. v5 幅度减半（eta 0.5→0.25）→ quality_regression：平衡点恶化，
+   drift 反升至 1.3664 + 小表更伤
+
+**结论：任何形式的"降温"都损伤修复-破坏平衡。v3 配置（rho 三段式
+H900/D600/floor0.001、eta 恒 0.5）是实证的质量最优点；drift 本底
+~1.16 是无门控终态输出在该最优点的固有代价。**
+
+按 v5 协议 §7：quality_regression → 停下，不进任何后续屏，不做
+eta=0.1 下探。B 路线（接受本底、修订叙事）已由三重预注册实验钉死，
+从"选择"升级为"结论"。
+
+下一步（等用户决定）：
+- B 叙事定稿：方法=v3 配置；drift 如实报告；v3/v4/v5 作为机制排除
+  证据链写入论文（预注册+可证伪审计是方法学卖点）
+- 之后：5-seed 确认屏协议（v3 配置）或 fitness 聚合缺口优先级讨论
+
+v2 unsupported / v3 rejected / v4 quality_regression /
+v5 quality_regression 四条记录并列保留，均不得重跑。
+
+### 上一暂停点：v5 eta 降温执行器与核心机制已就绪，等待运行授权（2026-09-04）
+
+> v5 协议获用户批准后完成实现。**本屏含核心代码改动**（v2-v4 均为纯
+> 配置 delta）：evolution.py + fitness_only.py 新增 eta 三段式退火
+> （eta_anneal_start_round / eta_anneal_rounds / eta_anneal_end），与
+> rho 退火完全同构、纯轮数驱动、只改复制开关阈值不动随机流；与
+> residual_directed_diffusion 组合被 fail-closed 拒绝。
+
+- 协议：docs/设计/FitnessOnly地板段Eta降温v5结果前协议.md
+- 执行器：scripts/run_fitness_only_eta_cooling_v5.py（SHA 钉死
+  05863ca27710fe52794a6106c74b341962b170b1edb964312d09571dc8e6fe27）
+- 配置 delta（相对 v3，非 v4）：eta 时间表 H=1500/D=600/end=0.25 +
+  n_rounds=9000；rho 时间表 v3 原样（floor 0.001）
+- 等价性合同：tests/test_eta_anneal_equivalence.py 7 项——关闭 vs 全程
+  保温逐位一致（loss/rho 历史、终表、RNG 终态）、中途降温保温段前缀
+  逐位一致+降温后分叉（v5 前缀审计依赖的性质）、公式逐轮匹配、
+  fail-closed 合同
+- 专项测试：tests/test_fitness_only_eta_cooling_v5_runner.py 19 项
+  （plan 只读、身份 fail-closed、不覆盖、config delta 仅 4 键、双时间
+  表边界与篡改拒绝、1501 轮前缀审计伪造拒绝、四标签+边界阈值、v4 记录
+  字面值核对）
+- 全量回归：319 项通过（v1-v5 runner + fitness_only + schedule +
+  等价性 + evolution + directional_diffusion），零回归
+- plan 只读验证通过：rho floor 0.001 / eta 0.5→0.25 / prefix 1501 /
+  T=9000 / generation_started=False
+
+待办：用户授权后正式运行（nvidia-smi 选空闲卡，预计 65-70 分钟）。
+判定四标签结果前冻结；v2 unsupported / v3 rejected /
+v4 quality_regression 记录并列保留。
+
+### 上一暂停点：v4 更低地板已运行，质量门失败（quality_regression_under_lower_floor），温度路线关闭（2026-09-04）
+
+> 用户授权运行。GPU1，nltcs 生成 3561.4s / test 227s，固定 9000 轮
+> 走满，时间表审计逐轮匹配，**前缀审计通过**（前 901 轮与 v3 四条
+> 轨迹逐位一致）。未做任何结果后调参。
+
+结果（`outputs/fitness_only_floor00005_dev_seed9908_v4/report.json`，
+residual 臂，判据结果前冻结于 v4 协议）：
+
+```text
+质量门（fail-closed，先于 drift 判据）：
+  nltcs L1 0.000165 ≤ 0.000197 ✓（v3 0.000179，再改善 8%）
+  test  L1 0.002733 ≤ 0.002640 ✗（v3 0.002400，倒退 14%）
+主判据 drift（被质量门盖住，记录用）：
+  nltcs 1.1754 > 1.100（v3 1.1639——降地板后本底不降反微升）
+  test  3.1364（v3 2.2400，量子化加剧，观察项）
+形态：非 descending（best 7033@r7422，尾窗 8022 > 前窗 7832，
+  链again 稳态横盘）
+判定：quality_regression_under_lower_floor
+```
+
+两条关键科学结论（v3+v4 配对证据链）：
+
+1. **nltcs 漂移本底对地板温度不敏感**：参与行减半（16→8 行/轮），
+   本底 1.1639→1.1754 未收窄。说明带宽由"单行重采样量子跳变"
+   主导，不由每轮扰动行数主导。温度路线对 drift 无效。
+2. **test 小表被冻伤**：0.15 行/轮（约 7 轮动 1 行）修复能力不足，
+   measured L1 显著倒退。地板不可再降（协议 §7 亦禁止下探）。
+
+综合 v2/v3/v4：**floor=0.001（v3 配置）是质量最优点**（nltcs L1
+0.000179 / test L1 0.002400 双优、held-out 配对优势保持）。
+按 v4 协议 §7：quality_regression → 停下诊断，不进入后续屏。
+
+下一步（等用户决定）：走 B 路线定稿——方法配置定为三段式
+H=900/D=600/floor=0.001，叙事如实报告 drift 本底 ~1.16 为无门控
+终态输出的固有代价，并以 v3（预算加倍）与 v4（地板减半）两次
+冻结实验作为"本底与预算、更低温度无关"的对照证据；随后讨论
+5-seed 确认屏协议与 fitness 聚合缺口优先级。
+
+v2 unsupported / v3 rejected / v4 quality_regression 三条记录并列
+保留，均不得重跑。
+
+### 上一暂停点：v4 更低地板（0.0005）执行器与测试已就绪，等待运行授权（2026-09-04）
+
+> 用户批准 v4 协议草稿后授权实现。已完成 v4 delta 执行器与专项测试
+> （17 项全过，v1-v4 相关合计 69 项全过），plan 只读验证通过。
+> **尚未运行**——正式运行需用户单独授权；运行前 nvidia-smi 选空闲
+> GPU（CUDA_VISIBLE_DEVICES 注入，不改协议）。
+
+结果前协议：`docs/设计/FitnessOnly地板0.0005降温v4结果前协议.md`。
+执行器 `scripts/run_fitness_only_floor00005_v4.py` 继承 v3 链，变更 =
+rho_anneal_end 0.001→0.0005 + n_rounds 9000（H=900/D=600 不变）。
+v4 协议清单 SHA-256：
+
+```text
+3002afe55683f08c9b87ac5e8a59b0f45ca938406cc09e8287d1ddfb31d84cd2
+```
+
+新增审计与判定（全部结果前冻结）：
+
+```text
+前缀一致审计：v4 各臂前 901 轮（t∈[0,900]，两时间表逐点相同段）
+  与 v3 逐位相等 + 初始表/初始化后 RNG 哈希相等（v3 参照产物
+  5 文件 SHA-256 生成前 fail-closed 核对）；失败 →
+  schedule_blindness_violated，运行无效、产物保留、不开 held-out。
+判据：nltcs drift ≤1.100（不放宽）；质量门 nltcs L1 ≤0.000197、
+  test L1 ≤0.002640（各 1.10×v3）。
+形态：descending = 尾窗[8000,9000)均值 < 前窗[7000,8000)均值
+  AND running-best 最后刷新 ≥8000。
+四互斥标签：quality_regression_under_lower_floor /
+  lower_floor_supported / lower_floor_budget_insufficient /
+  lower_floor_rejected（→停止下探回 B 叙事）。
+输出：outputs/fitness_only_floor00005_dev_seed9908_v4/（不覆盖）。
+```
+
+v2 unsupported / v3 rejected 记录保留不变。成本 ≈65-70 分钟
+（nltcs ≈59 分钟两臂、test ≈4 分钟两臂、评价照旧）。
+
+### 上一暂停点：v3 T=6000 已运行，截断假说被拒绝（truncation_hypothesis_rejected），产物已冻结（2026-09-04）
+
+> 用户授权运行。GPU1，nltcs 生成 2366.5s / test 151.0s，固定 6000 轮
+> 走满，时间表审计逐轮匹配，**前缀审计通过**（v3 前 3000 轮与 v2 四条
+> 轨迹逐位一致 + 初始表/初始化后 RNG 哈希一致——horizon_invariant
+> 承诺首次经受可证伪检验并成立）。未做任何结果后调参。
+
+结果（`outputs/fitness_only_schedule_T6000_dev_seed9908_v3/report.json`，
+residual 臂，判据结果前冻结于 v3 协议）：
+
+```text
+质量门（两条全过）：
+  nltcs L1 0.000179 ≤ 0.000200 ✓（v2 0.000182，还在改善）
+  test  L1 0.002400 ≤ 0.002786 ✓（v2 0.002533，改善 5%）
+主判据 drift：
+  nltcs 1.1639 ≤ 1.100 ✗（v2 1.2063，有改善但未达标）
+形态判定（非 descending）：
+  地板段分段均值 11382→9978→9640→9146→8713→7998→8231→8558→8221
+  best 7146.5@r4432（<5000），尾窗[5000,6000)均值 8389 >
+  前窗[4000,5000)均值 8115 → 链已于 ~r4400 进入稳态震荡
+判定：truncation_hypothesis_rejected
+```
+
+含义：v2 的"链仍在降"是真的——再给 3000 轮后 best 又降 15%
+（8409→7146.5）且两数据集 L1 双改善；但链在 ~r4400 到达稳态，
+之后 1600 轮横盘。**drift ≈1.16 是地板温度（rho=0.001）下 nltcs 的
+波动本底**，不是预算不足。加任何轮数都不会达成 ≤1.100。
+
+观察项：test drift 2.2400（v2 1.7949，小表量子化波动，无硬门）；
+held-out nltcs 优势原样保持（3way -0.0615 / 4way -0.0373）；
+test held-out delta 略增（+0.0033/+0.0010，仍远小于 v1 的 +0.0056）。
+
+按 v3 协议 §7 绑定动作：回 B/C 路线——
+B = 接受本底修订方法叙事（时间表收益 test 漂移收窄 66%、两数据集
+L1 全面改善、nltcs 漂移=本底 ~1.16 并如实报告）；
+C = 另立地板修订协议（更低地板/终点邻域平均/DP 兼容早停输出规则，
+任何一项都需新的结果前协议）。等待用户选择。
+
+v2 unsupported 与 v3 rejected 两条记录并列保留，均不得重跑。
+
+### 上一暂停点：T=6000 截断假说 v3 执行器与测试已就绪，等待运行授权（2026-09-04）
+
+> 用户授权范围：批准 v3 协议草稿后"继续"（实现阶段）。已完成 v3
+> delta 执行器与专项测试（16 项全过，v1/v2/时间表相关 52 项全过），
+> plan 只读验证通过。**尚未运行**——正式运行需用户单独授权；运行前
+> 用 nvidia-smi 选空闲 GPU（CUDA_VISIBLE_DEVICES 注入，不改协议）。
+
+结果前协议：`docs/设计/FitnessOnly时间表T6000截断假说v3结果前协议.md`。
+执行器 `scripts/run_fitness_only_schedule_v3_t6000.py` 继承 v2 全部科学
+内容，唯一变更 n_rounds 3000→6000（时间表三常数逐字不变，公式不含 T）。
+v3 协议清单 SHA-256：
+
+```text
+cd834439b90d6ffa7e7789c583019b92d07b3a763a4cf0a6357f30a0df8553b9
+```
+
+新增审计与判定（全部结果前冻结）：
+
+```text
+前缀一致审计：v3 各臂 loss/rho history[:3000] 与 v2 逐位相等 +
+  初始表哈希、初始化后 RNG 哈希相等（v2 参照产物 5 个文件 SHA-256
+  运行前 fail-closed 核对）；失败 → horizon_invariance_violated，
+  运行无效、不打开 held-out、产物保留供架构诊断。
+判据：nltcs drift ≤1.100（不放宽）；质量门 nltcs L1 ≤0.000200、
+  test L1 ≤0.002786（各 1.10×v2）。
+形态：descending = 尾窗[5000,6000)均值 < 前窗[4000,5000)均值
+  AND running-best 最后刷新 ≥5000。
+四互斥标签：quality_regression_under_extended_budget /
+  truncation_hypothesis_supported / budget_still_insufficient /
+  truncation_hypothesis_rejected。
+输出：outputs/fitness_only_schedule_T6000_dev_seed9908_v3/（不覆盖）。
+```
+
+v2 的 unsupported 记录保留不变——v3 检验新假说（截断），不是重考。
+成本 ≈45 分钟（nltcs cuda ≈2×20 分钟、test numpy ≈2×75 秒）。
+
+### 上一暂停点：三段式 rho 时间表 v2 开发屏已运行并判定 unsupported，产物已冻结（2026-09-04）
+
+> 用户授权范围："继续"（实现后接运行 v2）。已完成 v2 runner、其专项
+> 测试与正式运行；按结果前冻结判据判定 `schedule_dev_unsupported`；
+> 未做任何结果后调参或重跑，产物保留，promotion gate 保持关闭。
+
+执行方式：新建 delta 执行器 `scripts/run_fitness_only_schedule_v2.py`，
+继承 v1 模块全部科学内容（数据集、冻结输入哈希、seed 9908、T=3000、
+配对两臂、评价管线、相位边界），唯一变更 = 预冻结三段式时间表
+（H=900、D=600、地板 0.001）。v1 runner 仅加 `config_factory` 注入点
+（默认行为不变）。v2 协议清单 SHA-256：
+
+```text
+bb7d19cb806a501a4cce6b139166a53cf8fe27f73140d951c15e4c3bb05a1531
+```
+
+runner 专项测试 9 项全过（plan 只读、身份 fail-closed、误确认先拒、
+不覆盖输出、generation_config 与 v1 逐键一致仅差时间表三键、config
+delta 唯一、三段边界、篡改历史拒绝、判据阈值逻辑）。
+
+运行结果（`outputs/fitness_only_schedule_dev_seed9908_v2/report.json`，
+生成 test 75.6s / nltcs 1177.7s，时间表审计 4 条轨迹逐轮匹配公式，
+配对与源码不变审计全过，固定轮数走满）：
+
+```text
+判据一 漂移超额减半（residual 臂 drift = output/best）：
+  test  : 1.7949 ≤ 2.167 ✓（v1 3.333，超额 2.333→0.795，收窄 66%）
+  nltcs : 1.2063 ≤ 1.100 ✗（v1 1.2002，超额几乎不变）
+判据二 measured L1 不倒退（≤1.10×v1）：
+  test  : 0.002533 ≤ 0.003520 ✓（比 v1 0.003200 改善 21%）
+  nltcs : 0.000182 ≤ 0.000287 ✓（比 v1 0.000261 改善 30%）
+整体判定：schedule_dev_unsupported（判据一 nltcs 未达成）
+```
+
+观察项（无硬门，记录用）：
+
+```text
+test held-out 配对差值大幅收窄：3-way +0.005632→+0.002813，
+  4-way +0.001875→+0.000566；one-way safety +0.038933→+0.017200
+nltcs 绝对水平全面改善：best 14870→8409，terminal 17847.5→10143.5
+nltcs held-out 配对优势保持（3-way −0.0615、4-way −0.0374）
+equal 臂降温后 loss 轨迹冻结平稳（对照行为正常）
+```
+
+失败机理解读（记录，不构成新协议）：test 的漂移是高温末端重采样破坏，
+时间表有效（超额 −66%）；nltcs 的 ~20% 相对漂移在绝对 loss 下降 43%
+后等比例保留，更像当前地板温度下的稳态波动本底，非同一机理。若要
+进一步压 nltcs 漂移（更低地板/更长降温），按协议 §7-§8 必须另立新
+版本协议，本次产物保留为对照。
+
+下一步（待用户决策）：按协议 §8 走"不支持"分支——回到调度设计
+讨论（候选：地板比修订版协议、或接受 nltcs 漂移本底转向 fitness
+聚合/覆盖缺口），或先讨论本结果对创新点叙事的影响。
+
+### 最新暂停点：fitness-only 三段式 rho 时间表已实现并通过测试，v2 实验未运行（2026-09-04）
+
+> 用户授权范围：按已批准的 v2 结果前协议实现代码与测试，跑实验前停止。
+> 未运行任何 v2 生成实验，未修改 v1 冻结产物，promotion gate 保持关闭。
+
+背景：v1 fitness-only 配对归因（seed 9908）机制成立但存在终点漂移
+（output/best 漂移比 test 3.333、nltcs 1.2002），根因是恒定 rho 下末端仍以
+固定强度重采样。依据
+`docs/设计/FitnessOnly三段式rho时间表v2开发屏结果前协议.md` 实现预冻结
+三段式盲时间表：保温 H=900 轮恒 rho=0.01 → D=600 轮几何降温 → 地板
+rho/10=0.001（开口段，由总预算截断，将来由早停决定）；常数为归一化单位
+（9 次/行 ×safety、一个数量级坡、地板比 0.1），全数据集通用、禁止按
+数据集调；公式不含总轮数，视界不变保持成立。
+
+本轮改动（均已完成，实验未跑）：
+
+- `src/table_diffevo/evolution.py`：新参数 `rho_anneal_start_round`
+  （默认 None 完全向后兼容，需与 `rho_anneal_rounds` 同时启用）；调度
+  进度 `min(1, max(0, (t-H)/D))`；horizon_invariant 与 fitness-only 两道
+  合同放行绝对轮数时间表、继续拒绝全程式退火；params 诊断新增该字段。
+- `src/table_diffevo/fitness_only.py`：配置新增三个时间表字段
+  （all-or-none 验证，end ∈ (0, rho]）；kwargs 传递；运行后审计逐轮核对
+  `rho_schedule_history` 与预冻结公式一致（不一致即 RuntimeError）；
+  配对核对字段加入 `rho_schedule_history`；pairing 记录
+  `shared_rho_schedule`。
+- `tests/test_fitness_only_schedule.py`：新增 19 项专项测试（三段边界
+  逐轮核对、纯时间驱动非门控、两臂共享时间表、start=0 与 legacy 逐位
+  一致、合同放行与 fail-closed 拒绝、运行后审计防篡改）。
+- `docs/设计/FitnessOnly残差适应度扩散演化接线.md`：§3 合同同步并追加
+  2026-09-04 修订节。
+
+测试：时间表专项 19 + fitness-only 19 + rho 退火 23 = 61 全通过；全仓
+`--continue-on-collection-errors` 下 2121 通过 / 43 失败（40 个为本分支
+已知的协议哈希护栏 fail-closed——evolution.py 携带未提交 fitness-only
+接线属预期；3 个为 venv 缺 scipy 的既有环境问题），无新增回归。
+
+下一步（需用户单独授权）：运行 v2 配对归因（seed 9908，两数据集，
+输出 `outputs/fitness_only_schedule_dev_seed9908_v2/`，不覆盖 v1）。
+判据按协议 §5：漂移超额减半（drift_ratio test ≤2.167、nltcs ≤1.100）
+且 measured L1 ≤1.10×v1（test ≤0.003520、nltcs ≤0.000287）；held-out
+为观察项；失败记 `schedule_dev_unsupported`。
+
+### 最新暂停点：Issue #53 问题一 A/R 双通道单种子筛查已评价，未通过（2026-09-02）
+
+> 用户已明确授权完成冻结的两条候选轨迹及质量评价。本轮已完成采集、结果盲
+> 勘误恢复和离线评价；未扩种子、未调参、未自动运行独立审计、未推送，也未
+> 操作 PR #69。
+
+候选仍是唯一研究臂 `gap_dual_abs_relative_max_s8`，开发种子 9908，数据集为
+`test_300x10` 与 NLTCS。源生成提交为
+`a3ba71fa2e84512fc6c8ba1bc818ba03e908cc71`，执行协议 SHA-256 为
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`。
+
+两条 GPU 轨迹均完整生成：
+
+```text
+dataset        applied rounds  termination    case elapsed
+test_300x10    1505            early_stopped  319.0563068520278 s
+NLTCS          2805            early_stopped  5762.858124156017 s
+```
+
+源采集器在两个 case 均写入 staging 后，因继承的 Stage 6E 发布校验错误要求
+`state_evaluation_count == applied_rounds+1` 而失败关闭；实际生成器契约为
+`state_evaluation_count == max(1,applied_rounds)`，与此前 R8/sqrt 已冻结的同类
+勘误一致。八个源 case 文件未改写、未删除，GPU 生成器未重跑。结果盲恢复协议
+只对旧校验器构造内存代理计数，其余旧护栏与 A/R 逐轮权重/`8*K` 护栏原样通过：
+
+```text
+recovery protocol SHA-256  2132a4392740114398064b62bfc604cb97b3226e4b758d654dbd6a71dcc8c4b3
+recovery commit            d51600e3f5b7b26261bf4ddca62318acbbfca1c0
+collection SHA-256         3b53fcac678924205a4bd1038ec15f404b5245b09894d2b065d28794e615a790
+```
+
+最终评价在干净提交 `1a6194fd43437751b4b117e5dc4c30090637f239` 上运行，
+复用已独立审计的 legacy/R8/sqrt 六条基线，不重跑旧臂；终表与所有已达到的
+固定检查点均评价，未使用历史最好或检查点选表：
+
+```text
+evaluation adapter SHA-256  ebb1d6726b99f0f486934cb3c8b7bff8c561d594d02895ede68ed711dc422cb4
+evaluation report SHA-256   df9c64430be28f45c0a354dff0861ba501b4c3e429e66a85956119961f5b5c56
+screen metrics CSV SHA-256  3517bb58884f9aab2533a807a7e3996745de0e5b03154871489a76fa9fb4680e
+candidate / baseline cases  2 / 6
+CSV rows                     123
+execution valid              true
+```
+
+冻结门的关键结果（越小越好）：
+
+| 门 | candidate | baseline | ratio | threshold | pass |
+|---|---:|---:|---:|---:|:---:|
+| NLTCS measured normalized L1 vs legacy | 0.0001487913 | 0.0002894331 | 0.5141 | `<1.0` | ✅ |
+| NLTCS 常见箱 mean error vs legacy | 2.7300771 | 6.3239075 | 0.4317 | `<1.0` | ✅ |
+| NLTCS 稀有箱 mean error vs legacy | 1.4705882 | 0.9411765 | 1.5625 | `<=1.25` | ❌ |
+| NLTCS 稀有箱 mean error vs sqrt | 1.4705882 | 1.5882353 | 0.9259 | `<1.0` | ✅ |
+| test measured normalized L1 vs legacy | 0.0010000 | 0.0008667 | 1.1538 | `<=1.05` | ❌ |
+| test one-way safety vs legacy | 0.0442667 | 0.0485333 | 0.9121 | `<=1.05` | ✅ |
+| NLTCS one-way safety vs legacy | 0.0000927013 | 0.0002549286 | 0.3636 | `<=1.05` | ✅ |
+
+冻结分类为 `rare_query_protection_not_recovered`，因为分类优先级先命中稀有箱
+失败；test 总 L1 同时也独立失败。结论是：A/R 的 A 通道确实大幅保住并改善了
+NLTCS 常见查询和总体误差，R 通道也使稀有箱优于 sqrt 约 7.4%，但仍比 legacy
+差 56.25%，未达到 25% 容忍线；同时 test 总 L1 比 legacy 差 15.38%。因此当前
+无参数 A/R `max` 设计不能作为问题一的合格解，也不得进入新种子确认。
+
+评价过程中有两次结果发布前失败关闭：第一次是适配器错用 sqrt 顶层审计字段名，
+第二次是把检查点历史字段 `gap_e` 误解释为 A/R C 能量。实际 `gap_e` 仍是
+legacy relative 诊断，A/R C 核身份在逐轮 transition audit 中。两次均未生成
+evaluation/CSV；修正、重冻结并通过 `13 passed` 后才执行上述正式评价。
+
+当前严格停在单种子开发筛查结论处。`automatic_followup_authorized=false`，下一步
+若继续问题一，应先讨论失败机制和新的结果前设计；不得自动调 A/R 比例、改门、
+扩种子或把本结果描述为成功。
+
+### 最新暂停点：Issue #53 问题一 A/R 双通道已通过开跑前预检，停在 collect 前（2026-09-02）
+
+> 用户授权的范围是完成真实 GPU 候选生成之前的设计、实现、测试、协议和预检；
+> 不授权启动两条候选轨迹、质量评价、新种子、调参、推送或操作 PR #69。
+
+新增显式研究模式 `dual_abs_relative_max`，公共默认仍为
+`legacy_relative`。冻结公式为：
+
+```text
+A = sum_all(|target-current|) / (N*J)
+R = sum_positive(|target-current|/target)
+    / [N*sum_positive(1/target)]
+E = max(A,R)
+```
+
+`target=0` 只进 A，不进 R，不另设 Z；无正目标时退化为 `E=A`。
+`floor` 不进入新公式，`max_weight_ratio` 必须为 null。微步在两侧分别先求
+`max(A_b,R_b)` 再取 `E0-E1`，切换点不加 epsilon、滞回或随机平局。
+
+实现只为新模式新增 R 通道的 float64 增量误差项/和；A 复用原误差状态。
+旧 legacy/bounded/sqrt 继续走原 NumPy/Triton 结合顺序；新模式有专用单任务
+CUDA eager 提交和逐微步批量 CUDA 分支。B 残差、`gap_l1_sweeps=8`、strength、
+孤立分数 RMS 定尺、概率、RNG、自动停止和 terminal-current 均未改。
+
+已通过：
+
+- 相关 CPU/主循环回归 `155 passed`；
+- 完整缺口核 CUDA 套件 `27 passed`；
+- 新模式包括零目标、全零目标、等误差校准、A/R 各自主导、切换点、
+  CPU 全量重算对拍、CPU/单 CUDA 逐微步对拍、单/批量 CUDA 轨迹哈希和 RNG 终点；
+- 旧三种模式的现有数值与冻结 CUDA 轨迹测试全部通过。
+
+全库试跑为 `2272 passed, 31 failed`。31 项集中于历史实验协议对
+`evolution.py` / `gap_l1_diffusion.py` 旧提交哈希的预期失败关闭，以及本工作树
+已存在/未复制的历史 outputs 前提；无 A/R 公式、增量状态、旧模式数值轨迹或
+CUDA 回归失败。不改写历史冻结协议去伪装旧提交未变。
+
+结果前科学协议：
+
+```text
+mode                         dual_abs_relative_max
+tasks                        test_300x10 / NLTCS, development seed 9908
+candidate arm                gap_dual_abs_relative_max_s8
+scientific protocol SHA-256  85016eb9b91364006537b4ccadd71bea8685b502a96aa05d88f73c700d75532d
+execution protocol SHA-256   4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386
+```
+
+目标权重审计只读两份 measured query JSON，逐条固定 1051 条查询的 A/R 权重；
+未导入核实现，未读参考表或任何候选结果。任务矩阵只新增两条轨迹，复用
+已独立审计的 legacy/R8/sqrt 基线，不重跑旧臂。执行入口已实现双层哈希和
+用户后续授权门。
+
+已在干净实现提交 `2e01f26a628635904717d29a17a191ea274978f5` 上执行只读
+`plan` 和 `preflight`：
+
+```text
+worktree clean including untracked   true
+protocol / source / input identity   pass
+GPU                                  linyao-system physical 1, RTX 4090 24 GiB
+CUDA_VISIBLE_DEVICES                 1 (process cuda:0)
+GPU preflight                        0% utilization, 18 MiB, no compute process
+software                             Python 3.11 / NumPy 2.4.6 / pandas 3.0.3
+                                     PyTorch 2.13.0+cu130 / CUDA 13.0
+runtime executables                  all executable
+ready_for_final_user_confirmation    true
+screen_generation_authorized         false
+generation_started                   false
+candidate output / shard output      absent / absent
+```
+
+干净提交后的最终相关套件为 `215 passed in 9.14s`。已有平方根轨迹的案例耗时是
+test 约 5.8 分钟、NLTCS 约 25.5 分钟；新模式单任务 CUDA 每微步需多维护一个
+通道，尚无正式轨迹实测。执行预留保守墙钟范围为约 45--120 分钟；该范围只是
+资源规划，不是质量或性能结论。
+
+当前严格停在真实 GPU `collect` 前。只有用户后续单独明确授权并确认执行协议
+`4ccf7bbe953d2523fca76d6a7e0ef1410e8773ebdb9a81fd50f8ed8f230b9386`，才能运行已冻结的
+`collect` 命令。采集后仍必须先报告 collection SHA 并停止，不自动评价。
 
 ### 历史小结：第 6D 正式效果闭环 v1→v5（2026-08-27，五版均未产出正式结果，已由 Stage 6E 取代）
 

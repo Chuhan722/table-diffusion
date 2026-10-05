@@ -4,8 +4,11 @@ import copy
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from table_diffevo.gap_l1_diffusion import (
+    GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+    GAP_L1_WEIGHTING_LEGACY_RELATIVE,
     compile_gap_l1_workload,
     evaluate_gap_l1_condition,
     evolve_step_gap_l1_global,
@@ -39,6 +42,60 @@ def test_normalized_error_uses_target_floor_and_all_queries():
         np.array([2, 12]), np.array([0, 10]), floor=8
     )
     assert actual == (2 / 8 + 2 / 10) / 2
+
+
+def test_bounded_relative_uses_fractional_row_scaled_smoothing():
+    n_records = 300
+    rare = normalized_gap_l1_error(
+        np.array([1]),
+        np.array([0]),
+        weighting=GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+        max_weight_ratio=8.0,
+        n_records=n_records,
+    )
+    common = normalized_gap_l1_error(
+        np.array([n_records - 1]),
+        np.array([n_records]),
+        weighting=GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+        max_weight_ratio=8.0,
+        n_records=n_records,
+    )
+
+    smoothing = n_records / 7.0
+    assert rare == 1.0 / smoothing
+    assert common == 1.0 / (n_records + smoothing)
+    assert rare / common == 8.0
+
+
+@pytest.mark.parametrize(
+    "kwargs,message",
+    [
+        ({"weighting": "unknown"}, "weighting"),
+        (
+            {"weighting": GAP_L1_WEIGHTING_BOUNDED_RELATIVE},
+            "max_weight_ratio",
+        ),
+        (
+            {
+                "weighting": GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+                "max_weight_ratio": 1.0,
+            },
+            "大于 1",
+        ),
+        (
+            {
+                "weighting": GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+                "max_weight_ratio": 8.0,
+            },
+            "不允许",
+        ),
+    ],
+)
+def test_gap_l1_weighting_rejects_invalid_configuration(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        normalized_gap_l1_error(
+            np.array([1]), np.array([1]), n_records=10, **kwargs
+        )
 
 
 def test_same_row_conjunction_is_not_an_isolated_linear_sum():
@@ -185,6 +242,33 @@ def test_calibration_uses_exact_rational_zero_not_float_tail():
     assert diagnostics["zero_count"] == 1
 
 
+def test_bounded_calibration_preserves_exact_rational_zero():
+    schema = _schema("a")
+    queries = [{"conditions": [_equals("a")]} for _ in range(3)]
+    current = pd.DataFrame({"a": [1] * 10 + [0] * 60})
+    donors = current.copy()
+    donors.at[10, "a"] = 1
+    targets = np.array([2.0, 14.0, 14.0])
+    isolated = isolated_gap_l1_scores(
+        current,
+        donors,
+        schema,
+        queries,
+        targets,
+        np.array([10, 10, 10]),
+        exact_target_numerators=targets.astype(np.int64),
+        exact_target_denominator=1,
+        weighting=GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+        max_weight_ratio=8.0,
+    )
+    scale, diagnostics = stable_nonzero_rms(isolated["scores"])
+
+    np.testing.assert_array_equal(isolated["coordinates"], [[10, 0]])
+    assert isolated["scores"][0] == 0.0
+    assert scale == 0.0
+    assert diagnostics["zero_count"] == 1
+
+
 def test_random_scan_runs_exactly_eight_k_and_replays_bit_for_bit():
     schema = _schema("a", "b")
     queries = [
@@ -223,9 +307,22 @@ def test_random_scan_runs_exactly_eight_k_and_replays_bit_for_bit():
         rng=np.random.default_rng(1234),
         **kwargs,
     )
+    explicit_legacy = evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        np.array([1, 1, 1]),
+        current_counts,
+        rng=np.random.default_rng(1234),
+        weighting=GAP_L1_WEIGHTING_LEGACY_RELATIVE,
+        **kwargs,
+    )
 
     pd.testing.assert_frame_equal(first[0], second[0])
+    pd.testing.assert_frame_equal(first[0], explicit_legacy[0])
     np.testing.assert_array_equal(first[1], second[1])
+    np.testing.assert_array_equal(first[1], explicit_legacy[1])
     assert first[2]["active_switches_k"] == 4
     assert first[2]["gibbs_microsteps"] == 32
     assert first[2]["conditional_error_evaluations"] == 64
@@ -233,6 +330,11 @@ def test_random_scan_runs_exactly_eight_k_and_replays_bit_for_bit():
         first[2]["microstep_trace_sha256"]
         == second[2]["microstep_trace_sha256"]
     )
+    assert (
+        first[2]["microstep_trace_sha256"]
+        == explicit_legacy[2]["microstep_trace_sha256"]
+    )
+    assert "gap_l1_weighting" not in first[2]
     assert first[2]["clip_hit_count"] == 0
     assert first[2]["exact_zero_or_one_probability_count"] == 0
     assert first[2]["minimum_binary_outcome_probability"] > 0.0
@@ -240,6 +342,41 @@ def test_random_scan_runs_exactly_eight_k_and_replays_bit_for_bit():
     np.testing.assert_array_equal(
         evaluate_table(first[0], queries), first[2]["final_query_counts"]
     )
+
+
+def test_bounded_scan_records_weight_cap_without_changing_scan_shape():
+    schema = _schema("a")
+    queries = [
+        {"conditions": [_equals("a", 1)]},
+        {"conditions": [_equals("a", 0)]},
+    ]
+    current = pd.DataFrame({"a": np.zeros(70, dtype=int)})
+    donors = pd.DataFrame({"a": np.ones(70, dtype=int)})
+    counts = evaluate_table(current, queries)
+    _, _, diagnostics = evolve_step_gap_l1_global(
+        current,
+        donors,
+        schema,
+        queries,
+        np.array([0, 70]),
+        counts,
+        participate=np.ones(70, dtype=bool),
+        initial_mask=np.zeros((70, 1), dtype=bool),
+        reference_scale=0.1,
+        rng=np.random.default_rng(7),
+        n_sweeps=0,
+        weighting=GAP_L1_WEIGHTING_BOUNDED_RELATIVE,
+        max_weight_ratio=8.0,
+    )
+
+    assert diagnostics["kernel"].endswith("bounded_relative")
+    assert diagnostics["gap_l1_weighting"] == (
+        GAP_L1_WEIGHTING_BOUNDED_RELATIVE
+    )
+    assert diagnostics["gap_l1_max_weight_ratio"] == 8.0
+    assert diagnostics["gap_l1_smoothing_count"] == 10.0
+    assert diagnostics["gap_l1_actual_weight_ratio"] == 8.0
+    assert diagnostics["gibbs_microsteps"] == 0
 
 
 def test_k_zero_consumes_no_rng_and_returns_initial_table():
