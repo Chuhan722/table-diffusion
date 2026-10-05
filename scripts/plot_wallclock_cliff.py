@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """墙钟悬崖图:加噪 ε=1 场,单场墙钟(三种子均),log 刻度。
 
-口径说明(2026-10-04 核实):
+口径说明(2026-10-05 统一配方场定稿):
 - 全部为加噪 ε=1 δ=1e-5 场(AIM/PGM/Tab-PE 本就只有加噪场;我们/GSD 取加噪主线)。
-- 我们: nltcs/acsmob = A6000 日志实测(logs_dj/neps*, logs_acs/ours_s{1,2} +
-        logs_acsfix/ours_s3 15036.5/13538.2/13025.4s;s3 用正字复刻场,
-        原场 menu-seed 笔误 20260922 作废,见笔记第四十四步补记三);
-        adult/plants = 4090 场(笔记第六步续: adult 76-84min 均 80min; plants 82-251s 均 166s),
-        停轮与 results/*_eps1_rescue128stopA_curve_seed*.csv 逐位吻合。
+- 我们: 统一配方 12 场 A6000 实测(logs_night/*_eps1_rule_s{1,2,3}.log 耗时行:
+        nltcs 421.8/392.2/429.2s 均 414.4s; adult 8784.3/8364.8/6776.3s 均 7975.1s;
+        acsmob 12956.4/12788.7/13161.9s 均 12969.0s; plants 516.0/492.7/153.8s 均 387.5s)。
 - GSD:  nltcs/acsmob = A6000(logs_seed/geps*, logs_acs/gsd_s*); adult/plants = 4090(笔记:
         搜索 13-17min / 511-541s)。
 - AIM:  全 A6000 CPU(logs_aim/*: nltcs 复测 1554/1793/1748s(带清池参数,与其余科同口径);
@@ -32,7 +30,7 @@ xlabels = [
 # 小时,三种子均;None=OOM
 H = 3600.0
 hours = {
-    "Ours (GPU)":   [410.6 / H, 80.0 / 60, 13866.7 / H, 166.5 / H],
+    "Ours (GPU)":   [414.4 / H, 7975.1 / H, 12969.0 / H, 387.5 / H],
     "GSD (GPU)":    [153.4 / H, 15.0 / 60, 4907.9 / H, 526.0 / H],
     "AIM (CPU)":    [1698.3 / H, 2528.7 / H, 13003.7 / H, 157566.7 / H],
     "Tab-PE (CPU)": [0.017, 0.033, 0.075, 0.033],
