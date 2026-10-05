@@ -310,6 +310,102 @@ def _batch_masks_torch(X_t, cols_t, ops_t, lo_t, hi_t, valid_t, torch):
     return mask
 
 
+def evaluate_conditions_vectorized(
+    df: pd.DataFrame,
+    conditions: List[Dict[str, Any]],
+    schema: Schema,
+    *,
+    device: Literal["numpy", "cuda", "cpu"] = "numpy",
+    return_tensor: bool = False,
+    float64: bool = False,
+):
+    """一次评价一组独立条件，供增量查询后端复用。
+
+    与 :func:`evaluate_vectorized` 不同，这里每一列是一个条件而不是一条
+    合取查询。表编码和条件编码完全复用本模块的现有规则；CUDA 路径不会在
+    设备不可用时静默回退，便于结果前协议严格绑定运行设备。
+    """
+
+    if device not in ("numpy", "cuda", "cpu"):
+        raise ValueError("device 必须是 'numpy'、'cuda' 或 'cpu'")
+    if not isinstance(return_tensor, bool) or not isinstance(float64, bool):
+        raise ValueError("return_tensor 和 float64 必须是布尔值")
+
+    X, col_index, cat_maps = _encode_table(df, schema)
+    cols = []
+    ops = []
+    lo = []
+    hi = []
+    for index, condition in enumerate(conditions):
+        if not isinstance(condition, dict):
+            raise ValueError(f"conditions[{index}] 必须是字典")
+        attribute = condition.get("attribute")
+        operator = condition.get("operator")
+        if attribute not in col_index or operator not in VECTORIZED_OPS:
+            raise ValueError(f"不支持的独立条件：{condition!r}")
+        cols.append(col_index[attribute])
+        ops.append(_OP_CODE[operator])
+        if operator == "between":
+            if "lower" not in condition or "upper" not in condition:
+                raise ValueError("between 条件缺少 lower/upper")
+            lo.append(float(condition["lower"]))
+            hi.append(float(condition["upper"]))
+        elif operator == ">=":
+            if "value" not in condition:
+                raise ValueError(">= 条件缺少 value")
+            lo.append(float(condition["value"]))
+            hi.append(0.0)
+        else:
+            if "value" not in condition:
+                raise ValueError("== 条件缺少 value")
+            lo.append(_encode_eq_value(attribute, condition["value"], cat_maps))
+            hi.append(0.0)
+
+    cols_np = np.asarray(cols, dtype=np.intp)
+    ops_np = np.asarray(ops, dtype=np.intp)
+    lo_np = np.asarray(lo, dtype=np.float64)
+    hi_np = np.asarray(hi, dtype=np.float64)
+    if device == "numpy":
+        values = X[:, cols_np]
+        result = np.where(
+            ops_np[None, :] == _OP_EQ,
+            values == lo_np[None, :],
+            np.where(
+                ops_np[None, :] == _OP_GE,
+                values >= lo_np[None, :],
+                (values >= lo_np[None, :]) & (values <= hi_np[None, :]),
+            ),
+        )
+        return result if return_tensor else np.asarray(result, dtype=bool)
+
+    try:
+        import torch
+    except ImportError as error:
+        raise RuntimeError("条件 CUDA 路径需要 PyTorch") from error
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("请求 CUDA 条件评价但 CUDA 不可用")
+    target_device = torch.device(device)
+    dtype = torch.float64 if float64 else torch.float32
+    X_t = torch.as_tensor(X, dtype=dtype, device=target_device)
+    cols_t = torch.as_tensor(cols_np, dtype=torch.long, device=target_device)
+    ops_t = torch.as_tensor(ops_np, dtype=torch.long, device=target_device)
+    lo_t = torch.as_tensor(lo_np, dtype=dtype, device=target_device)
+    hi_t = torch.as_tensor(hi_np, dtype=dtype, device=target_device)
+    values = X_t[:, cols_t]
+    result_t = torch.where(
+        (ops_t == _OP_EQ).unsqueeze(0),
+        values == lo_t.unsqueeze(0),
+        torch.where(
+            (ops_t == _OP_GE).unsqueeze(0),
+            values >= lo_t.unsqueeze(0),
+            (values >= lo_t.unsqueeze(0)) & (values <= hi_t.unsqueeze(0)),
+        ),
+    )
+    if return_tensor:
+        return result_t
+    return result_t.cpu().numpy().astype(bool, copy=False)
+
+
 def evaluate_vectorized(
     df: pd.DataFrame,
     queries: List[Dict[str, Any]],

@@ -1,0 +1,54 @@
+{
+  "inventory_version": "issue53-stage6d-v5-postcollection-recovery-inventory-v1",
+  "source_generation_commit": "b8bd59f26acc5528165dcb54850f101249563715",
+  "source_generator_params_manifest_sha256": "771b27775ddc9bde562c169e3c3cb991c2635d00b0087f90d1795847951e8e9d",
+  "source_protocol_sha256": "835a2165beebe754707a942ae473bb0432b13ec7c914a1caac7b32a6a1a5a523",
+  "source_runner_sha256": "d020648c2ee9c3808e370ddab7fca74a26ddd412ea28c4643e3f9b280071f88b",
+  "source_shard_assignment_sha256": "627f39e59f8eb0d80a194719a8995c2db123fa1d1f1375de81d4f8ebc057d789",
+  "shards": {
+    "local_rtx4090": {
+      "case_manifest_sha256": {
+        "seed_354__factor_b_s8__test_300x10": "d532a385d8e1bb9b9de69c2e1baefe60f458314811de135c6c4604d2f2603a99",
+        "seed_354__gap_l1_global_s8__test_300x10": "d97ae86e8099b8b302c3a471bec69417c86ac77a1d2f7d9c5ef44ead63b1a4c5",
+        "seed_354__independent_b_s0__test_300x10": "03f75204345fe57794d09f54211f90b11503c2cabb416b5f28cb8593ab845b3a",
+        "seed_355__factor_b_s8__nltcs": "313ec71720cbe50bb70f18eec189028524a842042892de0ef38cfaaaa710b609",
+        "seed_355__factor_b_s8__test_300x10": "6651e31aab0b13bc555e573e043cffa75563dc04c8c8951da9401812de96fe57",
+        "seed_355__gap_l1_global_s8__nltcs": "7c69033b53544af33f7962ac44a5e42581464ef911f3bac7bd4da9bb697fc4f0",
+        "seed_355__gap_l1_global_s8__test_300x10": "a0f00368a05d28396b3dc4b0a5841deeb3bbf8f5bbcef7447ce8baa4e2b0b5ba",
+        "seed_355__independent_b_s0__nltcs": "e5caf94d8cf59c0e7f664f901483baf10250c1f5638c1f367337728768da260d",
+        "seed_355__independent_b_s0__test_300x10": "48d968e51c1091e8465ee9df8bd378fd8d8aa5200e22707f8d9e772669e4ddeb",
+        "seed_356__factor_b_s8__nltcs": "8fccf137dc34bf69ff2a5c5525bfaa418065b7a1ef4c420e8911680b49e611f0",
+        "seed_356__factor_b_s8__test_300x10": "2a25393326bfdb91d7e0c34110dda7f08978499b090dde4ba38ab93ee540dc86",
+        "seed_356__gap_l1_global_s8__nltcs": "c098c6ed47fde96b10b8a3e5855e949b622406297084a5c85cc624c06c3c93ef",
+        "seed_356__gap_l1_global_s8__test_300x10": "7c8d400ba23f4773aecd7e65bcc31f397b1ba625e9a907d4818b9873b864bd7d",
+        "seed_356__independent_b_s0__nltcs": "aff13d629c4b36d27f9fa456b8632adb7747b4627eba3f4d69a23eae749af567",
+        "seed_356__independent_b_s0__test_300x10": "d9f6d29c4b42dfd707114afd011d583ff49c8885f015f0b1237e430951c5d76e",
+        "seed_357__factor_b_s8__nltcs": "c1e3dfcc70740f492f3a4ec293ba4f6738e7bd8a8b612bb99b8da4fd161b6455",
+        "seed_357__factor_b_s8__test_300x10": "ab483263052bdd2d9649d52da057e27077a867e44085603faf830ef460dc8ace",
+        "seed_357__gap_l1_global_s8__nltcs": "6f990763a1dd66d34fccea879371631811c396ff2148349f1aff018565225611",
+        "seed_357__gap_l1_global_s8__test_300x10": "0467a9851f6a12c9a78d7a5cb4642e4e096d40fd0c9978f8daa3376c6711deb5",
+        "seed_357__independent_b_s0__nltcs": "0d012e01d1868132108c6754f3bd831b50334288684dd6f3f64f1915112fcd00",
+        "seed_357__independent_b_s0__test_300x10": "f222fe4120eca5e8c26e11d75c61cb4e7ffc7bdc7c0287e2963c09afda6a1ea9"
+      },
+      "source_hostname": "linyao-system",
+      "source_staging_basename": ".local_rtx4090.staging-iidkcqpm",
+      "staging_manifest_sha256": "a9769590ec101192796f8bfe246bebbc2fa6f017360799076c6e92f49a6947b6"
+    },
+    "remote_a6000": {
+      "case_manifest_sha256": {
+        "seed_353__factor_b_s8__nltcs": "c48f7a6faa02a003f0ab05c7b551963f2ceb209254f6da604ecccdc9826c8336",
+        "seed_353__factor_b_s8__test_300x10": "539a60401925a14d37f67d970fcb69d4b3a46beccb7de226b38853bf1ae8af74",
+        "seed_353__gap_l1_global_s8__nltcs": "05b8b6ec07c93d53b188af9e447ca6cf6e052685c8f886ef23c202fc4d2baa93",
+        "seed_353__gap_l1_global_s8__test_300x10": "821f33523ed282f0654b0a0b8ee9ec406bf19d1e898de41547765befaea7d6dc",
+        "seed_353__independent_b_s0__nltcs": "5ba49311f4fb91e248bdedbc7d05b7e1c195a60467b76d7f3408bbdac7d815c9",
+        "seed_353__independent_b_s0__test_300x10": "46b44613c019c1aeb8900d2666e235021a6a87fd3efc846d8928392d5df4f8f2",
+        "seed_354__factor_b_s8__nltcs": "396342d2fa3948885ede5815781ee2786c179286aa7fe71367c41841637fafa0",
+        "seed_354__gap_l1_global_s8__nltcs": "ee1df1d111056bf0f089e0ad430695f281ff556411382df4415812ff19e8f62f",
+        "seed_354__independent_b_s0__nltcs": "576a06236942be49de8887294883e2cc4a7dd9fe02695a34a51d0786a128c1b4"
+      },
+      "source_hostname": "Cardiff_VM_6",
+      "source_staging_basename": ".remote_a6000.staging-dgsym3mr",
+      "staging_manifest_sha256": "9705abf39940bdd7980815063e05d7e85d1c70cfdcbcb64db486b6c7bfdd2479"
+    }
+  }
+}
