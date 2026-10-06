@@ -39,6 +39,9 @@ def main() -> None:
     ap.add_argument("--clear-caches-every-projects", type=int, default=0,
                     help="每 N 次模型投影后 jax.clear_caches，0 为不清；大候选池科目单轮即可爆 JIT 池，须轮内清")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--dump-measurements", default="",
+                    help="把 AIM 全部测量（轮次、团、sigma、加噪向量）录成 JSON，官方代码零改动，"
+                         "靠包装 MirrorDescent.estimate 截取末次调用的测量列表")
     args = ap.parse_args()
 
     sys.path.insert(0, args.mechanisms)
@@ -47,6 +50,19 @@ def main() -> None:
     jax.config.update("jax_enable_compilation_cache", False)
 
     from mbi import Dataset, Domain, estimation
+
+    captured: dict = {"measurements": None, "calls": 0}
+    if args.dump_measurements:
+        orig_estimate_rec = estimation.MirrorDescent.estimate
+
+        def recording_estimate(self, domain, loss_fn, *a, **k):
+            captured["calls"] += 1
+            if isinstance(loss_fn, list):
+                # AIM 每轮都把累计全部测量整列传入，末次调用即完整录像，顺序即轮次
+                captured["measurements"] = list(loss_fn)
+            return orig_estimate_rec(self, domain, loss_fn, *a, **k)
+
+        estimation.MirrorDescent.estimate = recording_estimate
 
     if args.clear_caches_every > 0:
         orig_estimate = estimation.MirrorDescent.estimate
@@ -101,6 +117,42 @@ def main() -> None:
     out_df = pd.DataFrame({c: np.asarray(synth.data[c]) for c in df.columns})
     out_df.to_csv(args.out, index=False)
     print(f"完成 {time.time() - t0:.0f}s 行{len(out_df)} -> {args.out}", flush=True)
+
+    if args.dump_measurements:
+        import json
+
+        from mbi.marginal_loss import LinearMeasurement
+
+        ms = captured["measurements"]
+        if not ms:
+            raise SystemExit("录像为空：estimate 从未收到测量列表，请核对 mbi 版本")
+        records = []
+        for i, m in enumerate(ms):
+            if not isinstance(m, LinearMeasurement):
+                raise SystemExit(f"第 {i} 条测量不是 LinearMeasurement: {type(m)}")
+            cl = tuple(m.clique)
+            shape = [int(domain[a]) for a in cl]
+            y = np.asarray(m.noisy_measurement, dtype=np.float64).ravel()
+            if y.size != int(np.prod(shape)):
+                raise SystemExit(f"第 {i} 条测量长度 {y.size} 与团域 {shape} 不符")
+            records.append({
+                "round": i, "clique": list(cl), "shape": shape,
+                "sigma": float(m.stddev), "y": y.tolist(),
+            })
+        payload = {
+            "data": args.data, "epsilon": args.epsilon, "delta": args.delta,
+            "seed": args.seed, "rho": float(mech.rho),
+            "num_rows": int(len(df)), "columns": list(df.columns),
+            "domain_sizes": sizes, "max_model_size": args.max_model_size,
+            "estimate_calls": captured["calls"],
+            "layout": "y 为 C 序展平的团边际计数向量，shape 按 clique 顺序；值编码 0..k-1 与 CSV 同",
+            "measurements": records,
+        }
+        with open(args.dump_measurements, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        n1 = sum(1 for r in records if len(r["clique"]) == 1)
+        print(f"录像 {len(records)} 条（一阶 {n1}，二阶 {len(records) - n1}）"
+              f" estimate 调用 {captured['calls']} 次 -> {args.dump_measurements}", flush=True)
 
 
 if __name__ == "__main__":

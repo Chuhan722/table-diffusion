@@ -102,6 +102,46 @@ def derive_first_order(
     return marginals
 
 
+def derive_first_order_direct(
+    specs: list[QuerySpec], schema: TableSchema,
+) -> list[list[tuple[dict, float]]]:
+    """直接从卷面一阶等值查询取每字段的原子计数，不经二阶边缘化。
+
+    只看恰好一个单字段等值条件的查询，每字段须被整域覆盖（每个域值恰一题），
+    同格重复题取均值，负计数夹到零防加噪卷，覆盖不全即拒绝。
+    供选测录像回放等一阶直接入卷的考卷用，纯后处理零隐私预算。
+    """
+    cells: dict[int, dict[str, tuple[dict, list[float]]]] = {}
+    for spec in specs:
+        if len(spec.conditions) != 1:
+            continue
+        cond = spec.conditions[0]
+        if cond["operator"] != "==":
+            continue
+        j = schema.field_index(cond["attribute"])
+        value = str(cond["value"])
+        if value not in schema.domains[j]:
+            raise ValueError(f"一阶题域外值 {cond['attribute']}={value}")
+        entry = cells.setdefault(j, {}).setdefault(value, (cond, []))
+        entry[1].append(float(spec.result))
+
+    marginals: list[list[tuple[dict, float]]] = []
+    for j in range(schema.num_fields):
+        got = cells.get(j, {})
+        missing = [v for v in schema.domains[j] if v not in got]
+        if missing:
+            raise ValueError(
+                f"字段 {schema.fields[j]} 一阶题覆盖不全，缺 {len(missing)} 个域值"
+            )
+        atoms = [
+            (got[v][0], max(float(np.mean(got[v][1])), 0.0)) for v in schema.domains[j]
+        ]
+        if sum(c for _, c in atoms) <= 0.0:
+            raise ValueError(f"字段 {schema.fields[j]} 一阶计数夹零后全空")
+        marginals.append(atoms)
+    return marginals
+
+
 def derive_first_order_avg(
     specs: list[QuerySpec], schema: TableSchema, total_rows: int,
 ) -> list[list[tuple[dict, float]]]:

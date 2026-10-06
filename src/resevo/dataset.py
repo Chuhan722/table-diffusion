@@ -39,6 +39,7 @@ class QuerySpec:
     query_id: str
     conditions: tuple[dict, ...]
     result: float
+    sigma: float | None = None  # 该题加噪标准差（计数口径），混 sigma 考卷才带，默认无
 
 
 def load_table(csv_path: str) -> tuple[TableSchema, list[tuple[str, ...]]]:
@@ -65,8 +66,12 @@ def load_queries(json_path: str) -> list[QuerySpec]:
         raise ValueError("只支持行数计数口径的查询负载")
     specs = []
     for q in payload["queries"]:
+        sigma = q.get("sigma")
         specs.append(
-            QuerySpec(str(q["id"]), tuple(q["conditions"]), float(q["result"]))
+            QuerySpec(
+                str(q["id"]), tuple(q["conditions"]), float(q["result"]),
+                None if sigma is None else float(sigma),
+            )
         )
     return specs
 

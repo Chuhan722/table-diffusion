@@ -30,7 +30,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
-from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, sample_initial_rows  # noqa: E402
+from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
@@ -192,6 +192,16 @@ def main() -> None:
         "替代贪心选首张过关表，缺格表跳过，此模式忽略 --init-margin-tol，默认关走原路径",
     )
     parser.add_argument(
+        "--init-oneway", action="store_true",
+        help="初始化一阶直接取卷面一阶等值题（每字段整域覆盖，负计数夹零），"
+        "不经二阶边缘化，选测录像回放考卷用，默认关走原路径",
+    )
+    parser.add_argument(
+        "--exam-weights", type=str, default="none", choices=["none", "sigma"],
+        help="查询权重，none 全一现状零改变；sigma 按每题 sigma 逆方差加权 (sigma_min/sigma)^2，"
+        "考卷每题须带 sigma 字段，混 sigma 考卷用",
+    )
+    parser.add_argument(
         "--init-table", type=str, default="",
         help="从 CSV 载入初始表跳过抽样初始化，字段与行数须与真表一致，"
         "选择循环热启动用，默认空走原路径",
@@ -285,6 +295,10 @@ def main() -> None:
         parser.error("--init-avg 与 --uniform-init 互斥，二选一")
     if args.init_table and (args.uniform_init or args.init_avg or args.init_clean):
         parser.error("--init-table 与其他初始化开关互斥")
+    if args.init_oneway and (
+        args.uniform_init or args.init_avg or args.init_table or args.init_tree
+    ):
+        parser.error("--init-oneway 与其他初始化开关互斥")
     if args.init_tree and (
         args.uniform_init or args.init_avg or args.init_clean or args.init_table
     ):
@@ -346,6 +360,17 @@ def main() -> None:
     specs = load_queries(str(exam_path))
     y = target_from_specs(specs)
     w = np.ones(len(specs))
+    if args.exam_weights == "sigma":
+        sigmas = np.array(
+            [np.nan if q.sigma is None else q.sigma for q in specs], dtype=np.float64
+        )
+        if np.isnan(sigmas).any() or (sigmas <= 0.0).any():
+            parser.error("--exam-weights sigma 要求考卷每题带正的 sigma 字段")
+        w = (sigmas.min() / sigmas) ** 2
+        print(
+            f"查询逆方差加权：sigma 范围 {sigmas.min():.4g}~{sigmas.max():.4g}，"
+            f"权重范围 {w.min():.4g}~1，题数 {len(specs)}"
+        )
     seen = set()
     field_sets = []
     for fs in query_field_sets(specs, schema):
@@ -384,7 +409,9 @@ def main() -> None:
             specs, schema, len(real_rows), init_rng, tol_rows=args.init_margin_tol
         )
     else:
-        if args.init_avg:
+        if args.init_oneway:
+            marginals = derive_first_order_direct(specs, schema)
+        elif args.init_avg:
             marginals = derive_first_order_avg(specs, schema, len(real_rows))
         else:
             marginals = derive_first_order(
