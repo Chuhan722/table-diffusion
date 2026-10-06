@@ -1,0 +1,10 @@
+
+2026-10-06T04:20:29+00:00 COMMAND ["/root/miniconda3/envs/aim/bin/python", "-u", "-B", "scripts/run_baseline_gsd_plants.py", "--seed", "3", "--data", "nltcs", "--noisy-exam", "/root/residual-evolution/data/nltcs_eps10_s3/measured_480query.json", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_gsd_seed3.csv"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-114f21d5-e47f-903c-a164-83a9f9dfa082", "JAX_PLATFORMS": "cuda,cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/gsd_patched", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+同餐断言通过，码表全二阶逐格等于考卷 480 条答案
+Setting up Marginals.:   0%|          | 0/120 [00:00<?, ?it/s]Setting up Marginals.:   1%|          | 1/120 [00:00<00:14,  8.14it/s]Setting up Marginals.: 100%|██████████| 120/120 [00:00<00:00, 610.35it/s]
+statistics 0: has 120 workloads and 480 queries.
+噪声目标注入 480 格，与噪声考卷逐格一致
+搜索 163.7 秒，频率尺度残差 平均 0.000215 最大 0.000803
+对噪声目标残差 平均 0.000343 最大 0.001489
+已写出 /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_gsd_seed3.csv，16181 行

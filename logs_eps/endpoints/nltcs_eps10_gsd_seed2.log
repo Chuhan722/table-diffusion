@@ -1,0 +1,27 @@
+
+2026-10-06T03:55:50+00:00 COMMAND ["/root/miniconda3/envs/aim/bin/python", "-u", "-B", "scripts/run_baseline_gsd_plants.py", "--seed", "2", "--data", "nltcs", "--noisy-exam", "/root/residual-evolution/data/nltcs_eps10_s2/measured_480query.json", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_gsd_seed2.csv"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed", "JAX_PLATFORMS": "cuda", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/gsd_patched", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+Traceback (most recent call last):
+  File "/root/residual-evolution/scripts/run_baseline_gsd_plants.py", line 33, in <module>
+    from genetic_sd.adaptive_statistics import AdaptiveChainedStatistics
+  File "/root/gsd_patched/genetic_sd/adaptive_statistics/__init__.py", line 2, in <module>
+    from genetic_sd.adaptive_statistics.chained_adaptive_statistics import AdaptiveChainedStatistics
+  File "/root/gsd_patched/genetic_sd/adaptive_statistics/chained_adaptive_statistics.py", line 8, in <module>
+    cpu = jax.devices("cpu")
+  File "/root/miniconda3/envs/aim/lib/python3.10/site-packages/jax/_src/xla_bridge.py", line 1083, in devices
+    return get_backend(backend).devices()
+  File "/root/miniconda3/envs/aim/lib/python3.10/site-packages/jax/_src/xla_bridge.py", line 1017, in get_backend
+    return _get_backend_uncached(platform)
+  File "/root/miniconda3/envs/aim/lib/python3.10/site-packages/jax/_src/xla_bridge.py", line 1005, in _get_backend_uncached
+    raise RuntimeError(
+RuntimeError: Unknown backend cpu. Available backends are ['cuda']
+
+2026-10-06T04:08:24+00:00 COMMAND ["/root/miniconda3/envs/aim/bin/python", "-u", "-B", "scripts/run_baseline_gsd_plants.py", "--seed", "2", "--data", "nltcs", "--noisy-exam", "/root/residual-evolution/data/nltcs_eps10_s2/measured_480query.json", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_gsd_seed2.csv"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed", "JAX_PLATFORMS": "cuda,cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/gsd_patched", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+同餐断言通过，码表全二阶逐格等于考卷 480 条答案
+Setting up Marginals.:   0%|          | 0/120 [00:00<?, ?it/s]Setting up Marginals.:   1%|          | 1/120 [00:00<00:14,  7.97it/s]Setting up Marginals.: 100%|██████████| 120/120 [00:00<00:00, 596.80it/s]
+statistics 0: has 120 workloads and 480 queries.
+噪声目标注入 480 格，与噪声考卷逐格一致
+搜索 176.9 秒，频率尺度残差 平均 0.000201 最大 0.000927
+对噪声目标残差 平均 0.000365 最大 0.001296
+已写出 /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_gsd_seed2.csv，16181 行

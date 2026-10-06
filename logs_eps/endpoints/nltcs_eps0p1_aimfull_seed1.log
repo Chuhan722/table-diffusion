@@ -1,0 +1,115 @@
+
+2026-10-06T03:55:02+00:00 COMMAND ["taskset", "-c", "28-55", "/root/miniconda3/envs/aim2/bin/python", "-u", "-B", "scripts/run_aim_full.py", "--data", "nltcs", "--mechanisms", "/root/private-pgm/mechanisms", "--epsilon", "0.1", "--delta", "1e-5", "--seed", "1", "--max-model-size", "80", "--clear-caches-every", "1", "--clear-caches-every-projects", "500", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps0p1_aimfull_seed1.csv"]
+ENV {"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/private-pgm/src", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+nltcs 字段16 行16181 全二阶120对 eps=0.1 delta=1e-05 seed=1 max_model_size=80.0
+Initial Sigma 573.1165193526316
+Budget Used 2.60472790343276e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_7')
+Budget Used 2.7738660789803417e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_14')
+Budget Used 2.9430042545279235e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_13')
+Budget Used 3.1121424300755056e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_14')
+Budget Used 3.2812806056230873e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_6')
+Budget Used 3.450418781170669e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_15')
+Budget Used 3.619556956718251e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_12')
+Budget Used 3.788695132265833e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_10')
+Budget Used 3.9578333078134145e-05 / 0.00043299372940180947
+
+2026-10-06T04:01:18+00:00 COMMAND ["taskset", "-c", "0-27", "/root/miniconda3/envs/aim2/bin/python", "-u", "-B", "scripts/run_aim_full.py", "--data", "nltcs", "--mechanisms", "/root/private-pgm/mechanisms", "--epsilon", "0.1", "--delta", "1e-5", "--seed", "1", "--max-model-size", "80", "--clear-caches-every", "1", "--clear-caches-every-projects", "500", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps0p1_aimfull_seed1.csv"]
+ENV {"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/private-pgm/src", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+nltcs 字段16 行16181 全二阶120对 eps=0.1 delta=1e-05 seed=1 max_model_size=80.0
+Initial Sigma 573.1165193526316
+Budget Used 2.60472790343276e-05 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_12')
+Budget Used 2.7738660789803417e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_5')
+Budget Used 2.9430042545279235e-05 / 0.00043299372940180947
+Measuring Clique ('attr_11', 'attr_14')
+Budget Used 3.1121424300755056e-05 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_10')
+Budget Used 3.2812806056230873e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_6')
+Budget Used 3.450418781170669e-05 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_10')
+Budget Used 3.619556956718251e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_10')
+Budget Used 3.788695132265833e-05 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_9')
+Budget Used 3.9578333078134145e-05 / 0.00043299372940180947
+Measuring Clique ('attr_14', 'attr_15')
+Budget Used 4.126971483360996e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_9')
+Budget Used 4.296109658908578e-05 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_11')
+Budget Used 4.46524783445616e-05 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_13')
+Budget Used 4.6343860100037416e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_13')
+Budget Used 4.8035241855513234e-05 / 0.00043299372940180947
+Measuring Clique ('attr_10',)
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 286.5582596763158
+Budget Used 5.4800768877416505e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 6.156629589931978e-05 / 0.00043299372940180947
+Measuring Clique ('attr_12', 'attr_14')
+Budget Used 6.833182292122305e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_4')
+Budget Used 7.509734994312632e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_14')
+Budget Used 8.186287696502959e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_14')
+Budget Used 8.862840398693286e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_13')
+Budget Used 9.539393100883613e-05 / 0.00043299372940180947
+Measuring Clique ('attr_13', 'attr_15')
+Budget Used 0.0001021594580307394 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_12')
+Budget Used 0.00010892498505264267 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_6')
+Budget Used 0.00011569051207454595 / 0.00043299372940180947
+Measuring Clique ('attr_15', 'attr_16')
+Budget Used 0.00012245603909644923 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_3')
+Budget Used 0.0001292215661183525 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_14')
+Budget Used 0.00013598709314025577 / 0.00043299372940180947
+Measuring Clique ('attr_11', 'attr_13')
+Budget Used 0.00014275262016215904 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_13')
+Budget Used 0.00014951814718406232 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_3')
+Budget Used 0.0001562836742059656 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_6')
+Budget Used 0.00016304920122786886 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_10')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 143.2791298381579
+Budget Used 0.00019011130931548194 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_12')
+Budget Used 0.00021717341740309503 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_7')
+Budget Used 0.0002442355254907081 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_16')
+Budget Used 0.0002712976335783212 / 0.00043299372940180947
+Measuring Clique ('attr_12', 'attr_15')
+Budget Used 0.0002983597416659343 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_10')
+Budget Used 0.00032542184975354737 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_2')
+Budget Used 0.00035248395784116045 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_9')
+Budget Used 0.00037954606592877354 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_8')
+Budget Used 0.00043299372940180947 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_15')
+Generating Data...
+完成 1026s 行16181 -> /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps0p1_aimfull_seed1.csv

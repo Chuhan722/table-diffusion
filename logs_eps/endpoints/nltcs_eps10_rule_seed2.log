@@ -1,0 +1,94 @@
+
+2026-10-06T03:56:29+00:00 COMMAND ["/root/residual-evolution/.venv/bin/python", "-u", "-B", "scripts/run_plants.py", "--data", "nltcs_eps10u_s2", "--rounds", "30000", "--retries", "60", "--batched", "--pairing", "--gpu", "--work-rows", "4096", "--work-below", "0.2", "--stop-threshold", "1e-4", "--stop-lag", "100", "--pair-rescue-rows", "2000", "--rescue-after", "6", "--max-pairs", "128", "--rescue-stop-window", "10", "--rescue-stop-tol", "0.02", "--retry-select", "--init-margin-tol", "0.05", "--ji-rho", "0.03565", "--struct-ruler", "ding+ji", "--struct-boost", "4", "--struct-boost2", "8", "--donor-rule", "--menu-seed", "20260922", "--sample-seed", "2", "--init-seed", "2", "--progress", "200", "--save-table", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2.csv", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2_curve.csv"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+己尺基准（买入口径）ρ=3.5650e-02 σ=4.629e-04 S*=3.687793e-02 信噪比=79.67
+供体档位门：S*=3.6878e-02 > 1/32，高重复表，供体加码 d32/dfm3
+行数 16181，查询数 480，初始损失 450781790.277098
+轮 0 模式 batch 损失 450781790.3 步长 1.0002 预测降 144330731.29 ok 连败 0
+轮 200 模式 batch 损失 25066.4 步长 0.0021 预测降 37.14 ok 连败 0
+
+2026-10-06T04:11:37+00:00 COMMAND ["/root/residual-evolution/.venv/bin/python", "-u", "-B", "scripts/run_plants.py", "--data", "nltcs_eps10u_s2", "--rounds", "30000", "--retries", "60", "--batched", "--pairing", "--gpu", "--work-rows", "4096", "--work-below", "0.2", "--stop-threshold", "1e-4", "--stop-lag", "100", "--pair-rescue-rows", "2000", "--rescue-after", "6", "--max-pairs", "128", "--rescue-stop-window", "10", "--rescue-stop-tol", "0.02", "--retry-select", "--init-margin-tol", "0.05", "--ji-rho", "0.03565", "--struct-ruler", "ding+ji", "--struct-boost", "4", "--struct-boost2", "8", "--donor-rule", "--menu-seed", "20260922", "--sample-seed", "2", "--init-seed", "2", "--progress", "200", "--save-table", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2.csv", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2_curve.csv"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+己尺基准（买入口径）ρ=3.5650e-02 σ=4.629e-04 S*=3.687793e-02 信噪比=79.67
+供体档位门：S*=3.6878e-02 > 1/32，高重复表，供体加码 d32/dfm3
+行数 16181，查询数 480，初始损失 450781790.277098
+轮 0 模式 batch 损失 450781790.3 步长 1.0002 预测降 144330731.29 ok 连败 0
+轮 200 模式 batch 损失 25066.4 步长 0.0021 预测降 37.14 ok 连败 0
+轮 400 模式 batch 损失 16411.2 步长 0.0020 预测降 11.20 ok 连败 0
+轮 600 模式 batch 损失 13659.4 步长 0.0021 预测降 0.96 ok 连败 0
+轮 800 模式 batch 损失 13019.2 步长 0.0059 预测降 0.58 ok 连败 0
+轮 1000 模式 batch 损失 12818.0 步长 0.0002 预测降 0.01 ok 连败 0
+轮 1048 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1049 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1050 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1051 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1052 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1053 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1054 模式 rescue 损失 12815.7 步长 0.0724 预测降 3.29 ok 连败 6
+轮 1055 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1056 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1057 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1058 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1059 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1060 模式 batch 损失 12815.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1061 模式 rescue 损失 12815.7 步长 0.0765 预测降 3.65 ok 连败 6
+轮 1063 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1064 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1065 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1066 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1067 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1068 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1069 模式 rescue 损失 12800.6 步长 0.0772 预测降 2.88 ok 连败 6
+轮 1070 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1071 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1072 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1073 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1074 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1075 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1076 模式 rescue 损失 12800.6 步长 0.0786 预测降 2.01 ok 连败 6
+轮 1077 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1078 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1079 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1080 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1081 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1082 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1083 模式 rescue 损失 12799.0 步长 0.0835 预测降 2.27 ok 连败 6
+轮 1084 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1085 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1086 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1087 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1088 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1089 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1090 模式 rescue 损失 12799.0 步长 0.0701 预测降 2.84 ok 连败 6
+轮 1091 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1092 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1093 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1094 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1095 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 1096 模式 batch 损失 12799.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 1097 模式 rescue 损失 12799.0 步长 0.0647 预测降 1.92 ok 连败 6
+轮 1098 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1100 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1101 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1102 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1103 模式 batch 损失 12800.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 1145 模式 batch 损失 12796.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1200 模式 batch 损失 12791.6 步长 0.0031 预测降 0.03 ok 连败 0
+轮 1221 模式 batch 损失 12790.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 1222 模式 batch 损失 12790.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 1223 模式 batch 损失 12790.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 1224 模式 batch 损失 12790.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+实际轮数 1400，停止原因 loss_plateau，冻结轮数 52，注册状态数 13141
+最终损失 12787.838140，初始比 0.0028%，耗时 675.4 秒，平均每轮 482 毫秒
+  轮    0  损失 450781790.2771  beta     0.0001  步长  1.00019  期望损失 306451058.9911  ok
+  轮  140  损失   31961.7616  beta     0.2177  步长  0.04030  期望损失   31558.7534  ok
+  轮  280  损失   20032.9011  beta     0.4696  步长  0.00210  期望损失   20024.4769  ok
+  轮  420  损失   16169.2181  beta     0.3826  步长  0.00116  期望损失   16156.0356  ok
+  轮  560  损失   14105.6866  beta     1.2044  步长  0.00441  期望损失   14102.2433  ok
+  轮  700  损失   13326.7584  beta     2.1381  步长  0.00022  期望损失   13326.5318  ok
+  轮  840  损失   12984.9471  beta     0.3987  步长  0.00111  期望损失   12977.0103  ok
+  轮  980  损失   12823.7793  beta     2.5470  步长  0.00070  期望损失   12823.6255  ok
+  轮 1120  损失   12803.0105  beta     1.6545  步长  0.00421  期望损失   12802.4132  ok
+  轮 1260  损失   12787.8381  beta     3.2344  步长  0.15896  期望损失   12787.7072  ok
+曲线已写入 /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2_curve.csv
+终表已写入 /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_rule_seed2.csv

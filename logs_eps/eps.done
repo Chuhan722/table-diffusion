@@ -1,0 +1,65 @@
+adult_eps0p1_rule_s1 rc=1
+adult_eps0p1_rule_s2 rc=1
+adult_eps0p1_rule_s3 rc=1
+nltcs_eps0p1_rule_s1 rc=0
+nltcs_eps0p1_rule_s2 rc=0
+nltcs_eps0p1_rule_s3 rc=0
+adult_eps0p1_gsd_s1 rc=1
+adult_eps0p1_gsd_s2 rc=1
+adult_eps0p1_gsd_s3 rc=1
+nltcs_eps0p1_gsd_s1 rc=1
+nltcs_eps0p1_gsd_s2 rc=1
+nltcs_eps0p1_gsd_s3 rc=1
+LANE_A_DONE
+adult_eps10_aimfull_s1 rc=1
+adult_eps10_aimfull_s2 rc=1
+adult_eps10_aimfull_s3 rc=1
+AIM4_DONE
+nltcs_eps0p1_pgm_s1 rc=0
+nltcs_eps0p1_pgm_s2 rc=0
+nltcs_eps0p1_pgm_s3 rc=0
+nltcs_eps10_pgm_s1 rc=0
+nltcs_eps10_pgm_s2 rc=0
+nltcs_eps0p1_pgm_s1 rc=0
+nltcs_eps0p1_gsd_seed1 rc=1 gpu=1 cpu_lane=None
+nltcs_eps10_gsd_seed1 rc=1 gpu=0 cpu_lane=None
+nltcs_eps0p1_gsd_seed2 rc=1 gpu=0 cpu_lane=None
+nltcs_eps10_gsd_seed2 rc=1 gpu=0 cpu_lane=None
+nltcs_eps10_pgm_seed3 rc=0 gpu=None cpu_lane=0
+nltcs_eps0p1_aimfull_seed1 rc=-15 gpu=None cpu_lane=1
+nltcs_eps10_aimfull_seed1 rc=-15 gpu=None cpu_lane=0
+nltcs_eps10_rule_seed2 rc=-15 gpu=0 cpu_lane=None
+nltcs_eps10_rule_seed1 rc=-15 gpu=1 cpu_lane=None
+nltcs_eps10_gsd_seed1 rc=0 gpu=1 cpu_lane=None
+nltcs_eps0p1_gsd_seed1 rc=0 gpu=0 cpu_lane=None
+nltcs_eps0p1_gsd_seed2 rc=0 gpu=0 cpu_lane=None
+nltcs_eps10_gsd_seed2 rc=0 gpu=0 cpu_lane=None
+nltcs_eps10_rule_seed1 rc=0 gpu=1 cpu_lane=None
+nltcs_eps0p1_aimfull_seed1 rc=0 gpu=None cpu_lane=0
+nltcs_eps0p1_gsd_seed3 rc=0 gpu=1 cpu_lane=None
+nltcs_eps10_rule_seed2 rc=0 gpu=0 cpu_lane=None
+nltcs_eps10_gsd_seed3 rc=0 gpu=1 cpu_lane=None
+nltcs_eps10_rule_seed3 rc=0 gpu=0 cpu_lane=None
+adult_eps0p1_rule_seed1 rc=0 gpu=1 cpu_lane=None
+nltcs_eps0p1_aimfull_seed2 rc=0 gpu=None cpu_lane=1
+nltcs_eps10_aimfull_seed1 adopted=1 rc=unknown validation=ok gpu=None cpu_lane=0
+adult_eps0p1_gsd_seed1 adopted=1 rc=unknown validation=ok gpu=0 cpu_lane=None
+nltcs_eps10_aimfull_seed2 adopted=1 rc=unknown validation=ok gpu=None cpu_lane=2
+adult_eps0p1_aimfull_seed1 rc=0 validation=ok gpu=None cpu_lane=2
+adult_eps0p1_aimfull_seed2 rc=0 validation=ok gpu=None cpu_lane=2
+adult_eps0p1_aimfull_seed3 rc=0 validation=ok gpu=None cpu_lane=2
+adult_eps10_aimfull_seed1 rc=0 validation=ok gpu=None cpu_lane=1
+adult_eps10_aimfull_seed2 rc=0 validation=ok gpu=None cpu_lane=3
+adult_eps10_aimfull_seed3 rc=0 validation=ok gpu=None cpu_lane=0
+nltcs_eps0p1_aimfull_seed3 rc=0 validation=ok gpu=None cpu_lane=1
+nltcs_eps10_aimfull_seed3 rc=0 validation=ok gpu=None cpu_lane=2
+adult_eps10_gsd_seed1 adopted=1 rc=unknown validation=ok gpu=1 cpu_lane=None
+adult_eps10_rule_seed2 rc=0 validation=ok gpu=1 cpu_lane=None
+adult_eps10_gsd_seed2 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps10_rule_seed1 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps0p1_rule_seed2 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps0p1_rule_seed3 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps0p1_gsd_seed2 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps0p1_gsd_seed3 rc=0 validation=ok gpu=0 cpu_lane=None
+adult_eps10_gsd_seed3 rc=0 validation=ok gpu=1 cpu_lane=None
+adult_eps10_rule_seed3 rc=0 validation=ok gpu=1 cpu_lane=None

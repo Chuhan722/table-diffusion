@@ -1,0 +1,404 @@
+{
+  "controller_pid": 563087,
+  "started_at": "2026-10-06T04:37:44+00:00",
+  "phase": "running",
+  "budgets": [
+    0.1,
+    10
+  ],
+  "allowed_gpus": [
+    0,
+    1
+  ],
+  "cpu_cores": "0-55",
+  "initial_completed": 19,
+  "jobs": {
+    "nltcs_eps0p1_rule_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_rule_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_rule_seed3": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_gsd_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_gsd_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_gsd_seed3": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_aimfull_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_aimfull_seed2": {
+      "state": "succeeded",
+      "pid": 563103,
+      "started_at": "2026-10-06T04:37:44+00:00",
+      "gpu": null,
+      "cpu_lane": 1,
+      "command": [
+        "taskset",
+        "-c",
+        "28-55",
+        "/root/miniconda3/envs/aim2/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_aim_full.py",
+        "--data",
+        "nltcs",
+        "--mechanisms",
+        "/root/private-pgm/mechanisms",
+        "--epsilon",
+        "0.1",
+        "--delta",
+        "1e-5",
+        "--seed",
+        "2",
+        "--max-model-size",
+        "80",
+        "--clear-caches-every",
+        "1",
+        "--clear-caches-every-projects",
+        "500",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps0p1_aimfull_seed2.csv"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "",
+        "JAX_PLATFORMS": "cpu",
+        "PYTHONPATH": "/root/private-pgm/src"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/nltcs_eps0p1_aimfull_seed2.log",
+      "finished_at": "2026-10-06T04:53:24+00:00",
+      "elapsed_seconds": 939.907736335881,
+      "returncode": 0
+    },
+    "nltcs_eps0p1_aimfull_seed3": {
+      "state": "pending"
+    },
+    "nltcs_eps0p1_pgm_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_pgm_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps0p1_pgm_seed3": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_rule_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_rule_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_rule_seed3": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_gsd_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_gsd_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_gsd_seed3": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_aimfull_seed1": {
+      "state": "running",
+      "pid": 563102,
+      "started_at": "2026-10-06T04:37:44+00:00",
+      "gpu": null,
+      "cpu_lane": 0,
+      "command": [
+        "taskset",
+        "-c",
+        "0-27",
+        "/root/miniconda3/envs/aim2/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_aim_full.py",
+        "--data",
+        "nltcs",
+        "--mechanisms",
+        "/root/private-pgm/mechanisms",
+        "--epsilon",
+        "10",
+        "--delta",
+        "1e-5",
+        "--seed",
+        "1",
+        "--max-model-size",
+        "80",
+        "--clear-caches-every",
+        "1",
+        "--clear-caches-every-projects",
+        "500",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_aimfull_seed1.csv"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "",
+        "JAX_PLATFORMS": "cpu",
+        "PYTHONPATH": "/root/private-pgm/src"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/nltcs_eps10_aimfull_seed1.log"
+    },
+    "nltcs_eps10_aimfull_seed2": {
+      "state": "running",
+      "pid": 589059,
+      "started_at": "2026-10-06T04:53:24+00:00",
+      "gpu": null,
+      "cpu_lane": 1,
+      "command": [
+        "taskset",
+        "-c",
+        "28-55",
+        "/root/miniconda3/envs/aim2/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_aim_full.py",
+        "--data",
+        "nltcs",
+        "--mechanisms",
+        "/root/private-pgm/mechanisms",
+        "--epsilon",
+        "10",
+        "--delta",
+        "1e-5",
+        "--seed",
+        "2",
+        "--max-model-size",
+        "80",
+        "--clear-caches-every",
+        "1",
+        "--clear-caches-every-projects",
+        "500",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_aimfull_seed2.csv"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "",
+        "JAX_PLATFORMS": "cpu",
+        "PYTHONPATH": "/root/private-pgm/src"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/nltcs_eps10_aimfull_seed2.log"
+    },
+    "nltcs_eps10_aimfull_seed3": {
+      "state": "pending"
+    },
+    "nltcs_eps10_pgm_seed1": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_pgm_seed2": {
+      "state": "succeeded"
+    },
+    "nltcs_eps10_pgm_seed3": {
+      "state": "succeeded"
+    },
+    "adult_eps0p1_rule_seed1": {
+      "state": "succeeded",
+      "pid": 563373,
+      "started_at": "2026-10-06T04:37:46+00:00",
+      "gpu": 1,
+      "cpu_lane": null,
+      "command": [
+        "/root/residual-evolution/.venv/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_plants.py",
+        "--data",
+        "adult_eps0p1u_s1",
+        "--rounds",
+        "30000",
+        "--retries",
+        "60",
+        "--batched",
+        "--pairing",
+        "--gpu",
+        "--work-rows",
+        "4096",
+        "--work-below",
+        "0.2",
+        "--stop-threshold",
+        "1e-4",
+        "--stop-lag",
+        "100",
+        "--pair-rescue-rows",
+        "2000",
+        "--rescue-after",
+        "6",
+        "--max-pairs",
+        "128",
+        "--rescue-stop-window",
+        "10",
+        "--rescue-stop-tol",
+        "0.02",
+        "--retry-select",
+        "--init-margin-tol",
+        "0.5",
+        "--ji-rho",
+        "8.66e-06",
+        "--struct-ruler",
+        "ding+ji",
+        "--struct-boost",
+        "4",
+        "--struct-boost2",
+        "8",
+        "--donor-rule",
+        "--menu-seed",
+        "20260921",
+        "--sample-seed",
+        "1",
+        "--init-seed",
+        "1",
+        "--progress",
+        "200",
+        "--save-table",
+        "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1.csv",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1_curve.csv",
+        "--gpu-entry-budget",
+        "40000000"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "GPU-114f21d5-e47f-903c-a164-83a9f9dfa082",
+        "CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/adult_eps0p1_rule_seed1.log",
+      "finished_at": "2026-10-06T04:50:21+00:00",
+      "elapsed_seconds": 754.9908582409844,
+      "returncode": 0
+    },
+    "adult_eps0p1_rule_seed2": {
+      "state": "pending"
+    },
+    "adult_eps0p1_rule_seed3": {
+      "state": "pending"
+    },
+    "adult_eps0p1_gsd_seed1": {
+      "state": "running",
+      "pid": 563316,
+      "started_at": "2026-10-06T04:37:46+00:00",
+      "gpu": 0,
+      "cpu_lane": null,
+      "command": [
+        "/root/miniconda3/envs/aim/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_baseline_gsd_plants.py",
+        "--seed",
+        "1",
+        "--data",
+        "adult",
+        "--noisy-exam",
+        "/root/residual-evolution/data/adult_eps0p1_s1/measured_14123query.json",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_gsd_seed1.csv"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed",
+        "CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime",
+        "JAX_PLATFORMS": "cuda,cpu",
+        "PYTHONPATH": "/root/gsd_patched"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/adult_eps0p1_gsd_seed1.log"
+    },
+    "adult_eps0p1_gsd_seed2": {
+      "state": "pending"
+    },
+    "adult_eps0p1_gsd_seed3": {
+      "state": "pending"
+    },
+    "adult_eps0p1_aimfull_seed1": {
+      "state": "pending"
+    },
+    "adult_eps0p1_aimfull_seed2": {
+      "state": "pending"
+    },
+    "adult_eps0p1_aimfull_seed3": {
+      "state": "pending"
+    },
+    "adult_eps10_rule_seed1": {
+      "state": "pending"
+    },
+    "adult_eps10_rule_seed2": {
+      "state": "pending"
+    },
+    "adult_eps10_rule_seed3": {
+      "state": "pending"
+    },
+    "adult_eps10_gsd_seed1": {
+      "state": "running",
+      "pid": 582352,
+      "started_at": "2026-10-06T04:50:25+00:00",
+      "gpu": 1,
+      "cpu_lane": null,
+      "command": [
+        "/root/miniconda3/envs/aim/bin/python",
+        "-u",
+        "-B",
+        "scripts/run_baseline_gsd_plants.py",
+        "--seed",
+        "1",
+        "--data",
+        "adult",
+        "--noisy-exam",
+        "/root/residual-evolution/data/adult_eps10_s1/measured_14123query.json",
+        "--out",
+        "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps10_gsd_seed1.csv"
+      ],
+      "environment": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "CUDA_VISIBLE_DEVICES": "GPU-114f21d5-e47f-903c-a164-83a9f9dfa082",
+        "CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime",
+        "JAX_PLATFORMS": "cuda,cpu",
+        "PYTHONPATH": "/root/gsd_patched"
+      },
+      "log": "/root/residual-evolution/logs_eps/endpoints/adult_eps10_gsd_seed1.log"
+    },
+    "adult_eps10_gsd_seed2": {
+      "state": "pending"
+    },
+    "adult_eps10_gsd_seed3": {
+      "state": "pending"
+    },
+    "adult_eps10_aimfull_seed1": {
+      "state": "pending"
+    },
+    "adult_eps10_aimfull_seed2": {
+      "state": "pending"
+    },
+    "adult_eps10_aimfull_seed3": {
+      "state": "pending"
+    }
+  },
+  "gpu_waiting": {},
+  "updated_at": "2026-10-06T04:53:24+00:00",
+  "counts": {
+    "pending": 17,
+    "running": 4,
+    "succeeded": 21,
+    "failed": 0
+  }
+}

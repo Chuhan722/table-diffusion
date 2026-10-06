@@ -1,0 +1,35 @@
+
+2026-10-06T04:37:46+00:00 COMMAND ["/root/residual-evolution/.venv/bin/python", "-u", "-B", "scripts/run_plants.py", "--data", "adult_eps0p1u_s1", "--rounds", "30000", "--retries", "60", "--batched", "--pairing", "--gpu", "--work-rows", "4096", "--work-below", "0.2", "--stop-threshold", "1e-4", "--stop-lag", "100", "--pair-rescue-rows", "2000", "--rescue-after", "6", "--max-pairs", "128", "--rescue-stop-window", "10", "--rescue-stop-tol", "0.02", "--retry-select", "--init-margin-tol", "0.5", "--ji-rho", "8.66e-06", "--struct-ruler", "ding+ji", "--struct-boost", "4", "--struct-boost2", "8", "--donor-rule", "--menu-seed", "20260921", "--sample-seed", "1", "--init-seed", "1", "--progress", "200", "--save-table", "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1.csv", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1_curve.csv", "--gpu-entry-budget", "40000000"]
+ENV {"CUDA_PATH": "/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime", "CUDA_VISIBLE_DEVICES": "GPU-114f21d5-e47f-903c-a164-83a9f9dfa082", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+己尺基准（买入口径）ρ=8.6600e-06 σ=1.476e-02 S*=3.659981e-03 信噪比=0.25
+信噪比门：S* ≤ 3σ，基准不可信，己尺弃用（学费沉没）
+供体档位门：S* 不可信或低重复，供体守默认档
+行数 32561，查询数 14123，初始损失 2885540738.792587
+轮 0 模式 batch 损失 2885540738.8 步长 1.0001 预测降 719720049.65 ok 连败 0
+轮 200 模式 batch 损失 762852405.6 步长 1.0000 预测降 191339.09 ok 连败 0
+轮 400 模式 batch 损失 743068373.0 步长 1.0000 预测降 53483.94 ok 连败 0
+轮 600 模式 batch 损失 736783165.2 步长 1.0000 预测降 23861.08 ok 连败 0
+轮 800 模式 batch 损失 733805532.9 步长 1.0000 预测降 7638.57 ok 连败 0
+轮 1000 模式 batch 损失 732058041.6 步长 1.0000 预测降 7230.84 ok 连败 0
+轮 1200 模式 batch 损失 730985947.1 步长 0.9692 预测降 3874.52 ok 连败 0
+轮 1400 模式 batch 损失 730267701.4 步长 1.0000 预测降 3583.90 ok 连败 0
+轮 1600 模式 batch 损失 729729197.2 步长 1.0000 预测降 2637.23 ok 连败 0
+轮 1800 模式 batch 损失 729332491.3 步长 1.0000 预测降 2369.76 ok 连败 0
+轮 2000 模式 batch 损失 729021490.0 步长 0.1964 预测降 298.51 ok 连败 0
+轮 2200 模式 batch 损失 728778419.2 步长 0.3206 预测降 518.20 ok 连败 0
+轮 2400 模式 batch 损失 728570423.5 步长 0.2495 预测降 359.10 ok 连败 0
+轮 2600 模式 batch 损失 728403177.8 步长 1.0000 预测降 1660.77 ok 连败 0
+实际轮数 2800，停止原因 loss_plateau，冻结轮数 0，注册状态数 268464
+最终损失 728266342.892386，初始比 25.2385%，耗时 742.8 秒，平均每轮 265 毫秒
+  轮    0  损失 2885540738.7926  beta     0.0001  步长  1.00007  期望损失 2165820689.1470  ok
+  轮  280  损失 751358516.2271  beta     0.0148  步长  1.00000  期望损失 751257743.6633  ok
+  轮  560  损失 737685361.2645  beta     0.0286  步长  1.00000  期望损失 737664302.4740  ok
+  轮  840  损失 733346300.3039  beta     0.0279  步长  1.00000  期望损失 733333707.7679  ok
+  轮 1120  损失 731391453.9833  beta     0.0473  步长  1.00000  期望损失 731384880.1151  ok
+  轮 1400  损失 730267701.3576  beta     0.0836  步长  1.00000  期望损失 730264117.4619  ok
+  轮 1680  损失 729568565.9574  beta     0.0684  步长  1.00000  期望损失 729565703.4324  ok
+  轮 1960  损失 729077390.2392  beta     0.0869  步长  0.96678  期望损失 729075536.7940  ok
+  轮 2240  损失 728726312.5267  beta     0.0706  步长  0.53884  期望损失 728725339.5654  ok
+  轮 2520  损失 728468704.3884  beta     0.1461  步长  0.20717  期望损失 728468374.2252  ok
+曲线已写入 /root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1_curve.csv
+终表已写入 /root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_rule_seed1.csv

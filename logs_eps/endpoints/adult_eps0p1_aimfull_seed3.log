@@ -1,0 +1,61 @@
+
+2026-10-06T06:05:36+00:00 COMMAND ["taskset", "-c", "28-41", "/root/miniconda3/envs/aim2/bin/python", "-u", "-B", "scripts/run_aim_full.py", "--data", "adult", "--mechanisms", "/root/private-pgm/mechanisms", "--epsilon", "0.1", "--delta", "1e-5", "--seed", "3", "--max-model-size", "80", "--clear-caches-every", "1", "--clear-caches-every-projects", "500", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_aimfull_seed3.csv"]
+ENV {"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/private-pgm/src", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+adult 字段15 行32561 全二阶105对 eps=0.1 delta=1e-05 seed=3 max_model_size=80.0
+Initial Sigma 554.9176837222757
+Budget Used 2.6160037818025994e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 2.79641783572002e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_10')
+Budget Used 2.9768318896374406e-05 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_15')
+Budget Used 3.1572459435548615e-05 / 0.00043299372940180947
+Measuring Clique ('attr_10',)
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 277.45884186113784
+Budget Used 3.878902159224544e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_15')
+Budget Used 4.600558374894226e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_10')
+Budget Used 5.3222145905639085e-05 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_13')
+Budget Used 6.043870806233591e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_15')
+Budget Used 6.765527021903274e-05 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_15')
+Budget Used 7.487183237572956e-05 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_10')
+Budget Used 8.208839453242639e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_15')
+Budget Used 8.930495668912321e-05 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_15')
+Budget Used 9.652151884582003e-05 / 0.00043299372940180947
+Measuring Clique ('attr_13', 'attr_15')
+Budget Used 0.00010373808100251686 / 0.00043299372940180947
+Measuring Clique ('attr_15',)
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 138.72942093056892
+Budget Used 0.00013260432962930416 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_5')
+Budget Used 0.00016147057825609146 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_15')
+Budget Used 0.00019033682688287875 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_15')
+Budget Used 0.00021920307550966605 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_6')
+Budget Used 0.00024806932413645337 / 0.00043299372940180947
+Measuring Clique ('attr_11', 'attr_15')
+Budget Used 0.00027693557276324066 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_10')
+Budget Used 0.00030580182139002796 / 0.00043299372940180947
+Measuring Clique ('attr_13', 'attr_15')
+Budget Used 0.00033466807001681525 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_15')
+Budget Used 0.00036353431864360254 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_10')
+Budget Used 0.00039240056727038984 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 0.00043299372940180947 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_10')
+Generating Data...
+完成 887s 行32561 -> /root/residual-evolution/results/.eps_endpoints_pending/adult_eps0p1_aimfull_seed3.csv

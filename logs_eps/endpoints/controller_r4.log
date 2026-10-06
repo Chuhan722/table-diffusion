@@ -1,0 +1,44 @@
+2026-10-06T04:59:43+00:00 PLAN total=42 existing=21 adopted=4 pending_heavy=5 pending_light=4 pending_cpu=8 budgets=0.1,10 scheduler='v2: per-GPU heavy(rule)+light(gsd) slots, 4 CPU lanes in 0-55, orphan adoption'
+2026-10-06T04:59:43+00:00 ADOPT adult_eps0p1_gsd_seed1 pid=563316 gpu=0 cpu_lane=None cpus=0-55 started_at=2026-10-06T04:37:45+00:00 slot=light
+2026-10-06T04:59:43+00:00 ADOPT adult_eps10_gsd_seed1 pid=582352 gpu=1 cpu_lane=None cpus=0-55 started_at=2026-10-06T04:50:25+00:00 slot=light
+2026-10-06T04:59:43+00:00 ADOPT nltcs_eps10_aimfull_seed1 pid=563102 gpu=None cpu_lane=0 cpus=0-27 started_at=2026-10-06T04:37:44+00:00 slot=cpu0
+2026-10-06T04:59:43+00:00 ADOPT nltcs_eps10_aimfull_seed2 pid=589059 gpu=None cpu_lane=2 cpus=28-55 started_at=2026-10-06T04:53:23+00:00 slot=cpu2
+2026-10-06T04:59:43+00:00 START adult_eps10_aimfull_seed1 pid=593651 gpu=None cpu_lane=1 slot=cpu1
+2026-10-06T04:59:43+00:00 START adult_eps10_aimfull_seed2 pid=593652 gpu=None cpu_lane=3 slot=cpu3
+2026-10-06T04:59:45+00:00 START adult_eps10_rule_seed2 pid=593711 gpu=1 cpu_lane=None slot=heavy
+2026-10-06T04:59:45+00:00 START adult_eps10_rule_seed1 pid=593767 gpu=0 cpu_lane=None slot=heavy
+2026-10-06T05:22:37+00:00 DONE nltcs_eps10_aimfull_seed1 elapsed=1373.5s adopted=True
+2026-10-06T05:22:37+00:00 START adult_eps10_aimfull_seed3 pid=595674 gpu=None cpu_lane=0 slot=cpu0
+2026-10-06T05:27:57+00:00 DONE adult_eps0p1_gsd_seed1 elapsed=1693.9s adopted=True
+2026-10-06T05:27:57+00:00 START adult_eps10_gsd_seed2 pid=595790 gpu=0 cpu_lane=None slot=light
+2026-10-06T05:38:20+00:00 DONE nltcs_eps10_aimfull_seed2 elapsed=2316.6s adopted=True
+2026-10-06T05:38:20+00:00 START adult_eps0p1_aimfull_seed1 pid=597246 gpu=None cpu_lane=2 slot=cpu2
+2026-10-06T05:53:49+00:00 DONE adult_eps0p1_aimfull_seed1 elapsed=929.1s adopted=False
+2026-10-06T05:53:49+00:00 START adult_eps0p1_aimfull_seed2 pid=597398 gpu=None cpu_lane=2 slot=cpu2
+2026-10-06T06:05:36+00:00 DONE adult_eps0p1_aimfull_seed2 elapsed=706.8s adopted=False
+2026-10-06T06:05:36+00:00 START adult_eps0p1_aimfull_seed3 pid=598266 gpu=None cpu_lane=2 slot=cpu2
+2026-10-06T06:20:27+00:00 DONE adult_eps0p1_aimfull_seed3 elapsed=891.0s adopted=False
+2026-10-06T06:20:27+00:00 START nltcs_eps10_aimfull_seed3 pid=598414 gpu=None cpu_lane=2 slot=cpu2
+2026-10-06T06:28:51+00:00 DONE adult_eps10_aimfull_seed1 elapsed=5347.5s adopted=False
+2026-10-06T06:28:51+00:00 START nltcs_eps0p1_aimfull_seed3 pid=598839 gpu=None cpu_lane=1 slot=cpu1
+2026-10-06T06:32:53+00:00 DONE adult_eps10_aimfull_seed2 elapsed=5589.8s adopted=False
+2026-10-06T06:39:10+00:00 DONE adult_eps10_aimfull_seed3 elapsed=4592.8s adopted=False
+2026-10-06T06:44:08+00:00 DONE nltcs_eps0p1_aimfull_seed3 elapsed=917.0s adopted=False
+2026-10-06T07:06:38+00:00 DONE nltcs_eps10_aimfull_seed3 elapsed=2771.0s adopted=False
+2026-10-06T07:36:32+00:00 DONE adult_eps10_gsd_seed1 elapsed=9408.2s adopted=True
+2026-10-06T07:36:35+00:00 START adult_eps10_gsd_seed3 pid=599429 gpu=1 cpu_lane=None slot=light
+2026-10-06T07:59:22+00:00 DONE adult_eps10_rule_seed2 elapsed=10777.0s adopted=False
+2026-10-06T07:59:26+00:00 START adult_eps10_rule_seed3 pid=600943 gpu=1 cpu_lane=None slot=heavy
+2026-10-06T08:10:23+00:00 DONE adult_eps10_gsd_seed2 elapsed=9746.1s adopted=False
+2026-10-06T08:10:27+00:00 START adult_eps0p1_gsd_seed2 pid=601114 gpu=0 cpu_lane=None slot=light
+2026-10-06T08:16:55+00:00 DONE adult_eps10_rule_seed1 elapsed=11830.2s adopted=False
+2026-10-06T08:16:57+00:00 START adult_eps0p1_rule_seed2 pid=602556 gpu=0 cpu_lane=None slot=heavy
+2026-10-06T08:30:24+00:00 DONE adult_eps0p1_rule_seed2 elapsed=806.9s adopted=False
+2026-10-06T08:30:27+00:00 START adult_eps0p1_rule_seed3 pid=602735 gpu=0 cpu_lane=None slot=heavy
+2026-10-06T08:44:12+00:00 DONE adult_eps0p1_rule_seed3 elapsed=825.0s adopted=False
+2026-10-06T08:44:13+00:00 START adult_eps0p1_gsd_seed3 pid=602916 gpu=0 cpu_lane=None slot=heavy
+2026-10-06T08:54:31+00:00 DONE adult_eps0p1_gsd_seed2 elapsed=2644.8s adopted=False
+2026-10-06T09:10:40+00:00 DONE adult_eps0p1_gsd_seed3 elapsed=1587.7s adopted=False
+2026-10-06T10:42:00+00:00 DONE adult_eps10_gsd_seed3 elapsed=11125.2s adopted=False
+2026-10-06T11:13:27+00:00 DONE adult_eps10_rule_seed3 elapsed=11641.8s adopted=False
+2026-10-06T11:13:27+00:00 ALL_ENDPOINTS_COMPLETE completed=42 budgets=0.1,10

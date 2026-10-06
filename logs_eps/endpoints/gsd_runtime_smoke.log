@@ -1,0 +1,7 @@
+同餐断言通过，码表全二阶逐格等于考卷 480 条答案
+Setting up Marginals.:   0%|          | 0/120 [00:00<?, ?it/s]Setting up Marginals.:   1%|          | 1/120 [00:00<00:31,  3.77it/s]Setting up Marginals.: 100%|██████████| 120/120 [00:00<00:00, 348.15it/s]
+statistics 0: has 120 workloads and 480 queries.
+噪声目标注入 480 格，与噪声考卷逐格一致
+搜索 10.7 秒，频率尺度残差 平均 0.165804 最大 0.556826
+对噪声目标残差 平均 0.169118 最大 0.586578
+已写出 results/.eps_endpoints_pending/gsd_runtime_smoke_nltcs_eps0p1.csv，16181 行

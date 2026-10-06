@@ -1,0 +1,10 @@
+
+2026-10-06T03:55:02+00:00 COMMAND ["taskset", "-c", "0-27", "/root/miniconda3/envs/aim2/bin/python", "-u", "-B", "scripts/run_baseline_pgm.py", "--exam", "/root/residual-evolution/data/nltcs_eps10_s3/measured_480query.json", "--sigma", "8.2045", "--seed", "3", "--iters", "1000", "--out", "/root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_pgm_seed3.csv"]
+ENV {"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "/root/private-pgm/src", "PYTHONUNBUFFERED": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+/root/private-pgm/src/mbi/__init__.py:23: UserWarning: JAX persistent compilation cache is enabled. MBI generates many small compiled programs, which makes the cache counterproductive — especially when running sweeps of experiments that all write to the same cache location. Consider disabling it with: jax.config.update("jax_enable_compilation_cache", False)
+  warnings.warn(
+字段 16 个，边际 120 对，known_total 16181
+联结树参数表 0.5 MB
+拟合 4 秒，合成 16181 行 -> /root/residual-evolution/results/.eps_endpoints_pending/nltcs_eps10_pgm_seed3.csv
