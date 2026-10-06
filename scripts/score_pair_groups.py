@@ -7,7 +7,9 @@
 
 每对误差 = L1/N（合成表与真表该对二阶计数差绝对值之和除以行数），
 组内取均值，单位 1e-6。独立参照 = 真一阶乘积（Π p_a p_b）当合成边际，
-是"不花预算只知道一阶"的下界参照。--dump 给出 AIM 测过的团，没给则只报总体。
+是"不花预算只知道一阶"的下界参照。--dump 给出 AIM 测过的团，--exam 给出第一步
+分配考卷（读 allocation.measured_pairs）或第二步累计考卷（读 eq2way 题的字段对），
+三者都没给则只报总体。
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--real", required=True)
     ap.add_argument("--dump", default=None, help="AIM 测量录像 JSON，提供测过的团")
+    ap.add_argument("--exam", default=None, help="分配考卷或累计考卷 JSON，提供测过的对")
     ap.add_argument("tables", nargs="+", help="标签=路径")
     args = ap.parse_args()
 
@@ -40,12 +43,22 @@ def main() -> None:
     pairs = list(combinations(cols, 2))
 
     measured_pairs: set[tuple[str, str]] = set()
+    def add_pair(a: str, b: str) -> None:
+        measured_pairs.add((a, b) if cols.index(a) < cols.index(b) else (b, a))
     if args.dump:
         dump = json.loads(Path(args.dump).read_text(encoding="utf-8"))
         for m in dump["measurements"]:
             if len(m["clique"]) == 2:
-                a, b = m["clique"]
-                measured_pairs.add((a, b) if cols.index(a) < cols.index(b) else (b, a))
+                add_pair(*m["clique"])
+    if args.exam:
+        exam = json.loads(Path(args.exam).read_text(encoding="utf-8"))
+        if "allocation" in exam:
+            for a, b in exam["allocation"]["measured_pairs"]:
+                add_pair(a, b)
+        else:
+            for q in exam["queries"]:
+                if len(q["conditions"]) == 2:
+                    add_pair(q["conditions"][0]["attribute"], q["conditions"][1]["attribute"])
 
     real_pairs = {(a, b): pair_hist(real, a, b, sizes[a], sizes[b]) for a, b in pairs}
     real_ones = {c: np.bincount(real[c].to_numpy(), minlength=sizes[c]).astype(np.float64) for c in cols}
@@ -70,7 +83,7 @@ def main() -> None:
     meas = [p for p in pairs if p in measured_pairs]
     unmeas = [p for p in pairs if p not in measured_pairs]
     cells = lambda ps: np.mean([sizes[a] * sizes[b] for a, b in ps]) if ps else float("nan")
-    print(f"行数 {n}，字段 {len(cols)}，对数 {len(pairs)}；AIM 测过 {len(meas)} 对（均 {cells(meas):.0f} 格），"
+    print(f"行数 {n}，字段 {len(cols)}，对数 {len(pairs)}；测过 {len(meas)} 对（均 {cells(meas):.0f} 格），"
           f"没测 {len(unmeas)} 对（均 {cells(unmeas):.0f} 格）")
     hdr = f"{'表':<28}{'二阶总体':>10}{'测过的对':>10}{'没测的对':>10}{'一阶':>8}"
     print(hdr)

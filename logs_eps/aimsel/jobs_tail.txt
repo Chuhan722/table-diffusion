@@ -1,0 +1,9 @@
+aimsel 1
+aimsel 2
+aimsel 3
+alloc nltcs 0p1 1
+alloc nltcs 1 1
+alloc nltcs 0p1 2
+alloc nltcs 1 2
+alloc nltcs 0p1 3
+alloc nltcs 1 3
