@@ -1,0 +1,207 @@
+/home/chuhan/projects/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+acsmob 字段21 行80329 全二阶210对 eps=1000000.0 delta=1e-05 seed=1 max_model_size=80.0
+An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+Initial Sigma 0.01373861639337342
+Budget Used 58572.6099728353 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_15')
+Budget Used 61515.95720765115 / 988964.6708981236
+Measuring Clique ('attr_18', 'attr_20')
+Budget Used 64459.30444246699 / 988964.6708981236
+Measuring Clique ('attr_17', 'attr_19')
+Budget Used 67402.65167728283 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_9')
+Budget Used 70345.99891209867 / 988964.6708981236
+Measuring Clique ('attr_17', 'attr_18')
+Budget Used 73289.34614691451 / 988964.6708981236
+Measuring Clique ('attr_3', 'attr_10')
+Budget Used 76232.69338173035 / 988964.6708981236
+Measuring Clique ('attr_16', 'attr_18')
+Budget Used 79176.04061654619 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_10')
+Budget Used 82119.38785136203 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_20')
+Budget Used 85062.73508617787 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_20')
+Budget Used 88006.08232099371 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_10')
+Budget Used 90949.42955580955 / 988964.6708981236
+Measuring Clique ('attr_8', 'attr_14')
+Budget Used 93892.77679062539 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_14')
+Budget Used 96836.12402544123 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_21')
+Budget Used 99779.47126025707 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_2')
+Budget Used 102722.8184950729 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_20')
+Budget Used 105666.16572988874 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_14')
+Budget Used 108609.51296470458 / 988964.6708981236
+Measuring Clique ('attr_19', 'attr_20')
+Budget Used 111552.86019952042 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_10')
+Budget Used 114496.20743433626 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_13')
+Budget Used 117439.5546691521 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_3')
+Budget Used 120382.90190396794 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_16')
+Budget Used 123326.24913878378 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_18')
+Budget Used 126269.59637359962 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_10')
+Budget Used 129212.94360841546 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 132156.2908432313 / 988964.6708981236
+Measuring Clique ('attr_8', 'attr_10')
+Budget Used 135099.63807804717 / 988964.6708981236
+Measuring Clique ('attr_16', 'attr_17')
+Budget Used 138042.98531286302 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_16')
+Budget Used 140986.33254767887 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_14')
+Budget Used 143929.67978249473 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_6')
+Budget Used 146873.02701731058 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_19')
+Budget Used 149816.37425212644 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_4')
+Budget Used 152759.7214869423 / 988964.6708981236
+Measuring Clique ('attr_8', 'attr_18')
+Budget Used 155703.06872175814 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_18')
+Budget Used 158646.415956574 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_18')
+Budget Used 161589.76319138985 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_8')
+Budget Used 164533.1104262057 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_17')
+Budget Used 167476.45766102156 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_21')
+Budget Used 170419.8048958374 / 988964.6708981236
+Measuring Clique ('attr_14', 'attr_20')
+Budget Used 173363.15213065327 / 988964.6708981236
+Measuring Clique ('attr_7', 'attr_16')
+Budget Used 176306.49936546912 / 988964.6708981236
+Measuring Clique ('attr_16', 'attr_20')
+Budget Used 179249.84660028497 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_21')
+Budget Used 182193.19383510083 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_17')
+Budget Used 185136.54106991668 / 988964.6708981236
+Measuring Clique ('attr_14', 'attr_18')
+Budget Used 188079.88830473254 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_20')
+Budget Used 191023.2355395484 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_20')
+Budget Used 193966.58277436424 / 988964.6708981236
+Measuring Clique ('attr_18', 'attr_19')
+Budget Used 196909.9300091801 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_3')
+Budget Used 199853.27724399595 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_12')
+Budget Used 202796.6244788118 / 988964.6708981236
+Measuring Clique ('attr_17', 'attr_20')
+Budget Used 205739.97171362766 / 988964.6708981236
+Measuring Clique ('attr_3', 'attr_4')
+Budget Used 208683.3189484435 / 988964.6708981236
+Measuring Clique ('attr_7', 'attr_17')
+Budget Used 211626.66618325937 / 988964.6708981236
+Measuring Clique ('attr_13', 'attr_18')
+Budget Used 214570.01341807522 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_11')
+Budget Used 217513.36065289108 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_13')
+Budget Used 220456.70788770693 / 988964.6708981236
+Measuring Clique ('attr_20', 'attr_21')
+Budget Used 223400.05512252278 / 988964.6708981236
+Measuring Clique ('attr_12', 'attr_13')
+Budget Used 226343.40235733864 / 988964.6708981236
+Measuring Clique ('attr_7', 'attr_20')
+Budget Used 229286.7495921545 / 988964.6708981236
+Measuring Clique ('attr_1', 'attr_4')
+Budget Used 232230.09682697034 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_16')
+Budget Used 235173.4440617862 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_18')
+Budget Used 238116.79129660205 / 988964.6708981236
+Measuring Clique ('attr_7', 'attr_10')
+Budget Used 241060.1385314179 / 988964.6708981236
+Measuring Clique ('attr_11', 'attr_13')
+Budget Used 244003.48576623376 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_21')
+Budget Used 246946.8330010496 / 988964.6708981236
+Measuring Clique ('attr_13', 'attr_20')
+Budget Used 249890.18023586547 / 988964.6708981236
+Measuring Clique ('attr_18', 'attr_21')
+Budget Used 252833.52747068132 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_10')
+Budget Used 255776.87470549718 / 988964.6708981236
+Measuring Clique ('attr_3', 'attr_21')
+Budget Used 258720.22194031303 / 988964.6708981236
+Measuring Clique ('attr_12', 'attr_18')
+Budget Used 261663.56917512888 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_7')
+Budget Used 264606.9164099447 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_12')
+Budget Used 267550.26364476053 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_12')
+Budget Used 270493.61087957636 / 988964.6708981236
+Measuring Clique ('attr_11', 'attr_20')
+Budget Used 273436.9581143922 / 988964.6708981236
+Measuring Clique ('attr_11', 'attr_20')
+Budget Used 276380.305349208 / 988964.6708981236
+Measuring Clique ('attr_7', 'attr_10')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 0.00686930819668671
+Budget Used 288153.69428847136 / 988964.6708981236
+Measuring Clique ('attr_5', 'attr_19')
+Budget Used 299927.0832277347 / 988964.6708981236
+Measuring Clique ('attr_13', 'attr_19')
+Budget Used 311700.4721669981 / 988964.6708981236
+Measuring Clique ('attr_12', 'attr_19')
+Budget Used 323473.86110626144 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_11')
+Budget Used 335247.2500455248 / 988964.6708981236
+Measuring Clique ('attr_11', 'attr_12')
+Budget Used 347020.63898478815 / 988964.6708981236
+Measuring Clique ('attr_11', 'attr_19')
+Budget Used 358794.0279240515 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_18')
+Budget Used 370567.41686331487 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_18')
+Budget Used 382340.8058025782 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_18')
+Budget Used 394114.1947418416 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_6')
+Budget Used 405887.58368110494 / 988964.6708981236
+Measuring Clique ('attr_14', 'attr_21')
+Budget Used 417660.9726203683 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_14')
+Budget Used 429434.36155963165 / 988964.6708981236
+Measuring Clique ('attr_2', 'attr_10')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 0.003434654098343355
+Budget Used 476527.91731668514 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_16')
+Budget Used 523621.4730737386 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_7')
+Budget Used 570715.0288307922 / 988964.6708981236
+Measuring Clique ('attr_8', 'attr_21')
+Budget Used 617808.5845878457 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_19')
+Budget Used 664902.1403448993 / 988964.6708981236
+Measuring Clique ('attr_16', 'attr_21')
+Budget Used 711995.6961019528 / 988964.6708981236
+Measuring Clique ('attr_6', 'attr_21')
+Budget Used 759089.2518590064 / 988964.6708981236
+Measuring Clique ('attr_17', 'attr_21')
+Budget Used 806182.8076160599 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_17')
+Budget Used 853276.3633731134 / 988964.6708981236
+Measuring Clique ('attr_4', 'attr_5')
+Budget Used 900369.919130167 / 988964.6708981236
+Measuring Clique ('attr_3', 'attr_20')
+Budget Used 988964.6708981236 / 988964.6708981236
+Measuring Clique ('attr_10', 'attr_20')
+Generating Data...
+完成 4445s 行80329 -> results/acsmob_nonoise_aimfull_seed1.csv
