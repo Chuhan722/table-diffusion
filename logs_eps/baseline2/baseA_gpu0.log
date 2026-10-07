@@ -1,0 +1,9 @@
+2026-10-07T13:15:49Z START adult_eps1_alloc_k105f05_seed3 gpu0 lane=0-23
+2026-10-07T15:01:27Z END adult_eps1_alloc_k105f05_seed3 rc=0
+2026-10-07T15:01:27Z START adult_eps1_gsd_seed3 gpu0 lane=0-23
+2026-10-07T15:30:03Z END adult_eps1_gsd_seed3 rc=0
+2026-10-07T15:30:03Z START adult_eps10_gsd_seed1 gpu0 lane=0-23
+2026-10-07T16:15:13Z END adult_eps10_gsd_seed1 rc=0
+2026-10-07T16:15:13Z START adult_eps10_gsd_seed3 gpu0 lane=0-23
+2026-10-07T17:18:16Z END adult_eps10_gsd_seed3 rc=0
+2026-10-07T17:18:16Z gpu0 队列空

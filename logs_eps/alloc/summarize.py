@@ -14,29 +14,32 @@ ds, eps = sys.argv[1], sys.argv[2]
 groups = [a.split("=", 1) for a in sys.argv[3:]]
 cols = ["measured", "二阶", "三阶均", "三阶top5%", "三阶max", "等值", "半空间"]
 
-tables, owner = [], []
-for label, pat in groups:
+def score_group(pat):
+    """每组单独阅卷：score_any 按文件 stem 报分，不同目录同名表（如 results/ 与 results/baseline2/）放一起会互相覆盖。"""
     fs = sorted(f for f in glob.glob(str(ROOT / pat)) if "curve" not in f)
-    tables += fs
-    owner += [label] * len(fs)
-out = subprocess.run(
-    [str(ROOT / ".venv/bin/python"), "/tmp/score_any.py", ds, str(ROOT / f"data/{ds}/{ds}.csv")] + tables,
-    capture_output=True, text=True, check=True,
-).stdout
-scores = {}
-for line in out.splitlines():
-    parts = [p.strip() for p in line.split("|")]
-    if len(parts) < 9 or parts[0] in ("表", ds):
-        continue
-    try:
-        scores[parts[0]] = [float(x) * 1e6 for x in parts[1:8]]
-    except ValueError:
-        continue
+    if not fs:
+        return []
+    out = subprocess.run(
+        [str(ROOT / ".venv/bin/python"), "/tmp/score_any.py", ds, str(ROOT / f"data/{ds}/{ds}.csv")] + fs,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    scores = {}
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 9 or parts[0] in ("表", ds):
+            continue
+        try:
+            scores[parts[0]] = [float(x) * 1e6 for x in parts[1:8]]
+        except ValueError:
+            continue
+    return [scores[Path(f).stem] for f in fs if Path(f).stem in scores]
+
+group_rows = {label: score_group(pat) for label, pat in groups}
 print(f"| ε | 表 | n | " + " | ".join(cols) + " |")
 print("|---" * (len(cols) + 3) + "|")
 means = {}
 for label, _ in groups:
-    rows = [scores[Path(t).stem] for t, o in zip(tables, owner) if o == label and Path(t).stem in scores]
+    rows = group_rows[label]
     if not rows:
         continue
     m = np.mean(rows, axis=0)

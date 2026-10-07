@@ -1,0 +1,7 @@
+同餐断言通过，码表全二阶逐格等于考卷 480 条答案
+Setting up Marginals.:   0%|          | 0/120 [00:00<?, ?it/s]Setting up Marginals.:   1%|          | 1/120 [00:00<00:16,  7.07it/s]Setting up Marginals.: 100%|██████████| 120/120 [00:00<00:00, 542.86it/s]
+statistics 0: has 120 workloads and 480 queries.
+噪声目标注入 480 格，与噪声考卷逐格一致
+搜索 161.3 秒，频率尺度残差 平均 0.008633 最大 0.040109
+对噪声目标残差 平均 0.015844 最大 0.067119
+已写出 results/baseline2/nltcs_eps0p1_gsd_seed3.csv，16181 行

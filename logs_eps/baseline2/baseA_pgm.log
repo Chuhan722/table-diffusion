@@ -1,0 +1,19 @@
+2026-10-07T13:15:49Z START nltcs_eps0p1_pgm_seed1 cpu lane=48-55 sigma=372.436363576
+2026-10-07T13:17:30Z END nltcs_eps0p1_pgm_seed1 rc=0
+2026-10-07T13:17:30Z START nltcs_eps0p1_pgm_seed2 cpu lane=48-55 sigma=372.436363576
+2026-10-07T13:19:10Z END nltcs_eps0p1_pgm_seed2 rc=0
+2026-10-07T13:19:10Z START nltcs_eps0p1_pgm_seed3 cpu lane=48-55 sigma=372.436363576
+2026-10-07T13:20:51Z END nltcs_eps0p1_pgm_seed3 rc=0
+2026-10-07T13:20:51Z START nltcs_eps1_pgm_seed1 cpu lane=48-55 sigma=44.334355628
+2026-10-07T13:22:31Z END nltcs_eps1_pgm_seed1 rc=0
+2026-10-07T13:22:32Z START nltcs_eps1_pgm_seed2 cpu lane=48-55 sigma=44.334355628
+2026-10-07T13:24:12Z END nltcs_eps1_pgm_seed2 rc=0
+2026-10-07T13:24:12Z START nltcs_eps1_pgm_seed3 cpu lane=48-55 sigma=44.334355628
+2026-10-07T13:25:53Z END nltcs_eps1_pgm_seed3 rc=0
+2026-10-07T13:25:53Z START nltcs_eps10_pgm_seed1 cpu lane=48-55 sigma=5.804359228
+2026-10-07T13:27:33Z END nltcs_eps10_pgm_seed1 rc=0
+2026-10-07T13:27:33Z START nltcs_eps10_pgm_seed2 cpu lane=48-55 sigma=5.804359228
+2026-10-07T13:29:15Z END nltcs_eps10_pgm_seed2 rc=0
+2026-10-07T13:29:15Z START nltcs_eps10_pgm_seed3 cpu lane=48-55 sigma=5.804359228
+2026-10-07T13:30:55Z END nltcs_eps10_pgm_seed3 rc=0
+2026-10-07T13:30:55Z pgm 队列空
