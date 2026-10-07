@@ -1,0 +1,498 @@
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round1.json --rounds 1000 --exam-weights sigma --menu-seed 800001 --sample-seed 8001 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round1.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round0.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 554.9~554.9，权重范围 1~1，题数 220
+行数 32561，查询数 220，初始损失 104735944.548403
+轮 0 模式 batch 损失 104735944.5 步长 1.0004 预测降 51169403.84 ok 连败 0
+轮 200 模式 batch 损失 13123523.2 步长 0.0305 预测降 330.31 ok 连败 0
+轮 400 模式 batch 损失 12987042.9 步长 0.0433 预测降 456.07 ok 连败 0
+实际轮数 550，停止原因 loss_plateau，冻结轮数 0，注册状态数 109441
+最终损失 12943374.797016，初始比 12.3581%，耗时 72.5 秒，平均每轮 132 毫秒
+  轮    0  损失 104735944.5484  beta     0.0007  步长  1.00045  期望损失 53566540.7100  ok
+  轮   55  损失 13544764.6754  beta     0.0380  步长  0.20479  期望损失 13533318.1202  ok
+  轮  110  损失 13268972.2684  beta     0.1106  步长  0.02975  期望损失 13267938.1778  ok
+  轮  165  损失 13169983.4244  beta     0.2948  步长  0.24016  期望损失 13167478.8014  ok
+  轮  220  损失 13100233.6467  beta     0.6502  步长  0.02795  期望损失 13100047.9318  ok
+  轮  275  损失 13063256.5289  beta     0.2315  步长  0.01470  期望损失 13062958.5390  ok
+  轮  330  损失 13026601.3985  beta     0.5562  步长  0.00868  期望损失 13026532.6095  ok
+  轮  385  损失 12999832.5320  beta     0.2073  步长  0.01459  期望损失 12999602.5119  ok
+  轮  440  损失 12976990.3507  beta     1.2685  步长  0.04605  期望损失 12976813.6507  ok
+  轮  495  损失 12952556.0616  beta     0.4627  步长  0.00850  期望损失 12952494.4590  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round1.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round2.json --rounds 1000 --exam-weights sigma --menu-seed 800002 --sample-seed 8002 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round2.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round1.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 554.9~554.9，权重范围 1~1，题数 232
+行数 32561，查询数 232，初始损失 38107527.579210
+轮 0 模式 batch 损失 38107527.6 步长 0.5027 预测降 12606628.13 ok 连败 0
+轮 200 模式 batch 损失 14306708.9 步长 0.0292 预测降 760.52 ok 连败 0
+轮 400 模式 batch 损失 14184373.5 步长 0.0315 预测降 126.35 ok 连败 0
+实际轮数 450，停止原因 loss_plateau，冻结轮数 0，注册状态数 74247
+最终损失 14170402.369077，初始比 37.1853%，耗时 59.9 秒，平均每轮 133 毫秒
+  轮    0  损失 38107527.5792  beta     0.0009  步长  0.50265  期望损失 25500899.4452  ok
+  轮   45  损失 14711816.0252  beta     0.0778  步长  0.02616  期望损失 14710494.4079  ok
+  轮   90  损失 14494708.0231  beta     0.1811  步长  0.03815  期望损失 14493774.2992  ok
+  轮  135  损失 14394499.2556  beta     0.0594  步长  0.01734  期望损失 14393444.1184  ok
+  轮  180  损失 14328244.1159  beta     0.2943  步长  0.04810  期望损失 14327858.7931  ok
+  轮  225  损失 14286835.7436  beta     0.3298  步长  0.07762  期望损失 14286328.9614  ok
+  轮  270  损失 14264826.3496  beta     0.3262  步长  0.80007  期望损失 14259343.9981  ok
+  轮  315  损失 14213918.7137  beta     0.5327  步长  0.00372  期望损失 14213888.6254  ok
+  轮  360  损失 14193055.2536  beta     1.0644  步长  0.01965  期望损失 14192981.4053  ok
+  轮  405  损失 14184400.1113  beta     0.9087  步长  0.03640  期望损失 14184272.1449  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round2.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round3.json --rounds 1000 --exam-weights sigma --menu-seed 800003 --sample-seed 8003 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round3.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round2.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 554.9~554.9，权重范围 1~1，题数 244
+行数 32561，查询数 244，初始损失 26315725.306895
+轮 0 模式 batch 损失 26315725.3 步长 0.2446 预测降 4776445.50 ok 连败 0
+轮 200 模式 batch 损失 15437304.6 步长 0.0165 预测降 479.14 ok 连败 0
+实际轮数 400，停止原因 loss_plateau，冻结轮数 0，注册状态数 60529
+最终损失 15341436.776474，初始比 58.2976%，耗时 52.5 秒，平均每轮 131 毫秒
+  轮    0  损失 26315725.3069  beta     0.0011  步长  0.24456  期望损失 21539279.8115  ok
+  轮   40  损失 15618240.1174  beta     0.1229  步长  0.14335  期望损失 15615340.7238  ok
+  轮   80  损失 15540212.7486  beta     0.1626  步长  0.02215  期望损失 15539724.1296  ok
+  轮  120  损失 15502904.5156  beta     0.2572  步长  0.02383  期望损失 15502644.8144  ok
+  轮  160  损失 15473421.0864  beta     0.0944  步长  0.01081  期望损失 15473049.2793  ok
+  轮  200  损失 15437304.6152  beta     0.1201  步长  0.01646  期望损失 15436825.4794  ok
+  轮  240  损失 15416128.6875  beta     0.0449  步长  0.02166  期望损失 15414320.1036  ok
+  轮  280  损失 15389872.7633  beta     0.4398  步长  0.00930  期望损失 15389785.8946  ok
+  轮  320  损失 15373615.6788  beta     0.7160  步长  0.01297  期望损失 15373546.9986  ok
+  轮  360  损失 15351508.6148  beta     0.7442  步长  0.01614  期望损失 15351435.6828  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round3.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round4.json --rounds 1000 --exam-weights sigma --menu-seed 800004 --sample-seed 8004 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round4.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round3.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 392.4~554.9，权重范围 0.5~1，题数 244
+行数 32561，查询数 244，初始损失 7995016.207121
+轮 0 模式 batch 损失 7995016.2 步长 0.1931 预测降 404721.21 ok 连败 0
+实际轮数 150，停止原因 loss_plateau，冻结轮数 0，注册状态数 38651
+最终损失 7510806.390300，初始比 93.9436%，耗时 22.1 秒，平均每轮 148 毫秒
+  轮    0  损失 7995016.2071  beta     0.0082  步长  0.19305  期望损失 7590294.9989  ok
+  轮   15  损失 7527028.6717  beta     0.7390  步长  0.04279  期望损失 7526785.8755  ok
+  轮   30  损失 7525818.5052  beta     1.9473  步长  0.06728  期望损失 7525722.4384  ok
+  轮   45  损失 7525639.1421  beta     1.6891  步长  0.01263  期望损失 7525608.6578  ok
+  轮   60  损失 7519299.3040  beta     0.1676  步长  0.03268  期望损失 7518614.8848  ok
+  轮   75  损失 7516958.7447  beta     2.7266  步长  0.07470  期望损失 7516866.2917  ok
+  轮   90  损失 7516940.3966  beta     2.6639  步长  0.08699  期望损失 7516851.4929  ok
+  轮  105  损失 7514286.9991  beta     1.8911  步长  0.03682  期望损失 7514212.6902  ok
+  轮  120  损失 7513032.6873  beta     1.2959  步长  0.01850  期望损失 7512995.6473  ok
+  轮  135  损失 7511895.5457  beta     0.7763  步长  0.02904  期望损失 7511832.6944  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round4.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round5.json --rounds 1000 --exam-weights sigma --menu-seed 800005 --sample-seed 8005 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round5.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round4.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 277.5~554.9，权重范围 0.25~1，题数 274
+行数 32561，查询数 274，初始损失 9257455.221633
+轮 0 模式 batch 损失 9257455.2 步长 0.3434 预测降 2363421.93 ok 连败 0
+轮 200 模式 batch 损失 4678308.0 步长 0.0245 预测降 89.75 ok 连败 0
+轮 400 模式 batch 损失 4634394.5 步长 0.0450 预测降 57.25 ok 连败 0
+实际轮数 550，停止原因 loss_plateau，冻结轮数 0，注册状态数 67754
+最终损失 4619889.822688，初始比 49.9045%，耗时 73.1 秒，平均每轮 133 毫秒
+  轮    0  损失 9257455.2216  beta     0.0037  步长  0.34339  期望损失 6894033.2960  ok
+  轮   55  损失 4773425.3246  beta     0.3325  步长  0.06361  期望损失 4772896.7926  ok
+  轮  110  损失 4718693.4279  beta     0.2853  步长  0.04421  期望损失 4718361.0236  ok
+  轮  165  损失 4686345.8901  beta     0.1300  步长  0.03714  期望损失 4685236.4913  ok
+  轮  220  损失 4670153.2980  beta     1.1770  步长  0.06110  期望损失 4669964.3448  ok
+  轮  275  损失 4653650.7323  beta     0.6591  步长  0.01852  期望损失 4653553.4627  ok
+  轮  330  损失 4643148.6134  beta     1.3949  步长  0.01210  期望损失 4643127.4434  ok
+  轮  385  损失 4636856.1704  beta     1.2602  步长  0.00972  期望损失 4636829.9011  ok
+  轮  440  损失 4628324.0635  beta     0.8153  步长  0.01396  期望损失 4628281.7885  ok
+  轮  495  损失 4623050.6507  beta     7.0145  步长  0.04271  期望损失 4623028.7619  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round5.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round6.json --rounds 1000 --exam-weights sigma --menu-seed 800006 --sample-seed 8006 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round6.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round5.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 277.5~554.9，权重范围 0.25~1，题数 306
+行数 32561，查询数 306，初始损失 9611479.190983
+轮 0 模式 batch 损失 9611479.2 步长 0.4337 预测降 2792021.84 ok 连败 0
+轮 200 模式 batch 损失 5348158.2 步长 0.0575 预测降 385.00 ok 连败 0
+轮 400 模式 batch 损失 5292393.4 步长 0.0109 预测降 54.38 ok 连败 0
+实际轮数 450，停止原因 loss_plateau，冻结轮数 0，注册状态数 61504
+最终损失 5287684.045567，初始比 55.0143%，耗时 59.6 秒，平均每轮 133 毫秒
+  轮    0  损失 9611479.1910  beta     0.0030  步长  0.43368  期望损失 6819457.3494  ok
+  轮   45  损失 5547863.3693  beta     0.1176  步长  0.05733  期望损失 5546530.5058  ok
+  轮   90  损失 5441104.5008  beta     0.2191  步长  0.12079  期望损失 5439924.1604  ok
+  轮  135  损失 5368388.1083  beta     0.3148  步长  0.02557  期望损失 5368146.9607  ok
+  轮  180  损失 5353481.1378  beta     0.3933  步长  0.04107  期望损失 5353237.8704  ok
+  轮  225  损失 5334492.0982  beta     0.7264  步长  0.09850  期望损失 5334197.5746  ok
+  轮  270  损失 5320785.2711  beta     1.2077  步长  0.06283  期望损失 5320631.4956  ok
+  轮  315  损失 5313156.9317  beta     0.9468  步长  0.01708  期望损失 5313100.9150  ok
+  轮  360  损失 5303405.3574  beta     0.5888  步长  0.02486  期望损失 5303294.1194  ok
+  轮  405  损失 5292312.6385  beta     0.6555  步长  0.00908  期望损失 5292275.6355  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round6.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round7.json --rounds 1000 --exam-weights sigma --menu-seed 800007 --sample-seed 8007 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round7.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round6.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 277.5~554.9，权重范围 0.25~1，题数 338
+行数 32561，查询数 338，初始损失 11285846.394578
+轮 0 模式 batch 损失 11285846.4 步长 0.3773 预测降 2649532.98 ok 连败 0
+轮 200 模式 batch 损失 6598073.2 步长 0.0439 预测降 297.92 ok 连败 0
+轮 400 模式 batch 损失 6552358.5 步长 0.0279 预测降 59.52 ok 连败 0
+实际轮数 550，停止原因 loss_plateau，冻结轮数 0，注册状态数 64547
+最终损失 6530628.818042，初始比 57.8657%，耗时 73.3 秒，平均每轮 133 毫秒
+  轮    0  损失 11285846.3946  beta     0.0027  步长  0.37731  期望损失 8636313.4122  ok
+  轮   55  损失 6731747.6674  beta     0.1409  步长  0.04858  期望损失 6730858.5552  ok
+  轮  110  损失 6640258.5116  beta     0.4082  步长  0.06003  期望损失 6639625.8645  ok
+  轮  165  损失 6611506.0475  beta     0.4684  步长  0.02080  期望损失 6611390.8040  ok
+  轮  220  损失 6594042.1962  beta     0.6283  步长  0.03825  期望损失 6593894.1614  ok
+  轮  275  损失 6575941.2210  beta     0.5907  步长  0.01124  期望损失 6575889.9376  ok
+  轮  330  损失 6566895.2874  beta     0.4944  步长  0.01001  期望损失 6566839.6296  ok
+  轮  385  损失 6557256.0635  beta     0.6952  步长  0.03859  期望损失 6557080.2122  ok
+  轮  440  损失 6546563.7449  beta     0.7328  步长  0.02542  期望损失 6546437.0503  ok
+  轮  495  损失 6535834.5452  beta     2.0564  步长  0.01303  期望损失 6535809.9123  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round7.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round8.json --rounds 1000 --exam-weights sigma --menu-seed 800008 --sample-seed 8008 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round8.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round7.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 277.5~554.9，权重范围 0.25~1，题数 370
+行数 32561，查询数 370，初始损失 10552231.143259
+轮 0 模式 batch 损失 10552231.1 步长 0.4424 预测降 2237280.03 ok 连败 0
+轮 200 模式 batch 损失 7248152.4 步长 0.1615 预测降 329.32 ok 连败 0
+实际轮数 300，停止原因 loss_plateau，冻结轮数 0，注册状态数 54722
+最终损失 7231324.884160，初始比 68.5289%，耗时 42.1 秒，平均每轮 140 毫秒
+  轮    0  损失 10552231.1433  beta     0.0050  步长  0.44239  期望损失 8314951.1090  ok
+  轮   30  损失 7333574.0751  beta     0.3897  步长  0.26410  期望损失 7331348.4390  ok
+  轮   60  损失 7305250.4600  beta     0.1583  步长  0.06663  期望损失 7303950.5284  ok
+  轮   90  损失 7285348.3303  beta     0.1772  步长  0.02977  期望损失 7284999.1111  ok
+  轮  120  损失 7271416.9478  beta     0.2300  步长  0.02283  期望损失 7271202.4776  ok
+  轮  150  损失 7259597.7573  beta     0.4401  步长  0.02111  期望损失 7259483.9441  ok
+  轮  180  损失 7252834.9875  beta     0.7026  步长  0.02221  期望损失 7252718.1879  ok
+  轮  210  损失 7245951.5720  beta     0.8568  步长  0.02923  期望损失 7245848.5609  ok
+  轮  240  损失 7237716.0730  beta     0.3807  步长  0.01609  期望损失 7237611.9607  ok
+  轮  270  损失 7234386.6574  beta     2.2253  步长  0.02809  期望损失 7234347.4263  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round8.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round9.json --rounds 1000 --exam-weights sigma --menu-seed 800009 --sample-seed 8009 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round9.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round8.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 277.5~554.9，权重范围 0.25~1，题数 386
+行数 32561，查询数 386，初始损失 10525205.852853
+轮 0 模式 batch 损失 10525205.9 步长 0.3105 预测降 1354441.12 ok 连败 0
+轮 200 模式 batch 损失 8381206.3 步长 0.0200 预测降 98.80 ok 连败 0
+实际轮数 350，停止原因 loss_plateau，冻结轮数 0，注册状态数 51856
+最终损失 8351035.818861，初始比 79.3432%，耗时 49.9 秒，平均每轮 142 毫秒
+  轮    0  损失 10525205.8529  beta     0.0043  步长  0.31053  期望损失 9170764.7372  ok
+  轮   35  损失 8446868.1715  beta     0.5050  步长  0.05977  期望损失 8446445.3566  ok
+  轮   70  损失 8422101.4880  beta     0.1698  步长  0.02539  期望损失 8421778.2201  ok
+  轮  105  损失 8411500.7412  beta     0.2311  步长  0.04549  期望损失 8411121.8037  ok
+  轮  140  损失 8396033.7557  beta     0.4521  步长  0.04856  期望损失 8395794.2831  ok
+  轮  175  损失 8386284.5434  beta     0.9944  步长  0.04373  期望损失 8386126.7304  ok
+  轮  210  损失 8377685.4804  beta     0.7724  步长  0.04689  期望损失 8377511.5305  ok
+  轮  245  损失 8369958.9922  beta     1.2725  步长  0.35906  期望损失 8369045.2194  ok
+  轮  280  损失 8359969.6147  beta     0.6590  步长  0.02101  期望损失 8359898.0637  ok
+  轮  315  损失 8357133.6119  beta     0.6112  步长  0.09545  期望损失 8356854.8057  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round9.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round10.json --rounds 1000 --exam-weights sigma --menu-seed 800010 --sample-seed 8010 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round10.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round9.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 248.2~554.9，权重范围 0.2~1，题数 386
+行数 32561，查询数 386，初始损失 8380862.867314
+轮 0 模式 batch 损失 8380862.9 步长 0.4548 预测降 1579954.10 ok 连败 0
+实际轮数 200，停止原因 loss_plateau，冻结轮数 0，注册状态数 43759
+最终损失 6703079.969497，初始比 79.9808%，耗时 29.5 秒，平均每轮 147 毫秒
+  轮    0  损失 8380862.8673  beta     0.0061  步长  0.45476  期望损失 6800908.7708  ok
+  轮   20  损失 6726466.5089  beta     0.4994  步长  0.01505  期望损失 6726384.2262  ok
+  轮   40  损失 6721560.9737  beta     0.9963  步长  0.03548  期望损失 6721463.8147  ok
+  轮   60  损失 6718600.9103  beta     0.7008  步长  0.01761  期望损失 6718535.0519  ok
+  轮   80  损失 6715964.4460  beta     1.5637  步长  0.14694  期望损失 6715700.5685  ok
+  轮  100  损失 6713162.4287  beta     1.1935  步长  0.02219  期望损失 6713103.3761  ok
+  轮  120  损失 6708604.5435  beta     1.5837  步长  0.01913  期望损失 6708564.5506  ok
+  轮  140  损失 6706547.7180  beta     0.4806  步长  0.01687  期望损失 6706456.9129  ok
+  轮  160  损失 6705213.9352  beta     2.0049  步长  0.13302  期望损失 6705022.7713  ok
+  轮  180  损失 6704182.5176  beta     0.6025  步长  0.02276  期望损失 6704097.8339  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round10.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round11.json --rounds 1000 --exam-weights sigma --menu-seed 800011 --sample-seed 8011 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round11.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round10.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 248.2~554.9，权重范围 0.2~1，题数 396
+行数 32561，查询数 396，初始损失 7870839.873175
+轮 0 模式 batch 损失 7870839.9 步长 0.1107 预测降 248525.68 ok 连败 0
+轮 200 模式 batch 损失 7067562.6 步长 0.0345 预测降 317.02 ok 连败 0
+轮 400 模式 batch 损失 7030551.7 步长 0.0273 预测降 47.92 ok 连败 0
+实际轮数 450，停止原因 loss_plateau，冻结轮数 0，注册状态数 50638
+最终损失 7025269.896670，初始比 89.2569%，耗时 61.0 秒，平均每轮 136 毫秒
+  轮    0  损失 7870839.8732  beta     0.0069  步长  0.11067  期望损失 7622314.1921  ok
+  轮   45  损失 7121187.7734  beta     0.4664  步长  0.08564  期望损失 7120548.0513  ok
+  轮   90  损失 7092511.7840  beta     0.9809  步长  0.05270  期望损失 7092326.4043  ok
+  轮  135  损失 7078846.9790  beta     1.4996  步长  0.03780  期望损失 7078750.1039  ok
+  轮  180  损失 7072181.0800  beta     1.0192  步长  0.05403  期望损失 7072006.7321  ok
+  轮  225  损失 7065199.1626  beta     1.1710  步长  0.08019  期望损失 7064957.6602  ok
+  轮  270  损失 7053670.6366  beta     1.0732  步长  0.03801  期望损失 7053527.8672  ok
+  轮  315  损失 7048436.2381  beta     0.7077  步长  0.01255  期望损失 7048400.1377  ok
+  轮  360  损失 7041634.6846  beta     1.4008  步长  0.06420  期望损失 7041497.4951  ok
+  轮  405  损失 7029966.7562  beta     0.5229  步长  0.00874  期望损失 7029915.1198  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round11.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round12.json --rounds 1000 --exam-weights sigma --menu-seed 800012 --sample-seed 8012 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round12.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round11.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 248.2~554.9，权重范围 0.2~1，题数 414
+行数 32561，查询数 414，初始损失 9050608.207384
+轮 0 模式 batch 损失 9050608.2 步长 0.1607 预测降 698180.52 ok 连败 0
+轮 200 模式 batch 损失 7339017.7 步长 0.0482 预测降 425.04 ok 连败 0
+实际轮数 300，停止原因 loss_plateau，冻结轮数 0，注册状态数 52235
+最终损失 7323790.748126，初始比 80.9204%，耗时 41.9 秒，平均每轮 140 毫秒
+  轮    0  损失 9050608.2074  beta     0.0023  步长  0.16068  期望损失 8352427.6847  ok
+  轮   30  损失 7454242.7647  beta     0.0602  步长  0.09943  期望损失 7448779.8490  ok
+  轮   60  损失 7396602.7388  beta     0.4768  步长  0.25665  期望损失 7394658.7295  ok
+  轮   90  损失 7368220.5522  beta     0.2668  步长  0.12966  期望损失 7366184.3806  ok
+  轮  120  损失 7356301.3151  beta     0.5158  步长  0.01267  期望损失 7356223.1244  ok
+  轮  150  损失 7348521.7925  beta     1.0365  步长  0.03990  期望损失 7348378.3042  ok
+  轮  180  损失 7342722.1259  beta     0.9745  步长  0.10487  期望损失 7342463.0468  ok
+  轮  210  损失 7337017.9439  beta     1.0871  步长  0.07800  期望损失 7336809.5924  ok
+  轮  240  损失 7330939.3043  beta     0.6712  步长  0.03492  期望损失 7330780.3596  ok
+  轮  270  损失 7327781.7182  beta     0.8022  步长  0.02750  期望损失 7327696.4818  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round12.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round13.json --rounds 1000 --exam-weights sigma --menu-seed 800013 --sample-seed 8013 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round13.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round12.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 248.2~554.9，权重范围 0.2~1，题数 414
+行数 32561，查询数 414，初始损失 7532202.506320
+轮 0 模式 batch 损失 7532202.5 步长 0.1768 预测降 376914.80 ok 连败 0
+实际轮数 100，停止原因 loss_plateau，冻结轮数 0，注册状态数 37640
+最终损失 7076493.477154，初始比 93.9499%，耗时 18.1 秒，平均每轮 181 毫秒
+  轮    0  损失 7532202.5063  beta     0.0100  步长  0.17677  期望损失 7155287.7028  ok
+  轮   10  损失 7091789.2535  beta     0.0964  步长  0.02458  期望损失 7091100.5106  ok
+  轮   20  损失 7087233.6898  beta     0.2382  步长  0.01646  期望损失 7087066.7767  ok
+  轮   30  损失 7084014.3668  beta     0.9720  步长  0.11513  期望损失 7083677.7428  ok
+  轮   40  损失 7081850.1804  beta     0.7175  步长  0.01462  期望损失 7081792.0524  ok
+  轮   50  损失 7080603.7235  beta     1.0972  步长  0.04290  期望损失 7080466.3736  ok
+  轮   60  损失 7078940.9980  beta     1.1645  步长  0.01809  期望损失 7078884.1820  ok
+  轮   70  损失 7078087.2361  beta     0.9212  步长  0.00723  期望损失 7078067.7054  ok
+  轮   80  损失 7077827.0904  beta     1.0395  步长  0.01377  期望损失 7077790.8647  ok
+  轮   90  损失 7077373.3889  beta     1.3496  步长  0.00974  期望损失 7077350.3676  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round13.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round14.json --rounds 1000 --exam-weights sigma --menu-seed 800014 --sample-seed 8014 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round14.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round13.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 138.7~554.9，权重范围 0.0625~1，题数 670
+行数 32561，查询数 670，初始损失 73349418.434934
+轮 0 模式 batch 损失 73349418.4 步长 1.0330 预测降 32958819.05 ok 连败 0
+轮 200 模式 batch 损失 4915594.4 步长 0.1860 预测降 1000.03 ok 连败 0
+轮 400 模式 batch 损失 4788369.8 步长 0.0238 预测降 55.61 ok 连败 0
+轮 600 模式 batch 损失 4753271.5 步长 0.0210 预测降 44.78 ok 连败 0
+实际轮数 650，停止原因 loss_plateau，冻结轮数 0，注册状态数 125173
+最终损失 4750649.203777，初始比 6.4767%，耗时 96.7 秒，平均每轮 149 毫秒
+  轮    0  损失 73349418.4349  beta     0.0008  步长  1.03299  期望损失 40390599.3815  ok
+  轮   65  损失 5582572.9856  beta     0.0606  步长  0.17541  期望损失 5576511.5232  ok
+  轮  130  损失 5052502.5621  beta     0.2993  步长  1.00000  期望损失 5044361.3868  ok
+  轮  195  损失 4920773.9448  beta     0.0622  步长  0.07897  期望损失 4917703.3251  ok
+  轮  260  损失 4852192.6705  beta     0.2480  步长  0.04522  期望损失 4851824.1991  ok
+  轮  325  损失 4820655.0325  beta     0.6737  步长  0.02812  期望损失 4820543.6868  ok
+  轮  390  损失 4792377.5686  beta     1.6698  步长  0.17167  期望损失 4792022.8348  ok
+  轮  455  损失 4772674.2339  beta     2.5168  步长  0.08501  期望损失 4772528.4362  ok
+  轮  520  损失 4763112.2534  beta     0.6059  步长  0.02279  期望损失 4763049.4658  ok
+  轮  585  损失 4754909.2258  beta     0.3489  步长  0.03658  期望损失 4754718.0027  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round14.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round15.json --rounds 1000 --exam-weights sigma --menu-seed 800015 --sample-seed 8015 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round15.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round14.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 138.7~554.9，权重范围 0.0625~1，题数 700
+行数 32561，查询数 700，初始损失 7935941.843092
+轮 0 模式 batch 损失 7935941.8 步长 0.2230 预测降 1118243.79 ok 连败 0
+轮 200 模式 batch 损失 5047404.0 步长 0.0164 预测降 85.30 ok 连败 0
+轮 400 模式 batch 损失 5015693.5 步长 0.0935 预测降 119.82 ok 连败 0
+实际轮数 450，停止原因 loss_plateau，冻结轮数 0，注册状态数 59841
+最终损失 5013715.705771，初始比 63.1773%，耗时 69.2 秒，平均每轮 154 毫秒
+  轮    0  损失 7935941.8431  beta     0.0038  步长  0.22297  期望损失 6817698.0507  ok
+  轮   45  损失 5136330.7775  beta     0.2494  步长  0.03428  期望损失 5135926.0271  ok
+  轮   90  损失 5098626.3370  beta     0.2464  步长  0.03905  期望损失 5098328.1586  ok
+  轮  135  损失 5069659.3479  beta     1.3350  步长  0.17199  期望损失 5069279.7317  ok
+  轮  180  损失 5054325.3646  beta     0.2951  步长  0.02059  期望损失 5054191.3179  ok
+  轮  225  损失 5042756.8345  beta     1.6542  步长  0.16422  期望损失 5042474.0387  ok
+  轮  270  损失 5035568.2615  beta     1.3354  步长  0.01485  期望损失 5035539.8343  ok
+  轮  315  损失 5026053.1482  beta     0.9691  步长  0.02932  期望损失 5025990.8388  ok
+  轮  360  损失 5020828.7490  beta     2.0404  步长  0.01659  期望损失 5020806.8887  ok
+  轮  405  损失 5015414.4986  beta     0.9832  步长  0.00685  期望损失 5015396.4084  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round15.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round16.json --rounds 1000 --exam-weights sigma --menu-seed 800016 --sample-seed 8016 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round16.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round15.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 138.7~554.9，权重范围 0.0625~1，题数 714
+行数 32561，查询数 714，初始损失 6771882.295762
+轮 0 模式 batch 损失 6771882.3 步长 0.3103 预测降 1389260.41 ok 连败 0
+轮 200 模式 batch 损失 5083224.5 步长 0.0174 预测降 106.08 ok 连败 0
+实际轮数 350，停止原因 loss_plateau，冻结轮数 0，注册状态数 48457
+最终损失 5066290.602662，初始比 74.8136%，耗时 53.6 秒，平均每轮 153 毫秒
+  轮    0  损失 6771882.2958  beta     0.0035  步长  0.31027  期望损失 5382621.8809  ok
+  轮   35  损失 5127123.2518  beta     0.3756  步长  0.02654  期望损失 5126950.5719  ok
+  轮   70  损失 5111009.9022  beta     0.2269  步长  0.02645  期望损失 5110685.6489  ok
+  轮  105  损失 5101305.7475  beta     0.8550  步长  0.01180  期望损失 5101269.9571  ok
+  轮  140  损失 5092101.2143  beta     0.7967  步长  0.07328  期望损失 5091946.9566  ok
+  轮  175  损失 5087158.3927  beta     0.5328  步长  0.03357  期望损失 5087079.5976  ok
+  轮  210  损失 5081881.5992  beta     1.0292  步长  0.03028  期望损失 5081832.2141  ok
+  轮  245  损失 5077163.8770  beta     1.7984  步长  0.15337  期望损失 5076980.6287  ok
+  轮  280  损失 5071485.9703  beta     1.3320  步长  0.00826  期望损失 5071466.9540  ok
+  轮  315  损失 5068235.4100  beta     0.5162  步长  0.02279  期望损失 5068081.7554  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round16.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round17.json --rounds 1000 --exam-weights sigma --menu-seed 800017 --sample-seed 8017 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round17.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round16.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 134.6~554.9，权重范围 0.05882~1，题数 714
+行数 32561，查询数 714，初始损失 6861286.645642
+轮 0 模式 batch 损失 6861286.6 步长 0.4109 预测降 1166714.59 ok 连败 0
+轮 200 模式 batch 损失 4942853.0 步长 0.0226 预测降 97.00 ok 连败 0
+实际轮数 400，停止原因 loss_plateau，冻结轮数 0，注册状态数 55600
+最终损失 4907073.917031，初始比 71.5183%，耗时 59.1 秒，平均每轮 148 毫秒
+  轮    0  损失 6861286.6456  beta     0.0058  步长  0.41088  期望损失 5694572.0539  ok
+  轮   40  损失 5051207.0466  beta     0.4129  步长  0.16760  期望损失 5049927.7838  ok
+  轮   80  损失 5006422.0929  beta     0.1276  步长  0.01996  期望损失 5005932.7584  ok
+  轮  120  损失 4977993.2715  beta     0.4482  步长  0.04624  期望损失 4977748.3726  ok
+  轮  160  损失 4960254.9131  beta     0.6550  步长  0.02712  期望损失 4960131.9392  ok
+  轮  200  损失 4942853.0064  beta     0.4802  步长  0.02259  期望损失 4942756.0015  ok
+  轮  240  损失 4934711.5096  beta     0.4436  步长  0.01817  期望损失 4934607.1167  ok
+  轮  280  损失 4926523.2734  beta     1.4178  步长  0.05670  期望损失 4926364.3837  ok
+  轮  320  损失 4914394.4943  beta     0.4437  步长  0.00636  期望损失 4914344.5374  ok
+  轮  360  损失 4909033.4707  beta     1.2877  步长  0.02408  期望损失 4908992.7964  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round17.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round18.json --rounds 1000 --exam-weights sigma --menu-seed 800018 --sample-seed 8018 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round18.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round17.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 134.6~554.9，权重范围 0.05882~1，题数 732
+行数 32561，查询数 732，初始损失 5957805.687200
+轮 0 模式 batch 损失 5957805.7 步长 0.1241 预测降 374392.81 ok 连败 0
+轮 200 模式 batch 损失 4985211.3 步长 0.0109 预测降 119.90 ok 连败 0
+轮 400 模式 batch 损失 4960137.7 步长 0.0258 预测降 38.23 ok 连败 0
+实际轮数 450，停止原因 loss_plateau，冻结轮数 0，注册状态数 49738
+最终损失 4957447.746805，初始比 83.2093%，耗时 68.4 秒，平均每轮 152 毫秒
+  轮    0  损失 5957805.6872  beta     0.0045  步长  0.12414  期望损失 5583412.8734  ok
+  轮   45  损失 5021275.3622  beta     0.8173  步长  0.23896  期望损失 5020373.3191  ok
+  轮   90  损失 5009733.1775  beta     1.1572  步长  0.31567  期望损失 5008879.2044  ok
+  轮  135  损失 4995986.0479  beta     0.6836  步长  0.01585  期望损失 4995906.8139  ok
+  轮  180  损失 4987444.0800  beta     1.6281  步长  0.04106  期望损失 4987364.3031  ok
+  轮  225  损失 4981694.2342  beta     0.8211  步长  0.01347  期望损失 4981638.7795  ok
+  轮  270  损失 4975924.0085  beta     0.5823  步长  0.01052  期望损失 4975872.6524  ok
+  轮  315  损失 4972065.0006  beta     1.2436  步长  0.03881  期望损失 4971972.8646  ok
+  轮  360  损失 4965001.0170  beta     1.5783  步长  0.04328  期望损失 4964908.5908  ok
+  轮  405  损失 4960100.0450  beta     1.3162  步长  0.02701  期望损失 4960030.4589  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round18.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round19.json --rounds 1000 --exam-weights sigma --menu-seed 800019 --sample-seed 8019 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round19.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round18.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 124.1~554.9，权重范围 0.05~1，题数 732
+行数 32561，查询数 732，初始损失 4817617.025709
+轮 0 模式 batch 损失 4817617.0 步长 0.1485 预测降 285464.58 ok 连败 0
+实际轮数 200，停止原因 loss_plateau，冻结轮数 0，注册状态数 41885
+最终损失 4281487.727802，初始比 88.8715%，耗时 31.5 秒，平均每轮 158 毫秒
+  轮    0  损失 4817617.0257  beta     0.0124  步长  0.14852  期望损失 4532152.4442  ok
+  轮   20  损失 4311091.6047  beta     0.0589  步长  0.03970  期望损失 4308764.5173  ok
+  轮   40  损失 4298498.5123  beta     0.8937  步长  0.04174  期望损失 4298340.1284  ok
+  轮   60  损失 4295335.3858  beta     0.2635  步长  0.01059  期望损失 4295212.7914  ok
+  轮   80  损失 4291641.4337  beta     1.3935  步长  0.03275  期望损失 4291572.0856  ok
+  轮  100  损失 4288968.6412  beta     0.5383  步长  0.01462  期望损失 4288915.2623  ok
+  轮  120  损失 4286679.4313  beta     1.5885  步长  0.03670  期望损失 4286602.0972  ok
+  轮  140  损失 4284843.4888  beta     1.1958  步长  0.02842  期望损失 4284782.7129  ok
+  轮  160  损失 4283023.2858  beta     0.6312  步长  0.00599  期望损失 4282991.7683  ok
+  轮  180  损失 4282270.1120  beta     1.3248  步长  0.01627  期望损失 4282240.0322  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round19.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round20.json --rounds 1000 --exam-weights sigma --menu-seed 800020 --sample-seed 8020 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round20.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round19.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 124.1~554.9，权重范围 0.05~1，题数 732
+行数 32561，查询数 732，初始损失 4996332.462338
+轮 0 模式 batch 损失 4996332.5 步长 0.1424 预测降 293315.82 ok 连败 0
+轮 200 模式 batch 损失 4286439.2 步长 0.0751 预测降 361.38 ok 连败 0
+实际轮数 400，停止原因 loss_plateau，冻结轮数 0，注册状态数 49330
+最终损失 4262624.741791，初始比 85.3151%，耗时 60.0 秒，平均每轮 150 毫秒
+  轮    0  损失 4996332.4623  beta     0.0089  步长  0.14241  期望损失 4703016.6461  ok
+  轮   40  损失 4339152.5274  beta     0.2549  步长  0.01662  期望损失 4338936.4186  ok
+  轮   80  损失 4312131.9422  beta     0.2674  步长  0.01870  期望损失 4311983.9995  ok
+  轮  120  损失 4297310.6244  beta     0.4684  步长  0.00970  期望损失 4297243.1832  ok
+  轮  160  损失 4290831.0268  beta     0.4749  步长  0.02087  期望损失 4290691.7049  ok
+  轮  200  损失 4286439.2413  beta     0.5465  步长  0.07506  期望损失 4286077.8645  ok
+  轮  240  损失 4279300.0133  beta     1.4104  步长  0.25156  期望损失 4278965.9944  ok
+  轮  280  损失 4272424.1537  beta     0.3845  步长  0.01514  期望损失 4272353.2315  ok
+  轮  320  损失 4268883.6528  beta     0.8906  步长  0.01108  期望损失 4268847.9295  ok
+  轮  360  损失 4265169.0403  beta     1.3251  步长  0.03213  期望损失 4265119.0801  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round20.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round21.json --rounds 1000 --exam-weights sigma --menu-seed 800021 --sample-seed 8021 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round21.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round20.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 124.1~554.9，权重范围 0.05~1，题数 748
+行数 32561，查询数 748，初始损失 4853199.324055
+轮 0 模式 batch 损失 4853199.3 步长 0.1260 预测降 256951.34 ok 连败 0
+实际轮数 150，停止原因 loss_plateau，冻结轮数 0，注册状态数 39809
+最终损失 4306795.042988，初始比 88.7414%，耗时 25.1 秒，平均每轮 167 毫秒
+  轮    0  损失 4853199.3241  beta     0.0115  步长  0.12596  期望损失 4596247.9874  ok
+  轮   15  损失 4339594.6197  beta     0.1372  步长  0.04800  期望损失 4338627.0333  ok
+  轮   30  损失 4323022.2662  beta     0.5656  步长  0.05902  期望损失 4322651.1984  ok
+  轮   45  损失 4318407.5266  beta     0.5790  步长  0.02808  期望损失 4318237.8738  ok
+  轮   60  损失 4316344.6357  beta     0.8319  步长  0.01631  期望损失 4316286.6276  ok
+  轮   75  损失 4314346.8671  beta     0.2644  步长  0.01747  期望损失 4314202.4547  ok
+  轮   90  损失 4313053.6045  beta     0.9145  步长  0.01192  期望损失 4313011.0126  ok
+  轮  105  损失 4310229.7422  beta     0.9124  步长  0.01137  期望损失 4310196.6462  ok
+  轮  120  损失 4309313.9144  beta     1.8394  步长  0.02703  期望损失 4309260.4354  ok
+  轮  135  损失 4307891.2401  beta     1.6922  步长  0.10725  期望损失 4307749.3642  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round21.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round22.json --rounds 1000 --exam-weights sigma --menu-seed 800022 --sample-seed 8022 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round22.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round21.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 124.1~554.9，权重范围 0.05~1，题数 748
+行数 32561，查询数 748，初始损失 5293841.954771
+轮 0 模式 batch 损失 5293842.0 步长 0.2235 预测降 724393.49 ok 连败 0
+轮 200 模式 batch 损失 4334356.4 步长 0.0135 预测降 245.03 ok 连败 0
+轮 400 模式 batch 损失 4303170.3 步长 0.0996 预测降 160.46 ok 连败 0
+实际轮数 600，停止原因 loss_plateau，冻结轮数 0，注册状态数 49458
+最终损失 4284337.688047，初始比 80.9306%，耗时 87.4 秒，平均每轮 146 毫秒
+  轮    0  损失 5293841.9548  beta     0.0051  步长  0.22348  期望损失 4569448.4661  ok
+  轮   60  损失 4385571.4872  beta     0.6157  步长  0.06770  期望损失 4385245.4742  ok
+  轮  120  损失 4358619.2459  beta     0.2021  步长  0.01064  期望损失 4358481.2768  ok
+  轮  180  损失 4343279.0427  beta     1.3461  步长  0.41946  期望损失 4342406.8213  ok
+  轮  240  损失 4325698.6965  beta     0.0683  步长  0.03862  期望损失 4324452.4497  ok
+  轮  300  损失 4316956.9351  beta     0.5470  步长  0.01708  期望损失 4316865.4815  ok
+  轮  360  损失 4307734.5135  beta     1.0049  步长  0.00469  期望损失 4307720.9985  ok
+  轮  420  损失 4300686.1912  beta     1.7657  步长  0.00746  期望损失 4300670.3476  ok
+  轮  480  损失 4294426.1277  beta     0.3787  步长  0.00764  期望损失 4294377.6087  ok
+  轮  540  损失 4287735.1543  beta     0.5535  步长  0.00975  期望损失 4287665.8112  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round22.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round23.json --rounds 1000 --exam-weights sigma --menu-seed 800023 --sample-seed 8023 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round23.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round22.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 124.1~554.9，权重范围 0.05~1，题数 860
+行数 32561，查询数 860，初始损失 7780524.745315
+轮 0 模式 batch 损失 7780524.7 步长 0.5485 预测降 1299511.18 ok 连败 0
+轮 200 模式 batch 损失 4835807.0 步长 0.0343 预测降 249.11 ok 连败 0
+轮 400 模式 batch 损失 4765071.1 步长 0.0541 预测降 196.57 ok 连败 0
+轮 600 模式 batch 损失 4733600.7 步长 0.1176 预测降 152.93 ok 连败 0
+实际轮数 750，停止原因 loss_plateau，冻结轮数 0，注册状态数 66967
+最终损失 4718833.685299，初始比 60.6493%，耗时 112.9 秒，平均每轮 150 毫秒
+  轮    0  损失 7780524.7453  beta     0.0078  步长  0.54855  期望损失 6481013.5663  ok
+  轮   75  损失 4959014.2915  beta     0.2551  步长  0.05879  期望损失 4958294.0429  ok
+  轮  150  损失 4874187.4791  beta     0.3492  步长  0.01982  期望损失 4873990.0311  ok
+  轮  225  损失 4814539.7861  beta     0.1878  步长  0.01188  期望损失 4814347.6614  ok
+  轮  300  损失 4785290.0978  beta     0.8633  步长  0.02078  期望损失 4785201.3514  ok
+  轮  375  损失 4769482.3912  beta     0.3509  步长  0.00750  期望损失 4769425.9420  ok
+  轮  450  损失 4754257.2219  beta     0.8520  步长  0.02767  期望损失 4754176.0499  ok
+  轮  525  损失 4744201.3760  beta     0.4888  步长  0.00817  期望损失 4744166.5455  ok
+  轮  600  损失 4733600.7264  beta     2.1257  步长  0.11758  期望损失 4733447.7919  ok
+  轮  675  损失 4723107.1778  beta     1.8567  步长  0.00999  期望损失 4723090.0820  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round23.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_round24.json --rounds 1000 --exam-weights sigma --menu-seed 800024 --sample-seed 8024 --init-seed 8 --save-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round24.csv --init-table /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round23.csv --stop-threshold 1e-3 --stop-lag 50 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000
+查询逆方差加权：sigma 范围 107.8~554.9，权重范围 0.03774~1，题数 995
+行数 32561，查询数 995，初始损失 8022927.722926
+轮 0 模式 batch 损失 8022927.7 步长 0.6374 预测降 1830183.72 ok 连败 0
+轮 200 模式 batch 损失 4114243.3 步长 0.0153 预测降 88.97 ok 连败 0
+轮 400 模式 batch 损失 4051423.8 步长 1.0000 预测降 2687.52 ok 连败 0
+实际轮数 600，停止原因 loss_plateau，冻结轮数 0，注册状态数 69263
+最终损失 4022924.447624，初始比 50.1428%，耗时 94.5 秒，平均每轮 158 毫秒
+  轮    0  损失 8022927.7229  beta     0.0053  步长  0.63738  期望损失 6192744.0057  ok
+  轮   60  损失 4273940.7785  beta     0.1850  步长  0.09704  期望损失 4272269.1324  ok
+  轮  120  损失 4176331.5069  beta     0.1799  步长  0.14538  期望损失 4173593.4340  ok
+  轮  180  损失 4124721.3553  beta     0.3601  步长  0.02868  期望损失 4124528.8796  ok
+  轮  240  损失 4096284.1972  beta     0.4737  步长  0.01614  期望损失 4096193.2764  ok
+  轮  300  损失 4074993.4376  beta     0.3076  步长  0.05688  期望损失 4074608.9324  ok
+  轮  360  损失 4060009.9950  beta     0.5747  步长  0.01044  期望损失 4059966.2096  ok
+  轮  420  损失 4043589.0374  beta     0.1713  步长  0.02872  期望损失 4043148.6776  ok
+  轮  480  损失 4033852.6023  beta     1.2364  步长  0.00850  期望损失 4033830.8022  ok
+  轮  540  损失 4025783.6833  beta     0.6463  步长  0.03665  期望损失 4025677.8426  ok
+终表已写入 /root/residual-evolution/runs/aimsel2_adult0p1_s8/table_round24.csv
+
+$ /root/residual-evolution/.venv/bin/python -u -B /root/residual-evolution/scripts/run_plants.py --data adult --exam /root/residual-evolution/runs/aimsel2_adult0p1_s8/exam_final.json --rounds 30000 --exam-weights sigma --menu-seed 20260928 --sample-seed 8 --init-seed 8 --save-table /root/residual-evolution/results/aimsel/adult_eps0p1_aimsel_seed8.csv --init-oneway --stop-threshold 1e-4 --stop-lag 100 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000 --out /root/residual-evolution/results/aimsel/adult_eps0p1_aimsel_seed8_curve.csv
+查询逆方差加权：sigma 范围 107.8~554.9，权重范围 0.03774~1，题数 995
+行数 32561，查询数 995，初始损失 138043017.813253
+轮 0 模式 batch 损失 138043017.8 步长 1.0002 预测降 56630668.74 ok 连败 0
+轮 200 模式 batch 损失 4426636.1 步长 1.0000 预测降 12240.13 ok 连败 0
+轮 400 模式 batch 损失 4153623.7 步长 0.0596 预测降 570.48 ok 连败 0
+轮 600 模式 batch 损失 4087041.4 步长 0.0106 预测降 53.04 ok 连败 0
+轮 800 模式 batch 损失 4050881.8 步长 0.0207 预测降 44.22 ok 连败 0
+轮 1000 模式 batch 损失 4030908.4 步长 0.0075 预测降 20.40 ok 连败 0
+轮 1200 模式 batch 损失 4016300.7 步长 0.0197 预测降 18.02 ok 连败 0
+轮 1400 模式 batch 损失 4007198.1 步长 0.0489 预测降 27.70 ok 连败 0
+轮 1600 模式 batch 损失 4001553.4 步长 0.0474 预测降 24.59 ok 连败 0
+轮 1800 模式 batch 损失 3996061.6 步长 0.0206 预测降 13.74 ok 连败 0
+轮 2000 模式 batch 损失 3992511.0 步长 0.0105 预测降 3.44 ok 连败 0
+轮 2200 模式 batch 损失 3989758.9 步长 0.0055 预测降 3.92 ok 连败 0
+轮 2400 模式 batch 损失 3987645.6 步长 0.0018 预测降 0.37 ok 连败 0
+轮 2600 模式 batch 损失 3986281.2 步长 0.0087 预测降 7.35 ok 连败 0
+轮 2800 模式 batch 损失 3985156.7 步长 0.0066 预测降 1.41 ok 连败 0
+实际轮数 2900，停止原因 loss_plateau，冻结轮数 0，注册状态数 193556
+最终损失 3984782.936937，初始比 2.8866%，耗时 452.0 秒，平均每轮 156 毫秒
+  轮    0  损失 138043017.8133  beta     0.0007  步长  1.00021  期望损失 81412349.0711  ok
+  轮  290  损失 4244033.0675  beta     0.0909  步长  0.05392  期望损失 4243005.8054  ok
+  轮  580  损失 4090924.6622  beta     0.5603  步长  0.01068  期望损失 4090876.8106  ok
+  轮  870  损失 4041984.9683  beta     1.2993  步长  0.00779  期望损失 4041967.7604  ok
+  轮 1160  损失 4019321.5930  beta     3.8496  步长  0.06876  期望损失 4019276.8692  ok
+  轮 1450  损失 4005824.1695  beta     4.3711  步长  0.02422  期望损失 4005813.7959  ok
+  轮 1740  损失 3997875.5215  beta     3.6998  步长  0.01462  期望损失 3997867.6180  ok
+  轮 2030  损失 3992015.9250  beta     3.5564  步长  0.01489  期望损失 3992007.7737  ok
+  轮 2320  损失 3988598.0189  beta    10.9339  步长  0.00351  期望损失 3988597.4818  ok
+  轮 2610  损失 3986238.3466  beta     7.3681  步长  0.00691  期望损失 3986237.5542  ok
+曲线已写入 /root/residual-evolution/results/aimsel/adult_eps0p1_aimsel_seed8_curve.csv
+终表已写入 /root/residual-evolution/results/aimsel/adult_eps0p1_aimsel_seed8.csv

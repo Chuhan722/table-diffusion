@@ -1,0 +1,50 @@
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+adult 字段15 行32561 全二阶105对 eps=0.1 delta=1e-05 seed=5 max_model_size=80.0
+Initial Sigma 554.9176837222757
+Budget Used 2.6160037818025994e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 2.79641783572002e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_10')
+Budget Used 2.9768318896374406e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_15')
+Budget Used 3.1572459435548615e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_15')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 277.45884186113784
+Budget Used 3.878902159224544e-05 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_10')
+Budget Used 4.600558374894226e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_15')
+Budget Used 5.3222145905639085e-05 / 0.00043299372940180947
+Measuring Clique ('attr_9',)
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 138.72942093056892
+Budget Used 8.208839453242639e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_5')
+Budget Used 0.0001109546431592137 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_6')
+Budget Used 0.000139820891786001 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_15')
+Budget Used 0.0001686871404127883 / 0.00043299372940180947
+Measuring Clique ('attr_7', 'attr_15')
+Budget Used 0.0001975533890395756 / 0.00043299372940180947
+Measuring Clique ('attr_13', 'attr_15')
+Budget Used 0.00022641963766636288 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_13')
+Budget Used 0.0002552858862931502 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_15')
+Budget Used 0.0002841521349199375 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_8')
+Budget Used 0.0003130183835467248 / 0.00043299372940180947
+Measuring Clique ('attr_11', 'attr_15')
+Budget Used 0.0003418846321735121 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_15')
+Budget Used 0.0003707508808002994 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_15')
+Budget Used 0.0003996171294270867 / 0.00043299372940180947
+Measuring Clique ('attr_6',)
+Budget Used 0.00043299372940180947 / 0.00043299372940180947
+Measuring Clique ('attr_15',)
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 64.50787042990409
+Generating Data...
+完成 723s 行32561 -> results/adult_eps0p1_aimfull_seed5.csv
+录像 35 条（一阶 18，二阶 17） estimate 调用 22 次 -> results/aimreplay/adult_eps0p1_aimfull_seed5_measurements.json

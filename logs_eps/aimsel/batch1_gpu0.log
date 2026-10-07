@@ -1,0 +1,12 @@
+2026-10-07T04:52:23Z START adult_eps10_aimsel_seed2 gpu0 lane=0-23
+logs_eps/aimsel/launch_batch1.sh: line 15: 1041304 Killed                  CUDA_VISIBLE_DEVICES=${UUID[$gpu]} taskset -c ${LANE[$gpu]} .venv/bin/python -u -B scripts/run_aim_select_v2.py --data adult --epsilon $eps --seed $seed --engine-rounds 1000 --workdir runs/aimsel2_adult${tag}_s${seed} --out results/aimsel/${name}.csv --engine-extra "$EXTRA" > logs_eps/aimsel/${name}.log 2>&1
+2026-10-07T05:14:59Z END adult_eps10_aimsel_seed2 rc=0
+2026-10-07T05:14:59Z START adult_eps1_aimsel_seed5 gpu0 lane=0-23
+2026-10-07T07:32:18Z END adult_eps1_aimsel_seed5 rc=0
+2026-10-07T07:32:18Z START adult_eps0p1_aimsel_seed4 gpu0 lane=0-23
+2026-10-07T08:00:17Z END adult_eps0p1_aimsel_seed4 rc=0
+2026-10-07T08:00:17Z START adult_eps0p1_aimsel_seed6 gpu0 lane=0-23
+2026-10-07T08:28:07Z END adult_eps0p1_aimsel_seed6 rc=0
+2026-10-07T08:28:07Z START adult_eps0p1_aimsel_seed8 gpu0 lane=0-23
+2026-10-07T08:59:59Z END adult_eps0p1_aimsel_seed8 rc=0
+2026-10-07T08:59:59Z gpu0 队列空

@@ -1,0 +1,10 @@
+2026-10-07T04:52:08Z START adult_eps10_aimsel_seed1 local-4090-gpu0
+logs_eps/aimsel/launch_batch1_local.sh: 第 19 行： 1020613 已杀死               CUDA_VISIBLE_DEVICES=0 taskset -c 0-15 .venv/bin/python -u -B scripts/run_aim_select_v2.py --data adult --epsilon $eps --seed $seed --engine-rounds 1000 --workdir runs/aimsel2_adult${tag}_s${seed} --out results/aimsel/${name}.csv --engine-extra "$EXTRA" > logs_eps/aimsel/${name}.log 2>&1
+2026-10-07T05:14:26Z END adult_eps10_aimsel_seed1 rc=0
+2026-10-07T05:14:26Z START adult_eps1_aimsel_seed4 local-4090-gpu0
+2026-10-07T06:16:47Z END adult_eps1_aimsel_seed4 rc=0
+2026-10-07T06:16:48Z START adult_eps1_aimsel_seed7 local-4090-gpu0
+2026-10-07T07:22:57Z END adult_eps1_aimsel_seed7 rc=0
+2026-10-07T07:22:57Z START adult_eps1_aimsel_seed8 local-4090-gpu0
+2026-10-07T08:31:35Z END adult_eps1_aimsel_seed8 rc=0
+2026-10-07T08:31:36Z 本机流结束（队列空）
