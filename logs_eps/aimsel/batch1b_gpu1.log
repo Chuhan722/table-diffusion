@@ -1,0 +1,6 @@
+2026-10-07T08:32:17Z gpu1 a 段已空，接 b 段
+2026-10-07T08:32:17Z START adult_eps10_alloc_k105f05_seed2 gpu1 lane=24-47
+2026-10-07T10:47:17Z END adult_eps10_alloc_k105f05_seed2 rc=0
+2026-10-07T10:47:17Z START nltcs_eps0p1_aimsel_seed2 gpu1 lane=24-47
+2026-10-07T10:55:35Z END nltcs_eps0p1_aimsel_seed2 rc=0
+2026-10-07T10:55:35Z gpu1 b 段队列空

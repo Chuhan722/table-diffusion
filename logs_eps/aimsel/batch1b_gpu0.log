@@ -1,0 +1,4 @@
+2026-10-07T09:00:17Z gpu0 a 段已空，接 b 段
+2026-10-07T09:00:17Z START adult_eps10_alloc_k105f05_seed3 gpu0 lane=0-23
+2026-10-07T11:08:47Z END adult_eps10_alloc_k105f05_seed3 rc=0
+2026-10-07T11:08:47Z gpu0 b 段队列空
