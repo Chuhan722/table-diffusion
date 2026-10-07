@@ -1,0 +1,9 @@
+2026-10-07T01:25:10Z START adult_eps0p1_aimselws_seed1 gpu1 init=table_round22
+2026-10-07T01:29:07Z END adult_eps0p1_aimselws_seed1 rc=0
+2026-10-07T01:29:07Z START adult_eps0p1_aimselws_seed2 gpu1 init=table_round19
+2026-10-07T01:32:15Z END adult_eps0p1_aimselws_seed2 rc=0
+2026-10-07T01:32:15Z START adult_eps0p1_aimselws_seed3 gpu1 init=table_round24
+2026-10-07T01:37:16Z END adult_eps0p1_aimselws_seed3 rc=0
+2026-10-07T01:37:16Z START adult_eps1_aimsel_seed2 gpu1
+2026-10-07T04:10:15Z END adult_eps1_aimsel_seed2 rc=0
+2026-10-07T04:10:15Z gpu1 队列空

@@ -1,0 +1,6 @@
+aimsel 1 1 1
+ablate_ws 1
+ablate_ws 2
+ablate_ws 3
+aimsel 1 1 2
+aimsel 1 1 3
