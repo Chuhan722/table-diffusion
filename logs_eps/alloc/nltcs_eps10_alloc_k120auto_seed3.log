@@ -1,0 +1,40 @@
+查询逆方差加权：sigma 范围 5.929~10.27，权重范围 0.3332~1，题数 512
+行数 16181，查询数 512，初始损失 447303525.816999
+轮 0 模式 batch 损失 447303525.8 步长 1.0001 预测降 143426202.89 ok 连败 0
+轮 200 模式 batch 损失 11174.0 步长 0.0032 预测降 19.19 ok 连败 0
+轮 400 模式 batch 损失 7871.2 步长 0.0044 预测降 2.52 ok 连败 0
+轮 600 模式 batch 损失 7072.6 步长 0.0206 预测降 0.23 ok 连败 0
+轮 685 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 691 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 700 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 712 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 713 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 717 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 720 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 725 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 729 模式 batch 损失 7019.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 739 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 746 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 755 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 760 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 761 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 800 模式 batch 损失 7017.1 步长 0.0013 预测降 0.00 ok 连败 0
+轮 811 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 855 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 879 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 889 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 891 模式 batch 损失 7017.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+实际轮数 900，停止原因 loss_plateau，冻结轮数 19，注册状态数 14394
+最终损失 7017.148673，初始比 0.0016%，耗时 11.9 秒，平均每轮 13 毫秒
+  轮    0  损失 447303525.8170  beta     0.0001  步长  1.00007  期望损失 303877322.9221  ok
+  轮   90  损失   44171.0871  beta     0.0820  步长  0.01513  期望损失   43599.0546  ok
+  轮  180  损失   12531.8187  beta     0.3086  步长  0.00306  期望损失   12509.5942  ok
+  轮  270  损失    8819.8301  beta     0.5026  步长  0.00025  期望损失    8817.8257  ok
+  轮  360  损失    8184.6535  beta     1.9742  步长  0.00102  期望损失    8184.4605  ok
+  轮  450  损失    7473.7619  beta     1.3143  步长  0.00217  期望损失    7472.1338  ok
+  轮  540  损失    7113.5183  beta     5.7512  步长  0.00063  期望损失    7113.4880  ok
+  轮  630  损失    7026.3087  beta     1.0630  步长  0.00825  期望损失    7025.9754  ok
+  轮  720  损失    7019.7848  beta     0.0000  步长  0.00000  期望损失    7019.7848  no_positive_direction
+  轮  810  损失    7017.1487  beta   163.4634  步长  0.00137  期望损失    7017.1486  ok
+曲线已写入 results/alloc/nltcs_eps10_alloc_k120auto_seed3_curve.csv
+终表已写入 results/alloc/nltcs_eps10_alloc_k120auto_seed3.csv
