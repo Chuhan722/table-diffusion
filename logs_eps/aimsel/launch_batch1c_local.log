@@ -1,0 +1,4 @@
+2026-10-07T10:54:55Z b 段已退出，接 c 段
+2026-10-07T10:54:55Z START adult_eps10_aimsel_seed1 local-4090-gpu0
+2026-10-07T15:47:14Z END adult_eps10_aimsel_seed1 rc=0
+2026-10-07T15:47:14Z 本机 c 段结束（队列空）

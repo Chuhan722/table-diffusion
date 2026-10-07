@@ -1,0 +1,8 @@
+2026-10-07T15:47:37Z c 段已退出，接 M3 本机段
+2026-10-07T15:47:37Z START acsmob_eps1_alloc_k210auto_seed1 local-4090-gpu0
+2026-10-07T15:47:50Z END acsmob_eps1_alloc_k210auto_seed1 rc=0
+2026-10-07T15:47:50Z START acsmob_eps1_alloc_k210auto_seed2 local-4090-gpu0
+2026-10-07T15:48:04Z END acsmob_eps1_alloc_k210auto_seed2 rc=0
+2026-10-07T15:48:04Z START acsmob_eps1_alloc_k210auto_seed3 local-4090-gpu0
+2026-10-07T15:48:17Z END acsmob_eps1_alloc_k210auto_seed3 rc=0
+2026-10-07T15:48:17Z 本机 M3 段结束

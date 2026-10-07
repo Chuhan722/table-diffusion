@@ -1,18 +1,12 @@
-alloc acsmob 1 k210f05 1
-alloc plants 1 k2346f05 1
-alloc plants 1 k2346f05 2
-alloc plants 1 k2346f05 3
-alloc plants 1 k2346f10 1
-alloc plants 1 k2346f10 2
-alloc plants 1 k2346f10 3
-alloc plants 1 k2346auto 1
-alloc plants 1 k2346auto 2
-alloc plants 1 k2346auto 3
 gsd plants 1 1
 gsd plants 1 2
 gsd plants 1 3
+alloc acsmob 1 k210f05 1
+alloc acsmob 1 k210auto 1
 alloc acsmob 1 k210f05 2
+alloc acsmob 1 k210auto 2
 alloc acsmob 1 k210f05 3
+alloc acsmob 1 k210auto 3
 gsd acsmob 1 1
 gsd acsmob 1 2
 gsd acsmob 1 3

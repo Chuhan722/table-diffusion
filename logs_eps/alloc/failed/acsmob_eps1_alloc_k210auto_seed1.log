@@ -1,0 +1,24 @@
+查询逆方差加权：sigma 范围 59.04~155.8，权重范围 0.1435~1，题数 11049
+行数 80329，查询数 11049，初始损失 2006212418.530915
+Traceback (most recent call last):
+  File "/home/chuhan/projects0916/residual-evolution/scripts/run_plants.py", line 673, in <module>
+    main()
+  File "/home/chuhan/projects0916/residual-evolution/scripts/run_plants.py", line 553, in main
+    out = evolve_batch(
+  File "/home/chuhan/projects0916/residual-evolution/src/resevo/batchkernel.py", line 1079, in evolve_batch
+    result = gpu_ctx.build(
+  File "/home/chuhan/projects0916/residual-evolution/src/resevo/gpukernel.py", line 853, in build
+    self_cross = float(counts @ ((drifts * drifts) @ self.weights))
+  File "cupy/_core/core.pyx", line 1387, in cupy._core.core._ndarray_base.__mul__
+  File "cupy/_core/_kernel.pyx", line 1349, in cupy._core._kernel.ufunc.__call__
+  File "cupy/_core/_kernel.pyx", line 645, in cupy._core._kernel._get_out_args_from_optionals
+  File "cupy/_core/core.pyx", line 2999, in cupy._core.core._ndarray_init
+  File "cupy/_core/core.pyx", line 272, in cupy._core.core._ndarray_base._init_fast
+  File "cupy/cuda/memory.pyx", line 875, in cupy.cuda.memory.alloc
+  File "cupy/cuda/memory.pyx", line 1579, in cupy.cuda.memory.MemoryPool.malloc
+  File "cupy/cuda/memory.pyx", line 1600, in cupy.cuda.memory.MemoryPool.malloc
+  File "cupy/cuda/memory.pyx", line 1271, in cupy.cuda.memory.SingleDeviceMemoryPool.malloc
+  File "cupy/cuda/memory.pyx", line 1292, in cupy.cuda.memory.SingleDeviceMemoryPool._malloc
+  File "cupy/cuda/memory.pyx", line 1537, in cupy.cuda.memory.SingleDeviceMemoryPool._try_malloc
+  File "cupy/cuda/memory.pyx", line 1540, in cupy.cuda.memory.SingleDeviceMemoryPool._try_malloc
+cupy.cuda.memory.OutOfMemoryError: Out of memory allocating 7,098,585,088 bytes (allocated so far: 19,016,292,352 bytes).
