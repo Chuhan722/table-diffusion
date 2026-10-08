@@ -1,0 +1,10 @@
+aimsel adult 3 3 1
+alloc nltcs 3 k120auto 1
+alloc nltcs 3 k120auto 2
+alloc nltcs 3 k120auto 3
+alloc nltcs 3 k120f05 1
+alloc nltcs 3 k120f05 2
+alloc nltcs 3 k120f05 3
+aimsel nltcs 3 3 1
+aimsel nltcs 3 3 2
+aimsel nltcs 3 3 3
