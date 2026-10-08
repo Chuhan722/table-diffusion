@@ -1,0 +1,7 @@
+同餐断言通过，码表全二阶逐格等于考卷 14123 条答案
+Setting up Marginals.:   0%|          | 0/105 [00:00<?, ?it/s]Setting up Marginals.:   1%|          | 1/105 [00:00<00:17,  5.83it/s]Setting up Marginals.:  29%|██▊       | 30/105 [00:00<00:00, 134.66it/s]Setting up Marginals.:  92%|█████████▏| 97/105 [00:00<00:00, 343.92it/s]Setting up Marginals.: 100%|██████████| 105/105 [00:00<00:00, 270.81it/s]
+statistics 0: has 105 workloads and 14123 queries.
+噪声目标注入 14123 格，与噪声考卷逐格一致
+搜索 1589.1 秒，频率尺度残差 平均 0.000897 最大 0.016615
+对噪声目标残差 平均 0.002548 最大 0.017146
+已写出 results/baseline2/adult_eps0p3_gsd_seed1.csv，32561 行
