@@ -1,1 +1,5 @@
 2026-10-07T23:46:37Z START adult_eps3_alloc_k105auto_seed1 local-4090-gpu0
+2026-10-08T01:28:12Z END adult_eps3_alloc_k105auto_seed1 rc=0
+2026-10-08T01:28:12Z START adult_eps3_alloc_k105auto_seed2 local-4090-gpu0
+2026-10-08T02:46:50Z END adult_eps3_alloc_k105auto_seed2 rc=0
+2026-10-08T02:46:50Z START adult_eps3_alloc_k105auto_seed3 local-4090-gpu0
