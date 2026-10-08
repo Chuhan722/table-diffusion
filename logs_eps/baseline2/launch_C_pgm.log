@@ -1,0 +1,7 @@
+2026-10-08T04:55:05Z START nltcs_eps3_pgm_seed1 cpu lane=48-55 sigma=16.3654315
+2026-10-08T04:56:45Z END nltcs_eps3_pgm_seed1 rc=0
+2026-10-08T04:56:45Z START nltcs_eps3_pgm_seed2 cpu lane=48-55 sigma=16.3654315
+2026-10-08T04:58:26Z END nltcs_eps3_pgm_seed2 rc=0
+2026-10-08T04:58:26Z START nltcs_eps3_pgm_seed3 cpu lane=48-55 sigma=16.3654315
+2026-10-08T05:00:06Z END nltcs_eps3_pgm_seed3 rc=0
+2026-10-08T05:00:06Z ALL DONE C-PGM

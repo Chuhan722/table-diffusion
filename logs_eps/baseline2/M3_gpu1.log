@@ -1,1 +1,15 @@
 2026-10-07T17:18:18Z START plants_eps1_gsd_seed2 gpu1 lane=24-47
+2026-10-07T17:40:37Z END plants_eps1_gsd_seed2 rc=0
+2026-10-07T17:40:37Z START acsmob_eps1_alloc_k210f05_seed1 gpu1 lane=24-47
+2026-10-07T21:11:11Z END acsmob_eps1_alloc_k210f05_seed1 rc=0
+2026-10-07T21:11:11Z START acsmob_eps1_alloc_k210f05_seed2 gpu1 lane=24-47
+2026-10-08T00:38:21Z END acsmob_eps1_alloc_k210f05_seed2 rc=0
+2026-10-08T00:38:21Z START acsmob_eps1_alloc_k210auto_seed3 gpu1 lane=24-47
+2026-10-08T03:44:24Z END acsmob_eps1_alloc_k210auto_seed3 rc=0
+2026-10-08T03:44:24Z START acsmob_eps1_gsd_seed1 gpu1 lane=24-47
+2026-10-08T04:56:50Z END acsmob_eps1_gsd_seed1 rc=0
+2026-10-08T04:56:50Z START acsmob_eps1_gsd_seed3 gpu1 lane=24-47
+2026-10-08T06:16:18Z END acsmob_eps1_gsd_seed3 rc=0
+2026-10-08T06:16:18Z START adult_eps3_gsd_seed3 gpu1 lane=24-47
+2026-10-08T06:49:57Z END adult_eps3_gsd_seed3 rc=0
+2026-10-08T06:49:57Z gpu1 队列空
