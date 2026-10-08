@@ -1,0 +1,19 @@
+2026-10-08T06:51:43Z START nltcs_eps3_alloc_k120auto_seed1 gpu1 lane=24-47
+2026-10-08T06:53:29Z END nltcs_eps3_alloc_k120auto_seed1 rc=0
+2026-10-08T06:53:29Z START nltcs_eps3_alloc_k120auto_seed2 gpu1 lane=24-47
+2026-10-08T06:55:41Z END nltcs_eps3_alloc_k120auto_seed2 rc=0
+2026-10-08T06:55:41Z START nltcs_eps3_alloc_k120auto_seed3 gpu1 lane=24-47
+2026-10-08T06:58:30Z END nltcs_eps3_alloc_k120auto_seed3 rc=0
+2026-10-08T06:58:30Z START nltcs_eps3_alloc_k120f05_seed1 gpu1 lane=24-47
+2026-10-08T07:00:35Z END nltcs_eps3_alloc_k120f05_seed1 rc=0
+2026-10-08T07:00:35Z START nltcs_eps3_alloc_k120f05_seed2 gpu1 lane=24-47
+2026-10-08T07:01:24Z END nltcs_eps3_alloc_k120f05_seed2 rc=0
+2026-10-08T07:01:24Z START nltcs_eps3_alloc_k120f05_seed3 gpu1 lane=24-47
+2026-10-08T07:02:21Z END nltcs_eps3_alloc_k120f05_seed3 rc=0
+2026-10-08T07:02:21Z START nltcs_eps3_aimsel_seed1 gpu1 lane=24-47
+2026-10-08T07:30:28Z END nltcs_eps3_aimsel_seed1 rc=0
+2026-10-08T07:30:28Z START nltcs_eps3_aimsel_seed2 gpu1 lane=24-47
+2026-10-08T07:56:20Z END nltcs_eps3_aimsel_seed2 rc=0
+2026-10-08T07:56:20Z START nltcs_eps3_aimsel_seed3 gpu1 lane=24-47
+2026-10-08T08:23:10Z END nltcs_eps3_aimsel_seed3 rc=0
+2026-10-08T08:23:11Z gpu1 队列空
