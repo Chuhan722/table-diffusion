@@ -1,0 +1,18 @@
+aimsel adult 0p3 0.3 1
+aimsel adult 0p3 0.3 2
+aimsel adult 0p3 0.3 3
+alloc adult 0p3 k105auto 1
+alloc adult 0p3 k105auto 2
+alloc adult 0p3 k105auto 3
+gsd adult 0p3 1
+gsd adult 0p3 2
+gsd adult 0p3 3
+alloc nltcs 0p3 k120auto 1
+alloc nltcs 0p3 k120auto 2
+alloc nltcs 0p3 k120auto 3
+gsd nltcs 0p3 1
+gsd nltcs 0p3 2
+gsd nltcs 0p3 3
+aimsel nltcs 0p3 0.3 1
+aimsel nltcs 0p3 0.3 2
+aimsel nltcs 0p3 0.3 3
