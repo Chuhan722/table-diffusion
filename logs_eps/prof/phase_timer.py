@@ -56,6 +56,15 @@ wrap(G, "build", "gpu.build 总")
 wrap(G, "_condition_counts", "gpu.1 条件计数 cnt(G×Q)")
 wrap(G, "_residual_loss", "gpu.2 残差/损失/组错位分(G×Q)")
 wrap(G, "_delta_parts", "gpu.3 菜单答案差 delta")
+# 第五十六步提速后的直算通路（旧代码没有这些方法，套壳时跳过）
+for nm, label in (
+    ("_feats_direct", "gpu.1' 直算特征 feats(G×Q)"),
+    ("_delta_direct", "gpu.3' 直算答案差 delta"),
+    ("_direct_entries", "gpu.3'' 直算条目(含分段)"),
+    ("_state_terms", "gpu.0 整表项 state_terms(cnt/feats+残差)"),
+):
+    if hasattr(G, nm):
+        wrap(G, nm, label)
 wrap(G, "_halfspace_delta", "gpu.4 半空间差")
 wrap(G, "_calibrate_flat", "gpu.5 括根(步长 beta)")
 # CPU 相

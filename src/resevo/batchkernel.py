@@ -881,6 +881,7 @@ def evolve_batch(
     nullswap_phase=None,
     nullswap_every: int = 0,
     nullswap_after: int = 0,
+    gpu_direct: bool | None = None,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -929,6 +930,9 @@ def evolve_batch(
     全局注册表落回原位。换位构造性不动全部一阶二阶，损失逐位不变，
     不产轮记录不碰引擎随机流；相位仅批量提供器可用（需码本）。
     nullswap_after 为暖场轮数，此前不开场。默认 None 加 0 关闭零改变。
+    gpu_direct 控制 GPU 后端的单元格直算通路（第五十六步提速），
+    None 自动识别考卷结构，True 强制，False 走通用通路，
+    直算与通用通路同种子逐位同结果，只省时间不改任何数学。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -1075,6 +1079,7 @@ def evolve_batch(
                     gpu_ctx = GpuBatchContext(
                         plan_provider.structure[0],
                         plan.workload.target, plan.workload.weights,
+                        direct=gpu_direct,
                     )
                 result = gpu_ctx.build(
                     plan.grouped, plan.menu, plan_provider.codebook.sync(),

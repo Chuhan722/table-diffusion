@@ -10,10 +10,22 @@
 
 残差在卡上由条件计数重构特征算出，零噪声整数数据下与 CPU 逐位相同，
 不需要把注册表的大特征矩阵搬上卡。
+
+单元格直算通路（第五十六步提速 A/B），
+- 考卷全部等值题都是单元格（每字段恰允许一个值，典型如二阶边际全格）时，
+  一条路径对某边际的答案差只在旧格 −1 新格 +1 两处非零，
+  直接按组码查格号得到这两项，不再把字段牵连的全部题展开再筛非零；
+- 特征矩阵同样由格号散射得到，省掉逐字段累加的条件计数矩阵；
+- 产出的稀疏块与通用通路逐条同序同值，分块边界也照通用通路的条目预算切，
+  之后的增益、括根、漂移合并一行不动，同种子同卡与通用通路逐位同结果；
+- 含非单元格题（区间、多值）时自动退回通用通路，半空间通道不受影响。
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+from numpy.typing import NDArray
 from scipy.optimize import brentq
 
 from .batchkernel import BatchKernelResult
@@ -215,6 +227,103 @@ def _seg_max(cp, values, offsets):
     return out
 
 
+@dataclass(frozen=True)
+class MarginalLayout:
+    """全单元格查询结构的边际表布局，直算通路的主机端静态量。
+
+    每个边际是一组题的集合，这些题涉及同一字段集且每字段恰允许一个值，
+    cellq_all 按边际拼接，把格的扁平号映射到全局题号，缺格记 -1，
+    边际按最小题号升序编号，ranges_sorted 为真表示各边际的题号区间
+    互不交错，此时按边际序铺开的条目天然按题号升序，免排序。
+    """
+
+    num_marginals: int
+    kmax: int
+    marg_fields: NDArray[np.int64]  # m 乘 kmax，填充位记 0 配零步长不生效
+    marg_strides: NDArray[np.int64]  # m 乘 kmax，填充位记 0
+    marg_off: NDArray[np.int64]  # m，各边际在 cellq_all 的起点
+    cellq_all: NDArray[np.int64]  # 拼接的格号到题号表
+    fm_list: NDArray[np.int64]  # 按字段拼接的所含边际号，字段内升序
+    fm_off: NDArray[np.int64]  # 字段数加一
+    ranges_sorted: bool
+
+
+def build_marginal_layout(qs: QueryStructure) -> MarginalLayout | None:
+    """从查询结构识别单元格边际布局，任一等值题不是单元格则返回 None。"""
+    ncond = np.asarray(qs.ncond, dtype=np.int64)
+    num_queries = int(ncond.size)
+    num_fields = len(qs.dep)
+    eq_queries = np.flatnonzero(ncond >= 0)
+    if eq_queries.size == 0 or np.any(ncond[eq_queries] == 0):
+        return None
+    fields_of: list[list[int]] = [[] for _ in range(num_queries)]
+    vals_of: list[list[int]] = [[] for _ in range(num_queries)]
+    domains = []
+    for j in range(num_fields):
+        dep_j = np.asarray(qs.dep[j], dtype=np.int64)
+        allow_j = np.asarray(qs.allow[j], dtype=np.bool_)
+        domains.append(int(allow_j.shape[1]))
+        if dep_j.size == 0:
+            continue
+        if np.any(allow_j.sum(axis=1) != 1):
+            return None
+        val_j = allow_j.argmax(axis=1)
+        for t, q in enumerate(dep_j.tolist()):
+            fields_of[q].append(j)
+            vals_of[q].append(int(val_j[t]))
+    groups: dict[tuple[int, ...], list[int]] = {}
+    for q in eq_queries.tolist():
+        key = tuple(fields_of[q])
+        if len(key) != int(ncond[q]):
+            return None
+        groups.setdefault(key, []).append(q)
+    margs = []
+    for key, qlist in groups.items():
+        dims = [domains[j] for j in key]
+        strides = [int(np.prod(dims[k + 1:], dtype=np.int64)) for k in range(len(dims))]
+        cellq = np.full(int(np.prod(dims, dtype=np.int64)), -1, dtype=np.int64)
+        for q in qlist:
+            flat = sum(v * s for v, s in zip(vals_of[q], strides))
+            if cellq[flat] != -1:
+                return None
+            cellq[flat] = q
+        margs.append((min(qlist), max(qlist), key, strides, cellq))
+    margs.sort(key=lambda t: t[0])
+    ranges_sorted = all(
+        margs[i][1] < margs[i + 1][0] for i in range(len(margs) - 1)
+    )
+    m = len(margs)
+    kmax = max(len(t[2]) for t in margs)
+    marg_fields = np.zeros((m, kmax), dtype=np.int64)
+    marg_strides = np.zeros((m, kmax), dtype=np.int64)
+    marg_off = np.zeros(m, dtype=np.int64)
+    pieces = []
+    pos = 0
+    for i, (_, _, key, strides, cellq) in enumerate(margs):
+        marg_fields[i, : len(key)] = key
+        marg_strides[i, : len(key)] = strides
+        marg_off[i] = pos
+        pos += cellq.size
+        pieces.append(cellq)
+    fm_lists = [[] for _ in range(num_fields)]
+    for i, (_, _, key, _, _) in enumerate(margs):
+        for j in key:
+            fm_lists[j].append(i)
+    fm_off = np.zeros(num_fields + 1, dtype=np.int64)
+    np.cumsum([len(l) for l in fm_lists], out=fm_off[1:])
+    fm_list = np.array(
+        [i for l in fm_lists for i in l], dtype=np.int64
+    ).reshape(-1)
+    return MarginalLayout(
+        m, kmax, marg_fields, marg_strides, marg_off,
+        np.concatenate(pieces), fm_list, fm_off, ranges_sorted,
+    )
+
+
+# 直算通路内部按（路径，边际）对数分块的预算，压住临时数组显存峰值
+_DIRECT_PAIR_BUDGET = 1 << 23
+
+
 class GpuBatchContext:
     """一次跑批的 GPU 上下文，静态量上传一次，每轮只传菜单与组编码。
 
@@ -223,7 +332,8 @@ class GpuBatchContext:
     条件计数在卡上整轮重算，省掉跨轮缓存的显存增长与大块传输。
     """
 
-    def __init__(self, qs: QueryStructure, target, weights):
+    def __init__(self, qs: QueryStructure, target, weights, direct: bool | None = None):
+        """direct 取 None 自动识别单元格结构，True 强制直算（结构不符报错），False 走通用通路。"""
         cp = _cupy()
         self.cp = cp
         self.qs = qs
@@ -255,6 +365,209 @@ class GpuBatchContext:
         self.dep_off = cp.asarray(off_np)
         self.dep_all = cp.asarray(dep_cat)
         self.allow_flat = cp.asarray(allow_cat)
+        # 单元格直算通路的边际布局，识别失败则留在通用通路
+        self.layout = None if direct is False else build_marginal_layout(qs)
+        if direct is True and self.layout is None:
+            raise ValueError("直算通路要求全部等值题都是单元格")
+        self.direct = self.layout is not None
+        if self.direct:
+            lay = self.layout
+            self.m_fields = cp.asarray(lay.marg_fields)
+            self.m_strides = cp.asarray(lay.marg_strides)
+            self.m_off = cp.asarray(lay.marg_off)
+            self.cellq = cp.asarray(lay.cellq_all)
+            self.fm_list = cp.asarray(lay.fm_list)
+            self.fm_off = cp.asarray(lay.fm_off)
+            self.fm_cnt = cp.asarray(np.diff(lay.fm_off))
+
+    # ------------------------------------------------------------------
+    def _hs_scores(self, codes_g):
+        """半空间整数分，按字段分表累加。"""
+        cp = self.cp
+        num_groups = codes_g.shape[0]
+        score = cp.zeros((num_groups, self.num_hs), dtype=cp.int64)
+        if self.num_hs:
+            for j in range(codes_g.shape[1]):
+                tab = self.hs_score[j]
+                if tab.size and bool(tab.any()):
+                    score += tab[:, codes_g[:, j]].T
+        return score
+
+    def _flat_cells(self, codes_rows, row_idx, m_idx):
+        """给定行码矩阵、行号与边际号，算每对的格在 cellq_all 里的扁平位置。"""
+        cp = self.cp
+        flat = self.m_off[m_idx]
+        for k in range(self.layout.kmax):
+            f = self.m_fields[m_idx, k]
+            flat = flat + codes_rows[row_idx, f].astype(cp.int64) * self.m_strides[m_idx, k]
+        return flat
+
+    def _feats_direct(self, codes_g):
+        """由组码查格号散射出特征矩阵，与条件计数重构的特征逐位相同。"""
+        cp = self.cp
+        num_groups = int(codes_g.shape[0])
+        m = self.layout.num_marginals
+        flat = cp.broadcast_to(self.m_off[None, :], (num_groups, m))
+        for k in range(self.layout.kmax):
+            flat = flat + (
+                codes_g[:, self.m_fields[:, k]].astype(cp.int64)
+                * self.m_strides[None, :, k]
+            )
+        q = self.cellq[flat]
+        feats = cp.zeros((num_groups, self.num_queries), dtype=cp.float64)
+        valid = q >= 0
+        rows = cp.broadcast_to(cp.arange(num_groups, dtype=cp.int64)[:, None], (num_groups, m))
+        feats[rows[valid], q[valid]] = 1.0
+        score_g = self._hs_scores(codes_g)
+        if self.num_hs:
+            feats[:, self.hs_cols] = (
+                score_g >= self.hs_threshold[None, :]
+            ).astype(cp.float64)
+        return feats, score_g
+
+    def _direct_entries(self, sub, menu_gpu, codes_g, multi: bool):
+        """给定路径子集，直算每条路径的答案差稀疏块，条目按（路径，题号）升序。
+
+        单字段路径只枚举该字段所含的边际，多字段路径枚举各槽字段所含边际的并集
+        （按（路径，边际）排序去重），不含动过字段的边际旧格新格必相同、本就不出条目，
+        旧格与新格相同的边际不出条目，缺格一侧也不出条目，
+        内部再按（路径，边际）对数预算分段，段结果拼接不改条目序。
+        """
+        cp = self.cp
+        group, fields, values = menu_gpu["group"], menu_gpu["fields"], menu_gpu["values"]
+        n = int(sub.size)
+        m = self.layout.num_marginals
+        grp = group[sub]
+        cur = codes_g[grp]
+        new = cur.copy()
+        for slot in range(3):
+            f = fields[sub, slot]
+            idx = cp.flatnonzero(f >= 0)
+            if idx.size:
+                new[idx, f[idx].astype(cp.int64)] = values[sub, slot][idx]
+        if multi:
+            f_slots = [fields[sub, s].astype(cp.int64) for s in range(3)]
+            c_slots = [
+                cp.where(f >= 0, self.fm_cnt[cp.maximum(f, 0)], 0) for f in f_slots
+            ]
+            pairs_per = c_slots[0] + c_slots[1] + c_slots[2]
+        else:
+            j_sub = fields[sub, 0].astype(cp.int64)
+            pairs_per = self.fm_cnt[j_sub]
+        datas, inds, nnzs = [], [], []
+        for lo, hi in _chunk_bounds(cp, pairs_per, _DIRECT_PAIR_BUDGET):
+            cnt_c = pairs_per[lo:hi]
+            indptr = cp.zeros(hi - lo + 1, dtype=cp.int64)
+            cp.cumsum(cnt_c, out=indptr[1:])
+            total = int(indptr[-1])
+            row_loc = _seg_ids(cp, indptr, total)
+            within = cp.arange(total, dtype=cp.int64) - indptr[row_loc]
+            if multi:
+                c0 = c_slots[0][lo:hi][row_loc]
+                c01 = c0 + c_slots[1][lo:hi][row_loc]
+                slot = (within >= c0).astype(cp.int64) + (within >= c01).astype(cp.int64)
+                start = cp.where(slot == 0, 0, cp.where(slot == 1, c0, c01))
+                f_sel = cp.where(
+                    slot == 0, f_slots[0][lo:hi][row_loc],
+                    cp.where(slot == 1, f_slots[1][lo:hi][row_loc], f_slots[2][lo:hi][row_loc]),
+                )
+                m_idx = self.fm_list[self.fm_off[f_sel] + within - start]
+                key = cp.unique(row_loc * m + m_idx)
+                row_loc = key // m
+                m_idx = key - row_loc * m
+            else:
+                m_idx = self.fm_list[self.fm_off[j_sub[lo:hi][row_loc]] + within]
+            row_abs = row_loc + lo
+            fo = self._flat_cells(cur, row_abs, m_idx)
+            fn = self._flat_cells(new, row_abs, m_idx)
+            q_old = self.cellq[fo]
+            q_new = self.cellq[fn]
+            change = fo != fn
+            swap = q_old > q_new
+            qa = cp.where(swap, q_new, q_old)
+            qb = cp.where(swap, q_old, q_new)
+            da = cp.where(swap, 1, -1).astype(cp.int8)
+            q2 = cp.stack([qa, qb], axis=1).ravel()
+            d2 = cp.stack([da, -da], axis=1).ravel()
+            v2 = cp.stack([change & (qa >= 0), change & (qb >= 0)], axis=1).ravel()
+            r2 = cp.repeat(row_loc, 2)
+            keep = cp.flatnonzero(v2)
+            q_k, d_k, r_k = q2[keep], d2[keep], r2[keep]
+            if not self.layout.ranges_sorted:
+                order = cp.argsort(r_k * self.num_queries + q_k)
+                q_k, d_k, r_k = q_k[order], d_k[order], r_k[order]
+            nnzs.append(
+                cp.bincount(r_k, minlength=hi - lo) if r_k.size
+                else cp.zeros(hi - lo, dtype=cp.int64)
+            )
+            datas.append(d_k.astype(cp.float64))
+            inds.append(q_k)
+        if datas:
+            data = cp.concatenate(datas)
+            indices = cp.concatenate(inds)
+            row_nnz = cp.concatenate(nnzs)
+        else:
+            data = cp.zeros(0, dtype=cp.float64)
+            indices = cp.zeros(0, dtype=cp.int64)
+            row_nnz = cp.zeros(n, dtype=cp.int64)
+        indptr = cp.zeros(n + 1, dtype=cp.int64)
+        cp.cumsum(row_nnz, out=indptr[1:])
+        return {
+            "data": data,
+            "indices": indices,
+            "indptr": indptr,
+            "row_of": _seg_ids(cp, indptr, int(indptr[-1])),
+            "path_idx": sub.astype(cp.int64),
+            "grp_of": grp,
+        }
+
+    @staticmethod
+    def _slice_parts(cp, ent, bounds):
+        """把一整段路径的稀疏块按路径区间切成多块，每块与单独直算该区间所得逐位相同。"""
+        if len(bounds) == 1 and bounds[0] == (0, int(ent["path_idx"].size)):
+            return [ent]
+        ip = cp.asnumpy(ent["indptr"])
+        out = []
+        for lo, hi in bounds:
+            a, b = int(ip[lo]), int(ip[hi])
+            out.append({
+                "data": ent["data"][a:b],
+                "indices": ent["indices"][a:b],
+                "indptr": ent["indptr"][lo:hi + 1] - ent["indptr"][lo],
+                "row_of": ent["row_of"][a:b] - lo,
+                "path_idx": ent["path_idx"][lo:hi],
+                "grp_of": ent["grp_of"][lo:hi],
+            })
+        return out
+
+    def _delta_direct(self, menu_gpu, codes_g, entry_budget: int = 0):
+        """答案差稀疏块的直算版，块划分照通用通路的条目预算切，产出逐位同序同值。
+
+        单字段路径与多字段路径各整段直算一次再按块边界切片，
+        省掉逐块的核发射与同步，每块内容与逐块直算相同。
+        """
+        cp = self.cp
+        fields = menu_gpu["fields"]
+        parts = []
+        nslots = (fields >= 0).sum(axis=1)
+        singles = cp.flatnonzero(nslots == 1)
+        if singles.size:
+            j_all = fields[singles, 0].astype(cp.int64)
+            bounds = _chunk_bounds(cp, self.dep_sizes[j_all], entry_budget)
+            ent = self._direct_entries(singles, menu_gpu, codes_g, multi=False)
+            parts.extend(self._slice_parts(cp, ent, bounds))
+        multis = cp.flatnonzero(nslots >= 2)
+        if multis.size:
+            sizes_m = cp.zeros(multis.size, dtype=cp.int64)
+            for slot in range(3):
+                jm = fields[multis, slot]
+                sizes_m += cp.where(
+                    jm >= 0, self.dep_sizes[cp.maximum(jm, 0).astype(cp.int64)], 0
+                )
+            bounds = _chunk_bounds(cp, sizes_m, entry_budget)
+            ent = self._direct_entries(multis, menu_gpu, codes_g, multi=True)
+            parts.extend(self._slice_parts(cp, ent, bounds))
+        return parts
 
     # ------------------------------------------------------------------
     def _condition_counts(self, codes_g):
@@ -267,29 +580,42 @@ class GpuBatchContext:
                 continue
             pj = self.allow[j][:, codes_g[:, j]].T
             cnt[:, self.dep[j]] += pj.astype(cp.int16)
-        score = cp.zeros((num_groups, self.num_hs), dtype=cp.int64)
-        if self.num_hs:
-            for j in range(codes_g.shape[1]):
-                tab = self.hs_score[j]
-                if tab.size and bool(tab.any()):
-                    score += tab[:, codes_g[:, j]].T
-        return cnt, score
+        return cnt, self._hs_scores(codes_g)
 
     # ------------------------------------------------------------------
-    def _residual_loss(self, cnt, score_g, counts):
-        """由条件计数重构特征算残差损失与组错位分，整数数据下与 CPU 逐位相同。"""
+    def _feats_from_counts(self, cnt, score_g):
+        """由条件计数重构特征矩阵，整数数据下与 CPU 逐位相同。"""
         cp = self.cp
         feats = (cnt == self.ncond[None, :]).astype(cp.float64)
         if self.num_hs:
             feats[:, self.hs_cols] = (
                 score_g >= self.hs_threshold[None, :]
             ).astype(cp.float64)
+        return feats
+
+    def _residual_from_feats(self, feats, counts):
+        """由特征矩阵算残差损失与组错位分。"""
+        cp = self.cp
         answers = counts @ feats
         residual = self.target - answers
         loss = float((residual * self.weights) @ residual / 2)
         # 组错位分，组覆盖的题按绝对加权残差求和，供工作批挑组
         scores = feats @ (self.weights * cp.abs(residual))
         return residual, loss, scores
+
+    def _residual_loss(self, cnt, score_g, counts):
+        """由条件计数重构特征算残差损失与组错位分，整数数据下与 CPU 逐位相同。"""
+        return self._residual_from_feats(self._feats_from_counts(cnt, score_g), counts)
+
+    def _state_terms(self, codes_g, counts):
+        """本轮表状态的残差、损失、组分与答案差所需的中间量，按通路分派。"""
+        if self.direct:
+            feats, score_g = self._feats_direct(codes_g)
+            residual, loss, scores = self._residual_from_feats(feats, counts)
+            return residual, loss, scores, score_g, None
+        cnt, score_g = self._condition_counts(codes_g)
+        residual, loss, scores = self._residual_loss(cnt, score_g, counts)
+        return residual, loss, scores, score_g, cnt
 
     def loss_of(self, codes: np.ndarray, state_ids) -> float:
         """当前表的损失，全程在卡上算，等价 CPU 的 table_loss。"""
@@ -299,8 +625,7 @@ class GpuBatchContext:
         grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
         codes_g = cp.asarray(codes[grouped.unique_ids])
         counts = cp.asarray(grouped.counts.astype(np.float64))
-        cnt, score_g = self._condition_counts(codes_g)
-        _, loss, _ = self._residual_loss(cnt, score_g, counts)
+        _, loss, _, _, _ = self._state_terms(codes_g, counts)
         return loss
 
     # ------------------------------------------------------------------
@@ -348,7 +673,11 @@ class GpuBatchContext:
             delta_i8 = (cnt_vals + adj == need).astype(cp.int8)
             delta_i8 -= (cnt_vals == need).astype(cp.int8)
             nz = cp.flatnonzero(delta_i8)
-            row_nnz = cp.bincount(row_of[nz], minlength=path_idx.size)
+            # 空块（整块路径都不改答案）时 bincount 无元素会报错，直接给零计数
+            row_nnz = (
+                cp.bincount(row_of[nz], minlength=path_idx.size) if nz.size
+                else cp.zeros(path_idx.size, dtype=cp.int64)
+            )
             new_indptr = cp.zeros(path_idx.size + 1, dtype=cp.int64)
             cp.cumsum(row_nnz, out=new_indptr[1:])
             parts.append({
@@ -700,12 +1029,15 @@ class GpuBatchContext:
             "num_paths": menu.num_paths,
         }
 
-        # 残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同
-        cnt, score_g = self._condition_counts(codes_g)
-        residual, old_loss, scores_gpu = self._residual_loss(cnt, score_g, counts)
+        # 残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同；
+        # 单元格直算通路改由格号散射特征，答案差直接取旧格新格两项
+        residual, old_loss, scores_gpu, score_g, cnt = self._state_terms(codes_g, counts)
         group_scores = cp.asnumpy(scores_gpu)
 
-        parts = self._delta_parts(menu_gpu, cnt, codes_g, entry_budget)
+        if self.direct:
+            parts = self._delta_direct(menu_gpu, codes_g, entry_budget)
+        else:
+            parts = self._delta_parts(menu_gpu, cnt, codes_g, entry_budget)
         delta_hs = self._halfspace_delta(menu_gpu, score_g, codes_g)
         we = self.weights * residual
         gains_paths = cp.zeros(menu.num_paths, dtype=cp.float64)

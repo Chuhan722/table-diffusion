@@ -1,0 +1,50 @@
+查询逆方差加权：sigma 范围 15.41~47.61，权重范围 0.1048~1，题数 14301
+行数 32561，查询数 14301，初始损失 883354.322060
+轮 0 模式 batch 损失 883354.3 步长 0.1946 预测降 1.74 ok 连败 0
+轮 68 模式 batch 损失 883190.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 69 模式 batch 损失 883190.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 100 模式 batch 损失 883183.4 步长 0.0708 预测降 4.22 ok 连败 0
+轮 124 模式 batch 损失 883131.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 142 模式 batch 损失 883110.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 150 模式 batch 损失 883092.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 151 模式 batch 损失 883092.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 181 模式 batch 损失 883032.5 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 189 模式 batch 损失 883022.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 191 模式 batch 损失 883020.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+实际轮数 200，停止原因 round_limit，冻结轮数 9，注册状态数 30971
+最终损失 882992.197121，初始比 99.9590%，耗时 47.2 秒，平均每轮 236 毫秒
+  轮    0  损失  883354.3221  beta     3.1440  步长  0.19462  期望损失  883352.5870  ok
+  轮   20  损失  883313.2060  beta    41.3726  步长  2.00000  期望损失  883313.0724  ok
+  轮   40  损失  883267.7737  beta     3.0391  步长  1.50579  期望损失  883265.7196  ok
+  轮   60  损失  883205.6303  beta     6.1377  步长  1.11091  期望损失  883204.4867  ok
+  轮   80  损失  883173.3421  beta     1.8754  步长  1.16275  期望损失  883169.1147  ok
+  轮  100  损失  883183.4242  beta     0.6557  步长  0.07078  期望损失  883179.1994  ok
+  轮  120  损失  883139.0992  beta     2.8578  步长  1.01671  期望损失  883135.2159  ok
+  轮  140  损失  883116.2327  beta     4.6343  步长  1.23386  期望损失  883114.7907  ok
+  轮  160  损失  883080.8411  beta     6.6138  步长  1.27990  期望损失  883079.8437  ok
+  轮  180  损失  883033.9093  beta     4.4619  步长  0.25201  期望损失  883033.3518  ok
+PHASE 进程总墙钟 56.6s
+PHASE 启动+收尾(总-evolve) 9.4s
+PHASE gpu.build 总                                      29.3s      200次     146.3ms/次  占evolve  62.0%
+PHASE gpu.1 条件计数 cnt(G×Q)                               0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.2 残差/损失/组错位分(G×Q)                             0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.3 菜单答案差 delta                                 0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.1' 直算特征 feats(G×Q)                            2.8s      201次      13.8ms/次  占evolve   5.9%
+PHASE gpu.3' 直算答案差 delta                                4.8s      200次      24.0ms/次  占evolve  10.2%
+PHASE gpu.3'' 直算条目(含分段)                                 4.1s      400次      10.2ms/次  占evolve   8.6%
+PHASE gpu.0 整表项 state_terms(cnt/feats+残差)               6.3s      201次      31.2ms/次  占evolve  13.3%
+PHASE gpu.4 半空间差                                        0.0s      200次       0.0ms/次  占evolve   0.0%
+PHASE gpu.5 括根(步长 beta)                                 1.8s      200次       8.8ms/次  占evolve   3.7%
+PHASE cpu.分组 group_state_ids                            0.2s      200次       0.9ms/次  占evolve   0.4%
+PHASE cpu.出菜单 generate_batch_menu                      11.9s      200次      59.4ms/次  占evolve  25.2%
+PHASE cpu.配对 build_paired_supports                      0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.救援菜单 build_rescue_menu                        0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.抽样落表 sample_batch_next                        0.2s      191次       0.9ms/次  占evolve   0.4%
+PHASE cpu.注册新状态 register_table                          0.1s        1次      60.1ms/次  占evolve   0.1%
+PHASE cpu.码本同步 codebook.sync                            0.1s      601次       0.1ms/次  占evolve   0.2%
+PHASE 启动.build_workload                                 7.6s        1次    7563.1ms/次  占evolve  16.0%
+PHASE gpu.结构尺 temperature_dev                           1.7s      200次       8.3ms/次  占evolve   3.5%
+PHASE gpu.结构尺 path_factors_dev                          0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.结构尺 CompositeShaper.temperature_dev           0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.计划 provider 总(分组+挑组+菜单)                      14.1s      200次      70.3ms/次  占evolve  29.8%
+PHASE evolve_batch 总                                   47.2s        1次   47196.5ms/次  占evolve 100.0%

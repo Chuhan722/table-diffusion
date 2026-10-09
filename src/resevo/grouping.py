@@ -38,6 +38,37 @@ from .stepsize import analytic_step
 from .tilt import calibrate_beta_flat
 
 
+class _RowLists:
+    """按组切段的行索引序列，CSR 存储按需切片，免去逐组物化小数组。
+
+    与元组版逐组逐位同内容，支持下标、长度与迭代，
+    组数上十万时省掉每轮 np.split 的 Python 级开销（第五十六步提速 C）。
+    """
+
+    __slots__ = ("_order", "_offsets")
+
+    def __init__(self, order: NDArray[np.int64], offsets: NDArray[np.int64]):
+        self._order = order
+        self._offsets = offsets
+
+    def __len__(self) -> int:
+        return len(self._offsets) - 1
+
+    def __getitem__(self, g):
+        if isinstance(g, slice):
+            return tuple(self[i] for i in range(*g.indices(len(self))))
+        g = int(g)
+        if g < 0:
+            g += len(self)
+        if not 0 <= g < len(self):
+            raise IndexError(g)
+        return self._order[self._offsets[g] : self._offsets[g + 1]]
+
+    def __iter__(self):
+        for g in range(len(self)):
+            yield self[g]
+
+
 @dataclass(frozen=True)
 class GroupedTable:
     """按状态编号分组后的表，行列表按原行索引升序，组按状态编号升序。"""
@@ -56,18 +87,24 @@ class GroupedTable:
 
 
 def group_state_ids(state_ids) -> GroupedTable:
-    """把状态编号向量分组，相同状态的行归入同一组。"""
+    """把状态编号向量分组，相同状态的行归入同一组。
+
+    一次稳定排序同时得到组序、组计数与组内升序的行索引，
+    与 np.unique 加稳定 argsort 加 np.split 的旧实现逐位同结果。
+    """
     s = np.asarray(state_ids)
     if s.ndim != 1 or s.size == 0 or not np.issubdtype(s.dtype, np.integer):
         raise ValueError("state_ids 必须是非空一维整数向量")
-    uniq, inverse, counts = np.unique(s, return_inverse=True, return_counts=True)
-    # 稳定排序按组聚拢行索引，组内保持原行升序，与逐行 append 版逐位同序
-    order = np.argsort(inverse, kind="stable").astype(np.int64)
-    splits = np.split(order, np.cumsum(counts[:-1]))
+    order = np.argsort(s, kind="stable").astype(np.int64, copy=False)
+    sorted_ids = s[order]
+    starts = np.flatnonzero(
+        np.concatenate([[True], sorted_ids[1:] != sorted_ids[:-1]])
+    ).astype(np.int64)
+    offsets = np.concatenate([starts, [sorted_ids.size]]).astype(np.int64)
     return GroupedTable(
-        uniq.astype(np.int64),
-        counts.astype(np.int64),
-        tuple(splits),
+        sorted_ids[starts].astype(np.int64),
+        np.diff(offsets),
+        _RowLists(order, offsets),
     )
 
 

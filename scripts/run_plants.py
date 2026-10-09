@@ -179,6 +179,11 @@ def main() -> None:
         help="GPU 条目流分块预算，大域宽数据压显存峰值用，0 不分块零改变",
     )
     parser.add_argument(
+        "--gpu-delta", choices=("auto", "direct", "generic"), default="auto",
+        help="GPU 答案差通路，auto 考卷全单元格时走直算否则通用，"
+             "direct 强制直算，generic 强制通用，两通路同种子逐位同结果",
+    )
+    parser.add_argument(
         "--init-margin-tol", type=float, default=0.0,
         help="初始化一阶边缘化覆盖校验相对容差，噪声考卷用 0.05，默认 0 精确",
     )
@@ -549,6 +554,7 @@ def main() -> None:
             )
 
     t0 = time.perf_counter()
+    gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
     if args.batched:
         out = evolve_batch(
             ids, args.rounds,
@@ -562,6 +568,7 @@ def main() -> None:
             rescue_stop_window=args.rescue_stop_window,
             rescue_stop_tol=args.rescue_stop_tol,
             gpu_entry_budget=args.gpu_entry_budget,
+            gpu_direct=gpu_direct,
             noise_floor=args.noise_floor,
             stop_threshold_noisy=args.stop_threshold_noisy,
             progress_every=args.progress,
@@ -598,7 +605,7 @@ def main() -> None:
         # 终点损失也在卡上算，避免为一次报数补算全部欠账特征
         from resevo.gpukernel import GpuBatchContext
 
-        gctx = GpuBatchContext(provider.structure[0], y, w)
+        gctx = GpuBatchContext(provider.structure[0], y, w, direct=gpu_direct)
         final_loss = gctx.loss_of(provider.codebook.sync(), out.state_ids)
     else:
         final_workload = registry.build_workload(y, w)

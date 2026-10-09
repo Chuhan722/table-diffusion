@@ -1,0 +1,29 @@
+2026-10-09T02:48:44Z START nltcs3_new_full
+2026-10-09T02:50:37Z END nltcs3_new_full rc=0 最终损失 41060.898914，初始比 0.0092%，耗时 112.1 秒，平均每轮 75 毫秒
+54bebcce1e0221defd1237ee01724026  results/prof/nltcs3_new_full.csv
+54bebcce1e0221defd1237ee01724026  results/alloc/nltcs_eps3_alloc_k120auto_seed1.csv
+NLTCS3 TABLE IDENTICAL
+NLTCS3 CURVE IDENTICAL
+2026-10-09T02:50:37Z START acsmob10_old_late100
+2026-10-09T02:53:15Z END acsmob10_old_late100 rc=0 最终损失 136060.134782，初始比 99.9282%，耗时 135.4 秒，平均每轮 1354 毫秒
+2026-10-09T02:53:15Z START acsmob10_new_late100
+2026-10-09T02:54:46Z END acsmob10_new_late100 rc=0 最终损失 136060.134782，初始比 99.9282%，耗时 69.0 秒，平均每轮 690 毫秒
+f42c4ab641eccd77ce66a01bb5a93b8f  results/prof/acsmob10_old_late100.csv
+f42c4ab641eccd77ce66a01bb5a93b8f  results/prof/acsmob10_new_late100.csv
+ACSMOB LATE100 TABLE IDENTICAL
+ACSMOB LATE100 CURVE IDENTICAL
+2026-10-09T02:54:46Z START acsmob10_old_early200
+2026-10-09T02:58:44Z END acsmob10_old_early200 rc=0 最终损失 78741095.534194，初始比 3.9779%，耗时 212.1 秒，平均每轮 1060 毫秒
+2026-10-09T02:58:44Z START acsmob10_new_early200
+2026-10-09T03:00:25Z END acsmob10_new_early200 rc=0 最终损失 78741095.534194，初始比 3.9779%，耗时 74.5 秒，平均每轮 372 毫秒
+eeec4d0e22b0e84e9150aac35ae4cdc8  results/prof/acsmob10_old_early200.csv
+eeec4d0e22b0e84e9150aac35ae4cdc8  results/prof/acsmob10_new_early200.csv
+ACSMOB EARLY200 TABLE IDENTICAL
+ACSMOB EARLY200 CURVE IDENTICAL
+2026-10-09T03:00:25Z START plants10_new_full2
+2026-10-09T03:17:37Z END plants10_new_full2 rc=0 最终损失 2374248.632712，初始比 0.0521%，耗时 1018.5 秒，平均每轮 167 毫秒
+dfadf0172958be58d7bfd34520828992  results/prof/plants10_new_full2.csv
+dfadf0172958be58d7bfd34520828992  results/alloc/plants_eps10_alloc_k2346auto_seed1.csv
+PLANTS10v2 TABLE IDENTICAL
+PLANTS10v2 CURVE IDENTICAL
+2026-10-09T03:17:37Z ALL DONE VALIDATE2
