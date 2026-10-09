@@ -1,0 +1,12 @@
+alloc acsmob 0p3 k210auto 1
+alloc acsmob 0p3 k210auto 2
+alloc acsmob 0p3 k210auto 3
+gsd acsmob 0p3 1
+gsd acsmob 0p3 2
+gsd acsmob 0p3 3
+alloc plants 0p3 k2346auto 1
+alloc plants 0p3 k2346auto 2
+alloc plants 0p3 k2346auto 3
+gsd plants 0p3 1
+gsd plants 0p3 2
+gsd plants 0p3 3

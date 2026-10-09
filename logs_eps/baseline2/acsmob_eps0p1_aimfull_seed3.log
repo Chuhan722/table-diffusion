@@ -40,3 +40,41 @@ Measuring Clique ('attr_8', 'attr_14')
 Budget Used 7.461409801299038e-05 / 0.00043299372940180947
 Measuring Clique ('attr_3', 'attr_4')
 Budget Used 7.976878526777383e-05 / 0.00043299372940180947
+Measuring Clique ('attr_15', 'attr_21')
+Budget Used 8.492347252255728e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_17')
+Budget Used 9.007815977734073e-05 / 0.00043299372940180947
+Measuring Clique ('attr_19', 'attr_21')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 164.1468644976911
+Budget Used 0.00011069690879647452 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_15')
+Budget Used 0.0001313156578156083 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_15')
+Budget Used 0.0001519344068347421 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_3')
+Budget Used 0.0001725531558538759 / 0.00043299372940180947
+Measuring Clique ('attr_16', 'attr_18')
+Budget Used 0.0001931719048730097 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_18')
+Budget Used 0.0002137906538921435 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_10')
+Budget Used 0.0002344094029112773 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_17')
+Budget Used 0.0002550281519304111 / 0.00043299372940180947
+Measuring Clique ('attr_2', 'attr_4')
+Budget Used 0.0002756469009495449 / 0.00043299372940180947
+Measuring Clique ('attr_17', 'attr_18')
+Budget Used 0.0002962656499686787 / 0.00043299372940180947
+Measuring Clique ('attr_19', 'attr_21')
+Budget Used 0.0003168843989878125 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_7')
+Budget Used 0.0003375031480069463 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_16')
+Budget Used 0.0003581218970260801 / 0.00043299372940180947
+Measuring Clique ('attr_18', 'attr_20')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 82.07343224884555
+Budget Used 0.00043299372940180947 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_18')
+Generating Data...
+完成 2788s 行80329 -> results/acsmob_eps0p1_aimfull_seed3.csv
+录像 56 条（一阶 21，二阶 35） estimate 调用 37 次 -> results/aimreplay/acsmob_eps0p1_aimfull_seed3_measurements.json
