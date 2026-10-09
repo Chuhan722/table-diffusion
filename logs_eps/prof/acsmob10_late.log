@@ -1,0 +1,95 @@
+查询逆方差加权：sigma 范围 7.729~20.4，权重范围 0.1435~1，题数 11049
+行数 80329，查询数 11049，初始损失 136157.958093
+轮 0 模式 batch 损失 136158.0 步长 0.0373 预测降 0.25 ok 连败 0
+轮 1 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 2 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 3 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 4 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 6 模式 batch 损失 136155.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 7 模式 batch 损失 136155.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 24 模式 batch 损失 136133.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 42 模式 batch 损失 136121.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 45 模式 batch 损失 136118.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 47 模式 batch 损失 136114.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 49 模式 batch 损失 136112.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 53 模式 batch 损失 136103.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 55 模式 batch 损失 136103.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 57 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 58 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 59 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 61 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 62 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 63 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 71 模式 batch 损失 136103.5 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 74 模式 batch 损失 136101.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 76 模式 batch 损失 136100.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 82 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 83 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 84 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 85 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 86 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 87 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 88 模式 rescue 损失 136093.2 步长 1.0000 预测降 33.53 ok 连败 6
+轮 89 模式 batch 损失 136062.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 94 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 95 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 96 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 97 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 98 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 99 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 100 模式 rescue 损失 136060.1 步长 1.0020 预测降 31.97 ok 连败 6
+轮 101 模式 batch 损失 136040.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 105 模式 batch 损失 136032.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 106 模式 batch 损失 136032.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 108 模式 batch 损失 136032.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 112 模式 batch 损失 136028.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 113 模式 batch 损失 136028.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 114 模式 batch 损失 136028.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 116 模式 batch 损失 136028.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 117 模式 batch 损失 136028.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 119 模式 batch 损失 136026.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 122 模式 batch 损失 136024.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 125 模式 batch 损失 136022.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 133 模式 batch 损失 136013.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 134 模式 batch 损失 136013.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 135 模式 batch 损失 136013.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 136 模式 batch 损失 136013.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 141 模式 batch 损失 136012.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 142 模式 batch 损失 136012.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 145 模式 batch 损失 136010.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 146 模式 batch 损失 136010.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 147 模式 batch 损失 136010.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 148 模式 batch 损失 136010.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 151 模式 batch 损失 136005.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 156 模式 batch 损失 135998.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 158 模式 batch 损失 135998.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 159 模式 batch 损失 135998.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 160 模式 batch 损失 135998.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 166 模式 batch 损失 135995.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 182 模式 batch 损失 135985.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 184 模式 batch 损失 135984.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 185 模式 batch 损失 135984.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 187 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 188 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 189 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 190 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 191 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 192 模式 batch 损失 135982.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 193 模式 rescue 损失 135982.6 步长 1.0320 预测降 33.13 ok 连败 6
+轮 194 模式 batch 损失 135951.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 195 模式 batch 损失 135951.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 196 模式 batch 损失 135951.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 197 模式 batch 损失 135951.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 199 模式 batch 损失 135950.5 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+实际轮数 200，停止原因 round_limit，冻结轮数 77，注册状态数 76882
+最终损失 135950.546535，初始比 99.8477%，耗时 304.3 秒，平均每轮 1522 毫秒
+  轮    0  损失  136157.9581  beta     4.9592  步长  0.03728  期望损失  136157.7049  ok
+  轮   20  损失  136152.7149  beta     2.9081  步长  0.01033  期望损失  136152.5765  ok
+  轮   40  损失  136126.0034  beta     4.6132  步长  1.28653  期望损失  136123.9695  ok
+  轮   60  损失  136102.8779  beta     8.0940  步长  1.99999  期望损失  136101.9319  ok
+  轮   80  损失  136099.3503  beta     3.7006  步长  0.22928  期望损失  136098.9123  ok
+  轮  100  损失  136060.1348  beta     2.1645  步长  1.00200  期望损失  136028.1600  ok
+  轮  120  损失  136025.9885  beta     6.0487  步长  1.99985  期望损失  136025.1897  ok
+  轮  140  损失  136012.0129  beta     5.6930  步长  0.40764  期望损失  136011.6591  ok
+  轮  160  损失  135997.9582  beta     0.0000  步长  0.00000  期望损失  135997.9582  no_positive_direction
+  轮  180  损失  135987.1016  beta     3.6031  步长  0.12833  期望损失  135986.8701  ok

@@ -1,0 +1,38 @@
+查询逆方差加权：sigma 范围 16.72~28.96，权重范围 0.3332~1，题数 512
+行数 16181，查询数 512，初始损失 446533750.808673
+轮 0 模式 batch 损失 446533750.8 步长 1.0000 预测降 143091472.27 ok 连败 0
+轮 100 模式 batch 损失 186073.4 步长 0.0018 预测降 75.44 ok 连败 0
+轮 200 模式 batch 损失 99608.7 步长 0.0266 预测降 984.15 ok 连败 0
+实际轮数 300，停止原因 round_limit，冻结轮数 0，注册状态数 14374
+最终损失 71874.568354，初始比 0.0161%，耗时 16.5 秒，平均每轮 55 毫秒
+  轮    0  损失 446533750.8087  beta     0.0001  步长  1.00000  期望损失 303442278.5405  ok
+  轮   30  损失  403301.3566  beta     0.0197  步长  0.08396  期望损失  398009.9085  ok
+  轮   60  损失  231128.9532  beta     0.0169  步长  0.00514  期望损失  229492.6883  ok
+  轮   90  损失  191875.6317  beta     0.0665  步长  0.09956  期望损失  190733.7639  ok
+  轮  120  损失  161637.2412  beta     0.0245  步长  0.00251  期望损失  161173.8407  ok
+  轮  150  损失  147336.8489  beta     0.0315  步长  0.00310  期望损失  146776.9820  ok
+  轮  180  损失  113397.6381  beta     0.1497  步长  0.00118  期望损失  113366.8343  ok
+  轮  210  损失   85880.7940  beta     0.0482  步长  0.00210  期望损失   85696.9004  ok
+  轮  240  损失   80275.5369  beta     0.1395  步长  0.03173  期望损失   80047.8771  ok
+  轮  270  损失   75472.9961  beta     0.0828  步长  0.00153  期望损失   75392.7851  ok
+PHASE 进程总墙钟 17.2s
+PHASE 启动+收尾(总-evolve) 0.7s
+PHASE gpu.build 总                                      10.8s      300次      36.2ms/次  占evolve  65.6%
+PHASE gpu.1 条件计数 cnt(G×Q)                               0.8s      301次       2.6ms/次  占evolve   4.7%
+PHASE gpu.2 残差/损失/组错位分(G×Q)                             0.2s      301次       0.8ms/次  占evolve   1.4%
+PHASE gpu.3 菜单答案差 delta                                 3.7s      300次      12.3ms/次  占evolve  22.4%
+PHASE gpu.4 半空间差                                        0.0s      300次       0.0ms/次  占evolve   0.0%
+PHASE gpu.5 括根(步长 beta)                                 1.5s      300次       4.9ms/次  占evolve   9.0%
+PHASE cpu.分组 group_state_ids                            1.4s      300次       4.6ms/次  占evolve   8.4%
+PHASE cpu.出菜单 generate_batch_menu                       1.3s      300次       4.2ms/次  占evolve   7.6%
+PHASE cpu.配对 build_paired_supports                      0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.救援菜单 build_rescue_menu                        0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.抽样落表 sample_batch_next                        0.5s      300次       1.6ms/次  占evolve   2.9%
+PHASE cpu.注册新状态 register_table                          0.0s        1次      13.4ms/次  占evolve   0.1%
+PHASE cpu.码本同步 codebook.sync                            0.0s      901次       0.0ms/次  占evolve   0.3%
+PHASE 启动.build_workload                                 0.1s        1次      59.0ms/次  占evolve   0.4%
+PHASE gpu.结构尺 temperature_dev                           0.6s      300次       2.0ms/次  占evolve   3.7%
+PHASE gpu.结构尺 path_factors_dev                          2.9s      299次       9.6ms/次  占evolve  17.3%
+PHASE gpu.结构尺 CompositeShaper.temperature_dev           0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.计划 provider 总(分组+挑组+菜单)                       2.8s      300次       9.4ms/次  占evolve  17.0%
+PHASE evolve_batch 总                                   16.5s        1次   16527.7ms/次  占evolve 100.0%

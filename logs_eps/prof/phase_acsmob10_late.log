@@ -1,0 +1,72 @@
+查询逆方差加权：sigma 范围 7.729~20.4，权重范围 0.1435~1，题数 11049
+行数 80329，查询数 11049，初始损失 136157.958093
+轮 0 模式 batch 损失 136158.0 步长 0.0373 预测降 0.25 ok 连败 0
+轮 1 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 2 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 3 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 4 模式 batch 损失 136158.0 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 6 模式 batch 损失 136155.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 7 模式 batch 损失 136155.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 24 模式 batch 损失 136133.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 42 模式 batch 损失 136121.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 45 模式 batch 损失 136118.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 47 模式 batch 损失 136114.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 49 模式 batch 损失 136112.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 53 模式 batch 损失 136103.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 55 模式 batch 损失 136103.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 57 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 58 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 59 模式 batch 损失 136102.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 61 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 62 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 63 模式 batch 损失 136101.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 71 模式 batch 损失 136103.5 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 74 模式 batch 损失 136101.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 76 模式 batch 损失 136100.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 82 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 83 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 84 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 85 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 86 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 87 模式 batch 损失 136093.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+轮 88 模式 rescue 损失 136093.2 步长 1.0000 预测降 33.53 ok 连败 6
+轮 89 模式 batch 损失 136062.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 94 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 95 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 96 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 2
+轮 97 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 3
+轮 98 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 4
+轮 99 模式 batch 损失 136060.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 5
+实际轮数 100，停止原因 round_limit，冻结轮数 35，注册状态数 76813
+最终损失 136060.134782，初始比 99.9282%，耗时 132.3 秒，平均每轮 1323 毫秒
+  轮    0  损失  136157.9581  beta     4.9592  步长  0.03728  期望损失  136157.7049  ok
+  轮   10  损失  136154.1482  beta     9.0973  步长  0.04385  期望损失  136154.1149  ok
+  轮   20  损失  136152.7149  beta     2.9081  步长  0.01033  期望损失  136152.5765  ok
+  轮   30  损失  136133.4721  beta     2.4195  步长  0.13458  期望损失  136133.1310  ok
+  轮   40  损失  136126.0034  beta     4.6132  步长  1.28653  期望损失  136123.9695  ok
+  轮   50  损失  136112.8461  beta     1.6639  步长  1.98537  期望损失  136110.3743  ok
+  轮   60  损失  136102.8779  beta     8.0940  步长  1.99999  期望损失  136101.9319  ok
+  轮   70  损失  136106.4192  beta     3.1557  步长  0.70400  期望损失  136105.3856  ok
+  轮   80  损失  136099.3503  beta     3.7006  步长  0.22928  期望损失  136098.9123  ok
+  轮   90  损失  136062.3986  beta    69.9038  步长  1.66667  期望损失  136062.2891  ok
+PHASE 进程总墙钟 153.4s
+PHASE 启动+收尾(总-evolve) 21.2s
+PHASE gpu.build 总                                      87.3s       99次     881.9ms/次  占evolve  66.0%
+PHASE gpu.1 条件计数 cnt(G×Q)                              24.4s      100次     244.0ms/次  占evolve  18.4%
+PHASE gpu.2 残差/损失/组错位分(G×Q)                             5.2s      100次      51.9ms/次  占evolve   3.9%
+PHASE gpu.3 菜单答案差 delta                                39.0s       99次     394.4ms/次  占evolve  29.5%
+PHASE gpu.4 半空间差                                        0.0s       99次       0.0ms/次  占evolve   0.0%
+PHASE gpu.5 括根(步长 beta)                                 0.8s       99次       8.6ms/次  占evolve   0.6%
+PHASE cpu.分组 group_state_ids                            8.3s       99次      84.3ms/次  占evolve   6.3%
+PHASE cpu.出菜单 generate_batch_menu                       4.8s       99次      48.9ms/次  占evolve   3.7%
+PHASE cpu.配对 build_paired_supports                      0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.救援菜单 build_rescue_menu                       15.3s        1次   15329.7ms/次  占evolve  11.6%
+PHASE cpu.抽样落表 sample_batch_next                        0.1s       64次       1.8ms/次  占evolve   0.1%
+PHASE cpu.注册新状态 register_table                          6.5s        3次    2151.1ms/次  占evolve   4.9%
+PHASE cpu.码本同步 codebook.sync                            0.2s      298次       0.8ms/次  占evolve   0.2%
+PHASE 启动.build_workload                                17.6s        4次    4397.1ms/次  占evolve  13.3%
+PHASE gpu.结构尺 temperature_dev                           1.7s       99次      17.0ms/次  占evolve   1.3%
+PHASE gpu.结构尺 path_factors_dev                          8.7s       99次      87.5ms/次  占evolve   6.6%
+PHASE gpu.结构尺 CompositeShaper.temperature_dev           0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.计划 provider 总(分组+挑组+菜单)                      30.3s      100次     303.2ms/次  占evolve  22.9%
+PHASE evolve_batch 总                                  132.3s        1次  132279.6ms/次  占evolve 100.0%
