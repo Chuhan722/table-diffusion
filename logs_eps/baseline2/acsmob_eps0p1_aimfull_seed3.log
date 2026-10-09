@@ -1,0 +1,42 @@
+/root/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+acsmob 字段21 行80329 全二阶210对 eps=0.1 delta=1e-05 seed=3 max_model_size=80.0
+Initial Sigma 656.5874579907644
+Budget Used 2.5644569092547647e-05 / 0.00043299372940180947
+Measuring Clique ('attr_6', 'attr_9')
+Budget Used 2.693324090624351e-05 / 0.00043299372940180947
+Measuring Clique ('attr_1', 'attr_15')
+Budget Used 2.822191271993937e-05 / 0.00043299372940180947
+Measuring Clique ('attr_17', 'attr_19')
+Budget Used 2.9510584533635234e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_15')
+Budget Used 3.079925634733109e-05 / 0.00043299372940180947
+Measuring Clique ('attr_17', 'attr_18')
+Budget Used 3.208792816102695e-05 / 0.00043299372940180947
+Measuring Clique ('attr_9', 'attr_14')
+Budget Used 3.337659997472281e-05 / 0.00043299372940180947
+Measuring Clique ('attr_5', 'attr_13')
+Budget Used 3.466527178841867e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_9')
+Budget Used 3.595394360211453e-05 / 0.00043299372940180947
+Measuring Clique ('attr_16', 'attr_17')
+Budget Used 3.724261541581039e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_9')
+Budget Used 3.8531287229506246e-05 / 0.00043299372940180947
+Measuring Clique ('attr_12', 'attr_14')
+(!!!!!!!!!!!!!!!!!!!!!!) Reducing sigma 328.2937289953822
+Budget Used 4.3685974484289695e-05 / 0.00043299372940180947
+Measuring Clique ('attr_18', 'attr_20')
+Budget Used 4.8840661739073145e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_10')
+Budget Used 5.3995348993856594e-05 / 0.00043299372940180947
+Measuring Clique ('attr_10', 'attr_21')
+Budget Used 5.915003624864004e-05 / 0.00043299372940180947
+Measuring Clique ('attr_15', 'attr_20')
+Budget Used 6.430472350342349e-05 / 0.00043299372940180947
+Measuring Clique ('attr_4', 'attr_18')
+Budget Used 6.945941075820693e-05 / 0.00043299372940180947
+Measuring Clique ('attr_8', 'attr_14')
+Budget Used 7.461409801299038e-05 / 0.00043299372940180947
+Measuring Clique ('attr_3', 'attr_4')
+Budget Used 7.976878526777383e-05 / 0.00043299372940180947

@@ -1,0 +1,7 @@
+同餐断言通过，码表全二阶逐格等于考卷 9248 条答案
+Setting up Marginals.:   0%|          | 0/2346 [00:00<?, ?it/s]Setting up Marginals.:   0%|          | 1/2346 [00:00<05:39,  6.90it/s]Setting up Marginals.:   5%|▌         | 125/2346 [00:00<00:03, 618.74it/s]Setting up Marginals.:  13%|█▎        | 304/2346 [00:00<00:01, 1103.61it/s]Setting up Marginals.:  21%|██        | 488/2346 [00:00<00:01, 1374.69it/s]Setting up Marginals.:  29%|██▊       | 674/2346 [00:00<00:01, 1540.88it/s]Setting up Marginals.:  37%|███▋      | 861/2346 [00:00<00:00, 1647.49it/s]Setting up Marginals.:  45%|████▍     | 1048/2346 [00:00<00:00, 1718.21it/s]Setting up Marginals.:  53%|█████▎    | 1236/2346 [00:00<00:00, 1766.81it/s]Setting up Marginals.:  61%|██████    | 1424/2346 [00:00<00:00, 1799.86it/s]Setting up Marginals.:  68%|██████▊   | 1606/2346 [00:01<00:00, 1800.76it/s]Setting up Marginals.:  76%|███████▌  | 1788/2346 [00:01<00:00, 1804.97it/s]Setting up Marginals.:  84%|████████▍ | 1970/2346 [00:01<00:00, 1567.26it/s]Setting up Marginals.:  92%|█████████▏| 2149/2346 [00:01<00:00, 1626.29it/s]Setting up Marginals.:  99%|█████████▉| 2329/2346 [00:01<00:00, 1674.64it/s]Setting up Marginals.: 100%|██████████| 2346/2346 [00:01<00:00, 1553.67it/s]
+statistics 0: has 2346 workloads and 9248 queries.
+噪声目标注入 9248 格，与噪声考卷逐格一致
+搜索 1178.0 秒，频率尺度残差 平均 0.001521 最大 0.006662
+对噪声目标残差 平均 0.002880 最大 0.013392
+已写出 results/baseline2/plants_eps3_gsd_seed3.csv，17412 行

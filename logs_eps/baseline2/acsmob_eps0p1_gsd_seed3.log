@@ -1,0 +1,4 @@
+同餐断言通过，码表全二阶逐格等于考卷 10895 条答案
+Setting up Marginals.:   0%|          | 0/210 [00:00<?, ?it/s]Setting up Marginals.:   0%|          | 1/210 [00:00<00:30,  6.82it/s]Setting up Marginals.:  39%|███▊      | 81/210 [00:00<00:00, 397.36it/s]Setting up Marginals.:  98%|█████████▊| 205/210 [00:00<00:00, 743.41it/s]Setting up Marginals.: 100%|██████████| 210/210 [00:00<00:00, 593.65it/s]
+statistics 0: has 210 workloads and 10895 queries.
+噪声目标注入 10895 格，与噪声考卷逐格一致
