@@ -1,0 +1,20 @@
+2026-10-08T06:52:31Z M3 A6000 段全部结束，开始拉取
+2026-10-08T06:52:36Z 拉取完成
+results/alloc/acsmob_eps1_alloc_k210auto_seed1.csv
+results/alloc/acsmob_eps1_alloc_k210auto_seed2.csv
+results/alloc/acsmob_eps1_alloc_k210auto_seed3.csv
+results/alloc/acsmob_eps1_alloc_k210f05_seed1.csv
+results/alloc/acsmob_eps1_alloc_k210f05_seed2.csv
+results/alloc/acsmob_eps1_alloc_k210f05_seed3.csv
+results/baseline2/acsmob_eps1_gsd_seed1.csv
+results/baseline2/acsmob_eps1_gsd_seed2.csv
+results/baseline2/acsmob_eps1_gsd_seed3.csv
+results/baseline2/adult_eps1_gsd_seed1.csv
+results/baseline2/adult_eps1_gsd_seed2.csv
+results/baseline2/adult_eps1_gsd_seed3.csv
+results/baseline2/nltcs_eps1_gsd_seed1.csv
+results/baseline2/nltcs_eps1_gsd_seed2.csv
+results/baseline2/nltcs_eps1_gsd_seed3.csv
+results/baseline2/plants_eps1_gsd_seed1.csv
+results/baseline2/plants_eps1_gsd_seed2.csv
+results/baseline2/plants_eps1_gsd_seed3.csv
