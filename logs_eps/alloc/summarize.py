@@ -1,4 +1,4 @@
-"""第一步/第二步阅卷汇总：对每组表跑 /tmp/score_any.py，按组取 3 种子均，输出 markdown 表。
+"""第一步/第二步阅卷汇总：对每组表跑 scripts/score_any.py，按组取 3 种子均，输出 markdown 表。
 
 用法: .venv/bin/python logs_eps/alloc/summarize.py adult 0p1 标签=glob [标签=glob ...]
 """
@@ -20,7 +20,7 @@ def score_group(pat):
     if not fs:
         return []
     out = subprocess.run(
-        [str(ROOT / ".venv/bin/python"), "/tmp/score_any.py", ds, str(ROOT / f"data/{ds}/{ds}.csv")] + fs,
+        [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/score_any.py"), ds, str(ROOT / f"data/{ds}/{ds}.csv")] + fs,
         capture_output=True, text=True, check=True,
     ).stdout
     scores = {}

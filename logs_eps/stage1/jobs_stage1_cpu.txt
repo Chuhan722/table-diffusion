@@ -1,0 +1,18 @@
+aim10 1
+aim10 2
+aim10 3
+pgmrep 0p1 1
+pgmrep 0p1 2
+pgmrep 0p1 3
+pgmrep 0p3 1
+pgmrep 0p3 2
+pgmrep 0p3 3
+pgmrep 1 1
+pgmrep 1 2
+pgmrep 1 3
+pgmrep 3 1
+pgmrep 3 2
+pgmrep 3 3
+pgmrep 10 1
+pgmrep 10 2
+pgmrep 10 3
