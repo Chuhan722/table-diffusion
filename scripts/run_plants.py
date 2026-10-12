@@ -207,6 +207,17 @@ def main() -> None:
         "考卷每题须带 sigma 字段，混 sigma 考卷用",
     )
     parser.add_argument(
+        "--oneway-pool", type=float, default=0.0,
+        help="一阶题平分清洗（工作笔记第五十七步第 14、15 条）：|y|<z·sigma 的格子视为未测出，"
+        "其余保留 max(y,0)，剩余行数在未测出格子间均分，回写为目标；读卷后初始化前做，"
+        "纯后处理零预算，考卷须带 sigma。给 z（惯例 2），默认 0 关闭现状逐位不变",
+    )
+    parser.add_argument(
+        "--pair-pool", type=float, default=0.0,
+        help="二阶题清洗，同 --oneway-pool 的规则但未测出格子按清洗后一阶乘积分（没证据当独立），"
+        "须与 --oneway-pool 同开。给 z，默认 0 关闭",
+    )
+    parser.add_argument(
         "--init-table", type=str, default="",
         help="从 CSV 载入初始表跳过抽样初始化，字段与行数须与真表一致，"
         "选择循环热启动用，默认空走原路径",
@@ -363,6 +374,24 @@ def main() -> None:
             parser.error(f"数据目录 {data_dir} 下 measured_*query.json 须恰有一个，实有 {len(found)}")
         exam_path = found[0]
     specs = load_queries(str(exam_path))
+    if args.pair_pool > 0.0 and args.oneway_pool <= 0.0:
+        parser.error("--pair-pool 须与 --oneway-pool 同开")
+    if args.oneway_pool > 0.0:
+        from resevo.denoise import pool_oneway, pool_pairs
+
+        if any(q.sigma is None for q in specs):
+            parser.error("--oneway-pool 要求考卷每题带 sigma 字段")
+        specs, pooled_ones, st = pool_oneway(specs, schema, len(real_rows), args.oneway_pool)
+        print(
+            f"一阶平分清洗 z={args.oneway_pool:g}：字段 {st['fields']}，格子 {st['cells']}，"
+            f"未测出格子 {st['pooled']}（{st['pooled'] / max(st['cells'], 1):.1%}）"
+        )
+        if args.pair_pool > 0.0:
+            specs, st2 = pool_pairs(specs, schema, len(real_rows), args.pair_pool, pooled_ones)
+            print(
+                f"二阶独立清洗 z={args.pair_pool:g}：对 {st2['pairs']}，格子 {st2['cells']}，"
+                f"未测出格子 {st2['pooled']}（{st2['pooled'] / max(st2['cells'], 1):.1%}）"
+            )
     y = target_from_specs(specs)
     w = np.ones(len(specs))
     if args.exam_weights == "sigma":

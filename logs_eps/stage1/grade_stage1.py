@@ -63,20 +63,14 @@ def fmt(v: float) -> str:
     return f"{v:.0f}"
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--eps", default="0p1,0p3,1,3,10")
-    ap.add_argument("--seeds", default="1,2,3")
-    ap.add_argument("--out", default="logs_eps/scores/stage1", help="markdown 输出前缀（不含后缀）")
-    args = ap.parse_args()
-    tags = args.eps.split(",")
-    seeds = [int(x) for x in args.seeds.split(",")]
-
+def grade(experiments, tags: list[str], seeds: list[int], intro: str | None = None) -> str:
+    """按实验列表逐 ε 阅卷并出 markdown；intro 为每个实验标题下的说明段。"""
+    if intro is None:
+        intro = ("只比这两臂，其余全同（同一份带噪文件、同噪声种子配对）；**每臂都跑到收敛**："
+                 "我们平台自停（未撞 30000 轮上限），PGM 固定 10000 轮（5000 轮已收敛，留一倍余量），GSD 原生早停。")
     lines_all = []
-    for title, ours, rival, refs in EXPERIMENTS:
-        lines = [f"## {title}", "",
-                 "只比这两臂，其余全同（同一份带噪文件、同噪声种子配对）；**每臂都跑到收敛**："
-                 "我们平台自停（未撞 30000 轮上限），PGM 固定 10000 轮（5000 轮已收敛，留一倍余量），GSD 原生早停。",
+    for title, ours, rival, refs in experiments:
+        lines = [f"## {title}", "", intro,
                  "单位 ×10⁻⁶（L1/N），3 种子均；Δ = (我们−对手)/对手，主轴二阶 |Δ| ≤ 2% 记平。", "",
                  "| ε | 臂 | n | " + " | ".join(COLS) + " |", "|---" * (len(COLS) + 3) + "|"]
         verdicts = []
@@ -109,7 +103,18 @@ def main() -> None:
                          if n else f"| {tag.replace('p', '.')} | — | {verdict} | 0 | |")
         lines.append("")
         lines_all += lines
-    text = "\n".join(lines_all)
+    return "\n".join(lines_all)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--eps", default="0p1,0p3,1,3,10")
+    ap.add_argument("--seeds", default="1,2,3")
+    ap.add_argument("--out", default="logs_eps/scores/stage1", help="markdown 输出前缀（不含后缀）")
+    args = ap.parse_args()
+    tags = args.eps.split(",")
+    seeds = [int(x) for x in args.seeds.split(",")]
+    text = grade(EXPERIMENTS, tags, seeds)
     print(text)
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
