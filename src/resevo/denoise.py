@@ -80,14 +80,32 @@ def _gather(specs, idx_map: dict, grid: list[tuple[str, ...]]):
     return y, s
 
 
+def covered_fields(specs: list[QuerySpec], schema: TableSchema) -> set[int]:
+    """出现在任一 ≥2 条件题里的字段：它们的一阶由更高阶测量决定。"""
+    out: set[int] = set()
+    for spec in specs:
+        if len(spec.conditions) >= 2:
+            out.update(schema.field_index(c["attribute"]) for c in spec.conditions)
+    return out
+
+
 def pool_oneway(
-    specs: list[QuerySpec], schema: TableSchema, total: int, z: float,
+    specs: list[QuerySpec], schema: TableSchema, total: int, z: float, scope: str = "all",
 ) -> tuple[list[QuerySpec], dict[int, NDArray[np.float64]], dict]:
-    """一阶题清洗，整域覆盖且带 σ 的字段才处理，返回新题单、各字段清洗后计数、统计。"""
+    """一阶题清洗，整域覆盖且带 σ 的字段才处理，返回新题单、各字段清洗后计数、统计。
+
+    scope="uncovered" 只清洗没被任何 ≥2 阶题覆盖的字段（第五十七步第 17 条：被覆盖字段的一阶
+    由二阶测量决定，清洗多余且带均分偏差）；"all" 全部字段。
+    """
+    if scope not in ("all", "uncovered"):
+        raise ValueError(f"scope 须为 all 或 uncovered，得到 {scope!r}")
+    skip = covered_fields(specs, schema) if scope == "uncovered" else set()
     out = list(specs)
     cleaned: dict[int, NDArray[np.float64]] = {}
     stats = {"fields": 0, "cells": 0, "pooled": 0}
     for (j,), idx_map in _eq_cells(specs, schema, 1).items():
+        if j in skip:
+            continue
         grid = [(v,) for v in schema.domains[j]]
         y, s = _gather(specs, idx_map, grid)
         if y is None:

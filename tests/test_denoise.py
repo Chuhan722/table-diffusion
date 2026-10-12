@@ -69,3 +69,14 @@ def test_pool_small_sigma_is_identity():
     assert st["pooled"] == 0 and all(a.result == b.result for a, b in zip(new, tiny))
     new2, st2 = pool_pairs(new, schema, 100, 2.0, ones)
     assert st2["pooled"] == 0 and all(a.result == b.result for a, b in zip(new2, tiny))
+
+
+def test_pool_oneway_scope_uncovered():
+    schema, specs = _specs()
+    # x、y 都出现在二阶题里 → uncovered 范围下一个字段都不清洗，题单原样
+    new, ones, st = pool_oneway(specs, schema, 100, 2.0, scope="uncovered")
+    assert st == {"fields": 0, "cells": 0, "pooled": 0} and ones == {} and all(a is b for a, b in zip(new, specs))
+    # 去掉二阶题后 x 未被覆盖 → 清洗
+    only_one = [q for q in specs if len(q.conditions) == 1]
+    new, ones, st = pool_oneway(only_one, schema, 100, 2.0, scope="uncovered")
+    assert st["fields"] == 2 and np.allclose(ones[0], [70.0, 15.0, 15.0])

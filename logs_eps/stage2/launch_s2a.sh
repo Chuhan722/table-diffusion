@@ -3,7 +3,8 @@
 # 诊断与设计见工作笔记第五十七步第 14–16 条、协议 docs/第一阶段可比性协议.md §4。
 # 臂（命令 = launch_stage1.sh run_hybrid 逐字 + 一个开关，其余全同，hybrid 对照臂用第一阶段已有终表不重跑）：
 #   p1  <tag> <seed>  hybrid + --oneway-pool 2             一阶题平分清洗
-#   p12 <tag> <seed>  hybrid + --oneway-pool 2 --pair-pool 2  一阶 + 二阶（独立分）清洗
+#   p12 <tag> <seed>  hybrid + --oneway-pool 2 --pair-pool 2  一阶 + 二阶（独立分）清洗（10-12 21:00 否决）
+#   p1u <tag> <seed>  hybrid + --oneway-pool 2 --oneway-pool-scope uncovered  只清洗没被二阶覆盖的字段（第 17 条复核臂；ε≥1 与 hybrid 逐位同不跑）
 # GPU/CPU 纪律同第一阶段：GPU 只用 0/1，别人显存 ≥5 GB 视为在用；GPU 道 0-23 / 24-47。
 # 用法（A6000）：cd /root/residual-evolution && nohup bash logs_eps/stage2/launch_s2a.sh [all|gpu0|gpu1] > logs_eps/stage2/launch_s2a.log 2>&1 &
 cd /root/residual-evolution || exit 1
@@ -45,6 +46,7 @@ run_arm() {  # gpu arm tag seed
   case $arm in
     p1) pool="--oneway-pool 2" ;;
     p12) pool="--oneway-pool 2 --pair-pool 2" ;;
+    p1u) pool="--oneway-pool 2 --oneway-pool-scope uncovered" ;;
     *) echo "未知臂: $arm"; return ;;
   esac
   [ -s $OUT/$name.csv ] && { echo "skip $name"; return; }

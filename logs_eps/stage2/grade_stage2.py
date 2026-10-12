@@ -25,16 +25,20 @@ import grade_stage1 as g1  # noqa: E402
 g1.ARMS.update({
     "hybridp1": "results/stage2/adult_eps{tag}_hybridp1_seed{s}.csv",
     "hybridp12": "results/stage2/adult_eps{tag}_hybridp12_seed{s}.csv",
+    "hybridp1u": "results/stage2/adult_eps{tag}_hybridp1u_seed{s}.csv",
 })
 EXPERIMENTS = [
     ("2A-1 一阶清洗 vs 独立 PGM（AIM 录像同一份测量；hybrid 列为第一阶段参考）", "hybridp1", "pgmrep10k", ["hybrid"]),
     ("2A-2 一阶清洗 vs 第一阶段 hybrid（同引擎同考卷，只差一个开关）", "hybridp1", "hybrid", []),
     ("2A-3 一阶+二阶清洗 vs 仅一阶清洗（只差二阶开关）", "hybridp12", "hybridp1", []),
     ("2A-4 一阶+二阶清洗 vs 独立 PGM", "hybridp12", "pgmrep10k", []),
+    ("2A-5 仅未覆盖字段清洗 vs 独立 PGM（ε≥1 该臂与 hybrid 逐位同，见 1B）", "hybridp1u", "pgmrep10k", []),
+    ("2A-6 仅未覆盖字段清洗 vs 全字段清洗（只差范围开关）", "hybridp1u", "hybridp1", []),
+    ("2A-7 仅未覆盖字段清洗 vs 第一阶段 hybrid", "hybridp1u", "hybrid", []),
 ]
 INTRO = ("只比这两臂，其余全同（同一份 AIM 录像考卷、同噪声种子配对）；我们臂命令 = 第一阶段 hybrid 逐字 + 清洗开关，"
          "PGM 臂为第一阶段 10000 轮收敛终表不重跑。")
-COVER_ARMS = ("hybrid", "hybridp1", "hybridp12", "pgmrep10k")
+COVER_ARMS = ("hybrid", "hybridp1", "hybridp12", "hybridp1u", "pgmrep10k")
 
 
 def oneway_cover(tags: list[str], seeds: list[int]) -> str:
@@ -50,19 +54,19 @@ def oneway_cover(tags: list[str], seeds: list[int]) -> str:
         acc: dict[str, list] = {}
         for s in seeds:
             paths = {a: g1.arm_path(a, tag, s) for a in COVER_ARMS}
-            if not all(p.exists() for p in paths.values()):
+            if not all(paths[a].exists() for a in ("hybrid", "hybridp1", "pgmrep10k")):
                 continue
             dump = json.loads((ROOT / f"results/aimreplay/adult_eps{tag}_aimfull_seed{s}_measurements.json").read_text())
             covered: set[str] = set()
             for m in dump["measurements"]:
                 if len(m["clique"]) >= 2:
                     covered.update(m["clique"])
-            syn = {a: pd.read_csv(p) for a, p in paths.items()}
+            syn = {a: pd.read_csv(p) if p.exists() else None for a, p in paths.items()}
             for g, fs in {"仅一阶测量": [c for c in cols if c not in covered], "被对覆盖": [c for c in cols if c in covered]}.items():
                 if not fs:
                     continue
-                r = [[np.abs(np.bincount(syn[a][c], minlength=sizes[c]) - ro[c]).sum() / n * 1e6 for a in COVER_ARMS] + [len(fs)]
-                     for c in fs]
+                r = [[np.abs(np.bincount(syn[a][c], minlength=sizes[c]) - ro[c]).sum() / n * 1e6 if syn[a] is not None else np.nan
+                      for a in COVER_ARMS] + [len(fs)] for c in fs]
                 acc.setdefault(g, []).append(np.mean(r, axis=0))
         for g in ("仅一阶测量", "被对覆盖"):
             if g not in acc:
@@ -71,7 +75,7 @@ def oneway_cover(tags: list[str], seeds: list[int]) -> str:
             m = np.mean(acc[g], axis=0)
             i1, ih, ip = COVER_ARMS.index("hybridp1"), COVER_ARMS.index("hybrid"), COVER_ARMS.index("pgmrep10k")
             lines.append(f"| {tag.replace('p', '.')} | {g} | {m[-1]:.1f} | {len(acc[g])} | "
-                         + " | ".join(f"{v:,.0f}" for v in m[:-1])
+                         + " | ".join("—" if np.isnan(v) else f"{v:,.0f}" for v in m[:-1])
                          + f" | {(m[i1] - m[ip]) / m[ip]:+.1%} | {(m[i1] - m[ih]) / m[ih]:+.1%} |")
     return "\n".join(lines) + "\n"
 

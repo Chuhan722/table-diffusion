@@ -213,6 +213,11 @@ def main() -> None:
         "纯后处理零预算，考卷须带 sigma。给 z（惯例 2），默认 0 关闭现状逐位不变",
     )
     parser.add_argument(
+        "--oneway-pool-scope", type=str, default="all", choices=["all", "uncovered"],
+        help="一阶清洗范围：all 全部字段；uncovered 只清洗没被任何 ≥2 阶题覆盖的字段"
+        "（被覆盖字段的一阶由二阶测量决定，清洗多余，第五十七步第 17 条），默认 all",
+    )
+    parser.add_argument(
         "--pair-pool", type=float, default=0.0,
         help="二阶题清洗，同 --oneway-pool 的规则但未测出格子按清洗后一阶乘积分（没证据当独立），"
         "须与 --oneway-pool 同开。给 z，默认 0 关闭",
@@ -381,9 +386,9 @@ def main() -> None:
 
         if any(q.sigma is None for q in specs):
             parser.error("--oneway-pool 要求考卷每题带 sigma 字段")
-        specs, pooled_ones, st = pool_oneway(specs, schema, len(real_rows), args.oneway_pool)
+        specs, pooled_ones, st = pool_oneway(specs, schema, len(real_rows), args.oneway_pool, args.oneway_pool_scope)
         print(
-            f"一阶平分清洗 z={args.oneway_pool:g}：字段 {st['fields']}，格子 {st['cells']}，"
+            f"一阶平分清洗 z={args.oneway_pool:g} 范围 {args.oneway_pool_scope}：字段 {st['fields']}，格子 {st['cells']}，"
             f"未测出格子 {st['pooled']}（{st['pooled'] / max(st['cells'], 1):.1%}）"
         )
         if args.pair_pool > 0.0:
