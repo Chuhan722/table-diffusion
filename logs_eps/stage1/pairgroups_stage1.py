@@ -1,7 +1,7 @@
 """第一阶段 1B 分组阅卷：按 AIM 录像"测过的对 / 没测的对 / 一阶"分组，3 种子均，出 markdown。
 
 对每个 ε、每个种子调 scripts/score_pair_groups.py（--dump 给录像），把各臂的四列取 3 种子均；
-单位 ×10⁻⁶（L1/N）。默认臂：hybrid、pgmrep10k、pgmrep、aimfull（缺表自动跳过）。
+单位 ×10⁻⁶（L1/N）。默认臂：hybrid、pgmrep10k（都跑到收敛，只比这两臂；参考臂可用 --arms 加回）。
 
 用法: .venv/bin/python logs_eps/stage1/pairgroups_stage1.py [--eps 0p1,0p3,1,3,10] [--seeds 1,2,3]
       [--arms hybrid,pgmrep10k,pgmrep,aimfull] [--out logs_eps/scores/stage1_pairgroups.md]
@@ -44,7 +44,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--eps", default="0p1,0p3,1,3,10")
     ap.add_argument("--seeds", default="1,2,3")
-    ap.add_argument("--arms", default="hybrid,pgmrep10k,pgmrep,aimfull")
+    ap.add_argument("--arms", default="hybrid,pgmrep10k")
     ap.add_argument("--out", default="logs_eps/scores/stage1_pairgroups.md")
     args = ap.parse_args()
     arms = args.arms.split(",")

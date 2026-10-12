@@ -27,8 +27,8 @@ ARMS = {
     "aimfull": ("results/aimreplay/adult_eps{tag}_aimfull_seed{s}.csv", "results/adult_eps{tag}_aimfull_seed{s}.csv"),
 }
 EXPERIMENTS = [
-    ("1A 我们 vs GSD（GSD 的全二阶边际，同一文件）", "ours2way", "gsd", []),
-    ("1B 我们 vs 独立 PGM 收敛臂 pgmrep10k（AIM 录像同一份测量，10000 迭代）", "hybrid", "pgmrep10k", ["pgmrep", "aimfull"]),
+    ("1A 我们 vs GSD（同一份全二阶带噪文件）", "ours2way", "gsd", []),
+    ("1B 我们 vs 独立 PGM（AIM 录像同一份测量）", "hybrid", "pgmrep10k", []),
 ]
 
 
@@ -74,7 +74,10 @@ def main() -> None:
 
     lines_all = []
     for title, ours, rival, refs in EXPERIMENTS:
-        lines = [f"## {title}", "", "单位 ×10⁻⁶（L1/N），3 种子均；Δ = (我们−对手)/对手，主轴二阶 |Δ| ≤ 2% 记平。", "",
+        lines = [f"## {title}", "",
+                 "只比这两臂，其余全同（同一份带噪文件、同噪声种子配对）；**每臂都跑到收敛**："
+                 "我们平台自停（未撞 30000 轮上限），PGM 固定 10000 轮（5000 轮已收敛，留一倍余量），GSD 原生早停。",
+                 "单位 ×10⁻⁶（L1/N），3 种子均；Δ = (我们−对手)/对手，主轴二阶 |Δ| ≤ 2% 记平。", "",
                  "| ε | 臂 | n | " + " | ".join(COLS) + " |", "|---" * (len(COLS) + 3) + "|"]
         verdicts = []
         for tag in tags:
