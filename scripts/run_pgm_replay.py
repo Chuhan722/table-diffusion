@@ -29,7 +29,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="AIM 测量录像 -> 独立 Private-PGM 出表")
     ap.add_argument("--dump", required=True, help="run_aim_full.py --dump-measurements 产物")
     ap.add_argument("--seed", type=int, default=1, help="合成采样随机种子（numpy 全局）")
-    ap.add_argument("--iters", type=int, default=1000, help="MirrorDescent 迭代数，AIM 默认 max_iters=1000")
+    ap.add_argument("--iters", type=int, default=1000, help="MirrorDescent 迭代数上限，AIM 默认 max_iters=1000")
+    ap.add_argument("--tol", type=float, default=None,
+                    help="跑到收敛：每块（mbi CALLBACK_EVERY 步）相对损失改善 ≤ tol 连续 patience 块即停，不给则固定跑满 iters")
+    ap.add_argument("--patience", type=int, default=2)
     ap.add_argument("--rows", type=int, default=0, help="合成行数，0 为录像里的真表行数")
     ap.add_argument("--known-total", choices=["rows", "auto"], default="rows",
                     help="模型总量：rows 喂真表行数（与我们引擎、GSD 同口径）；auto 留空由 mbi 从噪声测量自估（AIM 原样）")
@@ -62,13 +65,14 @@ def main() -> None:
     model_mb = junction_tree.hypothetical_model_size(domain, cliques)
     print(f"{dump['data']} eps={dump['epsilon']} 录像种子={dump['seed']} 测量 {len(measurements)} 条"
           f"（一阶 {n1}，高阶 {len(measurements) - n1}），联结树参数表 {model_mb:.1f} MB，"
-          f"iters={args.iters} rows={rows} known_total={args.known_total}", flush=True)
+          f"iters={args.iters} tol={args.tol} rows={rows} known_total={args.known_total}", flush=True)
     if model_mb > args.max_model_mb:
         raise SystemExit(f"树宽爆炸: 参数表 {model_mb:.1f} MB 超上限 {args.max_model_mb:.0f} MB")
 
     t0 = time.time()
     known_total = float(rows) if args.known_total == "rows" else None
-    model = estimation.MirrorDescent().estimate(domain, measurements, known_total=known_total, iters=args.iters)
+    model = estimation.MirrorDescent().estimate(domain, measurements, known_total=known_total, iters=args.iters,
+                                                tol=args.tol, patience=args.patience)
     fit_s = time.time() - t0
     np.random.seed(args.seed)
     synth = model.synthetic_data(rows=rows)

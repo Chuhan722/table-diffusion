@@ -1,4 +1,5 @@
-"""第一阶段配对阅卷：1A 我们(ours2way) vs GSD、1B 我们(hybrid) vs 独立 PGM(pgmrep)，AIM 终表作参考列。
+"""第一阶段配对阅卷：1A 我们(ours2way) vs GSD、1B 我们(hybrid) vs 独立 PGM 收敛臂(pgmrep10k)，
+1000 迭代臂(pgmrep，AIM 默认预算)与 AIM 终表(aimfull)作参考列。
 
 每张表用 scripts/score_any.py 阅全轴，按噪声种子配对算相对差 (我们-对手)/对手，3 种子均；
 主轴二阶 |均差| ≤ 2% 记平，否则记胜(我们误差更小)/负。协议见 docs/第一阶段可比性协议.md。
@@ -21,12 +22,20 @@ ARMS = {
     "gsd": "results/baseline2/adult_eps{tag}_gsd_seed{s}.csv",
     "hybrid": "results/stage1/adult_eps{tag}_hybrid_seed{s}.csv",
     "pgmrep": "results/stage1/adult_eps{tag}_pgmrep_seed{s}.csv",
-    "aimfull": "results/aimreplay/adult_eps{tag}_aimfull_seed{s}.csv",
+    "pgmrep10k": "results/stage1/adult_eps{tag}_pgmrep10k_seed{s}.csv",
+    # ε=0.3/3 的 AIM 终表与录像同一场跑出（远端时间戳一致），落在 results/ 根目录
+    "aimfull": ("results/aimreplay/adult_eps{tag}_aimfull_seed{s}.csv", "results/adult_eps{tag}_aimfull_seed{s}.csv"),
 }
 EXPERIMENTS = [
     ("1A 我们 vs GSD（GSD 的全二阶边际，同一文件）", "ours2way", "gsd", []),
-    ("1B 我们 vs 独立 PGM（AIM 录像同一份测量）", "hybrid", "pgmrep", ["aimfull"]),
+    ("1B 我们 vs 独立 PGM 收敛臂 pgmrep10k（AIM 录像同一份测量，10000 迭代）", "hybrid", "pgmrep10k", ["pgmrep", "aimfull"]),
 ]
+
+
+def arm_path(arm: str, tag: str, s: int) -> Path:
+    pats = ARMS[arm] if isinstance(ARMS[arm], tuple) else (ARMS[arm],)
+    cands = [ROOT / pat.format(tag=tag, s=s) for pat in pats]
+    return next((c for c in cands if c.exists()), cands[0])
 
 
 def score(paths: list[Path]) -> dict[str, list[float]]:
@@ -70,7 +79,7 @@ def main() -> None:
         verdicts = []
         for tag in tags:
             arms = [ours, rival] + refs
-            paths = {a: {s: ROOT / ARMS[a].format(tag=tag, s=s) for s in seeds} for a in arms}
+            paths = {a: {s: arm_path(a, tag, s) for s in seeds} for a in arms}
             sc = score([paths[a][s] for a in arms for s in seeds])
             per = {a: {s: sc.get(paths[a][s].stem) for s in seeds} for a in arms}
             for a in arms:

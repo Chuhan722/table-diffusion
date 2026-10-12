@@ -1,0 +1,63 @@
+2026-10-11T11:10:07Z gpu1 被占用，等待中（已等 0 min）
+2026-10-11T11:40:09Z gpu1 被占用，等待中（已等 30 min）
+2026-10-11T12:10:10Z gpu1 被占用，等待中（已等 60 min）
+2026-10-11T12:40:12Z gpu1 被占用，等待中（已等 90 min）
+2026-10-11T13:10:14Z gpu1 被占用，等待中（已等 120 min）
+2026-10-11T13:40:16Z gpu1 被占用，等待中（已等 150 min）
+2026-10-11T14:10:18Z gpu1 被占用，等待中（已等 180 min）
+2026-10-11T14:40:19Z gpu1 被占用，等待中（已等 210 min）
+2026-10-11T15:10:20Z gpu1 被占用，等待中（已等 240 min）
+2026-10-11T15:15:20Z gpu1 空闲，共等 244 min
+2026-10-11T15:15:20Z START adult_eps0p1_ours2way_seed2 gpu1 lane=24-47
+2026-10-11T15:21:13Z END adult_eps0p1_ours2way_seed2 rc=0
+2026-10-11T15:22:13Z START adult_eps0p1_ours2way_seed3 gpu1 lane=24-47
+2026-10-11T15:28:30Z END adult_eps0p1_ours2way_seed3 rc=0
+2026-10-11T15:29:30Z START adult_eps1_ours2way_seed1 gpu1 lane=24-47
+2026-10-11T16:11:03Z END adult_eps1_ours2way_seed1 rc=0
+2026-10-11T16:12:03Z START adult_eps1_ours2way_seed2 gpu1 lane=24-47
+2026-10-11T16:55:03Z END adult_eps1_ours2way_seed2 rc=0
+2026-10-11T16:56:03Z START adult_eps1_ours2way_seed3 gpu1 lane=24-47
+2026-10-11T17:39:11Z END adult_eps1_ours2way_seed3 rc=0
+2026-10-11T17:40:12Z START adult_eps10_ours2way_seed1 gpu1 lane=24-47
+2026-10-11T18:38:55Z END adult_eps10_ours2way_seed1 rc=0
+2026-10-11T18:39:56Z START adult_eps10_ours2way_seed2 gpu1 lane=24-47
+2026-10-11T19:33:50Z END adult_eps10_ours2way_seed2 rc=0
+2026-10-11T19:34:50Z START adult_eps10_ours2way_seed3 gpu1 lane=24-47
+2026-10-11T20:32:50Z END adult_eps10_ours2way_seed3 rc=0
+2026-10-11T20:33:50Z START adult_eps0p3_ours2way_seed1 gpu1 lane=24-47
+2026-10-11T20:51:21Z END adult_eps0p3_ours2way_seed1 rc=0
+2026-10-11T20:52:21Z START adult_eps0p3_ours2way_seed2 gpu1 lane=24-47
+2026-10-11T21:08:17Z END adult_eps0p3_ours2way_seed2 rc=0
+2026-10-11T21:09:17Z START adult_eps0p3_ours2way_seed3 gpu1 lane=24-47
+2026-10-11T21:25:35Z END adult_eps0p3_ours2way_seed3 rc=0
+2026-10-11T21:26:35Z START adult_eps3_ours2way_seed1 gpu1 lane=24-47
+2026-10-11T22:36:47Z END adult_eps3_ours2way_seed1 rc=0
+2026-10-11T22:37:47Z START adult_eps3_ours2way_seed2 gpu1 lane=24-47
+2026-10-11T23:41:51Z END adult_eps3_ours2way_seed2 rc=0
+2026-10-11T23:42:51Z START adult_eps3_ours2way_seed3 gpu1 lane=24-47
+2026-10-12T00:33:54Z END adult_eps3_ours2way_seed3 rc=0
+2026-10-12T00:34:54Z START adult_eps0p1_hybrid_seed1 gpu1 lane=24-47
+2026-10-12T00:44:19Z END adult_eps0p1_hybrid_seed1 rc=0
+2026-10-12T00:45:19Z START adult_eps0p1_hybrid_seed2 gpu1 lane=24-47
+2026-10-12T00:53:06Z END adult_eps0p1_hybrid_seed2 rc=0
+2026-10-12T00:54:06Z START adult_eps0p1_hybrid_seed3 gpu1 lane=24-47
+2026-10-12T01:02:44Z END adult_eps0p1_hybrid_seed3 rc=0
+2026-10-12T01:03:44Z START adult_eps1_hybrid_seed1 gpu1 lane=24-47
+2026-10-12T01:25:30Z END adult_eps1_hybrid_seed1 rc=0
+2026-10-12T01:26:30Z START adult_eps1_hybrid_seed2 gpu1 lane=24-47
+2026-10-12T01:51:05Z END adult_eps1_hybrid_seed2 rc=0
+2026-10-12T01:52:05Z START adult_eps1_hybrid_seed3 gpu1 lane=24-47
+2026-10-12T02:10:05Z END adult_eps1_hybrid_seed3 rc=0
+2026-10-12T02:11:05Z START adult_eps0p3_hybrid_seed1 gpu1 lane=24-47
+2026-10-12T02:18:44Z END adult_eps0p3_hybrid_seed1 rc=0
+2026-10-12T02:19:44Z START adult_eps0p3_hybrid_seed2 gpu1 lane=24-47
+2026-10-12T02:30:01Z END adult_eps0p3_hybrid_seed2 rc=0
+2026-10-12T02:31:01Z START adult_eps3_hybrid_seed1 gpu1 lane=24-47
+2026-10-12T02:51:12Z END adult_eps3_hybrid_seed1 rc=0
+2026-10-12T02:52:12Z START adult_eps3_hybrid_seed3 gpu1 lane=24-47
+2026-10-12T03:09:39Z END adult_eps3_hybrid_seed3 rc=0
+2026-10-12T03:10:39Z START adult_eps10_hybrid_seed2 gpu1 lane=24-47
+2026-10-12T03:36:33Z END adult_eps10_hybrid_seed2 rc=0
+2026-10-12T03:37:33Z START adult_eps0p1_ours2way_seed1 gpu1 lane=24-47
+2026-10-12T03:40:51Z END adult_eps0p1_ours2way_seed1 rc=0
+2026-10-12T03:40:51Z gpu1 队列空

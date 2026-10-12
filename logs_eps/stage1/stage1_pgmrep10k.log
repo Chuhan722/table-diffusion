@@ -1,0 +1,22 @@
+2026-10-12T05:21:13Z START adult_eps0p1_pgmrep10k_seed1 cpu lane=48-55
+2026-10-12T05:21:27Z END adult_eps0p1_pgmrep10k_seed1 rc=0
+2026-10-12T05:21:27Z START adult_eps0p1_pgmrep10k_seed2 cpu lane=48-55
+2026-10-12T05:21:41Z END adult_eps0p1_pgmrep10k_seed2 rc=0
+2026-10-12T05:21:41Z START adult_eps0p1_pgmrep10k_seed3 cpu lane=48-55
+2026-10-12T05:21:55Z END adult_eps0p1_pgmrep10k_seed3 rc=0
+2026-10-12T05:21:55Z START adult_eps0p3_pgmrep10k_seed1 cpu lane=48-55
+2026-10-12T05:22:31Z END adult_eps0p3_pgmrep10k_seed1 rc=0
+2026-10-12T05:22:31Z START adult_eps0p3_pgmrep10k_seed2 cpu lane=48-55
+2026-10-12T05:22:58Z END adult_eps0p3_pgmrep10k_seed2 rc=0
+2026-10-12T05:22:58Z START adult_eps0p3_pgmrep10k_seed3 cpu lane=48-55
+2026-10-12T05:23:29Z END adult_eps0p3_pgmrep10k_seed3 rc=0
+2026-10-12T05:23:29Z START adult_eps1_pgmrep10k_seed1 cpu lane=48-55
+2026-10-12T05:27:38Z END adult_eps1_pgmrep10k_seed1 rc=0
+2026-10-12T05:27:38Z START adult_eps1_pgmrep10k_seed2 cpu lane=48-55
+2026-10-12T05:29:31Z END adult_eps1_pgmrep10k_seed2 rc=0
+2026-10-12T05:29:31Z START adult_eps1_pgmrep10k_seed3 cpu lane=48-55
+2026-10-12T05:30:36Z END adult_eps1_pgmrep10k_seed3 rc=0
+2026-10-12T05:30:36Z START adult_eps3_pgmrep10k_seed1 cpu lane=48-55
+2026-10-12T06:06:20Z END adult_eps3_pgmrep10k_seed1 rc=0
+2026-10-12T06:06:20Z START adult_eps3_pgmrep10k_seed2 cpu lane=48-55
+2026-10-12T06:10:58Z STOP 主机他人负载 65 使 PGM 慢 20 倍（1000 轮 13 s → 4.5 min），eps3 s2 中止，余下 pgmrep10k 场改在本机跑

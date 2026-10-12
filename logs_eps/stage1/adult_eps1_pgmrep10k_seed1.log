@@ -1,0 +1,6 @@
+/home/chuhan/projects/private-pgm/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+  warnings.warn(
+/home/chuhan/projects/private-pgm/src/mbi/__init__.py:23: UserWarning: JAX persistent compilation cache is enabled. MBI generates many small compiled programs, which makes the cache counterproductive — especially when running sweeps of experiments that all write to the same cache location. Consider disabling it with: jax.config.update("jax_enable_compilation_cache", False)
+  warnings.warn(
+adult eps=1.0 录像种子=1 测量 60 条（一阶 16，高阶 44），联结树参数表 6.6 MB，iters=10000 tol=None rows=32561 known_total=rows
+拟合 130 秒，合成 32561 行 -> /tmp/pgmconv/adult_eps1_pgmrep10k_seed1.csv
