@@ -7,7 +7,8 @@
 #   pgmrep   <tag> <seed>  CPU：独立 PGM 吃同一份录像出表（1B 对照臂，秒级）
 # GPU 只用 0/1 且空闲才用：每场开跑前查 nvidia-smi，显存占用 >1.5 GB 视为别人在用，连续两次（间隔 60 s）空闲才发射。
 # CPU 道 48-55 / 64-71 两条（10-11 机器总负载 61/112，56-63 最忙，让开），GPU 道 0-23 / 24-47 守旧例。引擎命令 = logs_eps/baseline2/launch_E_a6000.sh run_alloc 逐字，只改协议写明的三处。
-# 用法（A6000）：cd /root/residual-evolution && nohup bash logs_eps/stage1/launch_stage1.sh > logs_eps/stage1/launch_stage1.log 2>&1 &
+# 用法（A6000）：cd /root/residual-evolution && nohup bash logs_eps/stage1/launch_stage1.sh [all|gpu|cpu|gpu0|gpu1] > logs_eps/stage1/launch_stage1.log 2>&1 &
+#   参数选只起 GPU 道或只起 CPU 道（队列文件 flock 共享，可分进程补起）。
 cd /root/residual-evolution || exit 1
 export CUDA_PATH=/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime
 declare -A UUID=([0]=GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed [1]=GPU-114f21d5-e47f-903c-a164-83a9f9dfa082)
@@ -46,7 +47,9 @@ wait_gpu_idle() {  # 连续两次空闲才放行
 }
 
 ensure_exam() {  # tag seed：录像落盘则转卷，否则等
-  local tag=$1 seed=$2 dir=data/adult_aimrep${tag}_s${seed}
+  local tag=$1 seed=$2
+  # 注意 local 一行里后面的赋值看不到前面刚赋的值（bash 先整体展开），dir 必须另起一行；10-12 02:00 因此栽过：转卷死循环 13 h
+  local dir=data/adult_aimrep${tag}_s${seed}
   local dump=results/aimreplay/adult_eps${tag}_aimfull_seed${seed}_measurements.json
   local log=logs_eps/stage1/adult_eps${tag}_aimfull_seed${seed}.log
   while [ ! -s $dir/README.md ]; do
@@ -141,9 +144,10 @@ cpu_worker() {
   echo "$(date -u +%FT%TZ) cpu lane $lane 队列空"
 }
 
-echo "$(date -u +%FT%TZ) 第一阶段开跑：GPU 队列 $(wc -l < $JOBS) 场，CPU 队列 $(wc -l < $CJOBS) 场"
-gpu_worker 0 > $LOG/stage1_gpu0.log 2>&1 &
-gpu_worker 1 > $LOG/stage1_gpu1.log 2>&1 &
-for i in 0 1; do cpu_worker ${CPU_LANES[$i]} > $LOG/stage1_cpu$i.log 2>&1 & done
+MODE=${1:-all}
+echo "$(date -u +%FT%TZ) 第一阶段开跑（$MODE）：GPU 队列 $(wc -l < $JOBS) 场，CPU 队列 $(wc -l < $CJOBS) 场"
+case $MODE in all|gpu|gpu0) gpu_worker 0 >> $LOG/stage1_gpu0.log 2>&1 & ;; esac
+case $MODE in all|gpu|gpu1) gpu_worker 1 >> $LOG/stage1_gpu1.log 2>&1 & ;; esac
+case $MODE in all|cpu) for i in 0 1; do cpu_worker ${CPU_LANES[$i]} >> $LOG/stage1_cpu$i.log 2>&1 & done ;; esac
 wait
 echo "$(date -u +%FT%TZ) ALL DONE stage1"
