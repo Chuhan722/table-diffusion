@@ -5,15 +5,15 @@
 #   hybrid   <tag> <seed>  1B 我们臂：吃 AIM 录像转的 data/adult_aimrep{tag}_s{seed}/（录像没落盘就等）
 #   aim10    <seed>        CPU：官方 AIM adult ε=10 复跑并开录像（10-06 那三跑没录），完成即转卷
 #   pgmrep   <tag> <seed>  CPU：独立 PGM 吃同一份录像出表（1B 对照臂，秒级）
-# GPU 只用 0/1 且空闲才用：每场开跑前查 nvidia-smi，显存占用 >1.5 GB 视为别人在用，连续两次（间隔 60 s）空闲才发射。
-# CPU 道 48-55 / 64-71 两条（10-11 机器总负载 61/112，56-63 最忙，让开），GPU 道 0-23 / 24-47 守旧例。引擎命令 = logs_eps/baseline2/launch_E_a6000.sh run_alloc 逐字，只改协议写明的三处。
+# GPU 只用 0/1：每场开跑前查 nvidia-smi，别人占的显存 ≥5 GB 视为在用（用户令 10-12：<5 GB 可用），连续两次（间隔 60 s）过关才发射。
+# CPU 最多用一半（用户令 10-12，112 核 → ≤56）：GPU 道 0-23 / 24-47 各 24 核 + CPU 道 48-55 一条 8 核 = 56 封顶，转卷也进 CPU 道。引擎命令 = logs_eps/baseline2/launch_E_a6000.sh run_alloc 逐字，只改协议写明的三处。
 # 用法（A6000）：cd /root/residual-evolution && nohup bash logs_eps/stage1/launch_stage1.sh [all|gpu|cpu|gpu0|gpu1] > logs_eps/stage1/launch_stage1.log 2>&1 &
 #   参数选只起 GPU 道或只起 CPU 道（队列文件 flock 共享，可分进程补起）。
 cd /root/residual-evolution || exit 1
 export CUDA_PATH=/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime
 declare -A UUID=([0]=GPU-24b178f1-5d73-6405-752d-3c3aa98e83ed [1]=GPU-114f21d5-e47f-903c-a164-83a9f9dfa082)
 declare -A LANE=([0]=0-23 [1]=24-47)
-CPU_LANES=(48-55 64-71)
+CPU_LANES=(48-55)
 EXTRA="--gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 200 --gpu-entry-budget 40000000"
 JOBS=logs_eps/stage1/jobs_stage1.txt
 CJOBS=logs_eps/stage1/jobs_stage1_cpu.txt
@@ -26,11 +26,11 @@ next_job() {  # $1 = 队列文件
   flock "$1.lock" bash -c "l=\$(head -1 $1); if [ -n \"\$l\" ]; then sed -i 1d $1; echo \"\$l\"; fi"
 }
 
-gpu_busy() {  # 别人占着就返回 0
+gpu_busy() {  # 别人占的显存 ≥5 GB 才算占着（返回 0）
   local used
   used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i $1 2>/dev/null | tr -d ' ')
   [ -z "$used" ] && return 0
-  [ "$used" -gt 1500 ]
+  [ "$used" -ge 5120 ]
 }
 
 wait_gpu_idle() {  # 连续两次空闲才放行
@@ -54,7 +54,7 @@ ensure_exam() {  # tag seed：录像落盘则转卷，否则等
   local log=logs_eps/stage1/adult_eps${tag}_aimfull_seed${seed}.log
   while [ ! -s $dir/README.md ]; do
     if [ -s $dump ] && { grep -q "录像" $log 2>/dev/null || [ "$tag" != 10 ]; }; then
-      flock $LOG/convert_${tag}_s${seed}.lock .venv/bin/python scripts/aim_replay_exam.py --dump $dump --real data/adult/adult.csv \
+      flock $LOG/convert_${tag}_s${seed}.lock taskset -c ${CPU_LANES[0]} .venv/bin/python scripts/aim_replay_exam.py --dump $dump --real data/adult/adult.csv \
         --name adult_aimrep${tag}_s${seed} --force >> $LOG/convert.log 2>&1
     else
       sleep 120
@@ -148,6 +148,6 @@ MODE=${1:-all}
 echo "$(date -u +%FT%TZ) 第一阶段开跑（$MODE）：GPU 队列 $(wc -l < $JOBS) 场，CPU 队列 $(wc -l < $CJOBS) 场"
 case $MODE in all|gpu|gpu0) gpu_worker 0 >> $LOG/stage1_gpu0.log 2>&1 & ;; esac
 case $MODE in all|gpu|gpu1) gpu_worker 1 >> $LOG/stage1_gpu1.log 2>&1 & ;; esac
-case $MODE in all|cpu) for i in 0 1; do cpu_worker ${CPU_LANES[$i]} >> $LOG/stage1_cpu$i.log 2>&1 & done ;; esac
+case $MODE in all|cpu) for i in "${!CPU_LANES[@]}"; do cpu_worker ${CPU_LANES[$i]} >> $LOG/stage1_cpu$i.log 2>&1 & done ;; esac
 wait
 echo "$(date -u +%FT%TZ) ALL DONE stage1"
