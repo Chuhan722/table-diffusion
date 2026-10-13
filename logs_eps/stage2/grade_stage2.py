@@ -1,7 +1,8 @@
 """第二阶段首战 A 阅卷：测量后处理（平分清洗）消融。
 
-臂：hybridp1 = 第一阶段 hybrid + --oneway-pool 2；hybridp12 = 再加 --pair-pool 2；
-对照：pgmrep10k（独立 PGM 收敛臂）、hybrid（第一阶段同引擎无清洗）。
+臂：hybridp1 = 第一阶段 hybrid + --oneway-pool 2；hybridp12 = 再加 --pair-pool 2；hybridp1u = --oneway-pool-scope uncovered；
+对照：pgmrep10k（独立 PGM 收敛臂）、hybrid（第一阶段同引擎无清洗）；
+归属对照 pgmrep10kp1u = pgmrep10k 命令 + 同样的 --oneway-pool 2 --oneway-pool-scope uncovered（run_pgm_replay.py 同名开关，清洗向量与我们臂逐位同）。
 每场只比两臂，其余全同；主轴二阶 |Δ| ≤ 2% 记平（同第一阶段协议）。
 附一阶覆盖表：仅一阶测量字段上各臂终表的一阶误差，直接看病灶有没有治好。
 
@@ -26,6 +27,7 @@ g1.ARMS.update({
     "hybridp1": "results/stage2/adult_eps{tag}_hybridp1_seed{s}.csv",
     "hybridp12": "results/stage2/adult_eps{tag}_hybridp12_seed{s}.csv",
     "hybridp1u": "results/stage2/adult_eps{tag}_hybridp1u_seed{s}.csv",
+    "pgmrep10kp1u": "results/stage2/adult_eps{tag}_pgmrep10kp1u_seed{s}.csv",
 })
 EXPERIMENTS = [
     ("2A-1 一阶清洗 vs 独立 PGM（AIM 录像同一份测量；hybrid 列为第一阶段参考）", "hybridp1", "pgmrep10k", ["hybrid"]),
@@ -35,10 +37,12 @@ EXPERIMENTS = [
     ("2A-5 仅未覆盖字段清洗 vs 独立 PGM（ε≥1 该臂与 hybrid 逐位同，见 1B）", "hybridp1u", "pgmrep10k", []),
     ("2A-6 仅未覆盖字段清洗 vs 全字段清洗（只差范围开关）", "hybridp1u", "hybridp1", []),
     ("2A-7 仅未覆盖字段清洗 vs 第一阶段 hybrid", "hybridp1u", "hybrid", []),
+    ("2A-8 归属对照：PGM 也吃清洗后一阶 vs PGM 吃原始（同录像同种子同 10000 轮，只差清洗）", "pgmrep10kp1u", "pgmrep10k", []),
+    ("2A-9 归属对照：我们(仅未覆盖字段清洗) vs PGM(同样清洗)（两臂吃完全相同的清洗后测量）", "hybridp1u", "pgmrep10kp1u", []),
 ]
 INTRO = ("只比这两臂，其余全同（同一份 AIM 录像考卷、同噪声种子配对）；我们臂命令 = 第一阶段 hybrid 逐字 + 清洗开关，"
          "PGM 臂为第一阶段 10000 轮收敛终表不重跑。")
-COVER_ARMS = ("hybrid", "hybridp1", "hybridp12", "hybridp1u", "pgmrep10k")
+COVER_ARMS = ("hybrid", "hybridp1", "hybridp12", "hybridp1u", "pgmrep10k", "pgmrep10kp1u")
 
 
 def oneway_cover(tags: list[str], seeds: list[int]) -> str:

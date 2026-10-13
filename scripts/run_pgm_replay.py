@@ -25,6 +25,68 @@ import numpy as np
 import pandas as pd
 
 
+def _project_simplex(v: np.ndarray, total: float) -> np.ndarray:
+    """逐字复制 resevo.initialization._project_simplex（本脚本在 aim2 环境跑，不装 resevo）。"""
+    u = np.sort(v)[::-1]
+    cssv = np.cumsum(u) - total
+    idx = np.arange(1, len(u) + 1)
+    cond = u - cssv / idx > 0
+    rho = idx[cond][-1]
+    tau = cssv[rho - 1] / rho
+    return np.maximum(v - tau, 0.0)
+
+
+def _pool_vector(y: np.ndarray, sigma: float, total: float, z: float) -> np.ndarray:
+    """逐字复制 resevo.denoise.pool_vector 的一阶均分规则（σ 同格同值）。"""
+    known = np.abs(y) >= z * sigma
+    if known.all():
+        return y.copy()
+    out = np.zeros_like(y)
+    out[known] = np.maximum(y[known], 0.0)
+    rest = float(total) - out[known].sum()
+    if rest < 0.0:
+        return _project_simplex(y, float(total))
+    out[~known] = rest / int((~known).sum())
+    return out
+
+
+def pool_oneway_records(records: list[dict], total: int, z: float, scope: str) -> tuple[list[dict], dict]:
+    """给 PGM 喂与我们 --oneway-pool/--oneway-pool-scope 完全相同的清洗后一阶。
+
+    同字段重复一阶测量先逆方差合并（与 aim_replay_exam.py 同式），再按 z·σ 规则清洗，
+    以一条测量（清洗后向量，合并后 σ）替换原来那几条；高斯似然下合并前后等价，
+    被清洗字段以外的测量逐字不动。scope=uncovered 只处理没出现在任何 ≥2 阶团里的字段。
+    """
+    covered = {a for r in records if len(r["clique"]) >= 2 for a in r["clique"]}
+    groups: dict[str, list[dict]] = {}
+    for r in records:
+        if len(r["clique"]) == 1:
+            groups.setdefault(r["clique"][0], []).append(r)
+    stats = {"fields": [], "cells": 0, "pooled": 0}
+    replaced: dict[str, dict] = {}
+    for attr, recs in groups.items():
+        if scope == "uncovered" and attr in covered:
+            continue
+        prec = np.array([1.0 / float(r["sigma"]) ** 2 for r in recs])
+        ys = np.array([np.asarray(r["y"], dtype=np.float64) for r in recs])
+        y = (ys * prec[:, None]).sum(axis=0) / prec.sum()
+        sigma = float(1.0 / np.sqrt(prec.sum()))
+        c = _pool_vector(y, sigma, total, z)
+        stats["fields"].append(attr)
+        stats["cells"] += int(y.size)
+        stats["pooled"] += int((np.abs(y) < z * sigma).sum())
+        replaced[attr] = {**recs[0], "y": c.tolist(), "sigma": sigma}
+    out, seen = [], set()
+    for r in records:
+        if len(r["clique"]) == 1 and r["clique"][0] in replaced:
+            if r["clique"][0] not in seen:
+                seen.add(r["clique"][0])
+                out.append(replaced[r["clique"][0]])
+            continue
+        out.append(r)
+    return out, stats
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="AIM 测量录像 -> 独立 Private-PGM 出表")
     ap.add_argument("--dump", required=True, help="run_aim_full.py --dump-measurements 产物")
@@ -38,6 +100,10 @@ def main() -> None:
                     help="模型总量：rows 喂真表行数（与我们引擎、GSD 同口径）；auto 留空由 mbi 从噪声测量自估（AIM 原样）")
     ap.add_argument("--max-model-mb", type=float, default=4096.0,
                     help="联结树参数表内存上限 MB，超限直接退出记录为证据")
+    ap.add_argument("--oneway-pool", type=float, default=0.0,
+                    help="与 run_plants.py 同名开关：一阶平分清洗阈值 z（|y|<z·σ 的格子平分剩余人数），0 关")
+    ap.add_argument("--oneway-pool-scope", choices=["all", "uncovered"], default="all",
+                    help="清洗范围：all 全部一阶字段；uncovered 只清洗没出现在任何 ≥2 阶团里的字段")
     ap.add_argument("--out", required=True, help="输出合成表 CSV")
     args = ap.parse_args()
 
@@ -50,8 +116,15 @@ def main() -> None:
     domain = Domain(columns, [int(s) for s in dump["domain_sizes"]])
     rows = args.rows or int(dump["num_rows"])
 
+    records = list(dump["measurements"])
+    if args.oneway_pool > 0.0:
+        records, pst = pool_oneway_records(records, int(dump["num_rows"]), args.oneway_pool, args.oneway_pool_scope)
+        print(f"一阶清洗 z={args.oneway_pool} scope={args.oneway_pool_scope}：字段 {pst['fields']}，"
+              f"{pst['cells']} 格中 {pst['pooled']} 格未测出被平分；测量条数 {len(dump['measurements'])} -> {len(records)}",
+              flush=True)
+
     measurements = []
-    for rec in dump["measurements"]:
+    for rec in records:
         cl = tuple(rec["clique"])
         shape = [int(domain[a]) for a in cl]
         if shape != [int(s) for s in rec["shape"]]:
