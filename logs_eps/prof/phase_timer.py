@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import runpy
 import sys
 import time
@@ -31,21 +32,38 @@ def _sync():
         cp.cuda.Device().synchronize()
 
 
+DEPTH = [0]            # 计时壳嵌套深度，只有最外层相计入“本轮已计时”
+ROUND_TIMED = [0.0]    # 本轮最外层相累计（provider 壳每轮开头清零）
+ROUND_MARKS: list[tuple[float, float]] = []  # (轮起点时刻, 上一轮已计时秒数)
+EVENTS: list[tuple[str, float, float, int]] = []  # 前两轮的逐相事件 (标签, 起, 止, 深度)，排查首轮用
+
+
 def wrap(obj, name, label, sync=True):
     fn = getattr(obj, name)
     acc = ACC.setdefault(label, [0.0, 0])
+    wait = ACC.setdefault("gpu.前置同步等待(入相前排空设备，不计入各相)", [0.0, 0]) if sync else None
 
     def inner(*a, **k):
         if sync:
+            t0 = time.perf_counter()
             _sync()
+            wait[0] += time.perf_counter() - t0
+            wait[1] += 1
         t = time.perf_counter()
+        DEPTH[0] += 1
         try:
             return fn(*a, **k)
         finally:
             if sync:
                 _sync()
-            acc[0] += time.perf_counter() - t
+            DEPTH[0] -= 1
+            d = time.perf_counter() - t
+            acc[0] += d
             acc[1] += 1
+            if DEPTH[0] == 0:
+                ROUND_TIMED[0] += d
+            if len(ROUND_MARKS) <= 2:
+                EVENTS.append((label, t, t + d, DEPTH[0]))
 
     setattr(obj, name, inner)
 
@@ -105,11 +123,17 @@ def _evolve(state_ids, num_rounds, rng, plan_provider, *a, **k):
     class P:
         def __call__(self, *pa, **pk):
             t = time.perf_counter()
+            ROUND_MARKS.append((t, ROUND_TIMED[0]))  # 轮起点；上一轮的已计时量随手记下
+            ROUND_TIMED[0] = 0.0
             try:
                 return plan_provider(*pa, **pk)
             finally:
-                acc[0] += time.perf_counter() - t
+                d = time.perf_counter() - t
+                acc[0] += d
                 acc[1] += 1
+                ROUND_TIMED[0] += d
+                if len(ROUND_MARKS) <= 2:
+                    EVENTS.append(("provider", t, t + d, -1))
 
         def __getattr__(self, item):
             return getattr(plan_provider, item)
@@ -126,6 +150,12 @@ def _evolve(state_ids, num_rounds, rng, plan_provider, *a, **k):
 
 batchkernel.evolve_batch = _evolve
 
+if os.environ.get("PHASE_GC", "") == "off":
+    import gc
+
+    gc.disable()
+    print("PHASE_GC=off：已关闭循环垃圾回收", file=sys.stderr)
+
 T0 = time.perf_counter()
 try:
     sys.argv = [str(REPO / "scripts" / "run_plants.py")] + sys.argv[1:]
@@ -140,3 +170,23 @@ finally:
         share = sec / ev * 100 if ev else 0.0
         print(f"PHASE {label:44s} {sec:8.1f}s  {n:7d}次  {per:8.1f}ms/次  占evolve {share:5.1f}%",
               file=sys.stderr)
+    if len(ROUND_MARKS) > 2:
+        # 逐轮：轮长 = 相邻两次 provider 起点之差；相外 = 轮长 − 本轮最外层各相之和（末轮无终点不算）
+        durs = np.diff([m[0] for m in ROUND_MARKS]) * 1000
+        timed = np.array([m[1] for m in ROUND_MARKS[1:]]) * 1000
+        gap = durs - timed
+        q = lambda x: " / ".join(f"{v:.1f}" for v in np.percentile(x, [0, 10, 50, 90, 100]))
+        print(f"ROUND 轮长 ms 最小/p10/中位/p90/最大 {q(durs)}  均值 {durs.mean():.1f}", file=sys.stderr)
+        print(f"ROUND 相外 ms 最小/p10/中位/p90/最大 {q(gap)}  均值 {gap.mean():.1f}  合计 {gap.sum()/1000:.1f}s", file=sys.stderr)
+        top = np.argsort(-gap)[:8]
+        print("ROUND 相外最大的 8 轮 (轮号:相外ms):", " ".join(f"{i+1}:{gap[i]:.0f}" for i in top), file=sys.stderr)
+    if EVENTS:
+        # 前两轮时间线：只列最外层（深度 0 或 provider），相邻事件之间的空档即相外代码
+        ev0 = sorted((e for e in EVENTS if e[3] <= 0), key=lambda e: e[1])
+        t0 = ROUND_MARKS[0][0]
+        prev_end = t0
+        for label, a, b, _ in ev0:
+            if a - prev_end > 0.001:
+                print(f"EV   {(prev_end - t0) * 1000:9.1f}  空档 {(a - prev_end) * 1000:8.1f} ms", file=sys.stderr)
+            print(f"EV   {(a - t0) * 1000:9.1f}  {label[:40]:40s} {(b - a) * 1000:8.1f} ms", file=sys.stderr)
+            prev_end = max(prev_end, b)

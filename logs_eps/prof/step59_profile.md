@@ -86,3 +86,84 @@ ms/轮，300 轮均值；"改前"列取 §二 同场。
 5. 全程验收（1A 命令 ε=3 / 0.1 各 3 种子）见 `logs_eps/scores/speed_step59.md`：6 张终表与旧表逐位同；整场 ε=3 61.8 → 22.1 min（GSD 36.4），ε=0.1 5.2 → 2.3 min（GSD 24.5）。
 
 原始日志：`phase_yi_batch.log`、`phase_runs4_yi2.log`（调度），`phase_{yi,yioff,yi2}_*.log`。
+
+## 六、甲 第一刀（出菜单 numpy 组主序重写，提交 e099bd0）同条件复测（10-14 21:0x～21:18 北京，`phase_runs4.sh jia1`）
+
+ms/轮，300 轮均值；"yi2"列取 §五。
+
+| 相 | ε=0.1 暖 yi2 a / b | ε=0.1 暖 jia1 a / b | ε=3 暖 yi2 a / b | ε=3 暖 jia1 a / b | ε=3 冷 yi2 | ε=3 冷 jia1 |
+|---|---|---|---|---|---|---|
+| evolve 总 / 轮（300 轮均值） | 42.0 / 41.7 | 41.3 / 49.3 | 90.0 / 90.7 | 93.7 / 93.7 | 111.0 | 92.3 |
+| cpu.provider 总 | 15.7 | 10.7 | 46.0 / 46.3 | 28.7 | 54.7 | 33.0 |
+| └ 出菜单 | 10.7 / 10.3 | 6.0 | 38.7 / 39.0 | 21.0 | 44.0 | 24.0 |
+| gpu.build 总 | 23.0 / 22.7 | 23.0 | 36.3 / 36.7 | 36.3～43.4 | 39.7 | 39.0 |
+
+读数：
+1. 出菜单 39 → 21 ms（−46%），ε=0.1 10.7 → 6.0；五场损失曲线与 yi2 逐行相同（三组终损 852250.740286 / 705336460.106174 / 2592493.604188）。
+2. 但 300 轮均值的 evolve 总没有同步下降（ε=3 暖 90 → 93.7），差额约 22 ms/轮"相外"。逐轮统计（`phase_timer.py` 新加 ROUND/EV 行，`dbg_jia1b.sh`、`dbg_jia1c.sh`）查明：稳态轮长 中位 68.5 / 67.9 / 68.5 / 68.6 ms（p90 ≈ 70，四场），差额全部落在第 1 轮——一次性 2.4～7.9 s，且场场不同。
+3. 第 1 轮的时间线（EV 行）：provider 0.69 s（首轮全菜单）→ **空档 2.6～4.3 s** → 结构尺 0.08 s → 空档 0.07～0.09 s（惰性建 GpuBatchContext）→ 首次 build 0.26～0.79 s。大空档在 `batchkernel.evolve_batch` 批量分支的首次 `import cupy` / 首个 `cp.asarray`（CUDA 上下文与模块装载）处，与菜单码无关。
+4. 新 → 旧（dd58bcd 的 `batchmenu.py`）→ 新 背靠背同卡对照（`phase_jia1dbg_tl_{new,old,new2}.log`）：旧码第 1 轮同样 5.28 s（空档 3.77 s），稳态中位 86.8 ms；新码 68.5 / 67.9。即一次性首轮开销是改前就有的、随主机负载浮动的固定成本，不是新码引入；§五 yi2 的 300 轮均值恰逢首轮较轻，才显得"吃掉"了甲 的收益。
+5. 结论：甲 第一刀 ε=3 稳态 86.8 → 68.5 ms/轮（−21%，与出菜单 −18 ms 吻合），ε=0.1 约 −5 ms；今后比较以稳态中位为准，300 轮均值受首轮 2～8 s 一次性成本干扰（折合 7～26 ms/轮）。GPU build 的轮间浮动（36.3～43.4，同码同参）同样说明 ±20% 以内的 build 差异不能当信号。
+6. 乙+甲一 之后 ε=3 稳态 68.5 的构成：GPU build 36.5（53%）、provider 28.7（出菜单 21，42%）、结构尺 5、其余 ≈ 0。下一刀转到 GPU build 内的主机同步点（`_delta_direct`/`_direct_entries` 的 flatnonzero/unique/`int(indptr[-1])`、`_calibrate_flat` 逐次 `float()`、提前的 `cp.asnumpy(scores_gpu)`）。
+
+原始日志：`phase_runs4_jia1.log`（调度），`phase_jia1_*.log`；诊断 `dbg_jia1{,b,c}.log`、`phase_jia1dbg_{wait,cprof,rounds,gcoff,tl_new,tl_old,tl_new2}.log`、`jia1dbg_adult3_late.prof`。
+
+## 七、甲 第二刀（GPU build 主机侧：融合核削运算数）同条件复测（10-14 22:1x 北京，`phase_runs4.sh jia2`）
+
+### 7.1 先量后动：build 是主机发射瓶颈，不是显卡算力瓶颈
+
+远端无 nsys/ncu，写了 `build_bench.py`（抓第 20 轮 build 入参原地重跑 30 次；经 ctypes 置 `cudaDeviceScheduleBlockingSync`，同步点上线程不自旋，线程 CPU 时间 ≈ 纯主机开销；`sys.setprofile` 数 cupy C 调用数），`bench_jia2.sh <标签>` 调度（ε=3 / 0.1 暖，GPU1）。
+
+| | ε=3 暖（组 30712，路径 100880） | ε=0.1 暖（组 7505，路径 26785） |
+|---|---|---|
+| build 墙钟 中位 | 37.7 ms | 23.8 ms |
+| 其中 CPU 线程 | 27.9 ms（74%） | 21.8 ms（92%） |
+| 等 GPU | 9.7 ms | 1.9 ms |
+| cupy C 调用 / 同步类 | 243 / 22 | 209 / 20 |
+| `_delta_direct`（含 `_direct_entries` 两次） | 13.0 CPU（10.4） | 12.9（10.3） |
+| `_calibrate_flat` | 4.9 | 4.3 |
+| `_drift_sparse`（含 `_merge_keys`） | 3.2（0.8） | 2.2（1.0） |
+
+读数：两个 ε 的 `_direct_entries` CPU 都是 10.4 ms，与数据量无关——是每次 cupy 运算固定的 Python + 发射开销（本机负载下每步约 50～100 µs，243 步即 20 多 ms）；再加 22 处隐式设备同步（`flatnonzero`/`unique`/`bincount`/`float()`/`asnumpy`、以及可分页内存 H2D 自带的流同步）截断了提交流水。方向因此定为"削运算数、去同步点"，而不是优化单个核。
+
+### 7.2 三刀（`gpukernel.py`，`structure.py`），每刀都与改前逐位相同
+
+1. 直算条目（`_direct_entries`/`_delta_direct`）：一对（路径，边际）一线程的整数融合核 `multi_keys` + `direct_pairs` 代替几十步 cupy 逐步计算；路径单/多字段的分类、分块与条目总量改在主机按菜单 `fields`（左齐规范化：槽 1 空即单字段）用直方图点积算，不再在卡上布尔压缩同步；块内非零计数用 uint64 `add.at` 再按位重解释（`add.at` 不收 int64）。
+2. 浮点融合核（`_TILT_KERNEL_SRC`，一律 `__dadd_rn/__dmul_rn/__ddiv_rn` 显式舍入，不受 FMA 合并影响；段归约照 `seg_sum` 的 128 线程跨步串行 + 定序树）：括根评估 `evaluate` 由 ~11 步 cupy 变 2 核 + 点积（`tilt_norm`/`tilt_gain`），缓冲区整段复用；路径增益 `lin − quad/2` 一路径一块（`part_gains`）；漂移合并的键与权一条目一线程直接写进拼接缓冲区（`drift_kv`）。结构尺 `temperature_dev` 的 15 字段逐字段 gather 累加改为一核按字段序顺次累加（`embed_scores`，权重表按字段拼接缓存）。
+3. 去同步：`cp.asnumpy(scores_gpu)` 推迟到 build 出口；`unit_rows` 用主机已有的 `grouped.counts` 不再回传 `counts`。
+
+逐位核对：`build_bitcheck.py`/`bitcheck_jia2.sh`——同一轮入参分别喂给新码与 HEAD 旧码（`git show HEAD:src/resevo/gpukernel.py` 导出为 `_gpukernel_old.py`），比对 `probabilities`/`group_scores`/`offsets` 整数组按位与全部标量字段，ε=3 与 ε=0.1 各 300 轮**全部逐位相同**（`bitcheck_jia2_cut2.log`、`bitcheck_jia2_cut2b.log`）；`embed_scores` 核与旧 gather 循环 3 组随机场景按位相同；GPU 跨通路测试 164 项通过。
+
+### 7.3 微基准逐刀（ms，`bench_jia2_{bench,cut1b,cut2,cut2b}.log`）
+
+| | 基线 ε=3 / 0.1 | 刀 1 后 | 刀 2a（括根+增益+结构尺）后 | 刀 2b（漂移键权+缓冲复用）后 |
+|---|---|---|---|---|
+| build 墙钟 | 37.7 / 23.8 | 28.8 / 15.9 | 26.9 / 12.6 | **25.2 / 12.6** |
+| CPU 线程 | 27.9 / 21.8 | 21.7 / 14.6 | 17.8 / 11.3 | 16.1 / 11.2 |
+| cupy C 调用 | 243 / 209 | 159 / 125 | 99 / 93 | 73 / 71 |
+| `_delta_direct` CPU | 13.0 / 12.9 | 6.5 / 3.6 | 6.6 / 3.7 | 6.6 / 3.6 |
+| `_calibrate_flat` CPU | 4.9 / 4.3 | 4.8 / 4.3 | 3.0 / 2.4 | 2.5 / 2.1 |
+| `_drift_sparse` CPU | 3.2 / 2.2 | 3.2 / 2.2 | 3.2 / 2.3 | 1.8 / 1.9 |
+
+build 墙钟 ε=3 −33%、ε=0.1 −47%；ε=3 的等 GPU 稳定在 9 ms 左右（整表项 bincount 2.7、漂移 argsort 3、括根 12 次串行评估 3），主机侧再削收益递减。
+
+### 7.4 整场复测（`phase_runs4.sh jia2`，五场损失曲线与 jia1 逐行相同）
+
+| 相（ms/轮） | ε=0.1 暖 jia1 a / b → jia2 a / b | ε=3 暖 jia1 a / b → jia2 a / b | ε=3 冷 jia1 → jia2 |
+|---|---|---|---|
+| evolve 总（300 轮均值） | 41.3 / 49.3 → 26.7 / 26.3 | 93.7 / 93.7 → 74.3 / 73.3 | 92.3 → 89.3 |
+| **轮长 稳态中位（ROUND 行）** | — → **22.3 / 22.0** | **68.5（§六）→ 56.5 / 56.1** | — → 64.0 |
+| gpu.build 总 | 22.7 / 23.7 → 12.0 / 11.7 | 36.3 / 35.7 → 25.7 / 25.0 | 40.7 → 28.0 |
+| └ 直算答案差 | 12.0 → 4.0 / 3.7 | 15.3 / 15.0 → 7.3 / 7.3 | 17.3 → 8.0 |
+| └ 漂移项 | 2.3 → 2.3 / 2.0 | 6.0 / 5.7 → 4.7 / 4.7 | 6.7 → 5.3 |
+| └ 括根 | 4.0 → 2.0 | 4.7 → 5.0 | 4.7 → 5.0 |
+| 结构尺 temperature_dev | 2.3 → 1.3 / 1.0 | 5.0 / 5.7 → 3.3 / 3.3 | 5.3 → 3.7 |
+| cpu.provider 总（出菜单） | 11.0（6.0）→ 不变 | 28.7（21.0）→ 不变 | 34.7（23.7）→ 不变 |
+
+读数：
+1. ε=3 暖 稳态轮长 68.5 → 56.3 ms（−18%）；连同 乙 与 甲一，自 10-09 剖析的 86.8 ms 稳态起累计 −35%。ε=0.1 暖 稳态 22 ms（300 轮均值 41.3 → 26.7，首轮 1.2 s 一次性开销折合 4 ms/轮）。
+2. 首轮一次性开销照旧（ε=3 4.1 s、冷启 3.5 s），与 §六 结论一致，不计入稳态。
+3. ε=3 稳态 56.3 的构成：provider 28.7（出菜单 21，占 51%）、GPU build 25.5（45%）、结构尺 3.3。主机侧的出菜单已成最大单项；GPU build 内再削只剩约 9 ms 的真实显卡时间可压。
+4. 括根 ms/轮 在 ε=3 由 4.7 变 5.0（+0.3）：这里的分相是含同步的墙钟——评估缓冲改复用后两核之间少了分配、提交更密，但 12 次串行评估每次都要等卡，墙钟由显卡时延决定；微基准里括根的 CPU 从 4.9 降到 2.5，被节省的主机时间转成了等卡时间，整体 build 仍净降 11 ms。
+
+原始日志：`bench_jia2_{bench,cut1,cut1b,cut2,cut2b}.log`、`bitcheck_jia2_{cut2,cut2b}.log`、`phase_runs4_jia2.log`（调度）、`phase_jia2_*.log`。脚本：`build_bench.py`、`bench_jia2.sh`、`build_bitcheck.py`、`bitcheck_jia2.sh`。

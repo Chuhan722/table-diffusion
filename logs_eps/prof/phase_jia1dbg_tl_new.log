@@ -1,0 +1,93 @@
+行数 32561，查询数 14123，初始损失 852561.201883
+轮 0 模式 batch 损失 852561.2 步长 0.0060 预测降 0.61 ok 连败 0
+轮 30 模式 batch 损失 852552.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 31 模式 batch 损失 852552.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 33 模式 batch 损失 852551.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 35 模式 batch 损失 852551.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 36 模式 batch 损失 852551.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 38 模式 batch 损失 852549.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 100 模式 batch 损失 852473.7 步长 0.0427 预测降 0.37 ok 连败 0
+轮 177 模式 batch 损失 852379.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 184 模式 batch 损失 852365.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 193 模式 batch 损失 852357.3 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 200 模式 batch 损失 852351.3 步长 0.0293 预测降 0.08 ok 连败 0
+轮 209 模式 batch 损失 852332.8 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 211 模式 batch 损失 852328.7 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 215 模式 batch 损失 852326.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 221 模式 batch 损失 852325.4 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 224 模式 batch 损失 852324.1 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 226 模式 batch 损失 852323.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 227 模式 batch 损失 852323.9 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 229 模式 batch 损失 852323.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 230 模式 batch 损失 852323.2 步长 0.0000 预测降 0.00 no_positive_direction 连败 1
+轮 234 模式 batch 损失 852316.6 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+轮 283 模式 batch 损失 852247.5 步长 0.0000 预测降 0.00 no_positive_direction 连败 0
+实际轮数 300，停止原因 round_limit，冻结轮数 20，注册状态数 30908
+最终损失 852250.740286，初始比 99.9636%，耗时 26.2 秒，平均每轮 87 毫秒
+  轮    0  损失  852561.2019  beta     2.4699  步长  0.00600  期望损失  852560.5870  ok
+  轮   30  损失  852552.1578  beta     0.0000  步长  0.00000  期望损失  852552.1578  no_positive_direction
+  轮   60  损失  852530.8803  beta     2.8989  步长  0.01094  期望损失  852530.6911  ok
+  轮   90  损失  852490.3537  beta     7.1188  步长  0.03543  期望损失  852490.2980  ok
+  轮  120  损失  852456.2469  beta     2.7188  步长  0.05470  期望损失  852456.0040  ok
+  轮  150  损失  852416.7431  beta    10.7115  步长  1.78109  期望损失  852416.2172  ok
+  轮  180  损失  852373.9773  beta     3.3033  步长  1.57636  期望损失  852371.4314  ok
+  轮  210  损失  852332.8156  beta     1.4374  步长  1.77580  期望损失  852328.7998  ok
+  轮  240  损失  852313.5643  beta     3.6581  步长  1.60500  期望损失  852311.9342  ok
+  轮  270  损失  852267.9729  beta     2.5561  步长  1.47413  期望损失  852264.7171  ok
+PHASE 进程总墙钟 35.3s
+PHASE 启动+收尾(总-evolve) 9.1s
+PHASE gpu.build 总                                      11.1s      300次      36.9ms/次  占evolve  42.3%
+PHASE gpu.前置同步等待(入相前排空设备，不计入各相)                         0.1s     3563次       0.0ms/次  占evolve   0.6%
+PHASE gpu.1 条件计数 cnt(G×Q)                               0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.2 残差/损失/组错位分(G×Q)                             0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.3 菜单答案差 delta                                 0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.1' 直算特征 feats(G×Q)                            0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.3' 直算答案差 delta                                4.7s      300次      15.5ms/次  占evolve  17.7%
+PHASE gpu.3'' 直算条目(含分段)                                 3.8s      600次       6.4ms/次  占evolve  14.7%
+PHASE gpu.0 整表项 state_terms(cnt/feats+残差)               1.2s      301次       4.0ms/次  占evolve   4.6%
+PHASE gpu.0b 残差/损失/组分 两次gemv(G×Q)                       0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.0c 半空间整数分                                     0.0s      301次       0.0ms/次  占evolve   0.0%
+PHASE gpu.0s 稀疏整表项(整数计数+聚合)                             1.2s      301次       4.0ms/次  占evolve   4.6%
+PHASE gpu.6 漂移项(稀疏合并+分段)                                1.7s      280次       6.0ms/次  占evolve   6.4%
+PHASE gpu.6' 键合并(排序+游程和)                                0.9s      280次       3.4ms/次  占evolve   3.6%
+PHASE gpu.4 半空间差                                        0.0s      300次       0.0ms/次  占evolve   0.0%
+PHASE gpu.5 括根(步长 beta)                                 1.4s      300次       4.6ms/次  占evolve   5.3%
+PHASE cpu.分组 group_state_ids                            0.3s      300次       0.9ms/次  占evolve   1.0%
+PHASE cpu.出菜单 generate_batch_menu                       6.4s      300次      21.2ms/次  占evolve  24.3%
+PHASE cpu.配对 build_paired_supports                      0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.救援菜单 build_rescue_menu                        0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.抽样落表 sample_batch_next                        0.2s      280次       0.8ms/次  占evolve   0.9%
+PHASE cpu.注册新状态 register_table                          0.0s        1次      38.4ms/次  占evolve   0.1%
+PHASE cpu.码本同步 codebook.sync                            0.1s      901次       0.1ms/次  占evolve   0.3%
+PHASE 启动.build_workload                                 7.4s        1次    7376.5ms/次  占evolve  28.2%
+PHASE gpu.结构尺 temperature_dev                           1.5s      300次       5.1ms/次  占evolve   5.8%
+PHASE gpu.结构尺 path_factors_dev                          0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE gpu.结构尺 CompositeShaper.temperature_dev           0.0s        0次       0.0ms/次  占evolve   0.0%
+PHASE cpu.计划 provider 总(分组+挑组+菜单)                       8.6s      300次      28.8ms/次  占evolve  33.0%
+PHASE evolve_batch 总                                   26.2s        1次   26197.6ms/次  占evolve 100.0%
+ROUND 轮长 ms 最小/p10/中位/p90/最大 55.2 / 67.2 / 68.5 / 71.4 / 5389.9  均值 87.4
+ROUND 相外 ms 最小/p10/中位/p90/最大 -36.2 / -20.5 / -20.0 / -19.7 / 4055.8  均值 -6.6  合计 -2.0s
+ROUND 相外最大的 8 轮 (轮号:相外ms): 1:4056 125:-19 235:-19 204:-19 105:-20 6:-20 41:-20 200:-20
+EV     -8769.4  cpu.注册新状态 register_table                     38.4 ms
+EV     -8730.8  启动.build_workload                          7376.5 ms
+EV         0.0  provider                                    687.2 ms
+EV       379.0  cpu.码本同步 codebook.sync                       75.7 ms
+EV       454.7  cpu.分组 group_state_ids                        1.2 ms
+EV       457.0  cpu.出菜单 generate_batch_menu                 230.1 ms
+EV       687.2  cpu.码本同步 codebook.sync                        0.0 ms
+EV       687.2  空档   4289.2 ms
+EV      4976.4  gpu.结构尺 temperature_dev                      79.2 ms
+EV      5055.6  空档     73.3 ms
+EV      5128.9  cpu.码本同步 codebook.sync                        0.0 ms
+EV      5128.9  gpu.build 总                                 259.3 ms
+EV      5388.4  cpu.抽样落表 sample_batch_next                    1.5 ms
+EV      5389.9  provider                                     32.5 ms
+EV      5389.9  cpu.码本同步 codebook.sync                        0.0 ms
+EV      5389.9  cpu.分组 group_state_ids                        0.8 ms
+EV      5395.5  cpu.出菜单 generate_batch_menu                  26.5 ms
+EV      5422.4  cpu.码本同步 codebook.sync                        0.0 ms
+EV      5422.4  空档      1.0 ms
+EV      5423.4  gpu.结构尺 temperature_dev                       4.8 ms
+EV      5428.3  cpu.码本同步 codebook.sync                        0.0 ms
+EV      5428.3  gpu.build 总                                  36.6 ms
+EV      5465.0  cpu.抽样落表 sample_batch_next                    0.8 ms

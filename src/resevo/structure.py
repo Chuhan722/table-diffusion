@@ -46,6 +46,35 @@ JI_GATE_DEFAULT = 0.5  # 己尺初诊门，聚簇缺口过半才收治（体检�
 _CHUNK = 16384
 _CHUNK_DEV = 65536  # GPU 版分块，显存 1GB 级
 
+# 体温计嵌入分数的融合核（第五十九步 甲 GPU 侧）：一组一维一线程，按字段序顺次累加，
+# 与原先逐字段 scores += w_t[codes[:, f]] 的加法序列逐位相同（纯加法无 FMA）。
+_EMBED_KERNEL_SRC = r"""
+extern "C" __global__ void embed_scores(const int* __restrict__ codes, const int F,
+                                        const long long G, const int D,
+                                        const double* __restrict__ wcat,
+                                        const long long* __restrict__ woff,
+                                        double* __restrict__ out) {
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= G * D) return;
+    const long long g = i / D;
+    const int e = (int)(i - g * D);
+    double acc = 0.0;
+    for (int f = 0; f < F; ++f)
+        acc += wcat[(woff[f] + codes[g * F + f]) * D + e];
+    out[i] = acc;
+}
+"""
+_embed_kernel_cache: dict = {}
+
+
+def _embed_kernel(cp):
+    dev = cp.cuda.device.get_device_id()
+    k = _embed_kernel_cache.get(dev)
+    if k is None:
+        k = cp.RawKernel(_EMBED_KERNEL_SRC, "embed_scores")
+        _embed_kernel_cache[dev] = k
+    return k
+
 
 def _field_weights(
     domain_sizes: Sequence[int], dim: int, seed: int
@@ -195,12 +224,25 @@ class StructShaper:
             s = float((c * c).sum()) / (n * n)
             return (s - self.ji_target) / self.ji_target
         if self._thermo_w_dev is None:
-            self._thermo_w_dev = [
-                cp.asarray(np.ascontiguousarray(w.T)) for w in self._thermo_w
-            ]
-        scores = cp.zeros((codes_g_dev.shape[0], EMBED_DIM))
-        for f, w_t in enumerate(self._thermo_w_dev):
-            scores += w_t[codes_g_dev[:, f]]
+            # 各字段权重表转置后按字段拼接成一张（Σ域宽 × 维数），配字段起点表
+            off = np.zeros(len(self._thermo_w) + 1, dtype=np.int64)
+            np.cumsum([w.shape[1] for w in self._thermo_w], out=off[1:])
+            self._thermo_w_dev = (
+                cp.asarray(np.concatenate([np.ascontiguousarray(w.T) for w in self._thermo_w])),
+                cp.asarray(off),
+            )
+        wcat, woff = self._thermo_w_dev
+        num_groups = int(codes_g_dev.shape[0])
+        num_fields = int(codes_g_dev.shape[1])
+        codes_c = cp.ascontiguousarray(codes_g_dev, dtype=cp.int32)
+        scores = cp.empty((num_groups, EMBED_DIM), dtype=cp.float64)
+        total = num_groups * EMBED_DIM
+        if total:
+            _embed_kernel(cp)(
+                ((total + 255) // 256,), (256,),
+                (codes_c, np.int32(num_fields), np.int64(num_groups), np.int32(EMBED_DIM),
+                 wcat, woff, scores),
+            )
         w = counts_dev.astype(cp.float64)
         n = w.sum()
         mean = (scores * w[:, None]).sum(axis=0) / n

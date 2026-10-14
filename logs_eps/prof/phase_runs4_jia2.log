@@ -1,0 +1,11 @@
+2026-10-14T14:12:56Z START adult0p1_late_a load=3.47 4.61 4.71
+2026-10-14T14:13:08Z END adult0p1_late_a rc=0
+2026-10-14T14:13:08Z START adult3_late_a load=3.78 4.64 4.71
+2026-10-14T14:13:41Z END adult3_late_a rc=0
+2026-10-14T14:13:41Z START adult0p1_late_b load=9.95 5.97 5.15
+2026-10-14T14:13:55Z END adult0p1_late_b rc=0
+2026-10-14T14:13:55Z START adult3_late_b load=8.90 5.94 5.16
+2026-10-14T14:14:27Z END adult3_late_b rc=0
+2026-10-14T14:14:27Z START adult3_early load=11.80 6.84 5.48
+2026-10-14T14:15:05Z END adult3_early rc=0
+2026-10-14T14:15:05Z ALL DONE PHASE4 jia2

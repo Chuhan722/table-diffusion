@@ -1,0 +1,27 @@
+2026-10-14TT14:10:14Z START eps=3 load=4.68 5.05 4.82
+BENCH cudaSetDeviceFlags(BlockingSync) -> 0
+BENCH 抓到第 20 轮 build：组数 30712，路径数 100880，题数 14123，稀疏 True
+BENCH build ×30：墙钟 中位 25.2 ms（p10 25.0 p90 25.6），CPU 线程 中位 16.1 ms，等 GPU ≈ 9.1 ms
+BENCH 每次 build cupy C 调用 73 次，其中同步类（asnumpy/nonzero/bincount/unique…） 9 次
+BENCH   _state_terms       每次 build 调 1.0 次  墙钟    3.9 ms  CPU    1.2 ms
+BENCH   _delta_direct      每次 build 调 1.0 次  墙钟    7.0 ms  CPU    6.6 ms
+BENCH   _direct_entries    每次 build 调 2.0 次  墙钟    3.7 ms  CPU    3.2 ms
+BENCH   _halfspace_delta   每次 build 调 1.0 次  墙钟    0.0 ms  CPU    0.0 ms
+BENCH   _calibrate_flat    每次 build 调 1.0 次  墙钟    5.7 ms  CPU    2.5 ms
+BENCH   _drift_sparse      每次 build 调 1.0 次  墙钟    4.8 ms  CPU    1.8 ms
+BENCH   _merge_keys        每次 build 调 1.0 次  墙钟    3.4 ms  CPU    0.8 ms
+2026-10-14T14:10:36Z END eps=3
+2026-10-14TT14:10:36Z START eps=0p1 load=6.17 5.33 4.92
+BENCH cudaSetDeviceFlags(BlockingSync) -> 0
+BENCH 抓到第 20 轮 build：组数 7505，路径数 26785，题数 14123，稀疏 True
+BENCH build ×30：墙钟 中位 12.6 ms（p10 12.0 p90 13.4），CPU 线程 中位 11.2 ms，等 GPU ≈ 1.4 ms
+BENCH 每次 build cupy C 调用 71 次，其中同步类（asnumpy/nonzero/bincount/unique…） 7 次
+BENCH   _state_terms       每次 build 调 1.0 次  墙钟    1.8 ms  CPU    1.4 ms
+BENCH   _delta_direct      每次 build 调 1.0 次  墙钟    3.7 ms  CPU    3.6 ms
+BENCH   _direct_entries    每次 build 调 2.0 次  墙钟    3.1 ms  CPU    3.0 ms
+BENCH   _halfspace_delta   每次 build 调 1.0 次  墙钟    0.0 ms  CPU    0.0 ms
+BENCH   _calibrate_flat    每次 build 调 1.0 次  墙钟    2.4 ms  CPU    2.1 ms
+BENCH   _drift_sparse      每次 build 调 1.0 次  墙钟    2.6 ms  CPU    1.9 ms
+BENCH   _merge_keys        每次 build 调 1.0 次  墙钟    1.7 ms  CPU    1.1 ms
+2026-10-14T14:10:50Z END eps=0p1
+2026-10-14T14:10:50Z ALL DONE

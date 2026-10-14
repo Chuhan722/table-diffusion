@@ -96,7 +96,228 @@ __global__ void run_sum(const double* v, const long long* starts,
 }
 """
 
+_PAIR_KERNEL_SRC = r"""
+extern "C" {
+
+// 直算条目的融合核（第五十九步 甲 GPU 侧）：一对（路径，边际）一线程，
+// 全整数运算，与原先几十步 cupy 逐步计算逐位相同。
+// 多字段路径的键：按槽序铺开各槽字段所含边际，键 = 段内行号 × 边际数 + 边际号。
+__global__ void multi_keys(const long long total, const long long lo,
+                           const long long* __restrict__ row_loc,
+                           const long long* __restrict__ indptr,
+                           const int* __restrict__ fsub,
+                           const long long* __restrict__ fm_cnt,
+                           const long long* __restrict__ fm_off,
+                           const long long* __restrict__ fm_list,
+                           const long long m, long long* __restrict__ key) {
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= total) return;
+    const long long r = row_loc[t];
+    const long long ra = r + lo;
+    const long long within = t - indptr[r];
+    const int f0 = fsub[ra * 3], f1 = fsub[ra * 3 + 1], f2 = fsub[ra * 3 + 2];
+    const long long c0 = f0 >= 0 ? fm_cnt[f0] : 0;
+    const long long c01 = c0 + (f1 >= 0 ? fm_cnt[f1] : 0);
+    const int slot = (within >= c0 ? 1 : 0) + (within >= c01 ? 1 : 0);
+    const long long start = slot == 0 ? 0 : (slot == 1 ? c0 : c01);
+    const int f = slot == 0 ? f0 : (slot == 1 ? f1 : f2);
+    key[t] = r * m + fm_list[fm_off[f] + within - start];
+}
+
+// 每对算旧格新格的题号，写成交错的 (qa, qb) / (da, -da) / 有效位 / 行号，
+// 新码不落地：字段命中改动槽（后槽优先，与逐槽赋值顺序一致）即取新值码。
+// use_midx 为 0 时（单字段路径）边际号由字段所含边际表按序取，否则读 m_idx。
+__global__ void direct_pairs(const long long total, const long long lo,
+                             const long long* __restrict__ row_loc,
+                             const long long* __restrict__ indptr,
+                             const long long* __restrict__ m_idx, const int use_midx,
+                             const int* __restrict__ cur, const int F,
+                             const int* __restrict__ fsub,
+                             const int* __restrict__ vsub,
+                             const long long* __restrict__ m_off,
+                             const long long* __restrict__ m_fields,
+                             const long long* __restrict__ m_strides, const int kmax,
+                             const long long* __restrict__ fm_off,
+                             const long long* __restrict__ fm_list,
+                             const long long* __restrict__ cellq,
+                             long long* __restrict__ q2, signed char* __restrict__ d2,
+                             bool* __restrict__ v2, long long* __restrict__ r2) {
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= total) return;
+    const long long r = row_loc[t];
+    const long long ra = r + lo;
+    long long mi;
+    if (use_midx) {
+        mi = m_idx[t];
+    } else {
+        mi = fm_list[fm_off[fsub[ra * 3]] + (t - indptr[r])];
+    }
+    long long fo = m_off[mi], fn = fo;
+    for (int k = 0; k < kmax; ++k) {
+        const long long f = m_fields[mi * kmax + k];
+        const long long s = m_strides[mi * kmax + k];
+        const long long c = cur[ra * F + f];
+        long long cn = c;
+        for (int sl = 0; sl < 3; ++sl)
+            if (fsub[ra * 3 + sl] == f) cn = vsub[ra * 3 + sl];
+        fo += c * s;
+        fn += cn * s;
+    }
+    const long long qo = cellq[fo], qn = cellq[fn];
+    const bool change = fo != fn;
+    const bool swap = qo > qn;
+    const long long qa = swap ? qn : qo, qb = swap ? qo : qn;
+    const signed char da = swap ? 1 : -1;
+    q2[2 * t] = qa;
+    q2[2 * t + 1] = qb;
+    d2[2 * t] = da;
+    d2[2 * t + 1] = -da;
+    v2[2 * t] = change && qa >= 0;
+    v2[2 * t + 1] = change && qb >= 0;
+    r2[2 * t] = r;
+    r2[2 * t + 1] = r;
+}
+
+}
+"""
+
 _seg_module_cache = {}
+_pair_module_cache = {}
+
+# 括根与增益的融合核（第五十九步 甲 GPU 侧）：浮点运算一律显式 __dadd_rn/__dmul_rn/__ddiv_rn，
+# 不受编译器 FMA 合并影响；段归约照 seg_sum 的线程跨步串行 + 定序树（128 线程），
+# 每个浮点结果与原先"逐步 cupy 运算 + seg_sum"逐位相同。
+_TILT_KERNEL_SRC = r"""
+extern "C" {
+
+// 括根评估 (1)：zw = ref · exp(beta · centered)，段和即归一化常数
+__global__ void tilt_norm(const double* __restrict__ ref, const double* __restrict__ centered,
+                          const double beta, const long long* __restrict__ offsets,
+                          double* __restrict__ zw, double* __restrict__ norm,
+                          const long long nseg) {
+    const long long s = blockIdx.x;
+    if (s >= nseg) return;
+    const long long lo = offsets[s], hi = offsets[s + 1];
+    __shared__ double buf[128];
+    double acc = 0.0;
+    for (long long k = lo + threadIdx.x; k < hi; k += blockDim.x) {
+        const double z = __dmul_rn(ref[k], exp(__dmul_rn(beta, centered[k])));
+        zw[k] = z;
+        acc = __dadd_rn(acc, z);
+    }
+    buf[threadIdx.x] = acc;
+    __syncthreads();
+    for (int step = 64; step > 0; step >>= 1) {
+        if (threadIdx.x < step) buf[threadIdx.x] = __dadd_rn(buf[threadIdx.x], buf[threadIdx.x + step]);
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) norm[s] = buf[0];
+}
+
+// 括根评估 (2)：P = zw / norm[段]，段和 Σ P·gains
+__global__ void tilt_gain(const double* __restrict__ zw, const double* __restrict__ norm,
+                          const double* __restrict__ gains, const long long* __restrict__ offsets,
+                          double* __restrict__ P, double* __restrict__ per_group,
+                          const long long nseg) {
+    const long long s = blockIdx.x;
+    if (s >= nseg) return;
+    const long long lo = offsets[s], hi = offsets[s + 1];
+    const double nrm = norm[s];
+    __shared__ double buf[128];
+    double acc = 0.0;
+    for (long long k = lo + threadIdx.x; k < hi; k += blockDim.x) {
+        const double p = __ddiv_rn(zw[k], nrm);
+        P[k] = p;
+        acc = __dadd_rn(acc, __dmul_rn(p, gains[k]));
+    }
+    buf[threadIdx.x] = acc;
+    __syncthreads();
+    for (int step = 64; step > 0; step >>= 1) {
+        if (threadIdx.x < step) buf[threadIdx.x] = __dadd_rn(buf[threadIdx.x], buf[threadIdx.x + step]);
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) per_group[s] = buf[0];
+}
+
+// 漂移合并的键与权：一条目一线程，键 = 题号 × 组数 + 组号，权 = d · rates[path[row]]，
+// 写入拼接缓冲区的 [base, base+n)
+__global__ void drift_kv(const long long n, const long long base,
+                         const long long* __restrict__ indices, const double* __restrict__ data,
+                         const long long* __restrict__ row_of, const long long* __restrict__ grp_of,
+                         const long long* __restrict__ path_idx, const double* __restrict__ rates,
+                         const long long num_groups,
+                         long long* __restrict__ keys, double* __restrict__ vals) {
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const long long r = row_of[i];
+    keys[base + i] = indices[i] * num_groups + grp_of[r];
+    vals[base + i] = __dmul_rn(data[i], rates[path_idx[r]]);
+}
+
+// 路径增益：一路径一块，lin = Σ d·we[q]，quad = Σ (d·d)·w[q]，gains[path] = lin − quad/2
+__global__ void part_gains(const double* __restrict__ data, const long long* __restrict__ indices,
+                           const double* __restrict__ we, const double* __restrict__ w,
+                           const long long* __restrict__ indptr,
+                           const long long* __restrict__ path_idx,
+                           double* __restrict__ gains, const long long nseg) {
+    const long long s = blockIdx.x;
+    if (s >= nseg) return;
+    const long long lo = indptr[s], hi = indptr[s + 1];
+    __shared__ double buf1[128];
+    __shared__ double buf2[128];
+    double a1 = 0.0, a2 = 0.0;
+    for (long long k = lo + threadIdx.x; k < hi; k += blockDim.x) {
+        const double d = data[k];
+        const long long q = indices[k];
+        a1 = __dadd_rn(a1, __dmul_rn(d, we[q]));
+        a2 = __dadd_rn(a2, __dmul_rn(__dmul_rn(d, d), w[q]));
+    }
+    buf1[threadIdx.x] = a1;
+    buf2[threadIdx.x] = a2;
+    __syncthreads();
+    for (int step = 64; step > 0; step >>= 1) {
+        if (threadIdx.x < step) {
+            buf1[threadIdx.x] = __dadd_rn(buf1[threadIdx.x], buf1[threadIdx.x + step]);
+            buf2[threadIdx.x] = __dadd_rn(buf2[threadIdx.x], buf2[threadIdx.x + step]);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) gains[path_idx[s]] = __dsub_rn(buf1[0], __ddiv_rn(buf2[0], 2.0));
+}
+
+}
+"""
+_tilt_module_cache = {}
+
+
+def _tilt_kernels(cp):
+    """按当前设备缓存编译好的括根/增益融合核。"""
+    dev = cp.cuda.device.get_device_id()
+    mod = _tilt_module_cache.get(dev)
+    if mod is None:
+        raw = cp.RawModule(code=_TILT_KERNEL_SRC)
+        mod = {
+            "norm": raw.get_function("tilt_norm"),
+            "gain": raw.get_function("tilt_gain"),
+            "part_gains": raw.get_function("part_gains"),
+            "drift_kv": raw.get_function("drift_kv"),
+        }
+        _tilt_module_cache[dev] = mod
+    return mod
+
+
+def _pair_kernels(cp):
+    """按当前设备缓存编译好的直算条目融合核。"""
+    dev = cp.cuda.device.get_device_id()
+    mod = _pair_module_cache.get(dev)
+    if mod is None:
+        raw = cp.RawModule(code=_PAIR_KERNEL_SRC)
+        mod = {
+            "keys": raw.get_function("multi_keys"),
+            "pairs": raw.get_function("direct_pairs"),
+        }
+        _pair_module_cache[dev] = mod
+    return mod
 
 
 def _seg_kernels(cp):
@@ -186,29 +407,35 @@ def _seg_ids(cp, offsets, total: int):
     )
 
 
-def _chunk_bounds(cp, sizes, budget: int):
+def _chunk_bounds(cp, sizes, budget: int, with_cums: bool = False):
     """按条目预算把路径序列切成连续块，返回主机端 (lo, hi) 列表。
 
     预算不正或总量不超预算时整段一块，切点由条目累计和二分得出，
     每块至少一条路径，单路径超预算时独占一块不再细分。
+    sizes 可为主机数组或设备数组（设备数组回传一次）；
+    with_cums 为真时连同主机端累计和一起返回，供调用方免同步取块内总量。
     """
     n = int(sizes.size)
     if n == 0:
-        return []
-    if budget <= 0:
+        return ([], None) if with_cums else []
+    if budget <= 0 and not with_cums:
         return [(0, n)]
-    cums = cp.asnumpy(cp.cumsum(sizes.astype(cp.int64)))
-    if int(cums[-1]) <= budget:
-        return [(0, n)]
-    out = []
-    lo = 0
-    while lo < n:
-        base = int(cums[lo - 1]) if lo else 0
-        hi = int(np.searchsorted(cums, base + budget, side="right"))
-        hi = min(max(hi, lo + 1), n)
-        out.append((lo, hi))
-        lo = hi
-    return out
+    if isinstance(sizes, np.ndarray):
+        cums = np.cumsum(sizes.astype(np.int64, copy=False))
+    else:
+        cums = cp.asnumpy(cp.cumsum(sizes.astype(cp.int64)))
+    if budget <= 0 or int(cums[-1]) <= budget:
+        out = [(0, n)]
+    else:
+        out = []
+        lo = 0
+        while lo < n:
+            base = int(cums[lo - 1]) if lo else 0
+            hi = int(np.searchsorted(cums, base + budget, side="right"))
+            hi = min(max(hi, lo + 1), n)
+            out.append((lo, hi))
+            lo = hi
+    return (out, cums) if with_cums else out
 
 
 def _seg_max(cp, values, offsets):
@@ -371,6 +598,7 @@ class GpuBatchContext:
             if a.size:
                 allow_cat[off_np[j]:off_np[j + 1], : a.shape[1]] = a
         self.dep_sizes = cp.asarray(sizes_np)
+        self.dep_sizes_np = sizes_np  # 主机端留一份，直算分块在主机算免同步
         self.dep_off = cp.asarray(off_np)
         self.dep_all = cp.asarray(dep_cat)
         self.allow_flat = cp.asarray(allow_cat)
@@ -387,7 +615,8 @@ class GpuBatchContext:
             self.cellq = cp.asarray(lay.cellq_all)
             self.fm_list = cp.asarray(lay.fm_list)
             self.fm_off = cp.asarray(lay.fm_off)
-            self.fm_cnt = cp.asarray(np.diff(lay.fm_off))
+            self.fm_cnt_np = np.diff(lay.fm_off)
+            self.fm_cnt = cp.asarray(self.fm_cnt_np)
         can_sparse = self.direct and self.num_hs == 0
         if sparse is True and not can_sparse:
             raise ValueError("稀疏通路要求直算布局且无半空间题")
@@ -405,15 +634,6 @@ class GpuBatchContext:
                 if tab.size and bool(tab.any()):
                     score += tab[:, codes_g[:, j]].T
         return score
-
-    def _flat_cells(self, codes_rows, row_idx, m_idx):
-        """给定行码矩阵、行号与边际号，算每对的格在 cellq_all 里的扁平位置。"""
-        cp = self.cp
-        flat = self.m_off[m_idx]
-        for k in range(self.layout.kmax):
-            f = self.m_fields[m_idx, k]
-            flat = flat + codes_rows[row_idx, f].astype(cp.int64) * self.m_strides[m_idx, k]
-        return flat
 
     def _cells_direct(self, codes_g):
         """由组码查每组每边际的格号（组数×边际数），缺格为 -1；散射特征与稀疏整表项共用。"""
@@ -469,83 +689,85 @@ class GpuBatchContext:
         scores = cp.where(valid, wr[cp.maximum(q, 0)], 0.0).sum(axis=1)
         return residual, loss, scores, self._hs_scores(codes_g), None
 
-    def _direct_entries(self, sub, menu_gpu, codes_g, multi: bool):
+    def _direct_entries(self, sub, menu_gpu, codes_g, multi: bool, pairs_total=None):
         """给定路径子集，直算每条路径的答案差稀疏块，条目按（路径，题号）升序。
 
         单字段路径只枚举该字段所含的边际，多字段路径枚举各槽字段所含边际的并集
         （按（路径，边际）排序去重），不含动过字段的边际旧格新格必相同、本就不出条目，
         旧格与新格相同的边际不出条目，缺格一侧也不出条目，
         内部再按（路径，边际）对数预算分段，段结果拼接不改条目序。
+
+        第五十九步 甲 GPU 侧：每对的格号/题号/有效位由一个融合核算出（全整数，
+        与原先逐步 cupy 计算逐位相同），分块总量取主机端累计和（调用方给出
+        pairs_total 且不超预算时整段一块、不回传），每段只剩布尔压缩一次同步；
+        每行条目数用整数散射累加（精确）。
         """
         cp = self.cp
         group, fields, values = menu_gpu["group"], menu_gpu["fields"], menu_gpu["values"]
         n = int(sub.size)
         m = self.layout.num_marginals
+        kmax = self.layout.kmax
         grp = group[sub]
-        cur = codes_g[grp]
-        new = cur.copy()
-        for slot in range(3):
-            f = fields[sub, slot]
-            idx = cp.flatnonzero(f >= 0)
-            if idx.size:
-                new[idx, f[idx].astype(cp.int64)] = values[sub, slot][idx]
+        cur = cp.ascontiguousarray(codes_g[grp], dtype=cp.int32)
+        num_fields = int(cur.shape[1])
+        fsub = cp.ascontiguousarray(fields[sub], dtype=cp.int32)
+        vsub = cp.ascontiguousarray(values[sub], dtype=cp.int32)
         if multi:
-            f_slots = [fields[sub, s].astype(cp.int64) for s in range(3)]
-            c_slots = [
-                cp.where(f >= 0, self.fm_cnt[cp.maximum(f, 0)], 0) for f in f_slots
-            ]
-            pairs_per = c_slots[0] + c_slots[1] + c_slots[2]
+            c_all = cp.where(fsub >= 0, self.fm_cnt[cp.maximum(fsub, 0)], 0)
+            pairs_per = c_all.sum(axis=1)
         else:
-            j_sub = fields[sub, 0].astype(cp.int64)
-            pairs_per = self.fm_cnt[j_sub]
+            pairs_per = self.fm_cnt[fsub[:, 0]]
+        if pairs_total is not None and int(pairs_total) <= _DIRECT_PAIR_BUDGET:
+            bounds, totals = [(0, n)], [int(pairs_total)]
+        else:
+            bounds, cums = _chunk_bounds(cp, pairs_per, _DIRECT_PAIR_BUDGET, with_cums=True)
+            totals = [int(cums[hi - 1]) - (int(cums[lo - 1]) if lo else 0) for lo, hi in bounds]
+        kern = _pair_kernels(cp)
+        threads = 256
         datas, inds, nnzs = [], [], []
-        for lo, hi in _chunk_bounds(cp, pairs_per, _DIRECT_PAIR_BUDGET):
-            cnt_c = pairs_per[lo:hi]
+        total_entries = 0
+        for (lo, hi), total in zip(bounds, totals):
             indptr = cp.zeros(hi - lo + 1, dtype=cp.int64)
-            cp.cumsum(cnt_c, out=indptr[1:])
-            total = int(indptr[-1])
+            cp.cumsum(pairs_per[lo:hi], out=indptr[1:])
             row_loc = _seg_ids(cp, indptr, total)
-            within = cp.arange(total, dtype=cp.int64) - indptr[row_loc]
             if multi:
-                c0 = c_slots[0][lo:hi][row_loc]
-                c01 = c0 + c_slots[1][lo:hi][row_loc]
-                slot = (within >= c0).astype(cp.int64) + (within >= c01).astype(cp.int64)
-                start = cp.where(slot == 0, 0, cp.where(slot == 1, c0, c01))
-                f_sel = cp.where(
-                    slot == 0, f_slots[0][lo:hi][row_loc],
-                    cp.where(slot == 1, f_slots[1][lo:hi][row_loc], f_slots[2][lo:hi][row_loc]),
-                )
-                m_idx = self.fm_list[self.fm_off[f_sel] + within - start]
-                key = cp.unique(row_loc * m + m_idx)
+                key = cp.empty(total, dtype=cp.int64)
+                if total:
+                    kern["keys"](
+                        ((total + threads - 1) // threads,), (threads,),
+                        (np.int64(total), np.int64(lo), row_loc, indptr, fsub,
+                         self.fm_cnt, self.fm_off, self.fm_list, np.int64(m), key),
+                    )
+                key = cp.unique(key)
+                total = int(key.size)
                 row_loc = key // m
                 m_idx = key - row_loc * m
             else:
-                m_idx = self.fm_list[self.fm_off[j_sub[lo:hi][row_loc]] + within]
-            row_abs = row_loc + lo
-            fo = self._flat_cells(cur, row_abs, m_idx)
-            fn = self._flat_cells(new, row_abs, m_idx)
-            q_old = self.cellq[fo]
-            q_new = self.cellq[fn]
-            change = fo != fn
-            swap = q_old > q_new
-            qa = cp.where(swap, q_new, q_old)
-            qb = cp.where(swap, q_old, q_new)
-            da = cp.where(swap, 1, -1).astype(cp.int8)
-            q2 = cp.stack([qa, qb], axis=1).ravel()
-            d2 = cp.stack([da, -da], axis=1).ravel()
-            v2 = cp.stack([change & (qa >= 0), change & (qb >= 0)], axis=1).ravel()
-            r2 = cp.repeat(row_loc, 2)
+                m_idx = indptr  # 占位，核内不读
+            q2 = cp.empty(2 * total, dtype=cp.int64)
+            d2 = cp.empty(2 * total, dtype=cp.int8)
+            v2 = cp.empty(2 * total, dtype=cp.bool_)
+            r2 = cp.empty(2 * total, dtype=cp.int64)
+            if total:
+                kern["pairs"](
+                    ((total + threads - 1) // threads,), (threads,),
+                    (np.int64(total), np.int64(lo), row_loc, indptr, m_idx,
+                     np.int32(1 if multi else 0), cur, np.int32(num_fields), fsub, vsub,
+                     self.m_off, self.m_fields, self.m_strides, np.int32(kmax),
+                     self.fm_off, self.fm_list, self.cellq, q2, d2, v2, r2),
+                )
             keep = cp.flatnonzero(v2)
             q_k, d_k, r_k = q2[keep], d2[keep], r2[keep]
             if not self.layout.ranges_sorted:
                 order = cp.argsort(r_k * self.num_queries + q_k)
                 q_k, d_k, r_k = q_k[order], d_k[order], r_k[order]
-            nnzs.append(
-                cp.bincount(r_k, minlength=hi - lo) if r_k.size
-                else cp.zeros(hi - lo, dtype=cp.int64)
-            )
+            nnz = cp.zeros(hi - lo, dtype=cp.uint64)  # add.at 不收 int64，无符号累加后按位重解释
+            if r_k.size:
+                cp.add.at(nnz, r_k, 1)
+            nnzs.append(nnz.view(cp.int64))
             datas.append(d_k.astype(cp.float64))
             inds.append(q_k)
+            total_entries += int(keep.size)
         if datas:
             data = cp.concatenate(datas)
             indices = cp.concatenate(inds)
@@ -560,7 +782,7 @@ class GpuBatchContext:
             "data": data,
             "indices": indices,
             "indptr": indptr,
-            "row_of": _seg_ids(cp, indptr, int(indptr[-1])),
+            "row_of": _seg_ids(cp, indptr, total_entries),
             "path_idx": sub.astype(cp.int64),
             "grp_of": grp,
         }
@@ -584,32 +806,55 @@ class GpuBatchContext:
             })
         return out
 
-    def _delta_direct(self, menu_gpu, codes_g, entry_budget: int = 0):
+    def _delta_direct(self, menu_gpu, codes_g, entry_budget: int = 0, fields_np=None):
         """答案差稀疏块的直算版，块划分照通用通路的条目预算切，产出逐位同序同值。
 
         单字段路径与多字段路径各整段直算一次再按块边界切片，
         省掉逐块的核发射与同步，每块内容与逐块直算相同。
+        路径分类与分块在主机端按菜单的 fields 做（fields_np 不给则回传一次），
+        不再在卡上做布尔压缩同步。
         """
         cp = self.cp
-        fields = menu_gpu["fields"]
+        if fields_np is None:
+            fields_np = cp.asnumpy(menu_gpu["fields"])
+        fields_np = np.asarray(fields_np)
+        # 菜单经规范化后槽位按字段升序左齐、无效槽在后：槽 1 空即单字段路径。
+        # 分块只在条目总量超预算时才需逐路径尺寸（adult 一段装下），总量用直方图点积算。
+        f0, f1, f2 = fields_np[:, 0], fields_np[:, 1], fields_np[:, 2]
+        dep_sizes = self.dep_sizes_np
+        nf = dep_sizes.size
         parts = []
-        nslots = (fields >= 0).sum(axis=1)
-        singles = cp.flatnonzero(nslots == 1)
+        singles = np.flatnonzero(f1 < 0)
         if singles.size:
-            j_all = fields[singles, 0].astype(cp.int64)
-            bounds = _chunk_bounds(cp, self.dep_sizes[j_all], entry_budget)
-            ent = self._direct_entries(singles, menu_gpu, codes_g, multi=False)
+            j0 = f0[singles]
+            hist = np.bincount(j0, minlength=nf)
+            total_s = int(hist @ dep_sizes)
+            if entry_budget > 0 and total_s > entry_budget:
+                bounds = _chunk_bounds(cp, dep_sizes[j0], entry_budget)
+            else:
+                bounds = [(0, int(singles.size))]
+            ent = self._direct_entries(
+                cp.asarray(singles), menu_gpu, codes_g, multi=False,
+                pairs_total=int(hist @ self.fm_cnt_np),
+            )
             parts.extend(self._slice_parts(cp, ent, bounds))
-        multis = cp.flatnonzero(nslots >= 2)
+        multis = np.flatnonzero(f1 >= 0)
         if multis.size:
-            sizes_m = cp.zeros(multis.size, dtype=cp.int64)
-            for slot in range(3):
-                jm = fields[multis, slot]
-                sizes_m += cp.where(
-                    jm >= 0, self.dep_sizes[cp.maximum(jm, 0).astype(cp.int64)], 0
-                )
-            bounds = _chunk_bounds(cp, sizes_m, entry_budget)
-            ent = self._direct_entries(multis, menu_gpu, codes_g, multi=True)
+            j0, j1, j2 = f0[multis], f1[multis], f2[multis]
+            j2v = j2[j2 >= 0]
+            hist = np.bincount(j0, minlength=nf) + np.bincount(j1, minlength=nf)
+            hist += np.bincount(j2v, minlength=nf)
+            total_m = int(hist @ dep_sizes)
+            if entry_budget > 0 and total_m > entry_budget:
+                sizes_m = dep_sizes[j0] + dep_sizes[j1]
+                sizes_m += np.where(j2 >= 0, dep_sizes[np.maximum(j2, 0)], 0)
+                bounds = _chunk_bounds(cp, sizes_m, entry_budget)
+            else:
+                bounds = [(0, int(multis.size))]
+            ent = self._direct_entries(
+                cp.asarray(multis), menu_gpu, codes_g, multi=True,
+                pairs_total=int(hist @ self.fm_cnt_np),
+            )
             parts.extend(self._slice_parts(cp, ent, bounds))
         return parts
 
@@ -852,12 +1097,24 @@ class GpuBatchContext:
             return None, max_gain_sum, requirement
 
         centered = gains_flat - gmax[seg_ids]
+        kern = _tilt_kernels(cp)
+        total = int(gains_flat.size)
+        nseg = int(num_groups)
+        off64 = offsets.astype(cp.int64, copy=False)
+        gains_c = cp.ascontiguousarray(gains_flat, dtype=cp.float64)
+        ref_c = cp.ascontiguousarray(ref_flat, dtype=cp.float64)
+
+        # 评估缓冲区只分配一次：每次评估整体改写，返回的 P 总是最近一次评估所写
+        zw = cp.empty(total, dtype=cp.float64)
+        norm = cp.zeros(nseg, dtype=cp.float64)
+        P = cp.empty(total, dtype=cp.float64)
+        per_group = cp.zeros(nseg, dtype=cp.float64)
 
         def evaluate(beta: float):
-            zw = ref_flat * cp.exp(beta * centered)
-            norm = _seg_sum(cp, zw, offsets)
-            P = zw / norm[seg_ids]
-            per_group = _seg_sum(cp, P * gains_flat, offsets)
+            # 两个融合核（见 _TILT_KERNEL_SRC），与 ref·exp(beta·centered) / seg_sum / 归一 / seg_sum 逐位相同
+            if nseg and total:
+                kern["norm"]((nseg,), (128,), (ref_c, centered, np.float64(beta), off64, zw, norm, np.int64(nseg)))
+                kern["gain"]((nseg,), (128,), (zw, norm, gains_c, off64, P, per_group, np.int64(nseg)))
             return P, float(counts @ per_group)
 
         ps, D = evaluate(0.0)
@@ -1090,13 +1347,28 @@ class GpuBatchContext:
         if cur:
             batches.append(cur)
         uks, sums_all = [], []
+        kv_kern = _tilt_kernels(cp)["drift_kv"]
+        rates_c = cp.ascontiguousarray(rates_paths, dtype=cp.float64)
         for batch in batches:
-            keys = [p["indices"] * num_groups + p["grp_of"][p["row_of"]] for p in batch]
-            vals = [p["data"] * rates_paths[p["path_idx"]][p["row_of"]] for p in batch]
-            uk, sums = self._merge_keys(
-                keys[0] if len(keys) == 1 else cp.concatenate(keys),
-                vals[0] if len(vals) == 1 else cp.concatenate(vals),
-            )
+            # 融合核直接把各块的键与权写进拼接缓冲区，与逐块算完再 concatenate 逐位相同
+            n_all = sum(int(p["indices"].size) for p in batch)
+            keys = cp.empty(n_all, dtype=cp.int64)
+            vals = cp.empty(n_all, dtype=cp.float64)
+            base = 0
+            for p in batch:
+                n = int(p["indices"].size)
+                kv_kern(
+                    ((n + 255) // 256,), (256,),
+                    (np.int64(n), np.int64(base),
+                     cp.ascontiguousarray(p["indices"], dtype=cp.int64),
+                     cp.ascontiguousarray(p["data"], dtype=cp.float64),
+                     cp.ascontiguousarray(p["row_of"], dtype=cp.int64),
+                     cp.ascontiguousarray(p["grp_of"], dtype=cp.int64),
+                     cp.ascontiguousarray(p["path_idx"], dtype=cp.int64),
+                     rates_c, np.int64(num_groups), keys, vals),
+                )
+                base += n
+            uk, sums = self._merge_keys(keys, vals)
             uks.append(uk)
             sums_all.append(sums)
         if not uks:
@@ -1156,23 +1428,31 @@ class GpuBatchContext:
         # 残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同；
         # 单元格直算通路改由格号散射特征，答案差直接取旧格新格两项
         residual, old_loss, scores_gpu, score_g, cnt = self._state_terms(codes_g, counts)
-        group_scores = cp.asnumpy(scores_gpu)
+        # 组分数回传推迟到出口处，免得在此处同步截断后续核的提交
 
         if self.direct:
-            parts = self._delta_direct(menu_gpu, codes_g, entry_budget)
+            parts = self._delta_direct(menu_gpu, codes_g, entry_budget, fields_np=menu.fields)
         else:
             parts = self._delta_parts(menu_gpu, cnt, codes_g, entry_budget)
         delta_hs = self._halfspace_delta(menu_gpu, score_g, codes_g)
-        we = self.weights * residual
+        we = cp.ascontiguousarray(self.weights * residual, dtype=cp.float64)
         gains_paths = cp.zeros(menu.num_paths, dtype=cp.float64)
+        part_gain_kern = _tilt_kernels(cp)["part_gains"]
         for part in parts:
-            lin = _seg_sum(cp, part["data"] * we[part["indices"]], part["indptr"])
-            quad = _seg_sum(
-                cp,
-                part["data"] * part["data"] * self.weights[part["indices"]],
-                part["indptr"],
+            # 一路径一块的融合核：lin = Σ d·we[q]，quad = Σ (d·d)·w[q]，写入 lin − quad/2，
+            # 与原先两次 seg_sum 加散射赋值逐位相同
+            nseg_part = int(part["path_idx"].size)
+            if nseg_part == 0:
+                continue
+            part_gain_kern(
+                (nseg_part,), (128,),
+                (cp.ascontiguousarray(part["data"], dtype=cp.float64),
+                 cp.ascontiguousarray(part["indices"], dtype=cp.int64),
+                 we, self.weights,
+                 cp.ascontiguousarray(part["indptr"], dtype=cp.int64),
+                 cp.ascontiguousarray(part["path_idx"], dtype=cp.int64),
+                 gains_paths, np.int64(nseg_part)),
             )
-            gains_paths[part["path_idx"]] = lin - quad / 2
         if delta_hs is not None:
             w_hs = self.weights[self.hs_cols]
             gains_paths += delta_hs @ we[self.hs_cols]
@@ -1237,7 +1517,7 @@ class GpuBatchContext:
                 menu, grouped, offsets_np, frozen, old_loss,
                 0.0, 0.0, 0.0, 0.0, old_loss, old_loss, 0.0,
                 max_gain_sum, requirement, "no_positive_direction",
-                group_scores,
+                cp.asnumpy(scores_gpu),
             )
         beta, ps, direction_gain = tilt
 
@@ -1293,7 +1573,7 @@ class GpuBatchContext:
         leave_np = cp.asnumpy(leave)
         rates_np = cp.asnumpy(rates_flat)
         h_star = analytic_step(float(leave_np.max()), direction_gain, interaction)
-        unit_rows = float(np.dot(cp.asnumpy(counts), leave_np))
+        unit_rows = float(np.dot(grouped.counts.astype(np.float64), leave_np))
         if max_expected_rows is not None and unit_rows > 0:
             step = damping * min(h_star, max_expected_rows / unit_rows)
         else:
@@ -1323,6 +1603,6 @@ class GpuBatchContext:
             beta, direction_gain, interaction, step,
             expected_loss, upper, step * unit_rows,
             max_gain_sum, requirement, "ok",
-            group_scores,
+            cp.asnumpy(scores_gpu),
             probe,
         )
