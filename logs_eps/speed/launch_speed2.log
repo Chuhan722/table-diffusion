@@ -1,0 +1,13 @@
+2026-10-14T14:19:15Z START adult_eps3_ours2way_jia_seed1 load=11.89 8.03 6.28
+2026-10-14T14:36:03Z END adult_eps3_ours2way_jia_seed1 rc=0
+2026-10-14T14:37:11Z START adult_eps3_ours2way_jia_seed2 load=7.99 18.55 17.54
+2026-10-14T14:52:37Z END adult_eps3_ours2way_jia_seed2 rc=0
+2026-10-14T14:53:44Z START adult_eps3_ours2way_jia_seed3 load=10.90 21.60 21.82
+2026-10-14T15:07:49Z END adult_eps3_ours2way_jia_seed3 rc=0
+2026-10-14T15:08:57Z START adult_eps0p1_ours2way_jia_seed1 load=39.16 47.88 39.30
+2026-10-14T15:10:51Z END adult_eps0p1_ours2way_jia_seed1 rc=0
+2026-10-14T15:11:59Z START adult_eps0p1_ours2way_jia_seed2 load=37.41 44.65 39.66
+2026-10-14T15:14:09Z END adult_eps0p1_ours2way_jia_seed2 rc=0
+2026-10-14T15:15:15Z START adult_eps0p1_ours2way_jia_seed3 load=34.23 41.38 39.44
+2026-10-14T15:17:48Z END adult_eps0p1_ours2way_jia_seed3 rc=0
+2026-10-14T15:17:48Z ALL DONE SPEED2
