@@ -1,0 +1,13 @@
+2026-10-14T01:22:16Z START adult_eps0p3_hybridfiberp1u_seed1 gpu1 lane=24-47
+2026-10-14T01:41:38Z END adult_eps0p3_hybridfiberp1u_seed1 rc=0
+2026-10-14T01:42:38Z START adult_eps0p3_hybridfiberp1u_seed2 gpu1 lane=24-47
+2026-10-14T02:02:46Z END adult_eps0p3_hybridfiberp1u_seed2 rc=0
+2026-10-14T02:03:46Z START adult_eps0p3_hybridfiberp1u_seed3 gpu1 lane=24-47
+2026-10-14T02:25:34Z END adult_eps0p3_hybridfiberp1u_seed3 rc=0
+2026-10-14T02:26:34Z START adult_eps0p1_hybridfiberp1u_seed1 gpu1 lane=24-47
+2026-10-14T02:35:48Z END adult_eps0p1_hybridfiberp1u_seed1 rc=0
+2026-10-14T02:36:48Z START adult_eps0p1_hybridfiberp1u_seed2 gpu1 lane=24-47
+2026-10-14T02:46:18Z END adult_eps0p1_hybridfiberp1u_seed2 rc=0
+2026-10-14T02:47:18Z START adult_eps0p1_hybridfiberp1u_seed3 gpu1 lane=24-47
+2026-10-14T02:56:41Z END adult_eps0p1_hybridfiberp1u_seed3 rc=0
+2026-10-14T02:56:41Z gpu1 队列完
