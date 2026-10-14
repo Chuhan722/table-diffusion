@@ -1,4 +1,4 @@
-"""给 AIM 录像考卷补"没测的对"的推断目标（第二阶段 B：没测对的填法）。
+"""给 AIM 录像考卷补"没测的对"的目标（第二阶段 B：没测对的填法；--label 选目标来源，fiber_avg 为我们自己的纤维平均）。
 
 输入：录像考卷目录 data/<src>/（measured_*query.json）+ PGM 同一录像拟合后的精确边际 npz
 （scripts/pgm_exact_marginals.py 产物，键 measured_pairs、m2_i_j、columns、doms）。
@@ -27,7 +27,10 @@ def main() -> None:
     ap.add_argument("--npz", required=True, help="PGM 精确边际 npz")
     ap.add_argument("--name", required=True, help="输出数据目录名")
     ap.add_argument("--sigma-mult", type=float, default=1.0, help="伪测量 sigma = 中位数 × 此倍数")
+    ap.add_argument("--label", default="pgm_infer", choices=["pgm_infer", "fiber_avg"],
+                    help="目标来源标签：pgm_infer = PGM 精确边际（诊断用）；fiber_avg = 我们自己的纤维平均（scripts/fiber_targets.py）")
     args = ap.parse_args()
+    src_desc = {"pgm_infer": "PGM 推断二阶边际（精确，不出表）", "fiber_avg": "我们自己的纤维平均二阶边际（收敛表洗牌平均，不借任何对手产物）"}[args.label]
 
     src = ROOT / "data" / args.src
     exams = sorted(src.glob("measured_*query.json"))
@@ -59,7 +62,7 @@ def main() -> None:
                         {"attribute": columns[i], "operator": "==", "value": str(a)},
                         {"attribute": columns[j], "operator": "==", "value": str(b)},
                     ],
-                    "result": float(m[a, b]), "sigma": sigma, "repeats": 0, "source": "pgm_infer",
+                    "result": float(m[a, b]), "sigma": sigma, "repeats": 0, "source": args.label,
                 })
     out = ROOT / "data" / args.name
     out.mkdir(parents=True, exist_ok=True)
@@ -68,17 +71,17 @@ def main() -> None:
     payload["query_count"] = len(queries)
     payload["queries"] = queries
     payload["description"] = payload.get("description", "") + (
-        f"；另补 AIM 没测的 {len(unmeasured)} 对的 PGM 推断二阶边际（精确，不出表）共 {k} 题，"
+        f"；另补 AIM 没测的 {len(unmeasured)} 对的{src_desc}共 {k} 题，"
         f"sigma={sigma:.4g}（原二阶 sigma 中位数 ×{args.sigma_mult:g}），零预算后处理"
     )
     payload["infer"] = {"npz": str(npz_path.relative_to(ROOT)), "pairs": [[columns[i], columns[j]] for i, j in unmeasured],
-                        "sigma": sigma, "sigma_mult": args.sigma_mult}
+                        "sigma": sigma, "sigma_mult": args.sigma_mult, "source": args.label}
     exam_name = f"measured_{len(queries)}query.json"
     json.dump(payload, open(out / exam_name, "w", encoding="utf-8"), ensure_ascii=False)
     (out / "README.md").write_text(
-        f"# {args.name}\n\n1. 来源，{args.src} 考卷原样（{n0} 题）+ PGM 推断目标。\n"
-        f"2. 口径，AIM 没测的对 {len(unmeasured)}/{len(pairs)}，每对精确二阶边际逐格成题共 {k} 题，"
-        f"sigma {sigma:.4g}（原二阶中位数 ×{args.sigma_mult:g}）；推断来自 {npz_path.name}（同录像、同配置 PGM 拟合，不出表）。\n"
+        f"# {args.name}\n\n1. 来源，{args.src} 考卷原样（{n0} 题）+ 没测对的目标（{args.label}）。\n"
+        f"2. 口径，AIM 没测的对 {len(unmeasured)}/{len(pairs)}，每对二阶边际逐格成题共 {k} 题，"
+        f"sigma {sigma:.4g}（原二阶中位数 ×{args.sigma_mult:g}）；目标来自 {npz_path.name}（{src_desc}）。\n"
         f"3. 用法，run_plants.py --data {args.name} --init-oneway --exam-weights sigma（与 hybrid 臂同，只多这些题）。\n",
         encoding="utf-8")
     print(f"写出 {out / exam_name}：原 {n0} 题 + 推断 {k} 题（{len(unmeasured)} 对），sigma={sigma:.4g}")
