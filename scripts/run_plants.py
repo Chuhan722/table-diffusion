@@ -769,15 +769,6 @@ def main() -> None:
         from resevo.fiber import encode_rows, fiber_average, fiber_specs, measured_sets, pseudo_sigma
 
         stage1_rows = tuples_from_ids(stage1.registry, stage1.out.state_ids)
-        # 第一段的卡上对象先放掉，第二段题数更多
-        stage1.registry = None
-        if args.gpu:
-            import gc
-
-            gc.collect()
-            from resevo.gpukernel import _cupy
-
-            _cupy().get_default_memory_pool().free_all_blocks()
         t_f = time.perf_counter()
         sets = measured_sets(specs, schema)
         doms = [len(d) for d in schema.domains]
@@ -795,13 +786,27 @@ def main() -> None:
             f"测过集合 {len(sets)} 个逐格不动，没测的对 {len(res.unmeasured_pairs)}/{len(res.unmeasured_pairs) + len(res.measured_pairs)} 补伪测量 {len(extra)} 题，"
             f"伪 σ={'无' if sigma is None else f'{sigma:.4g}'}（二阶 σ 中位数 ×{args.fiber_sigma_mult:g}），种子 {fiber_seed}"
         )
-        specs2 = list(specs) + extra
-        rounds2 = args.fiber_rounds if args.fiber_rounds > 0 else args.rounds
-        final = run_stage(
-            args, parser, schema, specs2, stage1_rows, ji_target, work_rows_val,
-            rounds2, args.menu_seed + FIBER_SEED_BUMP, args.sample_seed + FIBER_SEED_BUMP,
-            args.select_seed + FIBER_SEED_BUMP, label="第二段 ",
-        )
+        if not extra:
+            # 全二阶考卷（如对 GSD 的卷）每对都测过，无题可补：第二段不跑，产物与单段逐位同
+            print("没测的对为 0，无伪测量可补，跳过第二段")
+            stage1_rows = None
+        else:
+            # 第一段的卡上对象先放掉，第二段题数更多
+            stage1.registry = None
+            if args.gpu:
+                import gc
+
+                gc.collect()
+                from resevo.gpukernel import _cupy
+
+                _cupy().get_default_memory_pool().free_all_blocks()
+            specs2 = list(specs) + extra
+            rounds2 = args.fiber_rounds if args.fiber_rounds > 0 else args.rounds
+            final = run_stage(
+                args, parser, schema, specs2, stage1_rows, ji_target, work_rows_val,
+                rounds2, args.menu_seed + FIBER_SEED_BUMP, args.sample_seed + FIBER_SEED_BUMP,
+                args.select_seed + FIBER_SEED_BUMP, label="第二段 ",
+            )
     out, registry, y, w = final.out, final.registry, final.y, final.w
     initial_loss, final_loss, elapsed = final.initial_loss, final.final_loss, final.elapsed
     checkpoints = [r for r in out.records if r.round_index % max(1, len(out.records) // 10) == 0]

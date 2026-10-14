@@ -115,3 +115,24 @@ def test_matches_script_version_on_real_table():
         ia = [int(v) for v in schema.domains[a]]
         ib = [int(v) for v in schema.domains[b]]
         assert np.array_equal(ours, theirs[np.ix_(ia, ib)])
+
+
+def test_all_pairs_measured_yields_no_pseudo_specs():
+    # 全二阶考卷（对 GSD 的卷）：每对都测过 → 没测的对为空、不出伪题，脚本据此跳过第二段
+    schema, specs = _toy()
+    full = [q for q in specs if len(q.conditions) == 2]
+    for a, b in [(0, 2), (1, 2)]:
+        for va in schema.domains[a]:
+            for vb in schema.domains[b]:
+                full.append(QuerySpec(f"m{a}{b}{va}{vb}", (
+                    {"attribute": schema.fields[a], "operator": "==", "value": va},
+                    {"attribute": schema.fields[b], "operator": "==", "value": vb}), 1.0, 4.0))
+    sets = measured_sets(full, schema)
+    assert sets == [(0, 1), (0, 2), (1, 2)]
+    X = np.random.default_rng(0).integers(0, 2, (50, 3)).astype(np.int64)
+    X0 = X.copy()
+    res = fiber_average(X, [2, 3, 2], sets, passes=3, rng=np.random.default_rng(1))
+    assert res.unmeasured_pairs == [] and res.measured_pairs == [(0, 1), (0, 2), (1, 2)]
+    assert fiber_specs(res, schema, 4.0) == []
+    # 每列的邻居都是其余全部列，组内行的其他列全同，洗牌只在相同行之间换位：表作为多重集逐行不变
+    assert np.array_equal(np.sort(X.view([('', X.dtype)] * 3), axis=0), np.sort(X0.view([('', X0.dtype)] * 3), axis=0))
