@@ -218,6 +218,11 @@ def main() -> None:
         "（被覆盖字段的一阶由二阶测量决定，清洗多余，第五十七步第 17 条），默认 all",
     )
     parser.add_argument(
+        "--oneway-pool-cover-ignore-prefix", type=str, default="",
+        help="判定覆盖时忽略题号以此开头的题（后处理补进考卷的伪目标如 P2_ 不是测量，不算覆盖），"
+        "默认空现状不变；只在 --oneway-pool-scope uncovered 下有意义",
+    )
+    parser.add_argument(
         "--pair-pool", type=float, default=0.0,
         help="二阶题清洗，同 --oneway-pool 的规则但未测出格子按清洗后一阶乘积分（没证据当独立），"
         "须与 --oneway-pool 同开。给 z，默认 0 关闭",
@@ -386,7 +391,10 @@ def main() -> None:
 
         if any(q.sigma is None for q in specs):
             parser.error("--oneway-pool 要求考卷每题带 sigma 字段")
-        specs, pooled_ones, st = pool_oneway(specs, schema, len(real_rows), args.oneway_pool, args.oneway_pool_scope)
+        specs, pooled_ones, st = pool_oneway(
+            specs, schema, len(real_rows), args.oneway_pool, args.oneway_pool_scope,
+            args.oneway_pool_cover_ignore_prefix,
+        )
         print(
             f"一阶平分清洗 z={args.oneway_pool:g} 范围 {args.oneway_pool_scope}：字段 {st['fields']}，格子 {st['cells']}，"
             f"未测出格子 {st['pooled']}（{st['pooled'] / max(st['cells'], 1):.1%}）"

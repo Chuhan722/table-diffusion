@@ -1,0 +1,1 @@
+写出 results/stage2/adult_eps0p3_fiberp1u_seed2_targets.npz：测过 24 对原计数，没测 81 对取 99 趟平均（共洗 100 趟）

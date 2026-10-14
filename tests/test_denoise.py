@@ -80,3 +80,17 @@ def test_pool_oneway_scope_uncovered():
     only_one = [q for q in specs if len(q.conditions) == 1]
     new, ones, st = pool_oneway(only_one, schema, 100, 2.0, scope="uncovered")
     assert st["fields"] == 2 and np.allclose(ones[0], [70.0, 15.0, 15.0])
+
+
+def test_pool_oneway_cover_ignore_prefix():
+    schema, specs = _specs()
+    # 把二阶题改成后处理补进来的 P2_ 伪目标：忽略前缀后 x、y 都算没被覆盖 → 与只有一阶题时结果一致
+    renamed = [
+        QuerySpec("P2_" + q.query_id, q.conditions, q.result, q.sigma) if len(q.conditions) >= 2 else q for q in specs
+    ]
+    new, ones, st = pool_oneway(renamed, schema, 100, 2.0, scope="uncovered", cover_ignore_prefix="P2_")
+    assert st["fields"] == 2 and np.allclose(ones[0], [70.0, 15.0, 15.0])
+    assert all(a.result == b.result for a, b in zip(new, renamed) if a.query_id.startswith("P2_"))
+    # 不给前缀：伪目标仍算覆盖，一个字段都不洗（现状不变）
+    _, _, st0 = pool_oneway(renamed, schema, 100, 2.0, scope="uncovered")
+    assert st0 == {"fields": 0, "cells": 0, "pooled": 0}

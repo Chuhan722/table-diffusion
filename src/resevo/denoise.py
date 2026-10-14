@@ -80,10 +80,15 @@ def _gather(specs, idx_map: dict, grid: list[tuple[str, ...]]):
     return y, s
 
 
-def covered_fields(specs: list[QuerySpec], schema: TableSchema) -> set[int]:
-    """出现在任一 ≥2 条件题里的字段：它们的一阶由更高阶测量决定。"""
+def covered_fields(specs: list[QuerySpec], schema: TableSchema, ignore_prefix: str = "") -> set[int]:
+    """出现在任一 ≥2 条件题里的字段：它们的一阶由更高阶测量决定。
+
+    ignore_prefix 非空时，题号以此开头的题不算测量（如后处理补进考卷的 P2_ 伪目标），覆盖只看真测量。
+    """
     out: set[int] = set()
     for spec in specs:
+        if ignore_prefix and spec.query_id.startswith(ignore_prefix):
+            continue
         if len(spec.conditions) >= 2:
             out.update(schema.field_index(c["attribute"]) for c in spec.conditions)
     return out
@@ -91,6 +96,7 @@ def covered_fields(specs: list[QuerySpec], schema: TableSchema) -> set[int]:
 
 def pool_oneway(
     specs: list[QuerySpec], schema: TableSchema, total: int, z: float, scope: str = "all",
+    cover_ignore_prefix: str = "",
 ) -> tuple[list[QuerySpec], dict[int, NDArray[np.float64]], dict]:
     """一阶题清洗，整域覆盖且带 σ 的字段才处理，返回新题单、各字段清洗后计数、统计。
 
@@ -99,7 +105,7 @@ def pool_oneway(
     """
     if scope not in ("all", "uncovered"):
         raise ValueError(f"scope 须为 all 或 uncovered，得到 {scope!r}")
-    skip = covered_fields(specs, schema) if scope == "uncovered" else set()
+    skip = covered_fields(specs, schema, cover_ignore_prefix) if scope == "uncovered" else set()
     out = list(specs)
     cleaned: dict[int, NDArray[np.float64]] = {}
     stats = {"fields": 0, "cells": 0, "pooled": 0}
