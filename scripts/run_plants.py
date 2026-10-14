@@ -35,6 +35,7 @@ from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
+FIBER_SEED_BUMP = 100003  # 第二段三个随机种子的偏移，与第一段分流
 
 
 def resolve_work_rows(total_rows: int, work_rows: int, work_frac: float) -> int:
@@ -45,6 +46,265 @@ def resolve_work_rows(total_rows: int, work_rows: int, work_frac: float) -> int:
     if work_frac <= 0.0:
         return work_rows
     return max(1, int(total_rows * work_frac + 0.5))
+
+
+class StageResult:
+    """一段演化的产物：终态、注册表、目标与权重、损失与耗时（普通类，测试用 importlib 载入本脚本时 dataclass 会出错）。"""
+
+    def __init__(self, out, registry, y, w, initial_loss, final_loss, elapsed, num_queries):
+        self.out = out
+        self.registry = registry
+        self.y = y
+        self.w = w
+        self.initial_loss = initial_loss
+        self.final_loss = final_loss
+        self.elapsed = elapsed
+        self.num_queries = num_queries
+
+
+def run_stage(
+    args, parser, schema, specs, init_rows, ji_target, work_rows_val,
+    rounds: int, menu_seed: int, sample_seed: int, select_seed: int, label: str = "",
+) -> StageResult:
+    """从给定初始表按考卷 specs 演化到停止，一段完整的"建目标→注册→供给→演化→结算"。
+
+    第一段用考卷原题从初始化表起步；纤维阶段的第二段用原题 + 伪测量题从第一段的终表热启动。
+    除 rounds 与三个随机种子外全部参数取 args，两段逐字同配置。
+    """
+    y = target_from_specs(specs)
+    w = np.ones(len(specs))
+    if args.exam_weights == "sigma":
+        sigmas = np.array(
+            [np.nan if q.sigma is None else q.sigma for q in specs], dtype=np.float64
+        )
+        if np.isnan(sigmas).any() or (sigmas <= 0.0).any():
+            parser.error("--exam-weights sigma 要求考卷每题带正的 sigma 字段")
+        w = (sigmas.min() / sigmas) ** 2
+        print(
+            f"查询逆方差加权：sigma 范围 {sigmas.min():.4g}~{sigmas.max():.4g}，"
+            f"权重范围 {w.min():.4g}~1，题数 {len(specs)}"
+        )
+    seen = set()
+    field_sets = []
+    for fs in query_field_sets(specs, schema):
+        # 联合修改来源，二到四字段集合去重，半空间的全字段集合不进来源
+        if 2 <= len(fs) <= 4 and fs not in seen:
+            seen.add(fs)
+            field_sets.append(fs)
+
+    registry = StateRegistry(schema, specs)
+    if args.gpu:
+        # GPU 后端整轮不读注册表特征，惰性登记省掉每轮特征求值与特征矩阵内存
+        registry.set_lazy_features(True)
+    ids = registry.register_table(init_rows)
+
+    factory = make_paired_provider if args.pairing else make_edit_provider
+    pairing_budget = PairingBudget(max_pairs=args.max_pairs)
+    edit_budget = EditBudget(
+        max_edit_fields=args.max_edit_fields,
+        donor_copies=args.donor_copies, donor_fields_max=args.donor_fields_max,
+    )
+    if args.batched:
+        tree_sampler = None
+        if args.tree_every > 0:
+            from resevo.rowtree import TreeRowSampler
+
+            tree_sampler = TreeRowSampler().fit(specs, schema)
+            print(f"树采样器就绪，骨架边 {len(tree_sampler.cpt)} 条")
+        nullswap = None
+        if args.nullswap_every > 0:
+            from resevo.nullswap import NullSwapPhase
+
+            nullswap = NullSwapPhase(schema)
+            print("换位相位就绪，门槛 -0.05 地板 0.6%")
+        provider = make_batch_provider(
+            registry, y, w,
+            np.random.default_rng(menu_seed),
+            budget=edit_budget,
+            joint_field_sets=field_sets,
+            pairing=args.pairing,
+            pairing_backoff=args.pairing_backoff,
+            pairing_budget=pairing_budget,
+            defer_workload=args.gpu,
+            pair_rescue_rows=args.pair_rescue_rows,
+            rescue_after=args.rescue_after,
+            rescue_gpu=args.gpu,
+            work_rows=work_rows_val,
+            work_random_frac=args.work_random,
+            select_rng=np.random.default_rng(select_seed),
+            work_below_step=args.work_below,
+            retry_select=args.retry_select,
+            tree_sampler=tree_sampler,
+            tree_every=args.tree_every,
+            tree_pool=args.tree_pool,
+            tree_per_row=args.tree_per_row,
+        )
+    elif args.grouped:
+        provider = make_grouped_provider(
+            registry, y, w,
+            np.random.default_rng(menu_seed),
+            budget=edit_budget,
+            joint_field_sets=field_sets,
+            pairing=args.pairing,
+        )
+    else:
+        provider = factory(
+            registry, y, w,
+            np.random.default_rng(menu_seed),
+            budget=edit_budget,
+            joint_field_sets=field_sets,
+        )
+    initial_loss = table_loss(registry.build_workload(y, w), ids)
+    print(f"{label}行数 {len(ids)}，查询数 {len(specs)}，初始损失 {initial_loss:.6f}")
+
+    shaper = None
+    if args.struct_ruler != "off":
+        from resevo.structure import StructShaper
+
+        if args.struct_ruler == "ding+ji" and ji_target is None and args.ji_rho > 0.0:
+            shaper = StructShaper(
+                "ding", [len(d) for d in schema.domains],
+                boost=args.struct_boost, gate=args.struct_gate,
+            )
+        elif args.struct_ruler == "ding+ji":
+            from resevo.structure import CompositeShaper
+
+            sizes = [len(d) for d in schema.domains]
+            shaper = CompositeShaper([
+                StructShaper(
+                    "ding", sizes,
+                    boost=args.struct_boost, gate=args.struct_gate,
+                ),
+                StructShaper(
+                    "ji", sizes,
+                    boost=args.struct_boost2 or args.struct_boost,
+                    gate=args.struct_gate, ji_target=ji_target,
+                ),
+            ])
+        else:
+            shaper = StructShaper(
+                args.struct_ruler,
+                [len(d) for d in schema.domains],
+                boost=args.struct_boost,
+                gate=args.struct_gate,
+                ji_target=ji_target,
+            )
+
+    t0 = time.perf_counter()
+    gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
+    if args.batched:
+        out = evolve_batch(
+            ids, rounds,
+            np.random.default_rng(sample_seed),
+            provider, registry,
+            alpha=args.alpha,
+            max_frozen_retries=args.retries,
+            backend="gpu" if args.gpu else "cpu",
+            stop_threshold=args.stop_threshold,
+            stop_lag=args.stop_lag,
+            rescue_stop_window=args.rescue_stop_window,
+            rescue_stop_tol=args.rescue_stop_tol,
+            gpu_entry_budget=args.gpu_entry_budget,
+            gpu_direct=gpu_direct,
+            noise_floor=args.noise_floor,
+            stop_threshold_noisy=args.stop_threshold_noisy,
+            progress_every=args.progress,
+            probe_interval=args.probe_interval,
+            ref_shape=args.ref_shape,
+            stay_probability=args.stay,
+            damping=args.damping,
+            struct_shaper=shaper,
+            treat_stop_tol=args.treat_stop_tol,
+            stop_floor=args.stop_floor,
+            nullswap_phase=nullswap,
+            nullswap_every=args.nullswap_every,
+            nullswap_after=args.nullswap_after,
+        )
+    elif args.grouped:
+        out = evolve_grouped(
+            ids, rounds,
+            np.random.default_rng(sample_seed),
+            provider,
+            alpha=args.alpha,
+            max_frozen_retries=args.retries,
+        )
+    else:
+        out = evolve(
+            None, ids, rounds,
+            np.random.default_rng(sample_seed),
+            support_provider=provider,
+            alpha=args.alpha,
+            max_frozen_retries=args.retries,
+        )
+    elapsed = time.perf_counter() - t0
+
+    if args.gpu:
+        # 终点损失也在卡上算，避免为一次报数补算全部欠账特征
+        from resevo.gpukernel import GpuBatchContext
+
+        gctx = GpuBatchContext(provider.structure[0], y, w, direct=gpu_direct)
+        final_loss = gctx.loss_of(provider.codebook.sync(), out.state_ids)
+    else:
+        final_workload = registry.build_workload(y, w)
+        final_loss = table_loss(final_workload, out.state_ids)
+    frozen_rounds = sum(1 for r in out.records if r.status == "no_positive_direction")
+    print(
+        f"{label}实际轮数 {len(out.records)}，停止原因 {out.stop_reason}，"
+        f"冻结轮数 {frozen_rounds}，注册状态数 {registry.num_states}"
+    )
+    print(
+        f"{label}最终损失 {final_loss:.6f}，初始比 {final_loss / initial_loss:.4%}，"
+        f"耗时 {elapsed:.1f} 秒，平均每轮 {elapsed / len(out.records) * 1000:.0f} 毫秒"
+    )
+    return StageResult(out, registry, y, w, initial_loss, final_loss, elapsed, len(specs))
+
+
+def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") -> None:
+    """演化曲线落盘：逐轮记录 + final 行；有探针再写同名 _probe.csv。"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        has_temp = out.temps is not None
+        header = ["round", "old_loss", "beta", "direction_gain", "interaction",
+                  "step", "expected_loss", "status", "max_gain_sum"]
+        if has_temp:
+            header.append("temp")
+        writer.writerow(header)
+        for i, r in enumerate(out.records):
+            row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
+                   r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
+            if has_temp:
+                t = out.temps[i]
+                row.append(
+                    "|".join(f"{x:.6f}" for x in t)
+                    if isinstance(t, tuple) else t
+                )
+            writer.writerow(row)
+        final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
+        if has_temp:
+            final_row.append("")
+        writer.writerow(final_row)
+    print(f"{what}已写入 {out_path}")
+    if out.probes:
+        probe_path = out_path.with_name(out_path.stem + "_probe.csv")
+        with open(probe_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"])
+            for p in out.probes:
+                writer.writerow(
+                    [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
+                )
+        print(f"探针已写入 {probe_path}")
+
+
+def write_table(table_path: Path, schema, rows, what: str = "终表") -> None:
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(table_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(schema.fields)
+        for row in rows:
+            writer.writerow(row)
+    print(f"{what}已写入 {table_path}")
 
 
 def main() -> None:
@@ -228,6 +488,28 @@ def main() -> None:
         "须与 --oneway-pool 同开。给 z，默认 0 关闭",
     )
     parser.add_argument(
+        "--fiber-passes", type=int, default=0,
+        help="纤维洗牌补没测的对（第五十八、五十九步）：第一段按考卷收敛后，固定所有测过的字段集合逐格不动，"
+        "在每个测过集合的纤维内随机重排其余列，洗 K 趟取平均得没测的二阶边缘，以 P2_ 伪测量题并入考卷，"
+        "再从第一段终表热启动演化第二段。给趟数 K（批次用 100），默认 0 关闭现状逐位不变",
+    )
+    parser.add_argument(
+        "--fiber-start-pass", type=int, default=2,
+        help="纤维洗牌从第几趟起计入平均（第 1 趟仍带第一段终表的偶然结构，批次口径丢弃），默认 2",
+    )
+    parser.add_argument(
+        "--fiber-sigma-mult", type=float, default=1.0,
+        help="伪测量题 σ = 考卷二阶题 σ 中位数 × 此倍数（只定 --exam-weights sigma 下的权重），默认 1",
+    )
+    parser.add_argument(
+        "--fiber-seed", type=int, default=-1,
+        help="纤维洗牌随机种子，默认 -1 取 --sample-seed",
+    )
+    parser.add_argument(
+        "--fiber-rounds", type=int, default=0,
+        help="第二段最大轮数，默认 0 同 --rounds；两段其余配置逐字相同，第二段三个随机种子各加 %d" % FIBER_SEED_BUMP,
+    )
+    parser.add_argument(
         "--init-table", type=str, default="",
         help="从 CSV 载入初始表跳过抽样初始化，字段与行数须与真表一致，"
         "选择循环热启动用，默认空走原路径",
@@ -405,31 +687,6 @@ def main() -> None:
                 f"二阶独立清洗 z={args.pair_pool:g}：对 {st2['pairs']}，格子 {st2['cells']}，"
                 f"未测出格子 {st2['pooled']}（{st2['pooled'] / max(st2['cells'], 1):.1%}）"
             )
-    y = target_from_specs(specs)
-    w = np.ones(len(specs))
-    if args.exam_weights == "sigma":
-        sigmas = np.array(
-            [np.nan if q.sigma is None else q.sigma for q in specs], dtype=np.float64
-        )
-        if np.isnan(sigmas).any() or (sigmas <= 0.0).any():
-            parser.error("--exam-weights sigma 要求考卷每题带正的 sigma 字段")
-        w = (sigmas.min() / sigmas) ** 2
-        print(
-            f"查询逆方差加权：sigma 范围 {sigmas.min():.4g}~{sigmas.max():.4g}，"
-            f"权重范围 {w.min():.4g}~1，题数 {len(specs)}"
-        )
-    seen = set()
-    field_sets = []
-    for fs in query_field_sets(specs, schema):
-        # 联合修改来源，二到四字段集合去重，半空间的全字段集合不进来源
-        if 2 <= len(fs) <= 4 and fs not in seen:
-            seen.add(fs)
-            field_sets.append(fs)
-
-    registry = StateRegistry(schema, specs)
-    if args.gpu:
-        # GPU 后端整轮不读注册表特征，惰性登记省掉每轮特征求值与特征矩阵内存
-        registry.set_lazy_features(True)
     init_rng = np.random.default_rng(args.init_seed)
     if args.init_table:
         it_schema, init_rows = load_table(args.init_table)
@@ -467,8 +724,6 @@ def main() -> None:
         if args.init_clean:
             marginals = clean_first_order(marginals, len(real_rows))
         init_rows = sample_initial_rows(marginals, schema, len(real_rows), init_rng)
-    ids = registry.register_table(init_rows)
-
     # 己尺基准 S* 统一结算（买断一次，己尺与供体档位共用同一读数）：
     # --ji-rho 0 为零噪场精确值；>0 为部署口径，高斯机制买带噪标量（敏感度 2/n）
     ji_target = None
@@ -503,164 +758,52 @@ def main() -> None:
         else:
             print("供体档位门：S* 不可信或低重复，供体守默认档")
 
-    factory = make_paired_provider if args.pairing else make_edit_provider
-    pairing_budget = PairingBudget(max_pairs=args.max_pairs)
-    edit_budget = EditBudget(
-        max_edit_fields=args.max_edit_fields,
-        donor_copies=args.donor_copies, donor_fields_max=args.donor_fields_max,
+    stage1 = run_stage(
+        args, parser, schema, specs, init_rows, ji_target, work_rows_val,
+        args.rounds, args.menu_seed, args.sample_seed, args.select_seed,
     )
-    if args.batched:
-        tree_sampler = None
-        if args.tree_every > 0:
-            from resevo.rowtree import TreeRowSampler
+    final = stage1
+    stage1_rows = None
+    if args.fiber_passes > 0:
+        from resevo.editspace import tuples_from_ids
+        from resevo.fiber import encode_rows, fiber_average, fiber_specs, measured_sets, pseudo_sigma
 
-            tree_sampler = TreeRowSampler().fit(specs, schema)
-            print(f"树采样器就绪，骨架边 {len(tree_sampler.cpt)} 条")
-        nullswap = None
-        if args.nullswap_every > 0:
-            from resevo.nullswap import NullSwapPhase
+        stage1_rows = tuples_from_ids(stage1.registry, stage1.out.state_ids)
+        # 第一段的卡上对象先放掉，第二段题数更多
+        stage1.registry = None
+        if args.gpu:
+            import gc
 
-            nullswap = NullSwapPhase(schema)
-            print("换位相位就绪，门槛 -0.05 地板 0.6%")
-        provider = make_batch_provider(
-            registry, y, w,
-            np.random.default_rng(args.menu_seed),
-            budget=edit_budget,
-            joint_field_sets=field_sets,
-            pairing=args.pairing,
-            pairing_backoff=args.pairing_backoff,
-            pairing_budget=pairing_budget,
-            defer_workload=args.gpu,
-            pair_rescue_rows=args.pair_rescue_rows,
-            rescue_after=args.rescue_after,
-            rescue_gpu=args.gpu,
-            work_rows=work_rows_val,
-            work_random_frac=args.work_random,
-            select_rng=np.random.default_rng(args.select_seed),
-            work_below_step=args.work_below,
-            retry_select=args.retry_select,
-            tree_sampler=tree_sampler,
-            tree_every=args.tree_every,
-            tree_pool=args.tree_pool,
-            tree_per_row=args.tree_per_row,
+            gc.collect()
+            from resevo.gpukernel import _cupy
+
+            _cupy().get_default_memory_pool().free_all_blocks()
+        t_f = time.perf_counter()
+        sets = measured_sets(specs, schema)
+        doms = [len(d) for d in schema.domains]
+        fiber_seed = args.sample_seed if args.fiber_seed < 0 else args.fiber_seed
+        res = fiber_average(
+            encode_rows(stage1_rows, schema), doms, sets, args.fiber_passes,
+            np.random.default_rng(fiber_seed), args.fiber_start_pass,
         )
-    elif args.grouped:
-        provider = make_grouped_provider(
-            registry, y, w,
-            np.random.default_rng(args.menu_seed),
-            budget=edit_budget,
-            joint_field_sets=field_sets,
-            pairing=args.pairing,
+        sigma = pseudo_sigma(specs, args.fiber_sigma_mult)
+        if args.exam_weights == "sigma" and sigma is None:
+            parser.error("--fiber-passes 配 --exam-weights sigma 要求考卷有带 sigma 的二阶题以定伪测量 σ")
+        extra = fiber_specs(res, schema, sigma)
+        print(
+            f"纤维洗牌 {res.passes} 趟（第 {args.fiber_start_pass} 趟起取 {res.averaged} 趟平均）耗时 {time.perf_counter() - t_f:.1f} 秒："
+            f"测过集合 {len(sets)} 个逐格不动，没测的对 {len(res.unmeasured_pairs)}/{len(res.unmeasured_pairs) + len(res.measured_pairs)} 补伪测量 {len(extra)} 题，"
+            f"伪 σ={'无' if sigma is None else f'{sigma:.4g}'}（二阶 σ 中位数 ×{args.fiber_sigma_mult:g}），种子 {fiber_seed}"
         )
-    else:
-        provider = factory(
-            registry, y, w,
-            np.random.default_rng(args.menu_seed),
-            budget=edit_budget,
-            joint_field_sets=field_sets,
+        specs2 = list(specs) + extra
+        rounds2 = args.fiber_rounds if args.fiber_rounds > 0 else args.rounds
+        final = run_stage(
+            args, parser, schema, specs2, stage1_rows, ji_target, work_rows_val,
+            rounds2, args.menu_seed + FIBER_SEED_BUMP, args.sample_seed + FIBER_SEED_BUMP,
+            args.select_seed + FIBER_SEED_BUMP, label="第二段 ",
         )
-    initial_loss = table_loss(registry.build_workload(y, w), ids)
-    print(f"行数 {len(ids)}，查询数 {len(specs)}，初始损失 {initial_loss:.6f}")
-
-    shaper = None
-    if args.struct_ruler != "off":
-        from resevo.structure import StructShaper
-
-        if args.struct_ruler == "ding+ji" and ji_target is None and args.ji_rho > 0.0:
-            shaper = StructShaper(
-                "ding", [len(d) for d in schema.domains],
-                boost=args.struct_boost, gate=args.struct_gate,
-            )
-        elif args.struct_ruler == "ding+ji":
-            from resevo.structure import CompositeShaper
-
-            sizes = [len(d) for d in schema.domains]
-            shaper = CompositeShaper([
-                StructShaper(
-                    "ding", sizes,
-                    boost=args.struct_boost, gate=args.struct_gate,
-                ),
-                StructShaper(
-                    "ji", sizes,
-                    boost=args.struct_boost2 or args.struct_boost,
-                    gate=args.struct_gate, ji_target=ji_target,
-                ),
-            ])
-        else:
-            shaper = StructShaper(
-                args.struct_ruler,
-                [len(d) for d in schema.domains],
-                boost=args.struct_boost,
-                gate=args.struct_gate,
-                ji_target=ji_target,
-            )
-
-    t0 = time.perf_counter()
-    gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
-    if args.batched:
-        out = evolve_batch(
-            ids, args.rounds,
-            np.random.default_rng(args.sample_seed),
-            provider, registry,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-            backend="gpu" if args.gpu else "cpu",
-            stop_threshold=args.stop_threshold,
-            stop_lag=args.stop_lag,
-            rescue_stop_window=args.rescue_stop_window,
-            rescue_stop_tol=args.rescue_stop_tol,
-            gpu_entry_budget=args.gpu_entry_budget,
-            gpu_direct=gpu_direct,
-            noise_floor=args.noise_floor,
-            stop_threshold_noisy=args.stop_threshold_noisy,
-            progress_every=args.progress,
-            probe_interval=args.probe_interval,
-            ref_shape=args.ref_shape,
-            stay_probability=args.stay,
-            damping=args.damping,
-            struct_shaper=shaper,
-            treat_stop_tol=args.treat_stop_tol,
-            stop_floor=args.stop_floor,
-            nullswap_phase=nullswap,
-            nullswap_every=args.nullswap_every,
-            nullswap_after=args.nullswap_after,
-        )
-    elif args.grouped:
-        out = evolve_grouped(
-            ids, args.rounds,
-            np.random.default_rng(args.sample_seed),
-            provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
-    else:
-        out = evolve(
-            None, ids, args.rounds,
-            np.random.default_rng(args.sample_seed),
-            support_provider=provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
-    elapsed = time.perf_counter() - t0
-
-    if args.gpu:
-        # 终点损失也在卡上算，避免为一次报数补算全部欠账特征
-        from resevo.gpukernel import GpuBatchContext
-
-        gctx = GpuBatchContext(provider.structure[0], y, w, direct=gpu_direct)
-        final_loss = gctx.loss_of(provider.codebook.sync(), out.state_ids)
-    else:
-        final_workload = registry.build_workload(y, w)
-        final_loss = table_loss(final_workload, out.state_ids)
-    frozen_rounds = sum(1 for r in out.records if r.status == "no_positive_direction")
-    print(
-        f"实际轮数 {len(out.records)}，停止原因 {out.stop_reason}，"
-        f"冻结轮数 {frozen_rounds}，注册状态数 {registry.num_states}"
-    )
-    print(
-        f"最终损失 {final_loss:.6f}，初始比 {final_loss / initial_loss:.4%}，"
-        f"耗时 {elapsed:.1f} 秒，平均每轮 {elapsed / len(out.records) * 1000:.0f} 毫秒"
-    )
+    out, registry, y, w = final.out, final.registry, final.y, final.w
+    initial_loss, final_loss, elapsed = final.initial_loss, final.final_loss, final.elapsed
     checkpoints = [r for r in out.records if r.round_index % max(1, len(out.records) // 10) == 0]
     for r in checkpoints:
         print(
@@ -670,52 +813,17 @@ def main() -> None:
 
     if args.out:
         out_path = Path(args.out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            has_temp = out.temps is not None
-            header = ["round", "old_loss", "beta", "direction_gain", "interaction",
-                      "step", "expected_loss", "status", "max_gain_sum"]
-            if has_temp:
-                header.append("temp")
-            writer.writerow(header)
-            for i, r in enumerate(out.records):
-                row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
-                       r.interaction, r.step, r.expected_loss, r.status, r.max_gain_sum]
-                if has_temp:
-                    t = out.temps[i]
-                    row.append(
-                        "|".join(f"{x:.6f}" for x in t)
-                        if isinstance(t, tuple) else t
-                    )
-                writer.writerow(row)
-            final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
-            if has_temp:
-                final_row.append("")
-            writer.writerow(final_row)
-        print(f"曲线已写入 {out_path}")
-        if out.probes:
-            probe_path = out_path.with_name(out_path.stem + "_probe.csv")
-            with open(probe_path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"])
-                for p in out.probes:
-                    writer.writerow(
-                        [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
-                    )
-            print(f"探针已写入 {probe_path}")
+        if stage1_rows is not None:
+            write_curve(out_path.with_name(out_path.stem + "_stage1" + out_path.suffix), stage1.out, stage1.final_loss, "第一段曲线")
+        write_curve(out_path, out, final_loss, "曲线")
 
     if args.save_table:
         from resevo.editspace import tuples_from_ids
 
         table_path = Path(args.save_table)
-        table_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(table_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(schema.fields)
-            for row in tuples_from_ids(registry, out.state_ids):
-                writer.writerow(row)
-        print(f"终表已写入 {table_path}")
+        if stage1_rows is not None:
+            write_table(table_path.with_name(table_path.stem + "_stage1" + table_path.suffix), schema, stage1_rows, "第一段终表")
+        write_table(table_path, schema, tuples_from_ids(registry, out.state_ids), "终表")
 
 
 if __name__ == "__main__":

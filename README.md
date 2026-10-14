@@ -27,6 +27,8 @@
 - src/resevo/pairing.py 配对板块，登记本检索互补行对，Gamma 打分绑双行块
 - src/resevo/grouping.py 重复记录压缩，组共享菜单增益概率，多项分布抽样
 - src/resevo/metrics.py 评价指标，AIM 式边缘误差，GSD 式查询误差，综合误差分
+- src/resevo/denoise.py 一阶平分清洗，读卷后初始化前的零预算后处理（第五十七步）
+- src/resevo/fiber.py 纤维洗牌平均，固定测过的字段集合逐格不动在纤维内重排其余列，洗出没测的二阶边缘当伪测量题（第五十八、五十九步）
 - data/test_300x10/ 300 行 10 字段测试数据与 50 个计数查询，复制自旧仓数据文件
 - tests/ 与模块一一对应的锚点断言测试
 - tests/reference/ 复制来的参考实现，对拍用
@@ -335,6 +337,11 @@ CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --rounds 800 --r
 
 # 工作批加步长闸门，早期全量演化，步长低于 0.2 后每轮只挑 4096 行上场
 CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --rounds 3000 --retries 60 --batched --pairing --gpu --work-rows 4096 --work-below 0.2 --menu-seed 20260921 --sample-seed 1 --init-seed 1 --out results/plants_work_curve.csv --save-table results/plants_work.csv
+
+# 完整配方一条命令（adult AIM 回放考卷，第五十九步 2B-4 批次口径）：
+# 一阶清洗（只清没被二阶题覆盖的字段）→ 按考卷收敛 → 纤维洗牌 100 趟补没测的对 → 从第一段终表热启动再收敛
+# --fiber-passes 0（默认）关闭后两步，逐位等于原单段流程；开了之后 _stage1 后缀另存第一段曲线与终表
+CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python scripts/run_plants.py --data adult_aimrep0p1_s1 --rounds 30000 --stop-threshold 1e-4 --stop-lag 100 --init-oneway --exam-weights sigma --menu-seed 20260921 --sample-seed 1 --init-seed 1 --gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --gpu-entry-budget 40000000 --oneway-pool 2 --oneway-pool-scope uncovered --fiber-passes 100 --out results/stage2/adult_eps0p1_full_seed1_curve.csv --save-table results/stage2/adult_eps0p1_full_seed1.csv
 ```
 
 依赖见 requirements.txt，venv 由 uv 创建。
