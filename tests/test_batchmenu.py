@@ -5,6 +5,7 @@ import pytest
 from resevo.batchmenu import (
     BatchMenu,
     CodeBook,
+    _normalize_grid,
     _normalize_menu,
     build_query_structure,
     condition_counts,
@@ -89,6 +90,44 @@ def test_normalize_menu_semantics():
     assert menu.fields[0].tolist() == [0, -1, -1]
     assert menu.values[0].tolist() == [1, -1, -1]
     assert menu.mass.tolist() == [3.0]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_normalize_grid_matches_generic(seed):
+    """组主序快路径与通用规范化逐位同，含重复、落回源、全无效与超宽值域回退。"""
+    rng = np.random.default_rng(seed)
+    wide = seed % 3 == 2  # 值域超宽触发单键位宽不够的回退路径
+    num_groups, num_fields, k_per = int(rng.integers(1, 40)), int(rng.integers(1, 12)), int(rng.integers(1, 70))
+    sizes = rng.integers(1, 200000 if wide else 7, size=num_fields).astype(np.int32)
+    codes_g = (rng.random((num_groups, num_fields)) * sizes).astype(np.int32)
+    fields = rng.integers(-1, num_fields, size=(num_groups, k_per, 3)).astype(np.int32)
+    values = np.where(
+        fields >= 0,
+        (rng.random((num_groups, k_per, 3)) * (sizes[np.maximum(fields, 0)] + 1)).astype(np.int32) - 1,
+        -1,
+    ).astype(np.int32)
+    if k_per > 1:  # 制造组内重复
+        dup = rng.integers(0, k_per, size=(num_groups, k_per // 2 + 1))
+        src = rng.integers(0, k_per, size=dup.shape)
+        rows = np.arange(num_groups)[:, None]
+        fields[rows, dup] = fields[rows, src]
+        values[rows, dup] = values[rows, src]
+    group = np.repeat(np.arange(num_groups, dtype=np.int64), k_per)
+    ref = _normalize_menu(group, fields.reshape(-1, 3).copy(), values.reshape(-1, 3).copy(), codes_g, num_groups)
+    got = _normalize_grid(fields.copy(), values.copy(), codes_g)
+    for name in ("offsets", "group", "fields", "values", "mass"):
+        a, b = getattr(ref, name), getattr(got, name)
+        assert a.dtype == b.dtype, name
+        np.testing.assert_array_equal(a, b, err_msg=name)
+
+
+def test_generate_batch_menu_empty_groups():
+    """零组输入给出空菜单，供体与联合类在零组下不抽随机数也不报错。"""
+    menu = generate_batch_menu(
+        np.empty((0, 3), dtype=np.int32), np.empty(0, dtype=np.int64),
+        np.array([2, 3, 2], dtype=np.int32), np.random.default_rng(0), EditBudget(), [(0, 1)],
+    )
+    assert menu.num_paths == 0 and menu.offsets.tolist() == [0]
 
 
 @pytest.mark.parametrize("seed", range(4))

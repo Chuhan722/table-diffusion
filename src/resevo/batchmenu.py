@@ -333,11 +333,10 @@ def generate_batch_menu(
     num_groups, num_fields = codes_g.shape
     pieces_f: list[NDArray[np.int32]] = []
     pieces_v: list[NDArray[np.int32]] = []
-    pieces_g: list[NDArray[np.int64]] = []
     gidx = np.arange(num_groups, dtype=np.int64)
 
-    def _push(groups, fields, values):
-        pieces_g.append(groups)
+    def _push(fields, values):
+        # 每类路径都按组主序生成（行 g*k+i 属组 g），规范化按组主序排布
         pieces_f.append(fields)
         pieces_v.append(values)
 
@@ -359,7 +358,7 @@ def generate_batch_menu(
             values = np.full((num_groups * m, 3), _NO_FIELD, dtype=np.int32)
             fields[:, 0] = fcol.ravel()
             values[:, 0] = vcol.ravel()
-            _push(np.repeat(gidx, m), fields, values)
+            _push(fields, values)
 
     # 二，供体复制，按重数加权抽供体组，改一到 donor_fields_max 个字段为供体的值
     if budget.donor_copies > 0 and num_groups > 0:
@@ -367,7 +366,9 @@ def generate_batch_menu(
         dfm = min(budget.donor_fields_max, num_fields, 3)  # 批量表示三字段槽上限
         cumulative = np.cumsum(counts)
         draws = rng.integers(int(cumulative[-1]), size=(num_groups, d))
-        donors = np.searchsorted(cumulative, draws, side="right")
+        # 行号到组号查表，与 searchsorted(cumulative, draws, "right") 逐位同
+        row_group = np.repeat(gidx, counts)
+        donors = row_group[draws]
         k = rng.integers(1, dfm + 1, size=(num_groups, d))
         dfields = _distinct_fields(num_fields, num_groups * d, rng, dfm)
         for slot in range(dfm, 3):
@@ -381,7 +382,7 @@ def generate_batch_menu(
             live = dfields[:, slot] >= 0
             if np.any(live):
                 values[live, slot] = codes_g[donor_flat[live], dfields[live, slot]]
-        _push(np.repeat(gidx, d), dfields, values)
+        _push(dfields, values)
 
     # 三，联合修改，从查询涉及的多字段集合抽一个，各字段换替代值
     if budget.joint_edits > 0 and joint_sets:
@@ -401,7 +402,7 @@ def generate_batch_menu(
             values[live, slot] = _alt_codes(
                 codes_g[jgroups[live], fj], domain_sizes[fj], rng.random(int(live.sum()))
             )
-        _push(jgroups, jfields, values)
+        _push(jfields, values)
 
     # 四，支持探索，独立抽一到三个字段换替代值，可产生表里没有的状态
     if budget.explore_edits > 0:
@@ -420,12 +421,90 @@ def generate_batch_menu(
             values[live, slot] = _alt_codes(
                 codes_g[egroups[live], fj], domain_sizes[fj], rng.random(int(live.sum()))
             )
-        _push(egroups, efields, values)
+        _push(efields, values)
 
-    group = np.concatenate(pieces_g)
-    fields = np.concatenate(pieces_f)
-    values = np.concatenate(pieces_v)
-    return _normalize_menu(group, fields, values, codes_g, num_groups)
+    if not pieces_f:
+        raise ValueError("预算全零，菜单为空")
+    if num_groups == 0:
+        return _normalize_menu(
+            np.empty(0, dtype=np.int64), np.empty((0, 3), dtype=np.int32),
+            np.empty((0, 3), dtype=np.int32), codes_g, 0,
+        )
+    # 各类路径在类内都是组主序，拼成 (G, K, 3) 后组内相对顺序与类主序拼接一致，
+    # 规范化按组主序做可免去全局排序（第五十九步 甲）
+    fields = np.concatenate([p.reshape(num_groups, -1, 3) for p in pieces_f], axis=1)
+    values = np.concatenate([p.reshape(num_groups, -1, 3) for p in pieces_v], axis=1)
+    return _normalize_grid(fields, values, codes_g)
+
+
+def _normalize_grid(
+    fields: NDArray[np.int32],
+    values: NDArray[np.int32],
+    codes_g: NDArray[np.int32],
+) -> BatchMenu:
+    """组主序 (G, K, 3) 菜单的规范化，与 `_normalize_menu` 逐位同结果。
+
+    语义与 `_normalize_menu(repeat(gidx, K), fields, values, codes_g, G)` 完全一致，
+    组内首现顺序即组主序里的位置顺序，所以去重合并只需每组各自排一次短序，
+    不再做全局稳定排序与按首现位置的二次排序，路径数十万级时省六成以上。
+    单键位宽不够（超宽值域或超长组）时回退通用路径。
+    """
+    num_groups, k_per, _ = fields.shape
+    num_fields = codes_g.shape[1]
+    fbits = max(num_fields, 1).bit_length()
+    vbits = max(int(values.max(initial=-1)) + 1, 1).bit_length()
+    sbits = fbits + vbits
+    kbits = max(k_per - 1, 1).bit_length()
+    if 3 * sbits + kbits > 63:
+        gidx = np.arange(num_groups, dtype=np.int64)
+        return _normalize_menu(
+            np.repeat(gidx, k_per), fields.reshape(-1, 3), values.reshape(-1, 3),
+            codes_g, num_groups,
+        )
+    # 槽键 = 字段<<vbits|值，无效槽取全一，序与原 64 位打包一致；位宽够就用 int32 省带宽
+    dt = np.int32 if sbits <= 30 else np.int64
+    inval = dt((1 << sbits) - 1)
+    idt = np.int32 if num_groups * num_fields < 2**31 else np.int64
+    idx = np.maximum(fields, 0).astype(idt, copy=False)
+    idx += (np.arange(num_groups, dtype=idt) * num_fields)[:, None, None]
+    cur = np.take(codes_g, idx)
+    valid = (fields >= 0) & (values >= 0) & (cur != values)
+    ks = np.where(valid, fields.astype(dt) << vbits | values, inval)
+    # 三槽排序网络，字段升序无效槽垫后
+    c0, c1, c2 = ks[:, :, 0], ks[:, :, 1], ks[:, :, 2]
+    c0, c1 = np.minimum(c0, c1), np.maximum(c0, c1)
+    c0, c2 = np.minimum(c0, c2), np.maximum(c0, c2)
+    c1, c2 = np.minimum(c1, c2), np.maximum(c1, c2)
+    sorted_slots = np.stack([c0, c1, c2], axis=-1).reshape(-1, 3)
+    skey = c0.astype(np.int64) << (2 * sbits) | c1.astype(np.int64) << sbits | c2
+    # 路径键拼上组内位置做复合键，每组排一次短序，同键自然按位置升序，
+    # 键段首成员就是首现位置，段长就是合并质量
+    comp = np.sort(skey << kbits | np.arange(k_per, dtype=np.int64)[None, :], axis=1)
+    sorted_key = comp >> kbits
+    new_key = np.ones((num_groups, k_per), dtype=np.bool_)
+    new_key[:, 1:] = sorted_key[:, 1:] != sorted_key[:, :-1]
+    starts = np.flatnonzero(new_key)
+    total = num_groups * k_per
+    mass = np.diff(np.append(starts, total)).astype(np.float64)
+    order_flat = comp.ravel()[starts] & ((1 << kbits) - 1)
+    firsts = order_flat + (starts - starts % k_per)
+    keep = np.zeros(total, dtype=np.bool_)
+    keep[firsts] = True
+    mass_at = np.zeros(total, dtype=np.float64)
+    mass_at[firsts] = mass
+    keep &= (c0 != inval).ravel()  # 全槽无效即落回源，丢弃
+    pos = np.flatnonzero(keep)
+    out_ks = np.take(sorted_slots.ravel(), pos[:, None] * 3 + np.arange(3))
+    dead = out_ks == inval
+    out_fields = np.where(dead, _NO_FIELD, (out_ks >> vbits).astype(np.int32, copy=False))
+    out_values = np.where(
+        dead, _NO_FIELD, (out_ks & ((1 << vbits) - 1)).astype(np.int32, copy=False)
+    )
+    counts_g = np.bincount(pos // k_per, minlength=num_groups)
+    offsets = np.zeros(num_groups + 1, dtype=np.int64)
+    np.cumsum(counts_g, out=offsets[1:])
+    out_group = np.repeat(np.arange(num_groups, dtype=np.int64), counts_g)
+    return BatchMenu(offsets, out_group, out_fields, out_values, mass_at[pos])
 
 
 def _normalize_menu(
