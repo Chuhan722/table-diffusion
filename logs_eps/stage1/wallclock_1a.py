@@ -47,6 +47,7 @@ def main() -> None:
     ours_in = inner("logs_eps/stage1/adult_eps*_ours2way_seed*.log", r"耗时 ([\d.]+) 秒")
     rounds = inner("logs_eps/stage1/adult_eps*_ours2way_seed*.log", r"实际轮数 (\d+)")
     lines = ["# 1A 墙钟副轴：我们 vs GSD（adult，单位分钟，3 种子均（逐种子））", "",
+             "> 本表是 10-11/12 的 1A 旧场（稠密通路，第五十九步 乙/甲 提速前）。提速后同命令复跑的五档墙钟见 `speed_wallclock_step59.md`（终表逐位同）。", "",
              "同一台 A6000、同 GPU 道 24 核；两家原生早停（我们 --stop-threshold 1e-4 --stop-lag 100，上限 30000 轮；GSD stop_early 阈 1e-4，代数上限 5e7 即不设限）。"
              "整场 = 发射脚本 START→END；内计时 = 我们演化循环 / GSD fit。", "",
              "| ε | GSD 整场 | GSD fit | 我们整场 | 我们演化 | 我们轮数 | 我们每轮 ms | GSD÷我们 |",
