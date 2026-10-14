@@ -169,7 +169,8 @@ def test_direct_build_bitwise(seed, budget):
     qs, grouped, codes, menu = _inputs(registry, ids, rng)
     target = target_from_specs(registry.specs)
     gen = GpuBatchContext(qs, target, weights, direct=False)
-    dir_ = GpuBatchContext(qs, target, weights, direct=True)
+    # 稀疏整表项/漂移项求和顺序异于稠密，逐位对拍须关掉（见 test_gpu_sparse）
+    dir_ = GpuBatchContext(qs, target, weights, direct=True, sparse=False)
     a = gen.build(grouped, menu, codes, entry_budget=budget, probe_grid=8)
     b = dir_.build(grouped, menu, codes, entry_budget=budget, probe_grid=8)
     assert a.status == b.status
@@ -198,7 +199,7 @@ def test_evolve_batch_direct_trajectory_bitwise():
         out = evolve_batch(
             ids, 40, np.random.default_rng(9), provider, registry,
             max_frozen_retries=5, backend="gpu", gpu_entry_budget=60,
-            gpu_direct=direct,
+            gpu_direct=direct, gpu_sparse=False,
         )
         outs.append(out)
     np.testing.assert_array_equal(outs[0].state_ids, outs[1].state_ids)

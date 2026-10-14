@@ -882,6 +882,7 @@ def evolve_batch(
     nullswap_every: int = 0,
     nullswap_after: int = 0,
     gpu_direct: bool | None = None,
+    gpu_sparse: bool | None = None,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -933,6 +934,10 @@ def evolve_batch(
     gpu_direct 控制 GPU 后端的单元格直算通路（第五十六步提速），
     None 自动识别考卷结构，True 强制，False 走通用通路，
     直算与通用通路同种子逐位同结果，只省时间不改任何数学。
+    gpu_sparse 控制 GPU 后端的稀疏整表项/漂移项（第五十九步 乙），None 在直算布局
+    且无半空间题时自动开，True 强制，False 走稠密老路；稀疏与稠密数学相同、答案与
+    残差逐位相同，组分与漂移项浮点求和顺序不同、末位可异，轨迹如换种子（分布同），
+    要逐位复现旧表时取 False。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -1079,7 +1084,7 @@ def evolve_batch(
                     gpu_ctx = GpuBatchContext(
                         plan_provider.structure[0],
                         plan.workload.target, plan.workload.weights,
-                        direct=gpu_direct,
+                        direct=gpu_direct, sparse=gpu_sparse,
                     )
                 result = gpu_ctx.build(
                     plan.grouped, plan.menu, plan_provider.codebook.sync(),

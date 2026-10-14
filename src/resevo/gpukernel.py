@@ -332,8 +332,17 @@ class GpuBatchContext:
     条件计数在卡上整轮重算，省掉跨轮缓存的显存增长与大块传输。
     """
 
-    def __init__(self, qs: QueryStructure, target, weights, direct: bool | None = None):
-        """direct 取 None 自动识别单元格结构，True 强制直算（结构不符报错），False 走通用通路。"""
+    def __init__(
+        self, qs: QueryStructure, target, weights,
+        direct: bool | None = None, sparse: bool | None = None,
+    ):
+        """direct 取 None 自动识别单元格结构，True 强制直算（结构不符报错），False 走通用通路。
+
+        sparse 控制稀疏整表项/漂移项（第五十九步 乙）：答案按格号整数计数（与稠密 gemv
+        逐位相同），组错位分与漂移项只在非零项上聚合，不铺 (组数×题数) 稠密矩阵，
+        浮点求和顺序异于 gemv、末位可异（轨迹如换种子，分布同）；只在直算布局且无半空间题
+        时可用，None 可用即开，True 强制（不可用报错），False 走稠密老路逐位复现旧表。
+        """
         cp = _cupy()
         self.cp = cp
         self.qs = qs
@@ -379,6 +388,10 @@ class GpuBatchContext:
             self.fm_list = cp.asarray(lay.fm_list)
             self.fm_off = cp.asarray(lay.fm_off)
             self.fm_cnt = cp.asarray(np.diff(lay.fm_off))
+        can_sparse = self.direct and self.num_hs == 0
+        if sparse is True and not can_sparse:
+            raise ValueError("稀疏通路要求直算布局且无半空间题")
+        self.sparse = bool(can_sparse) if sparse is None else bool(sparse)
 
     # ------------------------------------------------------------------
     def _hs_scores(self, codes_g):
@@ -402,8 +415,8 @@ class GpuBatchContext:
             flat = flat + codes_rows[row_idx, f].astype(cp.int64) * self.m_strides[m_idx, k]
         return flat
 
-    def _feats_direct(self, codes_g):
-        """由组码查格号散射出特征矩阵，与条件计数重构的特征逐位相同。"""
+    def _cells_direct(self, codes_g):
+        """由组码查每组每边际的格号（组数×边际数），缺格为 -1；散射特征与稀疏整表项共用。"""
         cp = self.cp
         num_groups = int(codes_g.shape[0])
         m = self.layout.num_marginals
@@ -413,7 +426,14 @@ class GpuBatchContext:
                 codes_g[:, self.m_fields[:, k]].astype(cp.int64)
                 * self.m_strides[None, :, k]
             )
-        q = self.cellq[flat]
+        return self.cellq[flat]
+
+    def _feats_direct(self, codes_g):
+        """由组码查格号散射出特征矩阵，与条件计数重构的特征逐位相同。"""
+        cp = self.cp
+        num_groups = int(codes_g.shape[0])
+        m = self.layout.num_marginals
+        q = self._cells_direct(codes_g)
         feats = cp.zeros((num_groups, self.num_queries), dtype=cp.float64)
         valid = q >= 0
         rows = cp.broadcast_to(cp.arange(num_groups, dtype=cp.int64)[:, None], (num_groups, m))
@@ -424,6 +444,30 @@ class GpuBatchContext:
                 score_g >= self.hs_threshold[None, :]
             ).astype(cp.float64)
         return feats, score_g
+
+    def _state_terms_sparse(self, codes_g, counts):
+        """整表项的稀疏版：不铺 (组数×题数) 特征矩阵，只在每组命中的格上算。
+
+        答案 = 各组计数按格号累加，计数是整数、和不超 2^53，任何求和顺序都精确，
+        与稠密 gemv 逐位相同，残差与损失随之逐位相同；
+        组错位分 = 每组命中格的加权绝对残差之和，按（组×边际）小矩阵沿行规约，
+        求和顺序异于 gemv、末位可异，同形状同输入同卡逐位可复现。
+        """
+        cp = self.cp
+        q = self._cells_direct(codes_g)
+        num_groups, m = q.shape
+        valid = q >= 0
+        nq = self.num_queries
+        # 缺格记到多出的一格再丢掉，免去布尔压缩的主机同步
+        counts_b = cp.broadcast_to(counts[:, None], (num_groups, m)).ravel()
+        answers = cp.bincount(
+            cp.where(valid, q, nq).ravel(), weights=counts_b, minlength=nq + 1,
+        )[:nq]
+        residual = self.target - answers
+        loss = float((residual * self.weights) @ residual / 2)
+        wr = self.weights * cp.abs(residual)
+        scores = cp.where(valid, wr[cp.maximum(q, 0)], 0.0).sum(axis=1)
+        return residual, loss, scores, self._hs_scores(codes_g), None
 
     def _direct_entries(self, sub, menu_gpu, codes_g, multi: bool):
         """给定路径子集，直算每条路径的答案差稀疏块，条目按（路径，题号）升序。
@@ -610,6 +654,8 @@ class GpuBatchContext:
     def _state_terms(self, codes_g, counts):
         """本轮表状态的残差、损失、组分与答案差所需的中间量，按通路分派。"""
         if self.direct:
+            if self.sparse:
+                return self._state_terms_sparse(codes_g, counts)
             feats, score_g = self._feats_direct(codes_g)
             residual, loss, scores = self._residual_from_feats(feats, counts)
             return residual, loss, scores, score_g, None
@@ -993,6 +1039,84 @@ class GpuBatchContext:
         return best_beta, best_j
 
     # ------------------------------------------------------------------
+    def _merge_keys(self, keys, wvals):
+        """按键稳定排序 + 游程串行求和，返回（唯一键升序，对应和）。
+
+        同键条目按原序相加（cupy argsort 稳定），同输入同卡逐位可复现；
+        稠密与稀疏漂移通路共用，二者每个 (组, 题) 项的值逐位相同。
+        """
+        cp = self.cp
+        if int(keys.size) == 0:
+            return cp.zeros(0, dtype=cp.int64), cp.zeros(0, dtype=cp.float64)
+        order = cp.argsort(keys)
+        sk = keys[order]
+        sw = wvals[order]
+        newseg = cp.concatenate([cp.ones(1, dtype=cp.bool_), sk[1:] != sk[:-1]])
+        starts = cp.flatnonzero(newseg)
+        bounds = cp.concatenate(
+            [starts[1:], cp.asarray([int(sk.size)], dtype=cp.int64)]
+        )
+        sums = cp.zeros(starts.size, dtype=cp.float64)
+        nruns = int(starts.size)
+        threads = 256
+        _seg_kernels(cp)["run"](
+            ((nruns + threads - 1) // threads,), (threads,),
+            (sw, starts, bounds, sums, np.int64(nruns)),
+        )
+        return sk[starts].astype(cp.int64), sums
+
+    def _drift_sparse(self, parts, rates_paths, counts, num_groups, num_queries,
+                      entry_budget: int = 0):
+        """漂移项的稀疏版：只合并非零 (组, 题) 项，不铺 (组数×题数) 稠密矩阵。
+
+        条目按键 (题号, 组号) 稳定排序合并；答案差的块按条目预算拼成尽量少的段
+        （直算条目远少于通用通路的依赖条目，adult 一段装下），每段一次合并，
+        多段时各段的唯一键再按段序合并一次；
+        键已按题号升序，题号变化处即段界，drift_total 一段一块定序树规约，
+        自交叉项一次全量规约，同输入同卡逐位可复现；
+        与稠密 gemv 的差只在浮点求和顺序。
+        """
+        cp = self.cp
+        batches, cur, cur_n = [], [], 0
+        for part in parts:
+            n = int(part["indices"].size)
+            if n == 0:
+                continue
+            if cur and entry_budget > 0 and cur_n + n > entry_budget:
+                batches.append(cur)
+                cur, cur_n = [], 0
+            cur.append(part)
+            cur_n += n
+        if cur:
+            batches.append(cur)
+        uks, sums_all = [], []
+        for batch in batches:
+            keys = [p["indices"] * num_groups + p["grp_of"][p["row_of"]] for p in batch]
+            vals = [p["data"] * rates_paths[p["path_idx"]][p["row_of"]] for p in batch]
+            uk, sums = self._merge_keys(
+                keys[0] if len(keys) == 1 else cp.concatenate(keys),
+                vals[0] if len(vals) == 1 else cp.concatenate(vals),
+            )
+            uks.append(uk)
+            sums_all.append(sums)
+        if not uks:
+            return cp.zeros(num_queries, dtype=cp.float64), 0.0
+        if len(uks) == 1:
+            uk, sums = uks[0], sums_all[0]
+        else:
+            uk, sums = self._merge_keys(cp.concatenate(uks), cp.concatenate(sums_all))
+        q_idx = uk // num_groups
+        g_idx = uk - q_idx * num_groups
+        cg = counts[g_idx]
+        newq = cp.concatenate([cp.ones(1, dtype=cp.bool_), q_idx[1:] != q_idx[:-1]])
+        starts = cp.flatnonzero(newq)
+        offsets = cp.concatenate([starts, cp.asarray([int(uk.size)], dtype=cp.int64)])
+        drift_total = cp.zeros(num_queries, dtype=cp.float64)
+        drift_total[q_idx[starts]] = _seg_sum(cp, cg * sums, offsets)
+        self_cross = float(cp.sum(cg * self.weights[q_idx] * sums * sums))
+        return drift_total, self_cross
+
+    # ------------------------------------------------------------------
     def build(
         self,
         grouped: GroupedTable,
@@ -1123,66 +1247,44 @@ class GpuBatchContext:
         rates_paths = rates_flat[path_pos]
 
         # 漂移，键排序加前缀和分段归约，确定性合并
-        drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
-
-        def _merge_into(keys, wvals, accumulate):
-            order = cp.argsort(keys)
-            sk = keys[order]
-            sw = wvals[order]
-            newseg = cp.concatenate([cp.ones(1, dtype=cp.bool_), sk[1:] != sk[:-1]])
-            starts = cp.flatnonzero(newseg)
-            bounds = cp.concatenate(
-                [starts[1:], cp.asarray([int(sk.size)], dtype=cp.int64)]
+        if self.sparse:
+            drift_total, self_cross = self._drift_sparse(
+                parts, rates_paths, counts, num_groups, num_queries, entry_budget,
             )
-            sums = cp.zeros(starts.size, dtype=cp.float64)
-            kern = _seg_kernels(cp)["run"]
-            nruns = int(starts.size)
-            if nruns == 0:
-                return
-            threads = 256
-            kern(
-                ((nruns + threads - 1) // threads,), (threads,),
-                (sw, starts, bounds, sums, np.int64(nruns)),
-            )
-            uk = sk[starts].astype(cp.int64)
-            if accumulate:
-                # 块内键唯一花式加法安全，跨块按块序累加，分块固定结果确定
-                drifts[uk] += sums
-            else:
-                drifts[uk] = sums
-
-        if entry_budget > 0:
-            # 分块口径，逐块排序合并后散射累加，免去全量条目流一次性拼接
-            for part in parts:
-                if part["indices"].size == 0:
-                    continue
-                keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
-                _merge_into(
-                    keys,
-                    part["data"] * rates_paths[part["path_idx"]][part["row_of"]],
-                    accumulate=True,
-                )
         else:
-            key_parts, weight_parts = [], []
-            for part in parts:
-                keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
-                key_parts.append(keys)
-                weight_parts.append(
-                    part["data"] * rates_paths[part["path_idx"]][part["row_of"]]
-                )
-            if key_parts:
-                _merge_into(
-                    cp.concatenate(key_parts),
-                    cp.concatenate(weight_parts),
-                    accumulate=False,
-                )
-        drifts = drifts.reshape(num_groups, num_queries)
-        if delta_hs is not None:
-            weighted = delta_hs * rates_paths[:, None]
-            seg = _seg_sum2d(cp, weighted, menu_gpu["offsets"])
-            drifts[:, self.hs_cols] += seg
-        drift_total = counts @ drifts
-        self_cross = float(counts @ ((drifts * drifts) @ self.weights))
+            drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
+            if entry_budget > 0:
+                # 分块口径，逐块排序合并后散射累加，免去全量条目流一次性拼接
+                for part in parts:
+                    if part["indices"].size == 0:
+                        continue
+                    keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
+                    uk, sums = self._merge_keys(
+                        keys,
+                        part["data"] * rates_paths[part["path_idx"]][part["row_of"]],
+                    )
+                    # 块内键唯一花式加法安全，跨块按块序累加，分块固定结果确定
+                    drifts[uk] += sums
+            else:
+                key_parts, weight_parts = [], []
+                for part in parts:
+                    keys = part["grp_of"][part["row_of"]] * num_queries + part["indices"]
+                    key_parts.append(keys)
+                    weight_parts.append(
+                        part["data"] * rates_paths[part["path_idx"]][part["row_of"]]
+                    )
+                if key_parts:
+                    uk, sums = self._merge_keys(
+                        cp.concatenate(key_parts), cp.concatenate(weight_parts),
+                    )
+                    drifts[uk] = sums
+            drifts = drifts.reshape(num_groups, num_queries)
+            if delta_hs is not None:
+                weighted = delta_hs * rates_paths[:, None]
+                seg = _seg_sum2d(cp, weighted, menu_gpu["offsets"])
+                drifts[:, self.hs_cols] += seg
+            drift_total = counts @ drifts
+            self_cross = float(counts @ ((drifts * drifts) @ self.weights))
         interaction = float(
             ((drift_total * self.weights) @ drift_total - self_cross) / 2
         )

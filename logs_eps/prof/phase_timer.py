@@ -64,6 +64,10 @@ for nm, label in (
     ("_state_terms", "gpu.0 整表项 state_terms(cnt/feats+残差)"),
     ("_residual_from_feats", "gpu.0b 残差/损失/组分 两次gemv(G×Q)"),
     ("_hs_scores", "gpu.0c 半空间整数分"),
+    # 第五十九步 乙：稀疏整表项/漂移项（旧代码没有，套壳时跳过）
+    ("_state_terms_sparse", "gpu.0s 稀疏整表项(整数计数+聚合)"),
+    ("_drift_sparse", "gpu.6 漂移项(稀疏合并+分段)"),
+    ("_merge_keys", "gpu.6' 键合并(排序+游程和)"),
 ):
     if hasattr(G, nm):
         wrap(G, nm, label)

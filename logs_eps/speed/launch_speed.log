@@ -1,0 +1,13 @@
+2026-10-14T06:58:51Z START adult_eps3_ours2way_sparse_seed1 load=5.82 8.81 8.62
+2026-10-14T07:23:29Z END adult_eps3_ours2way_sparse_seed1 rc=0
+2026-10-14T07:24:29Z START adult_eps3_ours2way_sparse_seed2 load=10.91 21.86 22.19
+2026-10-14T07:47:17Z END adult_eps3_ours2way_sparse_seed2 rc=0
+2026-10-14T07:48:17Z START adult_eps3_ours2way_sparse_seed3 load=13.70 24.28 25.67
+2026-10-14T08:07:11Z END adult_eps3_ours2way_sparse_seed3 rc=0
+2026-10-14T08:08:11Z START adult_eps0p1_ours2way_sparse_seed1 load=12.43 23.80 26.01
+2026-10-14T08:10:23Z END adult_eps0p1_ours2way_sparse_seed1 rc=0
+2026-10-14T08:11:23Z START adult_eps0p1_ours2way_sparse_seed2 load=9.27 19.34 24.02
+2026-10-14T08:13:44Z END adult_eps0p1_ours2way_sparse_seed2 rc=0
+2026-10-14T08:14:44Z START adult_eps0p1_ours2way_sparse_seed3 load=9.30 16.74 22.25
+2026-10-14T08:17:07Z END adult_eps0p1_ours2way_sparse_seed3 rc=0
+2026-10-14T08:17:07Z ALL DONE SPEED

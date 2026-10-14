@@ -3,8 +3,11 @@
 # 1A 命令逐字（GSD 同卷 measured_2way.json、--exam-weights none、EXTRA 同 launch_stage1.sh），
 # 用 1A 终表热启动各 300 轮：ε=0.1 与 ε=3 背靠背、再重复一遍看轮间噪声；最后补一场 ε=3 冷启 300 轮对照 10-09 剖析（253 ms/轮）。
 # --stop-threshold 0 关平台停，保证整 300 轮都跑到（判停只读损失不碰计算，关掉不改每轮工作量）。
-# A6000 GPU1、CPU 道 24-47（与 1A 同道）。用法：cd /root/residual-evolution && (nohup bash logs_eps/prof/phase_runs4.sh < /dev/null > logs_eps/prof/phase_runs4.log 2>&1 &)
+# A6000 GPU1、CPU 道 24-47（与 1A 同道）。用法：cd /root/residual-evolution && (nohup bash logs_eps/prof/phase_runs4.sh [前缀=base] [附加参数...] < /dev/null > logs_eps/prof/phase_runs4_<前缀>.log 2>&1 &)
+#   前缀进日志名 phase_<前缀>_*.log；附加参数原样接到命令尾（如 --gpu-sparse off）。乙 改后复测：前缀 yi；对照：前缀 yioff 加 --gpu-sparse off。
 cd /root/residual-evolution || exit 1
+PREFIX=${1:-base}; [ $# -gt 0 ] && shift
+MORE="$*"
 export CUDA_VISIBLE_DEVICES=GPU-114f21d5-e47f-903c-a164-83a9f9dfa082
 EXTRA="--gpu --batched --pairing --work-rows 4096 --work-below 0.2 --retries 60 --pair-rescue-rows 2000 --rescue-after 6 --max-pairs 128 --rescue-stop-window 10 --rescue-stop-tol 0.02 --retry-select --struct-ruler ding --struct-boost 4 --progress 100 --gpu-entry-budget 40000000"
 P=logs_eps/prof
@@ -18,12 +21,12 @@ run() {  # name tag rounds init...
   taskset -c 24-47 .venv/bin/python -u -B $P/phase_timer.py \
     --data adult_alloc${tag}base_s1 --exam measured_2way.json --rounds $rounds --stop-threshold 0 \
     "$@" --exam-weights none --menu-seed 20260921 --sample-seed 1 --init-seed 1 \
-    $EXTRA > $P/phase_${name}.log 2>&1
+    $EXTRA $MORE > $P/phase_${PREFIX}_${name}.log 2>&1
   echo "$(date -u +%FT%TZ) END $name rc=$?"
 }
-run base_adult0p1_late_a 0p1 300 --init-table results/stage1/adult_eps0p1_ours2way_seed1.csv
-run base_adult3_late_a   3   300 --init-table results/stage1/adult_eps3_ours2way_seed1.csv
-run base_adult0p1_late_b 0p1 300 --init-table results/stage1/adult_eps0p1_ours2way_seed1.csv
-run base_adult3_late_b   3   300 --init-table results/stage1/adult_eps3_ours2way_seed1.csv
-run base_adult3_early    3   300 --init-avg --init-clean
-echo "$(date -u +%FT%TZ) ALL DONE PHASE4"
+run adult0p1_late_a 0p1 300 --init-table results/stage1/adult_eps0p1_ours2way_seed1.csv
+run adult3_late_a   3   300 --init-table results/stage1/adult_eps3_ours2way_seed1.csv
+run adult0p1_late_b 0p1 300 --init-table results/stage1/adult_eps0p1_ours2way_seed1.csv
+run adult3_late_b   3   300 --init-table results/stage1/adult_eps3_ours2way_seed1.csv
+run adult3_early    3   300 --init-avg --init-clean
+echo "$(date -u +%FT%TZ) ALL DONE PHASE4 $PREFIX"

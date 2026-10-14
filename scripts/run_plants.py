@@ -192,6 +192,7 @@ def run_stage(
 
     t0 = time.perf_counter()
     gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
+    gpu_sparse = {"auto": None, "on": True, "off": False}[args.gpu_sparse]
     if args.batched:
         out = evolve_batch(
             ids, rounds,
@@ -206,6 +207,7 @@ def run_stage(
             rescue_stop_tol=args.rescue_stop_tol,
             gpu_entry_budget=args.gpu_entry_budget,
             gpu_direct=gpu_direct,
+            gpu_sparse=gpu_sparse,
             noise_floor=args.noise_floor,
             stop_threshold_noisy=args.stop_threshold_noisy,
             progress_every=args.progress,
@@ -242,7 +244,9 @@ def run_stage(
         # 终点损失也在卡上算，避免为一次报数补算全部欠账特征
         from resevo.gpukernel import GpuBatchContext
 
-        gctx = GpuBatchContext(provider.structure[0], y, w, direct=gpu_direct)
+        gctx = GpuBatchContext(
+            provider.structure[0], y, w, direct=gpu_direct, sparse=gpu_sparse,
+        )
         final_loss = gctx.loss_of(provider.codebook.sync(), out.state_ids)
     else:
         final_workload = registry.build_workload(y, w)
@@ -442,6 +446,12 @@ def main() -> None:
         "--gpu-delta", choices=("auto", "direct", "generic"), default="auto",
         help="GPU 答案差通路，auto 考卷全单元格时走直算否则通用，"
              "direct 强制直算，generic 强制通用，两通路同种子逐位同结果",
+    )
+    parser.add_argument(
+        "--gpu-sparse", choices=("auto", "on", "off"), default="auto",
+        help="GPU 稀疏整表项/漂移项（第五十九步 乙），auto 直算布局且无半空间题时开，"
+             "on 强制，off 走稠密老路；数学相同、答案残差逐位同，组分与漂移项浮点"
+             "求和顺序不同末位可异，轨迹如换种子；要逐位复现旧表用 off",
     )
     parser.add_argument(
         "--init-margin-tol", type=float, default=0.0,
