@@ -1,0 +1,11 @@
+2026-10-14T06:23:50Z START base_adult0p1_late_a load=4.14 5.12 4.95
+2026-10-14T06:24:10Z END base_adult0p1_late_a rc=0
+2026-10-14T06:24:10Z START base_adult3_late_a load=4.36 5.11 4.95
+2026-10-14T06:25:03Z END base_adult3_late_a rc=0
+2026-10-14T06:25:03Z START base_adult0p1_late_b load=14.59 7.52 5.77
+2026-10-14T06:25:23Z END base_adult0p1_late_b rc=0
+2026-10-14T06:25:23Z START base_adult3_late_b load=12.77 7.55 5.82
+2026-10-14T06:26:14Z END base_adult3_late_b rc=0
+2026-10-14T06:26:14Z START base_adult3_early load=20.27 10.23 6.81
+2026-10-14T06:27:14Z END base_adult3_early rc=0
+2026-10-14T06:27:14Z ALL DONE PHASE4

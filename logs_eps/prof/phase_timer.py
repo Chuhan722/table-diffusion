@@ -62,6 +62,8 @@ for nm, label in (
     ("_delta_direct", "gpu.3' 直算答案差 delta"),
     ("_direct_entries", "gpu.3'' 直算条目(含分段)"),
     ("_state_terms", "gpu.0 整表项 state_terms(cnt/feats+残差)"),
+    ("_residual_from_feats", "gpu.0b 残差/损失/组分 两次gemv(G×Q)"),
+    ("_hs_scores", "gpu.0c 半空间整数分"),
 ):
     if hasattr(G, nm):
         wrap(G, nm, label)
