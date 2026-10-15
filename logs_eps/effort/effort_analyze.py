@@ -22,6 +22,21 @@ OUT_MD = REPO / "logs_eps/scores/effort_step60.md"
 OUT_PNG = REPO.parent / "汇报" / "adult_搜索代价_2026-10-15.png"
 
 
+# 结论随数字手写，重跑后若数字变动需同步改（判读见笔记第六十步）。
+CONCLUSION = """## 结论（10-15 阅毕）
+
+1. 两臂终损失相差 ≤0.5%（Δ −0.25% / +0.02% / +0.48% / +0.12% / −0.05%），"到共同终损失的代价"是公平门槛。
+2. 到共同终损失的秒数之比（GSD÷我们）：原始墙钟 27.6× / 6.4× / 1.8× / 2.2× / 3.8×；扣掉 GSD 记账突发后 **10.7× / 2.5× / 0.7× / 0.9× / 1.5×**；
+   再扣 GSD 从随机表降到我们起点的那段 8.8× / 2.1× / 0.5× / 0.8× / 1.4×。即 ε ≤ 0.3 我们真快，ε ≥ 1 净搜索时间持平或略慢；
+   此前整场墙钟表里 ε ≥ 1 的 2.2～2.7× 主要是 GSD 的实现开销（每 32,561 代一次约 25 s 的设备标量回收，占其循环 62%）与随机起点。
+3. 按候选评估数：ε=0.1 两家相当（0.88×），ε ≥ 0.3 GSD 少 5～20 倍（0.20× / 0.05× / 0.06× / 0.14×）；我们每条候选便宜 10.6～14.6 倍。
+   时间优势全部来自每条候选的评估成本（整批 GPU 评估），不来自搜索步数。候选粒度不同（我们一条候选是一批行同移，GSD 一条候选改一行），候选数只说明搜索步数。
+4. 代价集中在平台段：进入终值 1.1 倍以内后，我们每轮仍评估 4×10⁴～10⁵ 条候选、只移动 74 / 30 / 8.6 / 2.1 / 0.9 行（下降段 1,336 / 601 / 175 / 66 / 38 行），
+   这段占总候选 86% / 91% / 88% / 80% / 53%、占总轮 97% / 95% / 89% / 80% / 54%；GSD 同段（门槛 1.1 倍→1 倍）用的候选 ε=0.1 与我们相当（0.85×），ε=0.3 / 1 / 3 / 10 少 6 / 32 / 17 / 5 倍。这是本步找到的问题，未动。
+5. 全程行改动数：我们 0.20～0.30M（每行均 6～9 次）；GSD 每代至多收 1 个候选，代数 1.2M～3.3M 是其行改动次数上限（未记录接受数）。
+"""
+
+
 def read(path: Path) -> list[dict]:
     with path.open(newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
@@ -117,7 +132,7 @@ def main() -> None:
             if (REPO / f"results/effort/adult_eps{t}_ours2way_seed{SEED}_curve.csv").exists()
             and (REPO / f"results/effort/adult_eps{t}_gsd_seed{SEED}_gens.csv").exists()]
     fig, axes = plt.subplots(2, len(tags), figsize=(3.4 * len(tags), 6.2), squeeze=False)
-    md = ["# 第六十步 搜索代价对比：我们 vs GSD（adult 1A，种子 1，五档 ε）", "",
+    md = ["# 第六十步 搜索代价对比：我们 vs GSD（adult 1A，种子 1，五档 ε）", "", CONCLUSION, "",
           "同一份 measured_2way.json，共同损失 ℒ = Σ(噪声目标 − 计数)²；我们 ℒ = 2·old_loss，GSD ℒ = N²·best_fitness（N = 32,561）。",
           "候选评估 = 一次“提出一个改动并给它打分”：我们每轮打分的菜单条数（行级模式为行数×(取值数−1)），GSD 每代 50 个种群成员。",
           "两家候选粒度不同（我们一条候选是一批行同移，GSD 一条候选是改一行），所以候选数只能说明搜索步数，不是算力。",
@@ -131,12 +146,17 @@ def main() -> None:
           "| ε | 臂 | 起点 ℒ | 终 ℒ | 终/我们 ℒ₀ | 轮/代数 | 累计候选 | 循环秒 | 净秒 | 整场分钟 | 每候选 µs（净） |",
           "|---|---|---|---|---|---|---|---|---|---|---|"]
     burst_rows = ["", "GSD 记账突发：", ""]
-    reach_rows = ["", "## 二 到达 GSD 终损失所需代价（以 GSD 终 ℒ 为门槛）", "",
-                  "| ε | GSD 终 ℒ | 我们到达时轮 | 我们秒 | GSD 秒 | GSD 净秒 | GSD 净秒（自我们 ℒ₀ 起） | 我们候选 | GSD 候选 | GSD 候选（自我们 ℒ₀ 起） |",
-                  "|---|---|---|---|---|---|---|---|---|---|"]
+    reach_rows = ["", "## 二 到达共同终损失所需代价", "",
+                  "门槛 = 两臂终 ℒ 中较高者（两臂都到得了，不偏谁）；终 Δ = 我们终 ℒ ÷ GSD 终 ℒ − 1。",
+                  "“自 ℒ₀ 起”= 扣除 GSD 从随机表降到我们起点损失所花的秒与候选（把初始化先手扣掉）。", "",
+                  "| ε | 门槛 ℒ | 终 Δ | 我们到达轮/总轮 | 我们秒 | GSD 秒 | GSD 净秒 | GSD 净秒（自 ℒ₀） | 我们候选 | GSD 候选 | GSD 候选（自 ℒ₀） |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|"]
     ratio_rows = ["", "## 二′ 比值分解（GSD ÷ 我们）：秒之比 = 候选之比 × 每候选耗时之比", "",
                   "| ε | 秒之比（原） | 秒之比（净） | 秒之比（净，自 ℒ₀） | 候选之比 | 候选之比（自 ℒ₀） | 每候选耗时之比（净） |",
                   "|---|---|---|---|---|---|---|"]
+    tail_rows = ["", "## 二″ 收尾段：到达门槛 ×m 所需（秒 / 候选；GSD 用净秒、不扣 ℒ₀）", "",
+                 "两臂早停都是“相对改善 < 1e-4”，大头时间都花在最后几成的改善上；此表看谁在平台段更省。", "",
+                 "| ε | m | 我们秒 | GSD 净秒 | 秒之比 | 我们候选 | GSD 候选 | 候选之比 |", "|---|---|---|---|---|---|---|---|"]
     level_rows = ["", "## 三 到达同一相对损失 ℒ/ℒ₀ 的代价（秒 / 候选；GSD 用净秒）", "",
                   "| ε | ℒ/ℒ₀ | 我们秒 | GSD 净秒 | 我们候选 | GSD 候选 |", "|---|---|---|---|---|---|"]
     for j, tag in enumerate(tags):
@@ -150,22 +170,26 @@ def main() -> None:
                       f"{fmt_n(cc)} | {tt:,.0f} | {tn:,.0f} | {wall.get(key, float('nan')):.1f} | {1e6 * tn / cc:.1f} |")
         burst_rows.append(f"- ε={EPS[tag]}：{g['bursts']} 次突发共 {g['burst_s']:,.0f} s（占循环 {g['burst_s'] / g['t'][-1]:.0%}），"
                           f"正常每 1000 代 {g['med_ms']:.0f} ms。")
-        thr = g["loss"][-1]
-        ro = first_reach(o, thr)
-        tg, tgn, cg = g["t"][-1], g["t_net"][-1], g["cand"][-1]
         gn = dict(g, t=g["t_net"])
         warm = first_reach(gn, l0) or (float("nan"), float("nan"))
+        thr = max(o["loss"][-1], g["loss"][-1])
+        delta = o["loss"][-1] / g["loss"][-1] - 1
+        (to, co), (tg, _), (tgn, cg) = first_reach(o, thr), first_reach(g, thr), first_reach(gn, thr)
+        k = int(np.nonzero(o["loss"] <= thr)[0][0])
         tgn0, cg0 = tgn - warm[0], cg - warm[1]
-        if ro is None:
-            reach_rows.append(f"| {EPS[tag]} | {thr:.4g} | 未达到（我们终 ℒ 高 {o['loss'][-1] / thr - 1:+.2%}） | — | {tg:,.0f} | {tgn:,.0f} | {tgn0:,.0f} | — | {fmt_n(cg)} | {fmt_n(cg0)} |")
-        else:
-            to, co = ro
-            k = int(np.nonzero(o["loss"] <= thr)[0][0])
-            cr = cg / co
-            reach_rows.append(f"| {EPS[tag]} | {thr:.4g} | {k} / {o['rounds']} | {to:,.1f} | {tg:,.0f} | {tgn:,.0f} | {tgn0:,.0f} | "
-                              f"{fmt_n(co)} | {fmt_n(cg)} | {fmt_n(cg0)} |")
-            ratio_rows.append(f"| {EPS[tag]} | {tg / to:.1f}× | {tgn / to:.1f}× | {tgn0 / to:.1f}× | {cr:.2f}× | {cg0 / co:.2f}× | {(tgn / to) / cr:.1f}× |")
-        floor = max(o["loss"][-1], g["loss"][-1]) / l0
+        cr = cg / co
+        reach_rows.append(f"| {EPS[tag]} | {thr:.4g} | {delta:+.2%} | {k} / {o['rounds']} | {to:,.1f} | {tg:,.0f} | {tgn:,.0f} | {tgn0:,.0f} | "
+                          f"{fmt_n(co)} | {fmt_n(cg)} | {fmt_n(cg0)} |")
+        ratio_rows.append(f"| {EPS[tag]} | {tg / to:.1f}× | {tgn / to:.1f}× | {tgn0 / to:.1f}× | {cr:.2f}× | {cg0 / co:.2f}× | {(tgn / to) / cr:.1f}× |")
+        for m in (2.0, 1.5, 1.2, 1.1, 1.05, 1.02, 1.0):
+            a, b = first_reach(o, m * thr), first_reach(gn, m * thr)
+            if a is None or b is None:
+                continue
+            if a[0] <= 0:  # 门槛×m 高于我们起点：我们零代价即满足，比值无意义
+                tail_rows.append(f"| {EPS[tag]} | {m:g} | 起点已满足 | {b[0]:,.0f} | — | 0 | {fmt_n(b[1])} | — |")
+                continue
+            tail_rows.append(f"| {EPS[tag]} | {m:g} | {a[0]:,.1f} | {b[0]:,.0f} | {b[0] / a[0]:.1f}× | {fmt_n(a[1])} | {fmt_n(b[1])} | {b[1] / a[1]:.2f}× |")
+        floor = thr / l0
         for lv in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01):
             if lv < floor:
                 break
@@ -190,11 +214,11 @@ def main() -> None:
             ax.grid(alpha=0.3, which="both", lw=0.4)
             if i == 0 and j == 0:
                 ax.legend(frameon=False)
-    fig.suptitle("adult 二阶工作负载：到达同一损失的搜索代价（种子 1，GSD 终损失为虚线）", y=1.0)
+    fig.suptitle("adult 二阶工作负载：到达同一损失的搜索代价（种子 1，虚线 = 两臂共同终损失）", y=1.0)
     fig.tight_layout()
     OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT_PNG, dpi=160, bbox_inches="tight")
-    md += burst_rows + reach_rows + ratio_rows + level_rows + ["", f"图：{OUT_PNG.name}（上行横轴墙钟秒，下行横轴累计候选数，纵轴 ℒ/ℒ₀，双对数）。"]
+    md += burst_rows + reach_rows + ratio_rows + tail_rows + level_rows + ["", f"图：{OUT_PNG.name}（上行横轴墙钟秒，下行横轴累计候选数，纵轴 ℒ/ℒ₀，双对数）。"]
     OUT_MD.write_text("\n".join(md) + "\n", encoding="utf-8")
     print("\n".join(md))
     print(f"\n写入 {OUT_MD}\n图 {OUT_PNG}")

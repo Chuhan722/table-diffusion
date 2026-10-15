@@ -1,0 +1,23 @@
+2026-10-15T06:13:00Z START adult_eps0p1_ours2way_seed1 gpu0 load=24.79 36.07 54.76
+2026-10-15T06:13:00Z START adult_eps0p1_gsd_seed1 gpu1 load=24.79 36.07 54.76
+2026-10-15T06:14:52Z END adult_eps0p1_ours2way_seed1 rc=0 load=35.10 37.03 53.04
+2026-10-15T06:15:57Z START adult_eps0p3_ours2way_seed1 gpu0 load=28.76 34.81 51.19
+2026-10-15T06:20:48Z END adult_eps0p3_ours2way_seed1 rc=0 load=45.76 41.36 49.54
+2026-10-15T06:21:54Z START adult_eps1_ours2way_seed1 gpu0 load=32.41 38.12 47.85
+2026-10-15T06:32:49Z END adult_eps1_ours2way_seed1 rc=0 load=42.57 41.92 44.98
+2026-10-15T06:33:55Z START adult_eps3_ours2way_seed1 gpu0 load=168.79 75.66 56.18
+2026-10-15T06:42:05Z END adult_eps0p1_gsd_seed1 rc=0 load=47.77 74.33 70.06
+2026-10-15T06:43:11Z START adult_eps0p3_gsd_seed1 gpu1 load=47.82 69.42 68.66
+2026-10-15T06:52:06Z END adult_eps3_ours2way_seed1 rc=0 load=31.02 45.13 57.33
+2026-10-15T06:53:11Z START adult_eps10_ours2way_seed1 gpu0 load=20.79 39.39 54.52
+2026-10-15T07:10:48Z END adult_eps10_ours2way_seed1 rc=0 load=21.71 27.07 38.14
+2026-10-15T07:10:48Z OURS DONE
+2026-10-15T07:15:14Z END adult_eps0p3_gsd_seed1 rc=0 load=20.48 21.65 33.02
+2026-10-15T07:16:14Z START adult_eps1_gsd_seed1 gpu1 load=16.91 20.40 31.87
+2026-10-15T07:51:16Z END adult_eps1_gsd_seed1 rc=0 load=10.71 11.55 14.63
+2026-10-15T07:52:24Z START adult_eps3_gsd_seed1 gpu1 load=8.54 10.80 14.15
+2026-10-15T08:39:49Z END adult_eps3_gsd_seed1 rc=0 load=171.90 68.60 34.18
+2026-10-15T08:40:57Z START adult_eps10_gsd_seed1 gpu1 load=91.52 68.52 36.83
+2026-10-15T09:43:14Z END adult_eps10_gsd_seed1 rc=0 load=4.57 4.94 6.04
+2026-10-15T09:43:14Z GSD DONE
+2026-10-15T09:43:14Z ALL DONE EFFORT
