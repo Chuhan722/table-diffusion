@@ -219,6 +219,11 @@ class RoundRecord:
     expected_loss: float
     status: str
     max_gain_sum: float = 0.0  # M，熵校准的最大可达增益总和
+    # 以下为第六十步加的纯记账列（只读不碰计算），非批量路径取默认值
+    mode: str = ""  # 计划模式 batch / rows / rescue / tree
+    candidates: int = -1  # 本轮评估的候选改法条数（批量轮 = 菜单路径数，行级轮 = Σ 行数×后继数）
+    moved_rows: float = float("nan")  # 期望搬动行数 h·H
+    elapsed: float = float("nan")  # 自演化循环起算的累计秒数，本轮记账时刻
 
 
 @dataclass

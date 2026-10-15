@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -992,6 +993,7 @@ def evolve_batch(
     last_sev: float | None = None  # 最近批量轮在治病情深度，治疗平台门用
     prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
+    t_loop = time.perf_counter()  # 记账用，只读
     for k in range(num_rounds):
         if (
             nullswap_phase is not None
@@ -1126,11 +1128,18 @@ def evolve_batch(
                 note(result.step)
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
+        if plan.mode == "batch":
+            n_cand = int(result.menu.num_paths)
+        else:
+            n_cand = int(sum(len(b.rows) * (len(b.outcomes) - 1) for b in result.blocks))
         records.append(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
                 result.interaction, result.step, result.expected_loss, result.status,
                 result.max_gain_sum,
+                mode=plan.mode, candidates=n_cand,
+                moved_rows=float(result.expected_changed_rows),
+                elapsed=time.perf_counter() - t_loop,
             )
         )
         if temps is not None:

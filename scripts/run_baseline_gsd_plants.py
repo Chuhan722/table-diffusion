@@ -80,6 +80,12 @@ def main() -> None:
         help="外部噪声考卷 json 路径，给了就按其答案当拟合目标，"
         "官方 oneshot 口径只挂全二阶，评价照旧对真实统计",
     )
+    parser.add_argument(
+        "--generation-log", type=str, default="",
+        help="第六十步记账：每 --log-every 代记 (代数, 最优 fitness, 累计秒, 累计候选评估数) 到该 CSV，"
+        "只读不碰计算，需 gsd_patched 带 generation_log 钩子",
+    )
+    parser.add_argument("--log-every", type=int, default=1000)
     args = parser.parse_args()
 
     data_dir = REPO / "data" / args.data
@@ -155,10 +161,14 @@ def main() -> None:
         stop_early=True,
         stop_eary_threshold=args.early_stop_threshold,
         sparse_statistics=True,
+        **({"generation_log": args.generation_log, "log_every": args.log_every}
+           if args.generation_log else {}),
     )
     started = time.time()
     sync_data = generator.fit(jax.random.PRNGKey(args.seed + 1), stats)
     fit_seconds = time.time() - started
+    if args.generation_log:
+        print(f"停止代数 {generator.stop_generation}，记账已写入 {args.generation_log}")
 
     stat_fn = stats.get_dataset_statistics_fn()
     sync_stats = np.asarray(stat_fn(sync_data))

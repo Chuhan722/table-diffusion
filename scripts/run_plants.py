@@ -273,6 +273,7 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
                   "step", "expected_loss", "status", "max_gain_sum"]
         if has_temp:
             header.append("temp")
+        header += ["mode", "candidates", "moved_rows", "elapsed_s"]  # 第六十步记账列
         writer.writerow(header)
         for i, r in enumerate(out.records):
             row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
@@ -283,10 +284,12 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
                     "|".join(f"{x:.6f}" for x in t)
                     if isinstance(t, tuple) else t
                 )
+            row += [r.mode, r.candidates, r.moved_rows, r.elapsed]
             writer.writerow(row)
         final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
         if has_temp:
             final_row.append("")
+        final_row += ["", "", "", ""]
         writer.writerow(final_row)
     print(f"{what}已写入 {out_path}")
     if out.probes:
