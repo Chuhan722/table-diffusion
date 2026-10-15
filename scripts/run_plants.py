@@ -193,6 +193,30 @@ def run_stage(
     t0 = time.perf_counter()
     gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
     gpu_sparse = {"auto": None, "on": True, "off": False}[args.gpu_sparse]
+    snapshot_hook = None
+    snapshot_losses = getattr(args, "snapshot_losses", None)
+    if snapshot_losses:
+        from resevo.editspace import tuples_from_ids
+
+        snap_prefix = Path(args.snapshot_prefix + ("_stage2" if label else ""))
+        snap_log = snap_prefix.with_name(snap_prefix.name + "_snaps.csv")
+
+        def snapshot_hook(index, threshold, round_index, old_loss, ids):
+            """损失快照落盘：起点表写 CSV，触发记录追加到日志，只读注册表。"""
+            snap_path = snap_prefix.with_name(snap_prefix.name + f"_snap{index}.csv")
+            write_table(snap_path, schema, tuples_from_ids(registry, ids), f"{label}快照{index}")
+            snap_log.parent.mkdir(parents=True, exist_ok=True)
+            new_log = not snap_log.exists()
+            with open(snap_log, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if new_log:
+                    writer.writerow(["index", "threshold", "round", "old_loss", "elapsed_s"])
+                writer.writerow([index, threshold, round_index, old_loss, time.perf_counter() - t0])
+            print(
+                f"{label}快照{index} 阈值 {threshold:.4f} 轮 {round_index} 损失 {old_loss:.4f}",
+                flush=True,
+            )
+
     if args.batched:
         out = evolve_batch(
             ids, rounds,
@@ -221,6 +245,8 @@ def run_stage(
             nullswap_phase=nullswap,
             nullswap_every=args.nullswap_every,
             nullswap_after=args.nullswap_after,
+            snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
+            snapshot_hook=snapshot_hook,
         )
     elif args.grouped:
         out = evolve_grouped(
@@ -408,6 +434,17 @@ def main() -> None:
         "--stop-floor", type=float, default=0.0,
         help="硬地板停，损失不高于该值直接收工（一致化卷防背错题，"
         "地板按公开机制参数外算），0 关闭",
+    )
+    parser.add_argument(
+        "--snapshot-loss", type=str, default="",
+        help="损失快照阈值，逗号分隔的引擎口径损失值，某轮起点损失首次不高于"
+        "某阈值时把该轮起点表写成 CSV（第六十一步，纯记账不改轨迹），"
+        "留空关闭，需 --batched 与 --snapshot-prefix",
+    )
+    parser.add_argument(
+        "--snapshot-prefix", type=str, default="",
+        help="损失快照输出前缀，表写到 前缀_snap{序号}.csv，"
+        "触发记录写到 前缀_snaps.csv，与 --snapshot-loss 同时给出",
     )
     parser.add_argument(
         "--tree-every", type=int, default=0,
@@ -640,6 +677,19 @@ def main() -> None:
         parser.error("--nullswap-every 只支持批量路径，请同时带 --batched")
     if args.nullswap_after > 0 and args.nullswap_every <= 0:
         parser.error("--nullswap-after 需要 --nullswap-every 为正")
+    if bool(args.snapshot_loss) != bool(args.snapshot_prefix):
+        parser.error("--snapshot-loss 与 --snapshot-prefix 须同时给出")
+    if args.snapshot_loss and not args.batched:
+        parser.error("--snapshot-loss 只支持批量路径，请同时带 --batched")
+    snapshot_losses = None
+    if args.snapshot_loss:
+        try:
+            snapshot_losses = [float(x) for x in args.snapshot_loss.split(",") if x.strip()]
+        except ValueError:
+            parser.error("--snapshot-loss 须为逗号分隔的数值")
+        if not snapshot_losses or any(x <= 0.0 for x in snapshot_losses):
+            parser.error("--snapshot-loss 的每个阈值必须为正")
+    args.snapshot_losses = snapshot_losses
     if not (0 < args.alpha < 1):
         parser.error("--alpha 必须落在 (0,1)")
     if args.probe_interval > 0 and not args.batched:

@@ -884,9 +884,16 @@ def evolve_batch(
     nullswap_after: int = 0,
     gpu_direct: bool | None = None,
     gpu_sparse: bool | None = None,
+    snapshot_losses=None,
+    snapshot_hook=None,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
+    snapshot_losses 配 snapshot_hook 启用损失快照（第六十一步，纯记账）：
+    某轮起点损失首次不高于某个给定值时，把该轮起点表的状态编号副本交给
+    钩子 hook(index, threshold, round_index, old_loss, state_ids)，每个给定值
+    只触发一次，同一轮可触发多个；触发在判停与抽样之前，停止轮也能触发，
+    不碰随机流不改轨迹，默认 None 关闭零改变。
     backend 取 gpu 时批量轮核构造走 cupy 后端，数学定义一致，
     抽样与行级回退轮仍在 CPU，随机数语义不变。
     stop_threshold 大于零启用平台早停，参考 GSD 的窗口相对改进判据，
@@ -980,6 +987,14 @@ def evolve_batch(
         raise ValueError("换位相位暖场轮数不能为负")
     if (nullswap_phase is not None) != (nullswap_every > 0):
         raise ValueError("换位相位对象与周期须同时给出")
+    if (snapshot_losses is not None) != (snapshot_hook is not None):
+        raise ValueError("快照损失值与快照钩子须同时给出")
+    snap_thresholds: list[float] = (
+        [float(x) for x in snapshot_losses] if snapshot_losses is not None else []
+    )
+    if any(not np.isfinite(x) or x <= 0.0 for x in snap_thresholds):
+        raise ValueError("快照损失值必须为正的有限数")
+    snap_pending = list(range(len(snap_thresholds)))  # 尚未触发的快照序号
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -1155,6 +1170,12 @@ def evolve_batch(
                 f"{result.status} 连败 {frozen_streak}",
                 flush=True,
             )
+        if snap_pending:
+            # 损失快照：起点损失首次不高于给定值即交出起点表副本，只读不碰计算
+            fired = [i for i in snap_pending if result.old_loss <= snap_thresholds[i]]
+            for i in fired:
+                snapshot_hook(i, snap_thresholds[i], k, result.old_loss, current.copy())
+                snap_pending.remove(i)
         if stop_floor > 0.0 and result.old_loss <= stop_floor:
             # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
             # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
