@@ -39,7 +39,36 @@ MAIN = ["二阶", "三阶均", "三阶top5%", "半空间"]
 CONCLUSION = """\
 ## 结论（种子 1，五档 ε；数字见下表）
 
-（待填）
+1. **形状**：两臂五档 ε 的真值误差（二阶 L1）沿"损失/地板"都是一条谷：地板以上单调下降，谷底在地板附近，谷底以下回升到终表。
+   我们的谷底（二阶）在地板 ×0.985 / 0.95 / 0.9 / 0.8 / 0.56（ε = 0.1 / 0.3 / 1 / 3 / 10），比终表好 34.6 / 33.0 / 21.9 / 11.6 / 4.0%；
+   GSD 的谷底在 ×0.9 / 0.9 / 0.9 / 0.7 / 终表，比终表好 24.6 / 22.9 / 16.6 / 6.0 / 0%。ε 越大谷越浅、越靠下：
+   ε = 10 两臂都是终表（或 0.56×）最好，地板停反而比终表差 4.0%（我们）/ 5.8%（GSD）。
+   平方口径的真值误差 T 同样有谷、深度相同（我们 −35.5 / −34.5 / −19.5 / −10.7 / −4.6%），谷底略深（0.905 / 0.86 / 0.72 / 0.57 / 0.52×）。
+2. **地板停（×1.0）对我们**：比终表好 33.8 / 32.0 / 21.3 / 9.1%，ε = 10 差 4.0%；离各档最优 1.3 / 1.6 / 0.8 / 2.9 / 8.4%；
+   代价是全程候选的 9.2 / 3.2 / 2.5 / 3.9 / 16.2%（23 / 60 / 202 / 558 / 1754 轮，搜索循环内 10 / 10 / 22 / 93 / 121 秒，机器负载 7–49）。
+   一条不带参数的规则（损失到 ½Σσ² 即停）在 ε ≤ 3 拿到几乎全部收益；ε = 10 是例外，需多看种子再定是否按 ε 调倍数。
+3. **地板停对 GSD**：比终表好 8.0 / 12.8 / 14.9 / 5.2%，ε = 10 差 5.8%；但离其自身最优 22.0 / 13.2 / 2.0 / 0.9 / 5.8%
+   （GSD 到地板时真值误差还在明显下降，谷底在 ×0.9 以下）；花全程代数的 19.9 / 20.0 / 20.5 / 14.8 / 13.5%（净 102–200 秒）。
+4. **两臂同法对照（本步主结果）**：同一测量、同一噪声目标、同一停法下只换生成器。地板停处我们 ÷ GSD：
+   二阶 0.729 / 0.780 / 0.916 / 0.954 / 0.982，三阶均 0.781 / 0.823 / 0.938 / 0.976 / 1.003，半空间 0.753 / 0.829 / 0.912 / 0.952 / 1.043，
+   三阶top5% 0.978 / 0.899 / 0.906 / 0.934 / 1.012。各取自己二阶最优层级（上帝视角）：二阶 0.879 / 0.869 / 0.926 / 0.935 / 0.959，
+   三阶均 0.895 / 0.887 / 0.946 / 0.971 / 0.999。跑到收敛的终表：二阶 1.013 / 1.000 / 0.990 / 0.995 / 0.999，各轴都在 ±6% 内（ε = 10 半空间 1.09 除外）。
+   即：两个生成器收敛到同一处；差别全在路径上——同一损失水平下我们的表离真值更近，ε 越小差距越大。
+5. **为什么**（分解 ℒ = ‖e‖² + T − 2⟨d,e⟩，e 为注入噪声、d 为表与真值之差）：到地板时两臂 T − 2⟨d,e⟩ 必然相等，
+   但我们的 T = 0.070 / 0.151 / 0.323 / 0.544 / 0.752，GSD 为 0.093 / 0.200 / 0.395 / 0.663 / 0.878（低 25 / 25 / 18 / 18 / 14%）——
+   GSD 从起点降到地板的同样一段损失里，多花了一截在追噪声上；终表处两臂 T 与追噪项都相同（0.072 / 0.071 … 0.449 / 0.451）。
+   地板处追噪项占 ℒ 的份额随 ε 上升（我们 6% → 74%），而 T 的最低点随 ε 向地板以下移动：σ 小时到地板还有大块结构误差没消、残差仍含信号，
+   所以继续往下仍在改善真值，这是 ε = 10 例外的来源。
+6. **到地板的代价**：我们 9.6e6 / 1.1e7 / 2.4e7 / 6.1e7 / 1.9e8 候选、10 / 10 / 22 / 93 / 121 秒；GSD 1.2e7 / 1.4e7 / 1.6e7 / 1.7e7 / 2.1e7 候选、净 102 / 152 / 163 / 139 / 200 秒。
+   ε ≥ 1 我们的候选数更多（单个候选便宜、融合核），墙上时间 ε ≤ 1 快 7–15 倍、ε ≥ 3 快 1.5–1.7 倍（我们这边负载很重，时间偏保守）。
+7. **其他观察**：ε = 10 地板以上（×5～×2）GSD 比我们好（×5 处 15049 对 18500），×1.5 处交叉，地板以下我们略好；
+   三阶top5% 与半空间在 ε = 0.1 / 10 两端两臂互有胜负（这两轴本身噪）。
+8. **核对**：我们 5 张终表与第六十步逐位同、曲线除时间列逐列同、56 张快照轮号 = 曲线首穿越轮、快照 ℒ = 2·记账损失；
+   GSD 62 张快照与 5 张终表 ℒ = N²·记账 fitness（终表相对差 ≤ 3e-7），终 ℒ 与第六十步之比 0.9978–1.0000（非逐位确定）。
+9. **局限**：单种子；GSD 每 1000 代才检查一次阈值（×1.0 实际落在 0.992–0.998）；GSD 在 ε = 0.1 的网格只到 ×0.9（终 0.825，谷底位置未分辨）；
+   阅卷轴为 L1，T 为平方口径，两者谷深一致但位置略有差异。
+10. **下一步建议**：把"损失到噪声地板即停"作为我们的默认停法（无参数、ε ≤ 3 近最优），两臂三种子 × 五档 ε 同法复跑以确认第 4 条的比值；
+    ε = 10 的倍数问题等多种子后再定；汇报的收敛终表数字按地板停改写。
 """
 
 
@@ -56,11 +85,40 @@ def read_snaps(path: Path) -> list[dict]:
     return list(csv.DictReader(open(path, encoding="utf-8")))
 
 
+_EXAM: dict[str, tuple] = {}
+_COUNTS: dict[tuple[str, str], np.ndarray] = {}
+
+
+def exam(tag: str):
+    if tag not in _EXAM:
+        _, pairs, tgt = load_exam(ROOT / f"data/adult_alloc{tag}base_s1/measured_2way.json")
+        _EXAM[tag] = (pairs, tgt)
+    return _EXAM[tag]
+
+
+def counts(path: Path, tag: str) -> np.ndarray:
+    """表在该 ε 噪声考卷查询顺序下的格计数 c（按路径缓存，核对与分解共用）。"""
+    key = (str(path), tag)
+    if key not in _COUNTS:
+        cols, rows = load_codes(path)
+        _COUNTS[key] = cell_counts(cols, rows, exam(tag)[0])
+    return _COUNTS[key]
+
+
 def table_loss(path: Path, tag: str) -> float:
     """表对噪声目标的 ℒ = Σ(y − c)²（与 align_loss 同法）。"""
-    _, pairs, tgt = load_exam(ROOT / f"data/adult_alloc{tag}base_s1/measured_2way.json")
-    cols, rows = load_codes(path)
-    return float(np.sum((tgt - cell_counts(cols, rows, pairs)) ** 2))
+    return float(np.sum((exam(tag)[1] - counts(path, tag)) ** 2))
+
+
+def decompose(path: Path, tag: str) -> dict:
+    """ℒ = ‖e‖² + T − 2⟨d, e⟩：e = y − c*（注入的噪声），d = c − c*，T = ‖d‖²（对真值的平方误差），
+    2⟨d, e⟩ = 表与噪声同向的部分（追噪项）。全部除以 Σσ²（ℒ 口径地板）。"""
+    pairs, y = exam(tag)
+    c_true = counts(ROOT / "data/adult/adult.csv", tag)
+    c = counts(path, tag)
+    e, d = y - c_true, c - c_true
+    s2 = 2.0 * noise_floor(tag)
+    return dict(e2=float(e @ e) / s2, T=float(d @ d) / s2, cross=2.0 * float(d @ e) / s2)
 
 
 # ---------- 阅卷（带缓存） ----------
@@ -222,7 +280,7 @@ def pct(x: float) -> str:
 
 
 def cell(v: float, base: float) -> str:
-    return f"{v:.0f} ({pct((v - base) / base)})"
+    return f"{v * 1e6:.0f} ({pct((v - base) / base)})"
 
 
 def best_label(pts: list[dict], axis: str) -> str:
@@ -242,7 +300,7 @@ def ours_table(tag: str, pts: list[dict], notes: list[str], tot: dict) -> list[s
     for p in pts:
         cells = []
         for ax in AXES:
-            c = cell(p["scores"][ax], final[ax]) if p["label"] != "终表" else f"{final[ax]:.0f}"
+            c = cell(p["scores"][ax], final[ax]) if p["label"] != "终表" else f"{final[ax] * 1e6:.0f}"
             if bests[ax] == p["label"]:
                 c = f"**{c}**"
             cells.append(c)
@@ -267,13 +325,36 @@ def gsd_table(tag: str, pts: list[dict], notes: list[str], tot: dict) -> list[st
     for p in pts:
         cells = []
         for ax in AXES:
-            c = cell(p["scores"][ax], final[ax]) if p["label"] != "终表" else f"{final[ax]:.0f}"
+            c = cell(p["scores"][ax], final[ax]) if p["label"] != "终表" else f"{final[ax] * 1e6:.0f}"
             if bests[ax] == p["label"]:
                 c = f"**{c}**"
             cells.append(c)
         lines.append(
             f"| {p['label']} | {p['mult']:.3f} | {p['gen']:,} | {p['gen_share']:.1%} | {p['cand_share']:.1%} | "
             f"{p['tnet']:.0f} | {p['tnet_share']:.1%} | " + " | ".join(cells) + " |"
+        )
+    lines.append("")
+    return lines
+
+
+def decomp_table(arm: str, tag: str, pts: list[dict]) -> list[str]:
+    final_T = decompose(pts[-1]["path"], tag)["T"]
+    lines = [
+        f"## 分解 {arm} ε = {EPS[tag]}：ℒ = ‖e‖² + T − 2⟨d,e⟩（均除以 Σσ²；"
+        f"‖e‖²/Σσ² = {decompose(pts[-1]['path'], tag)['e2']:.3f}）",
+        "",
+        "| 层级 | 损失/地板 | T（真值平方误差） | 2⟨d,e⟩（追噪项） | 追噪项/ℒ | T Δ终 |",
+        "|---|---|---|---|---|---|",
+    ]
+    best = min(pts, key=lambda p: decompose(p["path"], tag)["T"])["label"]
+    for p in pts:
+        dc = decompose(p["path"], tag)
+        t_cell = f"{dc['T']:.3f}"
+        if p["label"] == best:
+            t_cell = f"**{t_cell}**"
+        lines.append(
+            f"| {p['label']} | {p['mult']:.3f} | {t_cell} | {dc['cross']:.3f} | {dc['cross'] / p['mult']:.1%} | "
+            f"{pct((dc['T'] - final_T) / final_T)} |"
         )
     lines.append("")
     return lines
@@ -309,9 +390,58 @@ def summary_ours(all_pts: dict[str, list[dict]]) -> list[str]:
     return lines
 
 
+def summary_gsd(all_pts: dict[str, list[dict] | None]) -> list[str]:
+    lines = [
+        "## 汇总（GSD）：最优停点在哪、地板停（×1.0）与跑到收敛（终表）差多少",
+        "",
+        "| ε | 二阶最优层级 | 三阶均最优 | 三阶top5%最优 | 半空间最优 | ×1.0 代占比 | ×1.0 净秒占比 | ×1.0 二阶 Δ终 | ×1.0 三阶均 Δ终 | ×1.0 三阶top5% Δ终 | ×1.0 半空间 Δ终 | 二阶最优 Δ终 | ×1.0 二阶 Δ最优 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for tag in TAGS:
+        pts = all_pts.get(tag)
+        if not pts:
+            continue
+        final = pts[-1]["scores"]
+        f1 = find(pts, "地板×1")
+        bl = best_label(pts, "二阶")
+        bp = find(pts, bl)["scores"]
+        d = lambda ax: pct((f1["scores"][ax] - final[ax]) / final[ax])  # noqa: E731
+        lines.append(
+            f"| {EPS[tag]} | {bl} | {best_label(pts, '三阶均')} | {best_label(pts, '三阶top5%')} | {best_label(pts, '半空间')} | "
+            f"{f1['gen_share']:.1%} | {f1['tnet_share']:.1%} | {d('二阶')} | {d('三阶均')} | {d('三阶top5%')} | {d('半空间')} | "
+            f"{pct((bp['二阶'] - final['二阶']) / final['二阶'])} | {pct((f1['scores']['二阶'] - bp['二阶']) / bp['二阶'])} |"
+        )
+    lines.append("")
+    return lines
+
+
+def arms_cost_decomp(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None],
+                     tot_o: dict[str, dict], tot_g: dict[str, dict | None]) -> list[str]:
+    lines = [
+        "## 两臂到地板的代价与分解：×1.0 快照处各自花了多少、真值平方误差 T 与追噪项 2⟨d,e⟩ 各多少（均除以 Σσ²）",
+        "",
+        "| ε | 我们 轮 | 我们 候选 | 我们 秒（搜索循环内） | GSD 代 | GSD 候选 | GSD 净秒（搜索循环内） | T 我们 ×1.0 | T GSD ×1.0 | 追噪 我们 ×1.0 | 追噪 GSD ×1.0 | T 我们 终表 | T GSD 终表 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for tag in TAGS:
+        if not gsd.get(tag):
+            continue
+        po, pg = find(ours[tag], "地板×1"), find(gsd[tag], "地板×1")
+        do, dg = decompose(po["path"], tag), decompose(pg["path"], tag)
+        fo, fg = decompose(ours[tag][-1]["path"], tag), decompose(gsd[tag][-1]["path"], tag)
+        to, tg = tot_o[tag], tot_g[tag]
+        lines.append(
+            f"| {EPS[tag]} | {po['round']} | {po['cand_share'] * to['cand']:.2g} | {po['t_share'] * to['t']:.0f} | "
+            f"{pg['gen']:,} | {pg['cand_share'] * tg['cand']:.2g} | {pg['tnet']:.0f} | "
+            f"{do['T']:.3f} | {dg['T']:.3f} | {do['cross']:.3f} | {dg['cross']:.3f} | {fo['T']:.3f} | {fg['T']:.3f} |"
+        )
+    lines.append("")
+    return lines
+
+
 def arms_table(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None]) -> list[str]:
     lines = [
-        "## 两臂对照：地板停（×1.0 快照）与跑到收敛（终表），我们 ÷ GSD（<1 我们好）",
+        "## 两臂对照：地板停（×1.0 快照）、各自二阶最优层级、跑到收敛（终表），我们 ÷ GSD（<1 我们好）",
         "",
         "| ε | 层级 | " + " | ".join(f"{ax} 我们" for ax in MAIN) + " | " + " | ".join(f"{ax} GSD" for ax in MAIN)
         + " | " + " | ".join(f"{ax} 比" for ax in MAIN) + " |",
@@ -320,15 +450,19 @@ def arms_table(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None]) -
     for tag in TAGS:
         if not gsd.get(tag):
             continue
-        for label in ["地板×1.5", "地板×1.2", "地板×1", "终表"]:
-            po, pg = find(ours[tag], label), find(gsd[tag], label)
+        bo, bg = best_label(ours[tag], "二阶"), best_label(gsd[tag], "二阶")
+        for label in ["地板×1.5", "地板×1.2", "地板×1", "各自最优", "终表"]:
+            if label == "各自最优":
+                po, pg, shown = find(ours[tag], bo), find(gsd[tag], bg), f"各自二阶最优（我们 {bo} / GSD {bg}）"
+            else:
+                po, pg, shown = find(ours[tag], label), find(gsd[tag], label), (label if label != "地板×1" else "地板停 ×1.0")
             if po is None or pg is None:
                 continue
             o, g = po["scores"], pg["scores"]
             lines.append(
-                f"| {EPS[tag]} | {label if label != '地板×1' else '地板停 ×1.0'} | "
-                + " | ".join(f"{o[ax]:.0f}" for ax in MAIN) + " | "
-                + " | ".join(f"{g[ax]:.0f}" for ax in MAIN) + " | "
+                f"| {EPS[tag]} | {shown} | "
+                + " | ".join(f"{o[ax] * 1e6:.0f}" for ax in MAIN) + " | "
+                + " | ".join(f"{g[ax] * 1e6:.0f}" for ax in MAIN) + " | "
                 + " | ".join(f"{o[ax] / g[ax]:.3f}" for ax in MAIN) + " |"
             )
     lines.append("")
@@ -343,6 +477,7 @@ def plot(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None]) -> None
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
     plt.rcParams["font.family"] = ["Noto Sans CJK JP", "Noto Sans CJK SC", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
     rows = ["二阶", "三阶均"]
@@ -355,12 +490,22 @@ def plot(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None]) -> None
                     continue
                 sel = [p for p in pts if p["label"] != "起点"]
                 x = [p["mult"] for p in sel]
-                y = [p["scores"][ax_name] for p in sel]
+                y = [p["scores"][ax_name] * 1e6 for p in sel]
                 ax.plot(x, y, "o-", ms=3, lw=1, color=color, label=arm)
-                ax.plot([pts[-1]["mult"]], [pts[-1]["scores"][ax_name]], "s", ms=6, color=color, mfc="none")
+                ax.plot([pts[-1]["mult"]], [pts[-1]["scores"][ax_name] * 1e6], "s", ms=6, color=color, mfc="none")
             ax.axvline(1.0, color="gray", lw=0.8, ls="--")
             ax.set_xscale("log")
-            ax.invert_xaxis()
+            xs = [p["mult"] for p in ours[tag] if p["label"] != "起点"]
+            ticks = [t for t in (5, 3, 2, 1.5, 1.2, 1, 0.9, 0.8, 0.7, 0.6, 0.5) if min(xs) * 0.98 <= t <= max(xs) * 1.02]
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([f"{t:g}" for t in ticks], fontsize=7)
+            ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
+            lo, hi = min(xs) * 0.93, max(xs) * 1.08
+            ax.set_xlim(hi, lo)
+            ys = [p["scores"][ax_name] * 1e6 for arm_pts in (ours[tag], gsd.get(tag) or [])
+                  for p in arm_pts if p["label"] != "起点" and lo <= p["mult"] <= hi]
+            pad = 0.05 * (max(ys) - min(ys))
+            ax.set_ylim(min(ys) - pad, max(ys) + pad)
             ax.grid(alpha=0.3)
             if i == 0:
                 ax.set_title(f"ε = {EPS[tag]}")
@@ -378,17 +523,17 @@ def plot(ours: dict[str, list[dict]], gsd: dict[str, list[dict] | None]) -> None
 
 def main() -> None:
     cache = load_cache()
-    ours, gsd = {}, {}
+    ours, gsd, tot_o, tot_g = {}, {}, {}, {}
     body: list[str] = []
     for tag in TAGS:
         pts, notes, tot = ours_points(tag, cache)
-        ours[tag] = pts
-        body += ours_table(tag, pts, notes, tot)
+        ours[tag], tot_o[tag] = pts, tot
+        body += ours_table(tag, pts, notes, tot) + decomp_table("我们", tag, pts)
     for tag in TAGS:
         pts, notes, tot = gsd_points(tag, cache)
-        gsd[tag] = pts
+        gsd[tag], tot_g[tag] = pts, tot
         if pts is not None:
-            body += gsd_table(tag, pts, notes, tot)
+            body += gsd_table(tag, pts, notes, tot) + decomp_table("GSD", tag, pts)
     head = [
         "# 第六十二步：沿噪声地板倍数取快照、定停点（adult，种子 1，五档 ε，两臂）",
         "",
@@ -404,7 +549,7 @@ def main() -> None:
         "每轴最优层级加粗。轮/代/候选/秒占比以本臂全程为分母；GSD 净秒按第六十步同一规则扣记账突发。",
         "",
     ]
-    tail = summary_ours(ours) + arms_table(ours, gsd)
+    tail = summary_ours(ours) + summary_gsd(gsd) + arms_table(ours, gsd) + arms_cost_decomp(ours, gsd, tot_o, tot_g)
     OUT.write_text("\n".join(head + tail + body), encoding="utf-8")
     plot(ours, gsd)
     print(f"written {OUT} and {PNG}")
