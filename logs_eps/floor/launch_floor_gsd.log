@@ -1,0 +1,14 @@
+2026-10-16T01:33:05Z ours lane finished, starting GSD
+2026-10-16T01:34:12Z START adult_eps10_gsd_seed1 gpu0 load=8.16 25.60 28.29
+2026-10-16T01:34:12Z START adult_eps3_gsd_seed1 gpu1 load=8.16 25.60 28.29
+2026-10-16T02:18:25Z END adult_eps3_gsd_seed1 rc=0 load=7.29 7.00 7.82
+2026-10-16T02:19:29Z START adult_eps1_gsd_seed1 gpu1 load=5.03 6.43 7.57
+2026-10-16T02:35:38Z END adult_eps10_gsd_seed1 rc=0 load=5.89 6.27 6.68
+2026-10-16T02:36:44Z START adult_eps0p1_gsd_seed1 gpu0 load=5.81 6.14 6.60
+2026-10-16T02:50:13Z END adult_eps1_gsd_seed1 rc=0 load=8.21 7.90 7.04
+2026-10-16T02:51:14Z START adult_eps0p3_gsd_seed1 gpu1 load=7.44 7.71 7.03
+2026-10-16T03:01:00Z END adult_eps0p1_gsd_seed1 rc=0 load=7.13 6.85 6.90
+2026-10-16T03:01:00Z GPU0 GSD LANE DONE
+2026-10-16T03:21:17Z END adult_eps0p3_gsd_seed1 rc=0 load=55.09 55.22 38.48
+2026-10-16T03:21:17Z GPU1 GSD LANE DONE
+2026-10-16T03:21:17Z ALL DONE FLOOR GSD

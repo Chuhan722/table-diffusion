@@ -1,0 +1,13 @@
+2026-10-16T01:05:00Z START adult_eps3_ours2way_seed1 gpu0 load=7.50 5.29 4.00
+2026-10-16T01:05:00Z START adult_eps10_ours2way_seed1 gpu1 load=7.50 5.29 4.00
+2026-10-16T01:21:24Z END adult_eps3_ours2way_seed1 rc=0 load=20.47 32.54 27.11
+2026-10-16T01:21:37Z END adult_eps10_ours2way_seed1 rc=0 load=19.19 31.63 26.90
+2026-10-16T01:22:30Z START adult_eps0p1_ours2way_seed1 gpu0 load=10.70 27.18 25.64
+2026-10-16T01:22:42Z START adult_eps1_ours2way_seed1 gpu1 load=10.05 26.50 25.44
+2026-10-16T01:24:01Z END adult_eps0p1_ours2way_seed1 rc=0 load=30.21 29.39 26.55
+2026-10-16T01:25:06Z START adult_eps0p3_ours2way_seed1 gpu0 load=28.40 28.99 26.61
+2026-10-16T01:29:21Z END adult_eps0p3_ours2way_seed1 rc=0 load=48.95 40.52 31.95
+2026-10-16T01:29:21Z GPU0 LANE DONE
+2026-10-16T01:32:44Z END adult_eps1_ours2way_seed1 rc=0 load=27.08 33.68 30.91
+2026-10-16T01:32:44Z GPU1 LANE DONE
+2026-10-16T01:32:44Z ALL DONE FLOOR
