@@ -73,49 +73,51 @@ CONCLUSION = """\
 
 
 # ---------- 读取 ----------
-def ours_name(tag: str) -> str:
-    return f"adult_eps{tag}_ours2way_seed1"
+def ours_name(tag: str, seed: int = 1) -> str:
+    return f"adult_eps{tag}_ours2way_seed{seed}"
 
 
-def gsd_name(tag: str) -> str:
-    return f"adult_eps{tag}_gsd_seed1"
+def gsd_name(tag: str, seed: int = 1) -> str:
+    return f"adult_eps{tag}_gsd_seed{seed}"
 
 
 def read_snaps(path: Path) -> list[dict]:
     return list(csv.DictReader(open(path, encoding="utf-8")))
 
 
-_EXAM: dict[str, tuple] = {}
-_COUNTS: dict[tuple[str, str], np.ndarray] = {}
+_EXAM: dict[tuple[str, int], tuple] = {}
+_COUNTS: dict[tuple[str, str, int], np.ndarray] = {}
 
 
-def exam(tag: str):
-    if tag not in _EXAM:
-        _, pairs, tgt = load_exam(ROOT / f"data/adult_alloc{tag}base_s1/measured_2way.json")
-        _EXAM[tag] = (pairs, tgt)
-    return _EXAM[tag]
+def exam(tag: str, seed: int = 1):
+    """该 ε、该种子的噪声考卷（查询对顺序 + 噪声目标）。"""
+    key = (tag, seed)
+    if key not in _EXAM:
+        _, pairs, tgt = load_exam(ROOT / f"data/adult_alloc{tag}base_s{seed}/measured_2way.json")
+        _EXAM[key] = (pairs, tgt)
+    return _EXAM[key]
 
 
-def counts(path: Path, tag: str) -> np.ndarray:
-    """表在该 ε 噪声考卷查询顺序下的格计数 c（按路径缓存，核对与分解共用）。"""
-    key = (str(path), tag)
+def counts(path: Path, tag: str, seed: int = 1) -> np.ndarray:
+    """表在该 ε、该种子噪声考卷查询顺序下的格计数 c（按路径缓存，核对与分解共用）。"""
+    key = (str(path), tag, seed)
     if key not in _COUNTS:
         cols, rows = load_codes(path)
-        _COUNTS[key] = cell_counts(cols, rows, exam(tag)[0])
+        _COUNTS[key] = cell_counts(cols, rows, exam(tag, seed)[0])
     return _COUNTS[key]
 
 
-def table_loss(path: Path, tag: str) -> float:
+def table_loss(path: Path, tag: str, seed: int = 1) -> float:
     """表对噪声目标的 ℒ = Σ(y − c)²（与 align_loss 同法）。"""
-    return float(np.sum((exam(tag)[1] - counts(path, tag)) ** 2))
+    return float(np.sum((exam(tag, seed)[1] - counts(path, tag, seed)) ** 2))
 
 
-def decompose(path: Path, tag: str) -> dict:
+def decompose(path: Path, tag: str, seed: int = 1) -> dict:
     """ℒ = ‖e‖² + T − 2⟨d, e⟩：e = y − c*（注入的噪声），d = c − c*，T = ‖d‖²（对真值的平方误差），
     2⟨d, e⟩ = 表与噪声同向的部分（追噪项）。全部除以 Σσ²（ℒ 口径地板）。"""
-    pairs, y = exam(tag)
-    c_true = counts(ROOT / "data/adult/adult.csv", tag)
-    c = counts(path, tag)
+    pairs, y = exam(tag, seed)
+    c_true = counts(ROOT / "data/adult/adult.csv", tag, seed)
+    c = counts(path, tag, seed)
     e, d = y - c_true, c - c_true
     s2 = 2.0 * noise_floor(tag)
     return dict(e2=float(e @ e) / s2, T=float(d @ d) / s2, cross=2.0 * float(d @ e) / s2)
@@ -161,17 +163,21 @@ def sc(cache: dict, p: Path) -> dict | None:
 
 
 # ---------- 我们臂 ----------
-def ours_points(tag: str, cache: dict) -> tuple[list[dict], list[str], dict]:
-    """返回 [点]（按损失从高到低）、核对说明、全程量。点 = dict(label, mult, round, cand_share, round_share, t_share, scores, path)。"""
+def ours_points(tag: str, cache: dict, seed: int = 1) -> tuple[list[dict], list[str], dict]:
+    """返回 [点]（按损失从高到低）、核对说明、全程量。点 = dict(label, mult, round, cand_share, round_share, t_share, scores, path)。
+    种子 1 另与第六十步终表/曲线逐位核对、并入第六十一步的终×快照与起点表；其他种子只有本场的地板×快照与终表。"""
     notes = []
-    name = ours_name(tag)
+    name = ours_name(tag, seed)
     floor = noise_floor(tag)
-    same = filecmp.cmp(EFFORT / f"{name}.csv", FLOOR / f"{name}.csv", shallow=False)
-    notes.append("终表与第六十步逐位一致" if same else "终表不一致！")
-    a, b = read_curve(EFFORT / f"{name}_curve.csv"), read_curve(FLOOR / f"{name}_curve.csv")
-    cols = [c for c in a[0].keys() if c != "elapsed_s"]
-    ok = len(a) == len(b) and all(ra[c] == rb[c] for ra, rb in zip(a, b) for c in cols)
-    notes.append("曲线除时间列外逐列一致" if ok else "曲线不一致！")
+    if seed == 1:
+        same = filecmp.cmp(EFFORT / f"{name}.csv", FLOOR / f"{name}.csv", shallow=False)
+        notes.append("终表与第六十步逐位一致" if same else "终表不一致！")
+        a, b = read_curve(EFFORT / f"{name}_curve.csv"), read_curve(FLOOR / f"{name}_curve.csv")
+        cols = [c for c in a[0].keys() if c != "elapsed_s"]
+        ok = len(a) == len(b) and all(ra[c] == rb[c] for ra, rb in zip(a, b) for c in cols)
+        notes.append("曲线除时间列外逐列一致" if ok else "曲线不一致！")
+    else:
+        a = read_curve(FLOOR / f"{name}_curve.csv")
     losses = np.array([float(r["old_loss"]) for r in a])
     cand = np.cumsum([float(r["candidates"]) for r in a])
     tsec = np.array([float(r["elapsed_s"]) for r in a])
@@ -184,23 +190,24 @@ def ours_points(tag: str, cache: dict) -> tuple[list[dict], list[str], dict]:
         pts.append(dict(
             label=label, mult=loss / floor, round=k,
             round_share=k / total_rounds, cand_share=(cand[k - 1] if k > 0 else 0.0) / total_cand,
-            t_share=(tsec[k - 1] if k > 0 else 0.0) / total_t, loss=loss, path=path,
+            t_share=(tsec[k - 1] if k > 0 else 0.0) / total_t, loss=loss, path=path, seed=seed,
         ))
 
-    init_snaps = read_snaps(INIT / f"{name}_snaps.csv")
-    add("起点", INIT / f"{name}_snap0.csv", 0, float(init_snaps[0]["old_loss"]))
+    if seed == 1:
+        init_snaps = read_snaps(INIT / f"{name}_snaps.csv")
+        add("起点", INIT / f"{name}_snap0.csv", 0, float(init_snaps[0]["old_loss"]))
     bad_round, bad_loss = 0, 0.0
-    for src, snaps_path, pref in [
-        ("地板×", FLOOR / f"{name}_snaps.csv", FLOOR / name),
-        ("终×", PLATEAU / f"{name}_snaps.csv", PLATEAU / name),
-    ]:
+    sources = [("地板×", FLOOR / f"{name}_snaps.csv", FLOOR / name)]
+    if seed == 1:
+        sources.append(("终×", PLATEAU / f"{name}_snaps.csv", PLATEAU / name))
+    for src, snaps_path, pref in sources:
         for r in read_snaps(snaps_path):
             k, thr, loss = int(r["round"]), float(r["threshold"]), float(r["old_loss"])
             pred = int(np.argmax(losses <= thr))
             if pred != k or losses[k] != loss:
                 bad_round += 1
             p = Path(f"{pref}_snap{r['index']}.csv")
-            if abs(table_loss(p, tag) - 2 * loss) > 1e-6 * 2 * loss:
+            if abs(table_loss(p, tag, seed) - 2 * loss) > 1e-6 * 2 * loss:
                 bad_loss += 1
             if src == "地板×":
                 label = f"地板×{thr / floor:.3g}"
@@ -226,8 +233,8 @@ def gsd_net_time(t: np.ndarray) -> np.ndarray:
     return np.concatenate([[t[0] if t[0] <= 10 * med else med], np.where(burst, med, dt)]).cumsum()
 
 
-def gsd_points(tag: str, cache: dict):
-    name = gsd_name(tag)
+def gsd_points(tag: str, cache: dict, seed: int = 1):
+    name = gsd_name(tag, seed)
     if not (FLOOR / f"{name}.csv").exists():
         return None, ["GSD 臂未收"], None
     floor_l = 2.0 * noise_floor(tag)
@@ -239,9 +246,10 @@ def gsd_points(tag: str, cache: dict):
     t_net = gsd_net_time(t)
     total = dict(gens=int(g[-1]), cand=cand[-1], t=t[-1], t_net=t_net[-1], floor_l=floor_l)
     notes = []
-    final_l = table_loss(FLOOR / f"{name}.csv", tag)
-    old = table_loss(EFFORT / f"{name}.csv", tag)
-    notes.append(f"终 ℒ 与第六十步之比 {final_l / old:.4f}（GSD 的 GPU 搜索非逐位确定）")
+    final_l = table_loss(FLOOR / f"{name}.csv", tag, seed)
+    if seed == 1:
+        old = table_loss(EFFORT / f"{name}.csv", tag)
+        notes.append(f"终 ℒ 与第六十步之比 {final_l / old:.4f}（GSD 的 GPU 搜索非逐位确定）")
     rel = abs(final_l - N * N * fit[-1]) / final_l
     notes.append(f"终表 ℒ 与记账末行 N²·fitness 相对差 {rel:.1e}")
     pts = []
@@ -251,7 +259,7 @@ def gsd_points(tag: str, cache: dict):
             label=label, mult=loss_l / floor_l, gen=int(g[gen_idx]),
             gen_share=g[gen_idx] / g[-1], cand_share=cand[gen_idx] / cand[-1],
             t_share=t[gen_idx] / t[-1], tnet_share=t_net[gen_idx] / t_net[-1], tnet=t_net[gen_idx],
-            loss=loss_l, path=path,
+            loss=loss_l, path=path, seed=seed,
         ))
 
     bad = 0
@@ -261,7 +269,7 @@ def gsd_points(tag: str, cache: dict):
             gen, thr, bf = int(r["gen"]), float(r["threshold"]), float(r["best_fitness"])
             idx = int(np.where(g == gen)[0][0])
             p = FLOOR / f"{name}_snap{r['index']}.csv"
-            tl = table_loss(p, tag)
+            tl = table_loss(p, tag, seed)
             if abs(tl - N * N * bf) > 1e-5 * tl:
                 bad += 1
             add(f"地板×{thr * N * N / floor_l:.3g}", p, idx, tl)
@@ -338,17 +346,20 @@ def gsd_table(tag: str, pts: list[dict], notes: list[str], tot: dict) -> list[st
 
 
 def decomp_table(arm: str, tag: str, pts: list[dict]) -> list[str]:
-    final_T = decompose(pts[-1]["path"], tag)["T"]
+    def dec(p: dict) -> dict:
+        return decompose(p["path"], tag, p.get("seed", 1))
+
+    final_T = dec(pts[-1])["T"]
     lines = [
         f"## 分解 {arm} ε = {EPS[tag]}：ℒ = ‖e‖² + T − 2⟨d,e⟩（均除以 Σσ²；"
-        f"‖e‖²/Σσ² = {decompose(pts[-1]['path'], tag)['e2']:.3f}）",
+        f"‖e‖²/Σσ² = {dec(pts[-1])['e2']:.3f}）",
         "",
         "| 层级 | 损失/地板 | T（真值平方误差） | 2⟨d,e⟩（追噪项） | 追噪项/ℒ | T Δ终 |",
         "|---|---|---|---|---|---|",
     ]
-    best = min(pts, key=lambda p: decompose(p["path"], tag)["T"])["label"]
+    best = min(pts, key=lambda p: dec(p)["T"])["label"]
     for p in pts:
-        dc = decompose(p["path"], tag)
+        dc = dec(p)
         t_cell = f"{dc['T']:.3f}"
         if p["label"] == best:
             t_cell = f"**{t_cell}**"
