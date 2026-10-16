@@ -86,7 +86,22 @@ def main() -> None:
         "只读不碰计算，需 gsd_patched 带 generation_log 钩子",
     )
     parser.add_argument("--log-every", type=int, default=1000)
+    parser.add_argument(
+        "--snapshot-fitness", type=str, default="",
+        help="第六十二步快照：逗号分隔的 fitness 阈值（官方口径 ‖目标频率−频率‖²，= ℒ/N²），"
+        "在 --log-every 的记账点上最优 fitness 首次不高于某阈值时，把当时的最优表写成 "
+        "{prefix}_snap{i}.csv 并在 {prefix}_snaps.csv 记一行，只读不碰计算，需 gsd_patched 带 snapshot 钩子",
+    )
+    parser.add_argument("--snapshot-prefix", type=str, default="")
     args = parser.parse_args()
+    if bool(args.snapshot_fitness) != bool(args.snapshot_prefix):
+        raise SystemExit("--snapshot-fitness 与 --snapshot-prefix 须同时给出")
+    snapshot_fitness = (
+        [float(x) for x in args.snapshot_fitness.split(",") if x.strip()]
+        if args.snapshot_fitness else []
+    )
+    if any(not (x > 0.0) for x in snapshot_fitness):
+        raise SystemExit("--snapshot-fitness 须为正数")
 
     data_dir = REPO / "data" / args.data
     exam_found = sorted(data_dir.glob("measured_*query.json"))
@@ -152,6 +167,29 @@ def main() -> None:
             raise RuntimeError(f"零噪声断言失败，最大漂移 {drift}")
         print(f"统计量 {true_stats.shape[0]} 格，零噪声逐格一致")
 
+    def write_table(path: Path, data: Dataset) -> None:
+        """码表 → 类别字符串 CSV，终表与快照同一写法。"""
+        codes = data.df[fields].astype(float).round().astype(int)
+        if len(codes) != total:
+            raise RuntimeError(f"输出行数漂移 {len(codes)} != {total}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(fields)
+            for i in range(total):
+                writer.writerow([cats[f][int(codes[f].iloc[i])] for f in fields])
+
+    def snapshot_hook(index, threshold, gen, best_fitness, elapsed, cum_candidates, member):
+        prefix = Path(args.snapshot_prefix)
+        write_table(Path(f"{prefix}_snap{index}.csv"), Dataset.from_numpy_to_dataset(domain, member))
+        log_path = Path(f"{prefix}_snaps.csv")
+        new = not log_path.exists()
+        with open(log_path, "a", encoding="utf-8") as fh:
+            if new:
+                fh.write("index,threshold,gen,best_fitness,elapsed_s,cum_candidates\n")
+            fh.write(f"{index},{threshold!r},{gen},{best_fitness!r},{elapsed:.3f},{cum_candidates}\n")
+        print(f"快照{index} 阈值 {threshold!r} 代 {gen} fitness {best_fitness!r} 秒 {elapsed:.1f}", flush=True)
+
     generator = GeneticSD(
         domain=domain,
         data_size=total,
@@ -161,8 +199,10 @@ def main() -> None:
         stop_early=True,
         stop_eary_threshold=args.early_stop_threshold,
         sparse_statistics=True,
-        **({"generation_log": args.generation_log, "log_every": args.log_every}
-           if args.generation_log else {}),
+        **({"log_every": args.log_every} if (args.generation_log or snapshot_fitness) else {}),
+        **({"generation_log": args.generation_log} if args.generation_log else {}),
+        **({"snapshot_fitness": snapshot_fitness, "snapshot_hook": snapshot_hook}
+           if snapshot_fitness else {}),
     )
     started = time.time()
     sync_data = generator.fit(jax.random.PRNGKey(args.seed + 1), stats)
@@ -181,16 +221,7 @@ def main() -> None:
         l1n = np.abs(np.asarray(stats.get_selected_noised_statistics()) - sync_stats)
         print(f"对噪声目标残差 平均 {l1n.mean():.6f} 最大 {l1n.max():.6f}")
 
-    out_codes = sync_data.df[fields].astype(float).round().astype(int)
-    if len(out_codes) != total:
-        raise RuntimeError(f"输出行数漂移 {len(out_codes)} != {total}")
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(fields)
-        for i in range(total):
-            writer.writerow([cats[f][int(out_codes[f].iloc[i])] for f in fields])
+    write_table(Path(args.out), sync_data)
     print(f"已写出 {args.out}，{total} 行")
 
 

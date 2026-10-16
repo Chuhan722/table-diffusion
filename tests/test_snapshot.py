@@ -84,3 +84,19 @@ def test_snapshot_validation():
             registry, ids, weights, rounds=5,
             snapshot_losses=[0.0], snapshot_hook=lambda *a: None,
         )
+
+
+def test_snapshot_equals_stop_floor_table():
+    """阈值 T 的快照表与 --stop-floor T 硬地板停返回的表逐位相同、轮号相同（第六十二步：×1.0 快照即地板停产物）。"""
+    r0, ids0, w0, _ = _scene(7, num_rows=30)
+    full = _evolve(r0, ids0, w0, rounds=40)
+    losses = [r.old_loss for r in full.records]
+    thr = (losses[0] + losses[-1]) / 2.0
+    out, fired = _run_with_snapshots(7, [thr], rounds=40)
+    assert len(fired) == 1 and fired[0][2] > 0
+    rf, idsf, wf, _ = _scene(7, num_rows=30)
+    floored = _evolve(rf, idsf, wf, rounds=40, stop_floor=thr)
+    assert floored.stop_reason == "floor_reached"
+    assert len(floored.records) - 1 == fired[0][2]
+    assert np.array_equal(floored.state_ids, fired[0][4])
+    assert not np.array_equal(floored.state_ids, out.state_ids)

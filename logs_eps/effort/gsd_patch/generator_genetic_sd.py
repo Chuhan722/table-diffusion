@@ -25,13 +25,26 @@ class GeneticSD(Generator):
                  sparse_statistics: bool = False,
                  generation_log: str = None,
                  log_every: int = 1000,
+                 snapshot_fitness=None,
+                 snapshot_hook=None,
                  ):
         # Local patch (residual-evolution 第六十步): generation_log is an output-only
         # hook. When set, every log_every generations we record
         # (generation, best_fitness, elapsed seconds, cumulative candidates evaluated)
         # and write them as CSV after the loop. No arithmetic or RNG path changes.
+        # Local patch (第六十二步): snapshot_fitness/snapshot_hook. At the same
+        # log points (every log_every generations, reusing the float already read),
+        # the first time best_fitness <= threshold we hand the current best member
+        # (host copy) to the hook, once per threshold. Output-only; the one D2H copy
+        # per threshold is the only extra cost.
         self.generation_log = generation_log
         self.log_every = log_every
+        if (snapshot_fitness is None) != (snapshot_hook is None):
+            raise ValueError("snapshot_fitness and snapshot_hook must be given together")
+        self.snapshot_fitness = [float(x) for x in snapshot_fitness] if snapshot_fitness else []
+        if any(not (x > 0.0) or not np.isfinite(x) for x in self.snapshot_fitness):
+            raise ValueError("snapshot_fitness must be positive finite")
+        self.snapshot_hook = snapshot_hook
         self.domain = domain
         self.N_prime = data_size
         self.num_generations = num_generations
@@ -157,6 +170,7 @@ class GeneticSD(Generator):
         t0 = time.time()
         log_rows = []
         cum_candidates = 0
+        snap_pending = list(range(len(self.snapshot_fitness)))
         t = -1
         keys = jax.random.split(key, self.num_generations)
         for t, ask_subkey in enumerate(keys):
@@ -181,8 +195,17 @@ class GeneticSD(Generator):
 
             strategy_rewards.append([strategy_id, rep_best])
 
-            if self.generation_log is not None and t % self.log_every == 0:
-                log_rows.append((t, float(state.best_fitness), time.time() - t0, cum_candidates))
+            if (self.generation_log is not None or snap_pending) and t % self.log_every == 0:
+                bf = float(state.best_fitness)
+                now = time.time() - t0
+                if self.generation_log is not None:
+                    log_rows.append((t, bf, now, cum_candidates))
+                if snap_pending:
+                    fired = [i for i in snap_pending if bf <= self.snapshot_fitness[i]]
+                    for i in fired:
+                        self.snapshot_hook(i, self.snapshot_fitness[i], t, bf, now, cum_candidates,
+                                           np.asarray(state.best_member))
+                        snap_pending.remove(i)
 
             if t % early_stop == 0:
                 print_progress_fn(t, state.best_fitness, LAST_LAG_FITNESS, weights, time.time() - t0, self.print_progress)
