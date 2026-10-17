@@ -1,0 +1,25 @@
+2026-10-17T13:22:17Z START ref_1b code=/tmp/resevo_old load=0.38 0.74 0.70
+2026-10-17T13:23:29Z END ref_1b rc=0
+2026-10-17T13:24:29Z START verify_1b_snapon code=/home/chuhan/projects0916/residual-evolution load=3.12 2.17 1.26
+2026-10-17T13:25:43Z END verify_1b_snapon rc=0
+2026-10-17T13:26:43Z START verify_1a_floor code=/home/chuhan/projects0916/residual-evolution load=4.00 3.49 1.92
+2026-10-17T13:26:54Z END verify_1a_floor rc=0
+2026-10-17T13:27:54Z START verify_1a_gstop code=/home/chuhan/projects0916/residual-evolution load=2.29 3.16 1.92
+2026-10-17T13:28:05Z END verify_1a_gstop rc=0
+2026-10-17T13:29:05Z START verify_1b_gstop code=/home/chuhan/projects0916/residual-evolution load=1.77 2.96 1.96
+2026-10-17T13:30:53Z END verify_1b_gstop rc=0
+== md5（判据：A 两表 = R 两表；B2 = B1）==
+20f9b4edf13161abe47cb9894dedb677  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/ref_1b_stage1.csv
+20f9b4edf13161abe47cb9894dedb677  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/eps1s1_snapon_stage1.csv
+98785ff3e11ae1f71f31c8748b7086c7  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/ref_1b.csv
+98785ff3e11ae1f71f31c8748b7086c7  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/eps1s1_snapon.csv
+0eab060e93ef3cc1c6e0cb96b0911abf  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/eps1s1_1a_floor.csv
+0eab060e93ef3cc1c6e0cb96b0911abf  /home/chuhan/projects0916/residual-evolution/results/groupfloor/verify4090/eps1s1_1a_gstop.csv
+== md5（旁证：跨卡 vs A6000 结果 20f9b4ed… / 98785ff3… / 0eab060e…）==
+20f9b4edf13161abe47cb9894dedb677  /home/chuhan/projects0916/residual-evolution/results/whole1b/adult_eps1_ourswhole_seed1_stage1.csv
+98785ff3e11ae1f71f31c8748b7086c7  /home/chuhan/projects0916/residual-evolution/results/whole1b/adult_eps1_ourswhole_seed1.csv
+0eab060e93ef3cc1c6e0cb96b0911abf  /home/chuhan/projects0916/residual-evolution/results/floor/adult_eps1_ours2way_seed1_snap8.csv
+== 分档曲线核对（A）==
+分档记账轮数 286 / 曲线轮数 286，各档之和 vs 曲线损失 最大相对差 5.197e-12
+地板停那轮各档损失÷地板: 0.195 0.223 0.491 0.400 0.344 0.592 2.823 总和÷地板 0.9996
+2026-10-17T13:30:53Z 核对场完
