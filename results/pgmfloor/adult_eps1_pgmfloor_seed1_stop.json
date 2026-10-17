@@ -1,0 +1,16 @@
+{
+ "stop_reason": "floor_reached",
+ "iters_done": 364,
+ "initial_loss": 3048338.75,
+ "final_loss": 2048.04296875,
+ "floor": 2053.0,
+ "final_over_floor": 0.9975854694349732,
+ "fit_s": 6.962743043899536,
+ "n_cells": 4106,
+ "stop_floor_mult": 1.0,
+ "iters_cap": 10000,
+ "tol": 0.0001,
+ "patience": 2,
+ "check_every": 1,
+ "known_total": 32561.0
+}

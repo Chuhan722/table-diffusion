@@ -119,16 +119,29 @@ def test_lock_leaves_stage1_untouched(runs):
     assert _final_stop_reason(off / "t_curve_stage1.csv") == "floor_reached"
 
 
-def test_stage2_floor_off_and_lock_check(runs):
-    """第二段不因地板收工；锁定后第二段起步损失恰为纯伪题损失，第一段真题损失与结算一致，核对文件齐全。"""
+def test_stage2_floor_and_lock_check(runs):
+    """不锁定：第二段无地板，不因地板收工。锁定：第二段地板 = 每题一个人 ½Σw，第一段的 1e12 不再沿用；
+    第二段起步损失恰为纯伪题损失，第一段真题损失与结算一致，核对文件齐全。"""
     off, on = runs
-    for d in (off, on):
-        assert _final_stop_reason(d / "t_curve.csv") != "floor_reached"
+    assert _final_stop_reason(off / "t_curve.csv") != "floor_reached"
     assert not (off / "t_lock.json").exists()
     info = json.loads((on / "t_lock.json").read_text(encoding="utf-8"))
     assert info["stage1_stop_reason"] == "floor_reached"
-    assert info["stage2_stop_reason"] in ("round_limit", "loss_plateau", "no_positive_direction", "rescue_exhausted")
+    assert info["stage2_stop_reason"] in ("floor_reached", "round_limit", "loss_plateau", "no_positive_direction", "rescue_exhausted")
     assert info["num_pseudo"] > 0
+    data_dir = on.parent.parent / "t300"
+    specs = load_queries(str(data_dir / "measured_eq.json"))
+    sig = np.array([q.sigma for q in specs])
+    w_real = (sig.min() / sig) ** 2
+    # 伪题 σ = 二阶题 σ 中位数 ×1，其权重按合卷（真题 + 伪题）的 σ_min 归一
+    sig2 = np.median([q.sigma for q in specs if len(q.conditions) == 2])
+    w_pseudo = (sig.min() / sig2) ** 2
+    assert info["stage2_floor"] == pytest.approx(0.5 * (w_real.sum() + info["num_pseudo"] * w_pseudo), rel=1e-9)
+    assert info["stage2_over_floor"] == pytest.approx(info["stage2_final_loss"] / info["stage2_floor"])
+    if info["stage2_stop_reason"] == "floor_reached":
+        assert info["stage2_final_loss"] <= info["stage2_floor"]
+    else:
+        assert info["stage2_final_loss"] > info["stage2_floor"] or info["stage2_rounds"] == 15
     assert info["stage2_initial_loss"] == pytest.approx(info["stage2_initial_pseudo_loss"], rel=1e-9)
     assert info["stage1_real_loss"] == pytest.approx(info["stage1_final_loss"], rel=1e-9)
     assert info["final_over_stage1"] == pytest.approx(info["final_real_loss"] / info["stage1_real_loss"])

@@ -62,6 +62,24 @@ class StageResult:
         self.num_queries = num_queries
 
 
+def exam_weights(args, parser, specs, verbose: bool = False) -> np.ndarray:
+    """考卷题目权重：--exam-weights none 全 1；sigma 为 (σ_min/σ)²（逆方差，最小 σ 归一到 1）。"""
+    w = np.ones(len(specs))
+    if args.exam_weights == "sigma":
+        sigmas = np.array(
+            [np.nan if q.sigma is None else q.sigma for q in specs], dtype=np.float64
+        )
+        if np.isnan(sigmas).any() or (sigmas <= 0.0).any():
+            parser.error("--exam-weights sigma 要求考卷每题带正的 sigma 字段")
+        w = (sigmas.min() / sigmas) ** 2
+        if verbose:
+            print(
+                f"查询逆方差加权：sigma 范围 {sigmas.min():.4g}~{sigmas.max():.4g}，"
+                f"权重范围 {w.min():.4g}~1，题数 {len(specs)}"
+            )
+    return w
+
+
 def run_stage(
     args, parser, schema, specs, init_rows, ji_target, work_rows_val,
     rounds: int, menu_seed: int, sample_seed: int, select_seed: int, label: str = "",
@@ -75,18 +93,7 @@ def run_stage(
     if stop_floor is None:
         stop_floor = args.stop_floor
     y = target_from_specs(specs)
-    w = np.ones(len(specs))
-    if args.exam_weights == "sigma":
-        sigmas = np.array(
-            [np.nan if q.sigma is None else q.sigma for q in specs], dtype=np.float64
-        )
-        if np.isnan(sigmas).any() or (sigmas <= 0.0).any():
-            parser.error("--exam-weights sigma 要求考卷每题带正的 sigma 字段")
-        w = (sigmas.min() / sigmas) ** 2
-        print(
-            f"查询逆方差加权：sigma 范围 {sigmas.min():.4g}~{sigmas.max():.4g}，"
-            f"权重范围 {w.min():.4g}~1，题数 {len(specs)}"
-        )
+    w = exam_weights(args, parser, specs, verbose=True)
     seen = set()
     field_sets = []
     for fs in query_field_sets(specs, schema):
@@ -316,8 +323,10 @@ def lock_real_targets(schema, specs, stage1: StageResult, stage1_rows) -> dict:
     return dict(locked_specs=locked, real_reg=real_reg, answers_t1=answers, real_loss_t1=real_loss_t1)
 
 
-def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: StageResult, final_rows, stage1_rows) -> None:
-    """锁定模式收工核对：终表对带噪测量的真题损失 ÷ 第一段终表（÷ 地板），第二段起步损失 = 纯伪题损失；写 *_lock.json。"""
+def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: StageResult, final_rows, stage1_rows,
+                      stop_floor2: float = 0.0) -> None:
+    """锁定模式收工核对：终表对带噪测量的真题损失 ÷ 第一段终表（÷ 地板），第二段起步损失 = 纯伪题损失，
+    第二段终损失 ÷ 第二段地板（每题一个人）；写 *_lock.json。"""
     import json
 
     n_real = len(lock["locked_specs"])
@@ -334,6 +343,7 @@ def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: Stage
         stage2_stop_reason=final.out.stop_reason, stage2_rounds=len(final.out.records),
         stage2_initial_loss=final.initial_loss, stage2_initial_pseudo_loss=pseudo_init,
         stage2_final_loss=final.final_loss, stage2_elapsed_s=final.elapsed,
+        stage2_floor=stop_floor2, stage2_over_floor=final.final_loss / stop_floor2 if stop_floor2 > 0 else None,
         final_real_loss=real_loss_final,
         final_over_stage1=real_loss_final / lock["real_loss_t1"] if lock["real_loss_t1"] > 0 else None,
         stop_floor=args.stop_floor,
@@ -346,7 +356,8 @@ def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: Stage
     )
     print(
         f"第二段核对：终表真题损失 {real_loss_final:.6f}，是第一段终表的 {info['final_over_stage1']:.4f} 倍{floor_txt}；"
-        f"第二段起步损失 {final.initial_loss:.6f} 对纯伪题损失 {pseudo_init:.6f}；"
+        f"第二段起步损失 {final.initial_loss:.6f} 对纯伪题损失 {pseudo_init:.6f}，"
+        f"第二段终损失 ÷ 第二段地板 {info['stage2_over_floor'] if info['stage2_over_floor'] is None else round(info['stage2_over_floor'], 4)}；"
         f"收工 第一段 {info['stage1_stop_reason']}（{info['stage1_rounds']} 轮）/ 第二段 {info['stage2_stop_reason']}（{info['stage2_rounds']} 轮）"
     )
     base = args.save_table or args.out
@@ -632,8 +643,8 @@ def main() -> None:
     parser.add_argument(
         "--fiber-lock-real", action="store_true",
         help="第二段真题答案锁定（工作笔记第六十五步定稿）：第二段考卷里原题的目标换成第一段终表自己的计数，"
-        "不再追带噪测量，只补没测的对、守住测过的边缘；第二段地板停一律关闭（伪测量题无地板）；"
-        "收工后记录终表对带噪测量的真题损失与第一段终表之比，另写 *_lock.json。默认关现状逐位不变",
+        "不再追带噪测量，只补没测的对、守住测过的边缘；第二段地板改为「每题平均差一个人」½Σw（第六十六步先导场定），"
+        "兜底平台早停与轮数上限；收工后记录终表对带噪测量的真题损失与第一段终表之比，另写 *_lock.json。默认关现状逐位不变",
     )
     parser.add_argument(
         "--init-table", type=str, default="",
@@ -942,21 +953,26 @@ def main() -> None:
             specs2 = list(specs) + extra
             rounds2 = args.fiber_rounds if args.fiber_rounds > 0 else args.rounds
             lock = None
+            stop_floor2 = 0.0
             if args.fiber_lock_real:
                 lock = lock_real_targets(schema, specs, stage1, stage1_rows)
                 specs2 = lock["locked_specs"] + extra
-            if args.stop_floor > 0.0:
+                # 第二段地板 = 每题平均差一个人：½ Σ w·1²。伪题目标是洗牌平均（非整数、无测量噪声），
+                # 表只能整人挪动，拟到每格差不到一个人以内再拟无意义；第一段的噪声地板对第二段不适用
+                stop_floor2 = 0.5 * float(exam_weights(args, parser, specs2).sum())
+                print(f"第二段地板停：每题平均差一个人即停，阈值 ½Σw = {stop_floor2:.6f}（{len(specs2)} 题），兜底平台早停与轮数上限")
+            elif args.stop_floor > 0.0:
                 # 伪测量题没有地板，第一段的阈值对含伪题的总损失无意义，第二段只留平台停与轮数上限
                 print("第二段地板停关闭（伪测量题无地板），只留平台早停与轮数上限")
             final = run_stage(
                 args, parser, schema, specs2, stage1_rows, ji_target, work_rows_val,
                 rounds2, args.menu_seed + FIBER_SEED_BUMP, args.sample_seed + FIBER_SEED_BUMP,
-                args.select_seed + FIBER_SEED_BUMP, label="第二段 ", stop_floor=0.0,
+                args.select_seed + FIBER_SEED_BUMP, label="第二段 ", stop_floor=stop_floor2,
             )
             if lock is not None:
                 from resevo.editspace import tuples_from_ids as _tuples
 
-                report_lock_check(args, lock, extra, stage1, final, _tuples(final.registry, final.out.state_ids), stage1_rows)
+                report_lock_check(args, lock, extra, stage1, final, _tuples(final.registry, final.out.state_ids), stage1_rows, stop_floor2)
     out, registry, y, w = final.out, final.registry, final.y, final.w
     initial_loss, final_loss, elapsed = final.initial_loss, final.final_loss, final.elapsed
     checkpoints = [r for r in out.records if r.round_index % max(1, len(out.records) // 10) == 0]
