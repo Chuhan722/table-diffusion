@@ -1,0 +1,17 @@
+2026-10-17T08:05:26Z START adult_eps1_ourswhole_seed1 gpu0 lane=0-23 floor=299038.1812299605 load=2.91 3.44 3.93
+2026-10-17T08:08:47Z END adult_eps1_ourswhole_seed1 rc=0
+2026-10-17T08:09:54Z START adult_eps1_ourswhole_seed2 gpu0 lane=0-23 floor=225753.08438055194 load=22.65 16.19 9.25
+2026-10-17T08:13:21Z END adult_eps1_ourswhole_seed2 rc=0
+2026-10-17T08:14:26Z START adult_eps1_ourswhole_seed3 gpu0 lane=0-23 floor=190205.15277737722 load=27.74 21.69 13.14
+2026-10-17T08:18:28Z END adult_eps1_ourswhole_seed3 rc=0
+2026-10-17T08:19:28Z START adult_eps0p1_ourswhole_seed1 gpu0 lane=0-23 floor=6287575.166310625 load=25.65 23.98 16.44
+2026-10-17T08:22:04Z END adult_eps0p1_ourswhole_seed1 rc=0
+2026-10-17T08:23:10Z START adult_eps0p1_ourswhole_seed2 gpu0 lane=0-23 floor=1823340.3762813245 load=20.83 22.04 17.28
+2026-10-17T08:25:39Z END adult_eps0p1_ourswhole_seed2 rc=0
+2026-10-17T08:26:44Z START adult_eps0p1_ourswhole_seed3 gpu0 lane=0-23 floor=5123813.774480508 load=13.55 20.69 17.93
+2026-10-17T08:29:27Z END adult_eps0p1_ourswhole_seed3 rc=0
+2026-10-17T08:30:29Z START adult_eps10_ourswhole_seed1 gpu0 lane=0-23 floor=9924.017934371434 load=12.14 20.08 18.57
+2026-10-17T08:36:01Z END adult_eps10_ourswhole_seed1 rc=0
+2026-10-17T08:37:07Z START adult_eps10_ourswhole_seed2 gpu0 lane=0-23 floor=14727.64151114602 load=28.15 33.81 25.71
+2026-10-17T08:42:45Z END adult_eps10_ourswhole_seed2 rc=0
+2026-10-17T08:42:45Z 队列完

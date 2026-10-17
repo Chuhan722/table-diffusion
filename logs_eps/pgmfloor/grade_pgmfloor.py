@@ -58,9 +58,11 @@ def pair_groups(tag: str, s: int, arms: dict[str, Path]) -> dict[str, list[float
     out = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=ROOT).stdout
     rows = {}
     for line in out.splitlines():
+        # 列序：表 二阶总体 测过的对 没测的对 一阶（一阶缺时为 -）
         mm = re.match(r"(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*$", line)
         if mm and mm.group(1) != "表":
-            rows[mm.group(1)] = [float(mm.group(i)) for i in (2, 3, 4)]
+            one = float(mm.group(5)) if mm.group(5) != "-" else float("nan")
+            rows[mm.group(1)] = [float(mm.group(3)), float(mm.group(4)), one]
     return rows
 
 
