@@ -523,6 +523,19 @@ class StateRegistry:
             ).astype(np.float64)
         return feats
 
+    def answers_for_rows(self, rows: list[tuple[str, ...]], chunk: int = 4096) -> np.ndarray:
+        """整表对每题的答案 q = Σ_i a(x_i)，分块求特征再累加，不登记状态、不改注册表。
+
+        与 build_workload 后 table_answers 的结果逐位一致（同一套特征函数），
+        但内存只占一块行 × 题数，供第二段真题锁定与收工核对用。
+        """
+        if not self._feat_ready:
+            self._build_featurizer()
+        total = np.zeros(len(self.specs), dtype=np.float64)
+        for start in range(0, len(rows), max(1, chunk)):
+            total += self._features_for_rows(rows[start:start + chunk]).sum(axis=0)
+        return total
+
     def register_many(self, rows: list[tuple[str, ...]]) -> np.ndarray:
         """批量注册状态行，编号发放次序与逐个 register 完全一致。
 

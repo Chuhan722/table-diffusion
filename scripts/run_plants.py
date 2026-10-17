@@ -65,12 +65,15 @@ class StageResult:
 def run_stage(
     args, parser, schema, specs, init_rows, ji_target, work_rows_val,
     rounds: int, menu_seed: int, sample_seed: int, select_seed: int, label: str = "",
+    stop_floor: float | None = None,
 ) -> StageResult:
     """从给定初始表按考卷 specs 演化到停止，一段完整的"建目标→注册→供给→演化→结算"。
 
     第一段用考卷原题从初始化表起步；纤维阶段的第二段用原题 + 伪测量题从第一段的终表热启动。
-    除 rounds 与三个随机种子外全部参数取 args，两段逐字同配置。
+    除 rounds、三个随机种子与地板阈值（stop_floor，None 取 args）外全部参数取 args，两段逐字同配置。
     """
+    if stop_floor is None:
+        stop_floor = args.stop_floor
     y = target_from_specs(specs)
     w = np.ones(len(specs))
     if args.exam_weights == "sigma":
@@ -241,7 +244,7 @@ def run_stage(
             damping=args.damping,
             struct_shaper=shaper,
             treat_stop_tol=args.treat_stop_tol,
-            stop_floor=args.stop_floor,
+            stop_floor=stop_floor,
             nullswap_phase=nullswap,
             nullswap_every=args.nullswap_every,
             nullswap_after=args.nullswap_after,
@@ -287,6 +290,73 @@ def run_stage(
         f"耗时 {elapsed:.1f} 秒，平均每轮 {elapsed / len(out.records) * 1000:.0f} 毫秒"
     )
     return StageResult(out, registry, y, w, initial_loss, final_loss, elapsed, len(specs))
+
+
+def weighted_half_loss(y: np.ndarray, answers: np.ndarray, w: np.ndarray) -> float:
+    """引擎记账口径的损失 ½ Σ w (y − q)²，与 state.loss_from_residual 同式。"""
+    e = np.asarray(y, dtype=np.float64) - np.asarray(answers, dtype=np.float64)
+    return float(np.dot(e * w, e) / 2)
+
+
+def lock_real_targets(schema, specs, stage1: StageResult, stage1_rows) -> dict:
+    """第二段真题锁定：原题目标换成第一段终表自己的计数，题面与 σ 不变（工作笔记第六十五步）。
+
+    返回锁定后的题目与核对量：第一段终表对带噪测量的真题损失（按第一段权重，应与第一段终损失一致）。
+    """
+    from dataclasses import replace
+
+    real_reg = StateRegistry(schema, specs)
+    answers = real_reg.answers_for_rows(stage1_rows)
+    locked = [replace(q, result=float(a)) for q, a in zip(specs, answers)]
+    real_loss_t1 = weighted_half_loss(stage1.y, answers, stage1.w)
+    print(
+        f"第二段真题锁定：{len(specs)} 题目标换成第一段终表计数；"
+        f"第一段终表真题损失 {real_loss_t1:.6f}（第一段结算 {stage1.final_loss:.6f}）"
+    )
+    return dict(locked_specs=locked, real_reg=real_reg, answers_t1=answers, real_loss_t1=real_loss_t1)
+
+
+def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: StageResult, final_rows, stage1_rows) -> None:
+    """锁定模式收工核对：终表对带噪测量的真题损失 ÷ 第一段终表（÷ 地板），第二段起步损失 = 纯伪题损失；写 *_lock.json。"""
+    import json
+
+    n_real = len(lock["locked_specs"])
+    answers_final = lock["real_reg"].answers_for_rows(final_rows)
+    real_loss_final = weighted_half_loss(stage1.y, answers_final, stage1.w)
+    pseudo_reg = StateRegistry(final.registry.schema, extra)
+    pseudo_init = weighted_half_loss(
+        final.y[n_real:], pseudo_reg.answers_for_rows(stage1_rows), final.w[n_real:]
+    )
+    info = dict(
+        num_real=n_real, num_pseudo=len(extra),
+        stage1_stop_reason=stage1.out.stop_reason, stage1_rounds=len(stage1.out.records),
+        stage1_final_loss=stage1.final_loss, stage1_real_loss=lock["real_loss_t1"], stage1_elapsed_s=stage1.elapsed,
+        stage2_stop_reason=final.out.stop_reason, stage2_rounds=len(final.out.records),
+        stage2_initial_loss=final.initial_loss, stage2_initial_pseudo_loss=pseudo_init,
+        stage2_final_loss=final.final_loss, stage2_elapsed_s=final.elapsed,
+        final_real_loss=real_loss_final,
+        final_over_stage1=real_loss_final / lock["real_loss_t1"] if lock["real_loss_t1"] > 0 else None,
+        stop_floor=args.stop_floor,
+        stage1_over_floor=lock["real_loss_t1"] / args.stop_floor if args.stop_floor > 0 else None,
+        final_over_floor=real_loss_final / args.stop_floor if args.stop_floor > 0 else None,
+    )
+    floor_txt = (
+        f"，÷地板 {info['final_over_floor']:.4f}（第一段终表 {info['stage1_over_floor']:.4f}）"
+        if args.stop_floor > 0 else ""
+    )
+    print(
+        f"第二段核对：终表真题损失 {real_loss_final:.6f}，是第一段终表的 {info['final_over_stage1']:.4f} 倍{floor_txt}；"
+        f"第二段起步损失 {final.initial_loss:.6f} 对纯伪题损失 {pseudo_init:.6f}；"
+        f"收工 第一段 {info['stage1_stop_reason']}（{info['stage1_rounds']} 轮）/ 第二段 {info['stage2_stop_reason']}（{info['stage2_rounds']} 轮）"
+    )
+    base = args.save_table or args.out
+    if base:
+        p = Path(base)
+        p = p.with_name(p.stem + "_lock.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        print(f"锁定核对已写 {p}")
 
 
 def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") -> None:
@@ -558,6 +628,12 @@ def main() -> None:
     parser.add_argument(
         "--fiber-rounds", type=int, default=0,
         help="第二段最大轮数，默认 0 同 --rounds；两段其余配置逐字相同，第二段三个随机种子各加 %d" % FIBER_SEED_BUMP,
+    )
+    parser.add_argument(
+        "--fiber-lock-real", action="store_true",
+        help="第二段真题答案锁定（工作笔记第六十五步定稿）：第二段考卷里原题的目标换成第一段终表自己的计数，"
+        "不再追带噪测量，只补没测的对、守住测过的边缘；第二段地板停一律关闭（伪测量题无地板）；"
+        "收工后记录终表对带噪测量的真题损失与第一段终表之比，另写 *_lock.json。默认关现状逐位不变",
     )
     parser.add_argument(
         "--init-table", type=str, default="",
@@ -865,11 +941,22 @@ def main() -> None:
                 _cupy().get_default_memory_pool().free_all_blocks()
             specs2 = list(specs) + extra
             rounds2 = args.fiber_rounds if args.fiber_rounds > 0 else args.rounds
+            lock = None
+            if args.fiber_lock_real:
+                lock = lock_real_targets(schema, specs, stage1, stage1_rows)
+                specs2 = lock["locked_specs"] + extra
+            if args.stop_floor > 0.0:
+                # 伪测量题没有地板，第一段的阈值对含伪题的总损失无意义，第二段只留平台停与轮数上限
+                print("第二段地板停关闭（伪测量题无地板），只留平台早停与轮数上限")
             final = run_stage(
                 args, parser, schema, specs2, stage1_rows, ji_target, work_rows_val,
                 rounds2, args.menu_seed + FIBER_SEED_BUMP, args.sample_seed + FIBER_SEED_BUMP,
-                args.select_seed + FIBER_SEED_BUMP, label="第二段 ",
+                args.select_seed + FIBER_SEED_BUMP, label="第二段 ", stop_floor=0.0,
             )
+            if lock is not None:
+                from resevo.editspace import tuples_from_ids as _tuples
+
+                report_lock_check(args, lock, extra, stage1, final, _tuples(final.registry, final.out.state_ids), stage1_rows)
     out, registry, y, w = final.out, final.registry, final.y, final.w
     initial_loss, final_loss, elapsed = final.initial_loss, final.final_loss, final.elapsed
     checkpoints = [r for r in out.records if r.round_index % max(1, len(out.records) // 10) == 0]

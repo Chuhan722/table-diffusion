@@ -104,6 +104,13 @@ def main() -> None:
                     help="与 run_plants.py 同名开关：一阶平分清洗阈值 z（|y|<z·σ 的格子平分剩余人数），0 关")
     ap.add_argument("--oneway-pool-scope", choices=["all", "uncovered"], default="all",
                     help="清洗范围：all 全部一阶字段；uncovered 只清洗没出现在任何 ≥2 阶团里的字段")
+    ap.add_argument("--stop-floor-mult", type=float, default=0.0,
+                    help="地板停倍数 m：mbi 损失 0.5·Σ((Qμ−y)/σ)² 首次 ≤ m·0.5·格数 即停（格数=所有测量向量长度之和，"
+                         "重复团分开计）；0 关。开着时 tol/patience 与 iters 作为兜底仍生效，停法写入 *_stop.json")
+    ap.add_argument("--check-every", type=int, default=50,
+                    help="每多少步查一次地板（须整除 50；tol 仍固定每 50 步比一次 = mbi CALLBACK_EVERY 原语义）；"
+                         "1 即逐步查，与我们引擎逐轮查地板同口径")
+    ap.add_argument("--curve", default=None, help="可选：逐块损失曲线 CSV（iters,loss,elapsed_s）")
     ap.add_argument("--out", required=True, help="输出合成表 CSV")
     args = ap.parse_args()
 
@@ -144,14 +151,88 @@ def main() -> None:
 
     t0 = time.time()
     known_total = float(rows) if args.known_total == "rows" else None
-    model = estimation.MirrorDescent().estimate(domain, measurements, known_total=known_total, iters=args.iters,
-                                                tol=args.tol, patience=args.patience)
+    n_cells = int(sum(m.noisy_measurement.size for m in measurements))
+    floor = args.stop_floor_mult * 0.5 * n_cells if args.stop_floor_mult > 0.0 else None
+    if 50 % args.check_every:
+        raise SystemExit(f"--check-every {args.check_every} 须整除 50")
+    if floor is None and args.check_every == 50 and args.curve is None:
+        model = estimation.MirrorDescent().estimate(domain, measurements, known_total=known_total, iters=args.iters,
+                                                    tol=args.tol, patience=args.patience)
+        stop = None
+    else:
+        print(f"地板停 m={args.stop_floor_mult}：格数 {n_cells}，地板 {floor if floor is not None else '关'}，"
+              f"每 {args.check_every} 步查一次", flush=True)
+        model, stop = fit_with_stops(estimation.MirrorDescent(), domain, measurements, known_total, args.iters,
+                                     args.tol, args.patience, floor, args.check_every, args.curve)
     fit_s = time.time() - t0
     np.random.seed(args.seed)
     synth = model.synthetic_data(rows=rows)
     out = pd.DataFrame({c: np.asarray(synth.data[c]) for c in columns})
     out.to_csv(args.out, index=False)
     print(f"拟合 {fit_s:.0f} 秒，合成 {len(out)} 行 -> {args.out}", flush=True)
+    if stop is not None:
+        stop.update({"fit_s": fit_s, "n_cells": n_cells, "stop_floor_mult": args.stop_floor_mult,
+                     "iters_cap": args.iters, "tol": args.tol, "patience": args.patience,
+                     "check_every": args.check_every, "known_total": known_total})
+        stop_path = args.out[:-4] + "_stop.json" if args.out.endswith(".csv") else args.out + "_stop.json"
+        with open(stop_path, "w", encoding="utf-8") as fh:
+            json.dump(stop, fh, ensure_ascii=False, indent=1)
+        ratio = stop["final_loss"] / floor if floor else float("nan")
+        print(f"停法 {stop['stop_reason']}，{stop['iters_done']} 步，起步损失 {stop['initial_loss']:.1f}，"
+              f"终损失 {stop['final_loss']:.1f}，÷地板 {ratio:.4f} -> {stop_path}", flush=True)
+
+
+def fit_with_stops(est, domain, measurements, known_total, iters, tol, patience, floor, block, curve_path):
+    """逐字复刻 mbi Estimator.estimate() 的循环（_init → 分块 _step → tol 早停 → _finalize），只多两件事：
+    每块查一次「损失 ≤ 地板」即停，并把每块的损失记下来。block=50 时每块与 mbi _multi_step 同为 50 步 scan。"""
+    import math
+
+    import jax
+    import jax.numpy as jnp
+    from mbi import marginal_loss
+    from mbi.estimation import minimum_variance_unbiased_total
+
+    if known_total is None:
+        known_total = minimum_variance_unbiased_total(measurements)
+    loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
+    state = est._init(domain, loss_fn, known_total)
+    state = jax.tree.map(jnp.copy, state)
+
+    @jax.jit
+    def multi_step(state, loss_fn, known_total):
+        def step(s, _):
+            return est._step(s, loss_fn, known_total, ()), None
+        return jax.lax.scan(step, state, None, length=block)[0]
+
+    t0 = time.time()
+    initial_loss = float(state.loss)
+    curve = [(0, initial_loss, 0.0)]
+    prev_loss, stalls, done, reason = float("inf"), 0, 0, "iter_limit"
+    for _ in range(math.ceil(iters / block)):
+        state = multi_step(state, loss_fn, known_total)
+        done += block
+        loss = float(state.loss)
+        curve.append((done, loss, time.time() - t0))
+        if floor is not None and loss <= floor:
+            reason = "floor_reached"
+            break
+        # tol 仍按 mbi 原语义每 50 步（CALLBACK_EVERY）比一次，与 block 大小无关（block 需整除 50）
+        if tol is not None and done % 50 == 0:
+            converged = prev_loss - loss <= tol * max(abs(loss), 1.0)
+            stalls = stalls + 1 if converged else 0
+            prev_loss = loss
+            if stalls >= patience:
+                reason = "loss_plateau"
+                break
+    model = est._finalize(state, known_total, constraints=())
+    if curve_path:
+        with open(curve_path, "w", encoding="utf-8") as fh:
+            fh.write("iters,loss,elapsed_s\n")
+            for it, ls, el in curve:
+                fh.write(f"{it},{ls!r},{el:.3f}\n")
+    stop = {"stop_reason": reason, "iters_done": done, "initial_loss": initial_loss, "final_loss": float(state.loss),
+            "floor": floor, "final_over_floor": (float(state.loss) / floor) if floor else None}
+    return model, stop
 
 
 if __name__ == "__main__":
