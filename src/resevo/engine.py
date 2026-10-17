@@ -246,6 +246,7 @@ class EvolveResult:
     stop_reason: str  # "no_positive_direction" 或 "round_limit"，批量路径另有 "loss_plateau" 与 "rescue_exhausted"
     probes: list[ProbeRecord] | None = None  # beta 探针旁路日志，未开启为 None
     temps: list[float] | None = None  # 逐轮体温计读数，结构签筒未开启为 None，非批量轮记 nan
+    group_losses: list | None = None  # 分档地板记账（第六十八步）：(轮号, 各档损失向量) 列表，未开启为 None
 
 
 def evolve(

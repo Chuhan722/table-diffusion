@@ -919,6 +919,24 @@ class GpuBatchContext:
         _, loss, _, _, _ = self._state_terms(codes_g, counts)
         return loss
 
+    def group_losses_of(self, codes: np.ndarray, state_ids, group_index_dev, num_groups: int):
+        """当前表按题分档的损失 ½ Σ_{i∈g} w_i e_i²（第六十八步分档地板），全程在卡上算。
+
+        group_index_dev 为卡上的每题档号向量（0..num_groups-1），返回 (各档损失 numpy 向量, 总损失)，
+        各档之和与 loss_of 同值（浮点求和顺序不同、末位可异）；只读不碰任何演化状态。
+        """
+        from .grouping import group_state_ids
+
+        cp = self.cp
+        grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
+        codes_g = cp.asarray(codes[grouped.unique_ids])
+        counts = cp.asarray(grouped.counts.astype(np.float64))
+        residual, loss, _, _, _ = self._state_terms(codes_g, counts)
+        if int(group_index_dev.size) != int(residual.size):
+            raise ValueError("分档索引长度须等于题数")
+        per = cp.bincount(group_index_dev, weights=self.weights * residual * residual, minlength=num_groups)
+        return cp.asnumpy(per) / 2.0, loss
+
     # ------------------------------------------------------------------
     def _entry_expand(self, j_of, cur_codes, new_codes):
         """条目流展开，按路径序铺开各自字段的依赖列并取通过差。

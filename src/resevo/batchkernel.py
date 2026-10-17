@@ -30,7 +30,7 @@ from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
 from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
-from .state import Workload, loss_from_residual
+from .state import Workload, loss_from_residual, table_residual
 from .stepsize import analytic_step
 from .tilt import calibrate_beta_flat
 
@@ -886,9 +886,23 @@ def evolve_batch(
     gpu_sparse: bool | None = None,
     snapshot_losses=None,
     snapshot_hook=None,
+    group_index=None,
+    group_floors=None,
+    stop_floor_groups: bool = False,
+    group_snapshot_hook=None,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
+    group_index 配 group_floors 启用分档地板记账（第六十八步）：group_index 为每题档号
+    （0..G-1，按 σ 分档由调用方定），group_floors 为各档地板 ½ Σ_{i∈g} w_i σ_i²；
+    启用后每轮起点表的各档损失 ½ Σ_{i∈g} w_i e_i² 记入返回值 group_losses
+    （GPU 后端在卡上由当前表重算残差，CPU 后端只在带全表负载的轮记账，小注册表轮跳过）。
+    stop_floor_groups 为真时某轮起点各档损失全部不高于各自地板即收工，停止原因记
+    group_floor_reached，返回触发轮起点表（与硬地板停同语义：总和到地板 ≠ 每档到地板，
+    σ 参差的卷里权重大的档先过拟合、权重小的档还远未拟合，改由最慢的档说了算）。
+    group_snapshot_hook 给出时在首个全档过线的轮调一次 hook(round_index, old_loss,
+    group_losses, state_ids) 交出起点表副本，不停也能记下该点（跑到收敛的对照场用），
+    触发在损失快照之后、硬地板停之前。全部默认 None/False 关闭零改变，记账只读不碰随机流。
     snapshot_losses 配 snapshot_hook 启用损失快照（第六十一步，纯记账）：
     某轮起点损失首次不高于某个给定值时，把该轮起点表的状态编号副本交给
     钩子 hook(index, threshold, round_index, old_loss, state_ids)，每个给定值
@@ -995,6 +1009,29 @@ def evolve_batch(
     if any(not np.isfinite(x) or x <= 0.0 for x in snap_thresholds):
         raise ValueError("快照损失值必须为正的有限数")
     snap_pending = list(range(len(snap_thresholds)))  # 尚未触发的快照序号
+    if (group_index is None) != (group_floors is None):
+        raise ValueError("分档索引与分档地板须同时给出")
+    if group_index is None and (stop_floor_groups or group_snapshot_hook is not None):
+        raise ValueError("分档地板停与分档快照需要分档索引与分档地板")
+    group_curve: list | None = None
+    group_pending = False  # 分档过线事件（快照/停）尚未发生
+    if group_index is not None:
+        group_index = np.asarray(group_index)
+        group_floors = np.asarray(group_floors, dtype=np.float64)
+        if (
+            group_index.ndim != 1 or group_index.size == 0
+            or not np.issubdtype(group_index.dtype, np.integer)
+            or group_floors.ndim != 1 or group_floors.size == 0
+        ):
+            raise ValueError("分档索引须为非空一维整数向量，分档地板须为非空一维向量")
+        group_index = group_index.astype(np.int64, copy=True)
+        if group_index.min() < 0 or group_index.max() >= group_floors.size:
+            raise ValueError("分档索引越界")
+        if not np.isfinite(group_floors).all() or (group_floors <= 0.0).any():
+            raise ValueError("分档地板必须为正的有限数")
+        group_curve = []
+        group_pending = True
+    group_index_dev = None  # 卡上档号向量，惰性上传一次
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -1008,6 +1045,27 @@ def evolve_batch(
     last_sev: float | None = None  # 最近批量轮在治病情深度，治疗平台门用
     prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
+
+    def group_losses_now(plan):
+        """分档地板记账：当前起点表各档损失，读 current 与 gpu_ctx 的最新绑定，只读。"""
+        nonlocal group_index_dev
+        if backend == "gpu":
+            if gpu_ctx is None:
+                return None
+            if group_index_dev is None:
+                group_index_dev = gpu_ctx.cp.asarray(group_index)
+            per, _ = gpu_ctx.group_losses_of(
+                plan_provider.codebook.sync(), current, group_index_dev, group_floors.size,
+            )
+            return per
+        wl = plan.workload
+        if wl.features.shape[0] <= int(current.max()):
+            return None  # 惰性负载或小注册表轮，本轮不记
+        if wl.target.size != group_index.size:
+            raise ValueError("分档索引长度须等于题数")
+        e = table_residual(wl, current)
+        return np.bincount(group_index, weights=wl.weights * e * e, minlength=group_floors.size) / 2.0
+
     t_loop = time.perf_counter()  # 记账用，只读
     for k in range(num_rounds):
         if (
@@ -1176,6 +1234,19 @@ def evolve_batch(
             for i in fired:
                 snapshot_hook(i, snap_thresholds[i], k, result.old_loss, current.copy())
                 snap_pending.remove(i)
+        if group_curve is not None:
+            # 分档地板记账（第六十八步）：各档损失逐轮入账，首个全档过线的轮交快照、按开关收工
+            per = group_losses_now(plan)
+            if per is not None:
+                group_curve.append((k, per))
+                if group_pending and bool(np.all(per <= group_floors)):
+                    group_pending = False
+                    if group_snapshot_hook is not None:
+                        group_snapshot_hook(k, result.old_loss, per.copy(), current.copy())
+                    if stop_floor_groups:
+                        return EvolveResult(
+                            current, records, "group_floor_reached", probes, temps, group_curve
+                        )
         if stop_floor > 0.0 and result.old_loss <= stop_floor:
             # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
             # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
@@ -1183,7 +1254,7 @@ def evolve_batch(
             # 恰为真表对理顺卷损失的理论锚点），压得更深即背错题。
             # 触发轮只记账不落表，与平台停同语义，默认 0 关闭零改变。
             return EvolveResult(
-                current, records, "floor_reached", probes, temps
+                current, records, "floor_reached", probes, temps, group_curve
             )
         if rescue_stop_window > 0 and plan.mode == "rescue":
             rescue_losses.append(result.old_loss)
@@ -1193,7 +1264,7 @@ def evolve_batch(
                     (base - rescue_losses[-1]) / base < rescue_stop_tol
                 ):
                     return EvolveResult(
-                        current, records, "rescue_exhausted", probes, temps
+                        current, records, "rescue_exhausted", probes, temps, group_curve
                     )
         if stop_threshold > 0.0:
             loss = result.old_loss
@@ -1227,6 +1298,7 @@ def evolve_batch(
                         "noise_plateau" if armed else "loss_plateau",
                         probes,
                         temps,
+                        group_curve,
                     )
                 prev_window_best = window_best
                 window_best = None
@@ -1235,7 +1307,7 @@ def evolve_batch(
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
                 return EvolveResult(
-                    current, records, "no_positive_direction", probes, temps
+                    current, records, "no_positive_direction", probes, temps, group_curve
                 )
             continue
         frozen_streak = 0
@@ -1256,4 +1328,4 @@ def evolve_batch(
                 current[plan.rescue_sub_idx[moved]] = gids
         else:
             current = sample_batch_next(result, current, rng, registry)
-    return EvolveResult(current, records, "round_limit", probes, temps)
+    return EvolveResult(current, records, "round_limit", probes, temps, group_curve)

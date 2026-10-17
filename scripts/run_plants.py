@@ -62,6 +62,62 @@ class StageResult:
         self.num_queries = num_queries
 
 
+def sigma_groups(specs, w: np.ndarray, min_questions: int) -> dict:
+    """按 σ 分档与各档地板（工作笔记第六十八步）。
+
+    σ 相同的题为一档（AIM 每轮一个 σ，一卷只有几档）；题数少于 min_questions 的档并入 σ 最近的
+    相邻档（小档的噪声实现离期望太远，当不了判据），反复并到每档都够数或只剩一档。
+    各档地板 floor_g = ½ Σ_{i∈g} w_i σ_i²，合计恰为整卷地板 ½ Σ w σ²。
+    返回 dict(index=每题档号 int64, floors=各档地板, table=各档明细列表)，档按 σ 升序编号。
+    """
+    sig = np.array([np.nan if q.sigma is None else float(q.sigma) for q in specs], dtype=np.float64)
+    if np.isnan(sig).any() or (sig <= 0.0).any():
+        raise ValueError("分档地板要求考卷每题带正的 sigma 字段")
+    uniq, inv = np.unique(sig, return_inverse=True)
+    n_u = np.bincount(inv, minlength=uniq.size)
+    f_u = np.bincount(inv, weights=0.5 * w * sig * sig, minlength=uniq.size)
+    # 每档 = 若干个 σ 值（unique 编号）的集合，按 σ 升序排列
+    groups: list[list[int]] = [[u] for u in range(uniq.size)]
+
+    def count(g):
+        return int(sum(n_u[u] for u in g))
+
+    def rep_sigma(g):
+        return float(sum(n_u[u] * uniq[u] for u in g) / count(g))
+
+    while len(groups) > 1 and min(count(g) for g in groups) < min_questions:
+        i = min(range(len(groups)), key=lambda j: (count(groups[j]), j))
+        cands = [j for j in (i - 1, i + 1) if 0 <= j < len(groups)]
+        j = min(cands, key=lambda c: (abs(rep_sigma(groups[c]) - rep_sigma(groups[i])), count(groups[c])))
+        lo, hi = min(i, j), max(i, j)
+        groups[lo] = groups[lo] + groups[hi]
+        del groups[hi]
+    of_unique = np.empty(uniq.size, dtype=np.int64)
+    for g_id, g in enumerate(groups):
+        for u in g:
+            of_unique[u] = g_id
+    index = of_unique[inv].astype(np.int64)
+    floors = np.bincount(index, weights=0.5 * w * sig * sig, minlength=len(groups))
+    table = []
+    for g_id, g in enumerate(groups):
+        m = index == g_id
+        table.append(dict(
+            group=g_id, sigmas=[float(uniq[u]) for u in g], questions=int(m.sum()),
+            weight_min=float(w[m].min()), weight_max=float(w[m].max()),
+            floor=float(floors[g_id]), share=float(floors[g_id] / floors.sum()),
+        ))
+    return dict(index=index, floors=floors, table=table)
+
+
+def describe_groups(info: dict, label: str = "") -> None:
+    """分档地板明细打印。"""
+    print(f"{label}分档地板：{len(info['table'])} 档（σ 相同为一档，小档并入相邻档），合计 {info['floors'].sum():.6f}")
+    for t in info["table"]:
+        sig_txt = "/".join(f"{s:.4g}" for s in t["sigmas"])
+        w_txt = f"{t['weight_min']:.3g}" if t["weight_min"] == t["weight_max"] else f"{t['weight_min']:.3g}~{t['weight_max']:.3g}"
+        print(f"  档{t['group']} σ={sig_txt} 题 {t['questions']} 权重 {w_txt} 地板 {t['floor']:.6f}（{t['share']:.1%}）")
+
+
 def exam_weights(args, parser, specs, verbose: bool = False) -> np.ndarray:
     """考卷题目权重：--exam-weights none 全 1；sigma 为 (σ_min/σ)²（逆方差，最小 σ 归一到 1）。"""
     w = np.ones(len(specs))
@@ -83,17 +139,23 @@ def exam_weights(args, parser, specs, verbose: bool = False) -> np.ndarray:
 def run_stage(
     args, parser, schema, specs, init_rows, ji_target, work_rows_val,
     rounds: int, menu_seed: int, sample_seed: int, select_seed: int, label: str = "",
-    stop_floor: float | None = None,
+    stop_floor: float | None = None, group_floor: dict | None = None,
 ) -> StageResult:
     """从给定初始表按考卷 specs 演化到停止，一段完整的"建目标→注册→供给→演化→结算"。
 
     第一段用考卷原题从初始化表起步；纤维阶段的第二段用原题 + 伪测量题从第一段的终表热启动。
     除 rounds、三个随机种子与地板阈值（stop_floor，None 取 args）外全部参数取 args，两段逐字同配置。
+    group_floor 为 sigma_groups 的产物时启用分档地板记账（第六十八步，只第一段给）：
+    按 args.stop_floor_groups 决定是否按分档地板收工，按 args.snapshot_group_floor 决定是否在全档过线时落快照。
     """
     if stop_floor is None:
         stop_floor = args.stop_floor
     y = target_from_specs(specs)
     w = exam_weights(args, parser, specs, verbose=True)
+    if group_floor is not None:
+        describe_groups(group_floor, label)
+        if args.stop_floor_groups:
+            print(f"{label}分档地板停：每档损失都不高于各自地板即停（由最慢的档说了算），兜底平台早停与轮数上限")
     seen = set()
     field_sets = []
     for fs in query_field_sets(specs, schema):
@@ -204,15 +266,17 @@ def run_stage(
     gpu_direct = {"auto": None, "direct": True, "generic": False}[args.gpu_delta]
     gpu_sparse = {"auto": None, "on": True, "off": False}[args.gpu_sparse]
     snapshot_hook = None
+    group_snapshot_hook = None
     snapshot_losses = getattr(args, "snapshot_losses", None)
-    if snapshot_losses:
+    want_group_snap = group_floor is not None and getattr(args, "snapshot_group_floor", False)
+    if snapshot_losses or want_group_snap:
         from resevo.editspace import tuples_from_ids
 
         snap_prefix = Path(args.snapshot_prefix + ("_stage2" if label else ""))
         snap_log = snap_prefix.with_name(snap_prefix.name + "_snaps.csv")
 
-        def snapshot_hook(index, threshold, round_index, old_loss, ids):
-            """损失快照落盘：起点表写 CSV，触发记录追加到日志，只读注册表。"""
+        def write_snapshot(index, threshold, round_index, old_loss, ids):
+            """快照落盘：起点表写 CSV，触发记录追加到日志，只读注册表。"""
             snap_path = snap_prefix.with_name(snap_prefix.name + f"_snap{index}.csv")
             write_table(snap_path, schema, tuples_from_ids(registry, ids), f"{label}快照{index}")
             snap_log.parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +290,16 @@ def run_stage(
                 f"{label}快照{index} 阈值 {threshold:.4f} 轮 {round_index} 损失 {old_loss:.4f}",
                 flush=True,
             )
+
+    if snapshot_losses:
+        def snapshot_hook(index, threshold, round_index, old_loss, ids):
+            write_snapshot(index, threshold, round_index, old_loss, ids)
+
+    if want_group_snap:
+        def group_snapshot_hook(round_index, old_loss, per, ids):
+            """分档全过线快照（第六十八步）：序号记 G，阈值列记各档地板合计。"""
+            write_snapshot("G", float(group_floor["floors"].sum()), round_index, old_loss, ids)
+            print(f"{label}分档快照 各档损失÷地板 " + " ".join(f"{r:.3f}" for r in per / group_floor["floors"]), flush=True)
 
     if args.batched:
         out = evolve_batch(
@@ -257,6 +331,10 @@ def run_stage(
             nullswap_after=args.nullswap_after,
             snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
             snapshot_hook=snapshot_hook,
+            group_index=None if group_floor is None else group_floor["index"],
+            group_floors=None if group_floor is None else group_floor["floors"],
+            stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
+            group_snapshot_hook=group_snapshot_hook,
         )
     elif args.grouped:
         out = evolve_grouped(
@@ -296,6 +374,13 @@ def run_stage(
         f"{label}最终损失 {final_loss:.6f}，初始比 {final_loss / initial_loss:.4%}，"
         f"耗时 {elapsed:.1f} 秒，平均每轮 {elapsed / len(out.records) * 1000:.0f} 毫秒"
     )
+    if group_floor is not None and out.group_losses:
+        k_last, per = out.group_losses[-1]
+        ratios = per / group_floor["floors"]
+        print(
+            f"{label}分档结算（轮 {k_last} 起点）各档损失÷地板 " + " ".join(f"{r:.3f}" for r in ratios)
+            + f"，最慢档 {ratios.max():.3f}，总和÷地板 {per.sum() / group_floor['floors'].sum():.3f}"
+        )
     return StageResult(out, registry, y, w, initial_loss, final_loss, elapsed, len(specs))
 
 
@@ -336,6 +421,8 @@ def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: Stage
     pseudo_init = weighted_half_loss(
         final.y[n_real:], pseudo_reg.answers_for_rows(stage1_rows), final.w[n_real:]
     )
+    # 第一段地板：硬地板停取 --stop-floor；分档地板停取各档地板合计（同为 ½Σwσ²），只作报数
+    floor1 = args.stop_floor if args.stop_floor > 0 else float(getattr(args, "group_floor_total", 0.0) or 0.0)
     info = dict(
         num_real=n_real, num_pseudo=len(extra),
         stage1_stop_reason=stage1.out.stop_reason, stage1_rounds=len(stage1.out.records),
@@ -346,13 +433,13 @@ def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: Stage
         stage2_floor=stop_floor2, stage2_over_floor=final.final_loss / stop_floor2 if stop_floor2 > 0 else None,
         final_real_loss=real_loss_final,
         final_over_stage1=real_loss_final / lock["real_loss_t1"] if lock["real_loss_t1"] > 0 else None,
-        stop_floor=args.stop_floor,
-        stage1_over_floor=lock["real_loss_t1"] / args.stop_floor if args.stop_floor > 0 else None,
-        final_over_floor=real_loss_final / args.stop_floor if args.stop_floor > 0 else None,
+        stop_floor=floor1,
+        stage1_over_floor=lock["real_loss_t1"] / floor1 if floor1 > 0 else None,
+        final_over_floor=real_loss_final / floor1 if floor1 > 0 else None,
     )
     floor_txt = (
         f"，÷地板 {info['final_over_floor']:.4f}（第一段终表 {info['stage1_over_floor']:.4f}）"
-        if args.stop_floor > 0 else ""
+        if floor1 > 0 else ""
     )
     print(
         f"第二段核对：终表真题损失 {real_loss_final:.6f}，是第一段终表的 {info['final_over_stage1']:.4f} 倍{floor_txt}；"
@@ -409,6 +496,24 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
                     [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
                 )
         print(f"探针已写入 {probe_path}")
+
+
+def write_group_curve(out_path: Path, out, group_floor: dict) -> None:
+    """分档地板曲线落盘（第六十八步）：逐轮各档损失 + floor 行（各档地板）；旁边写同名 .json 分档明细。"""
+    import json
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    floors = group_floor["floors"]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["round"] + [f"g{i}" for i in range(floors.size)])
+        for k, per in (out.group_losses or []):
+            writer.writerow([k] + [f"{x:.6f}" for x in per])
+        writer.writerow(["floor"] + [f"{x:.6f}" for x in floors])
+    meta_path = out_path.with_suffix(".json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(dict(stop_reason=out.stop_reason, rounds=len(out.records), groups=group_floor["table"]), f, ensure_ascii=False, indent=1)
+    print(f"分档曲线已写入 {out_path}，分档明细 {meta_path}")
 
 
 def write_table(table_path: Path, schema, rows, what: str = "终表") -> None:
@@ -517,6 +622,20 @@ def main() -> None:
         "地板按公开机制参数外算），0 关闭",
     )
     parser.add_argument(
+        "--stop-floor-groups", action="store_true",
+        help="分档地板停（第六十八步）：第一段按 σ 分档，每档损失都不高于各自地板 ½Σwσ² 才收工，"
+        "由最慢的档说了算；只管第一段，与 --stop-floor 二选一，需 --batched 且考卷每题带 sigma",
+    )
+    parser.add_argument(
+        "--floor-group-min", type=int, default=30,
+        help="分档地板的小档门槛：题数少于该值的 σ 档并入 σ 最近的相邻档",
+    )
+    parser.add_argument(
+        "--snapshot-group-floor", action="store_true",
+        help="分档全过线快照：第一段首个各档损失全不高于各自地板的轮，把起点表写成 前缀_snapG.csv"
+        "（不停也记，跑到收敛的对照场用），需 --snapshot-prefix 与 --batched",
+    )
+    parser.add_argument(
         "--snapshot-loss", type=str, default="",
         help="损失快照阈值，逗号分隔的引擎口径损失值，某轮起点损失首次不高于"
         "某阈值时把该轮起点表写成 CSV（第六十一步，纯记账不改轨迹），"
@@ -525,7 +644,7 @@ def main() -> None:
     parser.add_argument(
         "--snapshot-prefix", type=str, default="",
         help="损失快照输出前缀，表写到 前缀_snap{序号}.csv，"
-        "触发记录写到 前缀_snaps.csv，与 --snapshot-loss 同时给出",
+        "触发记录写到 前缀_snaps.csv，配 --snapshot-loss 或 --snapshot-group-floor",
     )
     parser.add_argument(
         "--tree-every", type=int, default=0,
@@ -764,10 +883,20 @@ def main() -> None:
         parser.error("--nullswap-every 只支持批量路径，请同时带 --batched")
     if args.nullswap_after > 0 and args.nullswap_every <= 0:
         parser.error("--nullswap-after 需要 --nullswap-every 为正")
-    if bool(args.snapshot_loss) != bool(args.snapshot_prefix):
-        parser.error("--snapshot-loss 与 --snapshot-prefix 须同时给出")
-    if args.snapshot_loss and not args.batched:
-        parser.error("--snapshot-loss 只支持批量路径，请同时带 --batched")
+    if bool(args.snapshot_loss) and not args.snapshot_prefix:
+        parser.error("--snapshot-loss 需要 --snapshot-prefix")
+    if args.snapshot_group_floor and not args.snapshot_prefix:
+        parser.error("--snapshot-group-floor 需要 --snapshot-prefix")
+    if args.snapshot_prefix and not (args.snapshot_loss or args.snapshot_group_floor):
+        parser.error("--snapshot-prefix 需配 --snapshot-loss 或 --snapshot-group-floor")
+    if (args.snapshot_loss or args.snapshot_group_floor) and not args.batched:
+        parser.error("快照只支持批量路径，请同时带 --batched")
+    if args.stop_floor_groups and not args.batched:
+        parser.error("--stop-floor-groups 只支持批量路径，请同时带 --batched")
+    if args.stop_floor_groups and args.stop_floor > 0.0:
+        parser.error("--stop-floor-groups 与 --stop-floor 二选一")
+    if args.floor_group_min < 1:
+        parser.error("--floor-group-min 必须为正")
     snapshot_losses = None
     if args.snapshot_loss:
         try:
@@ -908,9 +1037,17 @@ def main() -> None:
         else:
             print("供体档位门：S* 不可信或低重复，供体守默认档")
 
+    group_floor = None
+    if args.stop_floor_groups or args.snapshot_group_floor:
+        try:
+            group_floor = sigma_groups(specs, exam_weights(args, parser, specs), args.floor_group_min)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.group_floor_total = float(group_floor["floors"].sum())
     stage1 = run_stage(
         args, parser, schema, specs, init_rows, ji_target, work_rows_val,
         args.rounds, args.menu_seed, args.sample_seed, args.select_seed,
+        group_floor=group_floor,
     )
     final = stage1
     stage1_rows = None
@@ -987,6 +1124,8 @@ def main() -> None:
         if stage1_rows is not None:
             write_curve(out_path.with_name(out_path.stem + "_stage1" + out_path.suffix), stage1.out, stage1.final_loss, "第一段曲线")
         write_curve(out_path, out, final_loss, "曲线")
+        if group_floor is not None:
+            write_group_curve(out_path.with_name(out_path.stem + "_groups" + out_path.suffix), stage1.out, group_floor)
 
     if args.save_table:
         from resevo.editspace import tuples_from_ids
