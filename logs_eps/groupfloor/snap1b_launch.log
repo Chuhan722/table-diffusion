@@ -1,0 +1,31 @@
+2026-10-17T14:15:21Z START adult_eps1_snap_seed1 gpu0 floor=299038.1812299605 load=0.76 0.71 0.83
+2026-10-17T14:18:39Z END adult_eps1_snap_seed1 rc=0
+2026-10-17T14:19:39Z START adult_eps1_snap_seed2 gpu0 floor=225753.08438055194 load=6.76 7.12 3.69
+2026-10-17T14:22:39Z END adult_eps1_snap_seed2 rc=0
+2026-10-17T14:23:39Z START adult_eps1_snap_seed3 gpu0 floor=190205.15277737722 load=7.16 9.75 5.73
+2026-10-17T14:25:54Z END adult_eps1_snap_seed3 rc=0
+2026-10-17T14:26:54Z START adult_eps0p1_snap_seed1 gpu0 floor=6287575.166310625 load=6.37 10.32 6.87
+2026-10-17T14:28:23Z END adult_eps0p1_snap_seed1 rc=0
+2026-10-17T14:29:23Z START adult_eps0p1_snap_seed2 gpu0 floor=1823340.3762813245 load=5.44 9.72 7.25
+2026-10-17T14:30:32Z END adult_eps0p1_snap_seed2 rc=0
+2026-10-17T14:31:32Z START adult_eps0p1_snap_seed3 gpu0 floor=5123813.774480508 load=5.31 9.29 7.49
+2026-10-17T14:32:43Z END adult_eps0p1_snap_seed3 rc=0
+2026-10-17T14:33:43Z START adult_eps0p3_snap_seed1 gpu0 floor=1399681.5247673127 load=5.59 9.13 7.74
+2026-10-17T14:35:39Z END adult_eps0p3_snap_seed1 rc=0
+2026-10-17T14:36:39Z START adult_eps0p3_snap_seed2 gpu0 floor=1800172.6178743835 load=5.86 9.57 8.28
+2026-10-17T14:38:49Z END adult_eps0p3_snap_seed2 rc=0
+2026-10-17T14:39:49Z START adult_eps0p3_snap_seed3 gpu0 floor=1630659.5345760211 load=6.21 9.97 8.81
+2026-10-17T14:42:04Z END adult_eps0p3_snap_seed3 rc=0
+2026-10-17T14:43:04Z START adult_eps3_snap_seed1 gpu0 floor=68465.50849395874 load=6.43 10.32 9.31
+2026-10-17T14:46:45Z END adult_eps3_snap_seed1 rc=0
+2026-10-17T14:47:45Z START adult_eps3_snap_seed2 gpu0 floor=48037.311033374186 load=6.94 11.25 10.20
+2026-10-17T14:51:47Z END adult_eps3_snap_seed2 rc=0
+2026-10-17T14:52:47Z START adult_eps3_snap_seed3 gpu0 floor=51669.8821903612 load=6.31 11.54 10.87
+2026-10-17T14:56:34Z END adult_eps3_snap_seed3 rc=0
+2026-10-17T14:57:34Z START adult_eps10_snap_seed1 gpu0 floor=9924.017934371434 load=6.20 11.60 11.31
+2026-10-17T15:02:53Z END adult_eps10_snap_seed1 rc=0
+2026-10-17T15:03:53Z START adult_eps10_snap_seed2 gpu0 floor=14727.64151114602 load=4.88 10.97 11.57
+2026-10-17T15:09:25Z END adult_eps10_snap_seed2 rc=0
+2026-10-17T15:10:25Z START adult_eps10_snap_seed3 gpu0 floor=14291.893133479229 load=3.46 9.96 11.41
+2026-10-17T15:15:58Z END adult_eps10_snap_seed3 rc=0
+2026-10-17T15:15:58Z 队列完
