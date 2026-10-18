@@ -1,0 +1,17 @@
+2026-10-18T03:05:15Z START adult_eps3_oursgstop_seed1 gpu1 lane=24-47 load=3.80 3.70 3.75
+2026-10-18T03:10:30Z END adult_eps3_oursgstop_seed1 rc=0
+2026-10-18T03:11:36Z START adult_eps3_oursgstop_seed2 gpu1 lane=24-47 load=16.70 19.87 11.99
+2026-10-18T03:16:37Z END adult_eps3_oursgstop_seed2 rc=0
+2026-10-18T03:17:45Z START adult_eps3_oursgstop_seed3 gpu1 lane=24-47 load=39.30 30.69 19.42
+2026-10-18T03:22:43Z END adult_eps3_oursgstop_seed3 rc=0
+2026-10-18T03:23:43Z START adult_eps0p3_oursgstop_seed1 gpu1 lane=24-47 load=27.12 32.15 24.06
+2026-10-18T03:27:45Z END adult_eps0p3_oursgstop_seed1 rc=0
+2026-10-18T03:28:52Z START adult_eps0p3_oursgstop_seed2 gpu1 lane=24-47 load=16.68 27.38 24.38
+2026-10-18T03:33:48Z END adult_eps0p3_oursgstop_seed2 rc=0
+2026-10-18T03:34:50Z gpu(1) 均被占用，等待中（已等 0 min）
+2026-10-18T04:04:58Z gpu(1) 均被占用，等待中（已等 30 min）
+2026-10-18T04:16:01Z START adult_eps0p3_oursgstop_seed3 gpu1 lane=24-47 load=3.89 5.91 9.66
+2026-10-18T04:20:10Z END adult_eps0p3_oursgstop_seed3 rc=0
+2026-10-18T04:21:13Z START adult_eps10_oursgstop_seed3 gpu1 lane=24-47 load=10.57 12.84 11.83
+2026-10-18T04:27:48Z END adult_eps10_oursgstop_seed3 rc=0
+2026-10-18T04:27:48Z 队列完

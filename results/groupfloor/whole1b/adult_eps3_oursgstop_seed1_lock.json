@@ -1,0 +1,22 @@
+{
+ "num_real": 4606,
+ "num_pseudo": 9695,
+ "stage1_stop_reason": "group_floor_reached",
+ "stage1_rounds": 1841,
+ "stage1_final_loss": 35187.150181912395,
+ "stage1_real_loss": 35187.150181912395,
+ "stage1_elapsed_s": 129.99630079278722,
+ "stage2_stop_reason": "floor_reached",
+ "stage2_rounds": 1170,
+ "stage2_initial_loss": 27983.720819304133,
+ "stage2_initial_pseudo_loss": 27983.72081930414,
+ "stage2_final_loss": 2011.3566778900117,
+ "stage2_elapsed_s": 70.80871840380132,
+ "stage2_floor": 2011.9250000000002,
+ "stage2_over_floor": 0.9997175232128491,
+ "final_real_loss": 40520.99348512491,
+ "final_over_stage1": 1.151584975641316,
+ "stop_floor": 68465.50849395784,
+ "stage1_over_floor": 0.5139398064211808,
+ "final_over_floor": 0.591845359458638
+}
