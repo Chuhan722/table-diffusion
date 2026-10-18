@@ -1,0 +1,58 @@
+[
+ {
+  "exam": "1B",
+  "tag": "0p1",
+  "src": "adult_aimrep0p1_s1",
+  "data": "adult_aimrep0p1_s1_fisA",
+  "exam_file": "measured_878query.json",
+  "mode": "sigma",
+  "questions": 878,
+  "floor_source": 6287575.166310625,
+  "floor_known": 6287575.166310625,
+  "floor_rel_diff": 0.0,
+  "floor_split": 12575150.33262125,
+  "floor_split_str": "12575150.33262125"
+ },
+ {
+  "exam": "1B",
+  "tag": "1",
+  "src": "adult_aimrep1_s1",
+  "data": "adult_aimrep1_s1_fisA",
+  "exam_file": "measured_3221query.json",
+  "mode": "sigma",
+  "questions": 3221,
+  "floor_source": 299038.1812299605,
+  "floor_known": 299038.1812299605,
+  "floor_rel_diff": 0.0,
+  "floor_split": 598076.3624599215,
+  "floor_split_str": "598076.3624599215"
+ },
+ {
+  "exam": "1A",
+  "tag": "0p1",
+  "src": "adult_alloc0p1base_s1",
+  "data": "adult_alloc0p1base_s1_fisA",
+  "exam_file": "measured_2way.json",
+  "mode": "none",
+  "questions": 14123,
+  "floor_source": 857055944.8113317,
+  "floor_known": 857055944.8114933,
+  "floor_rel_diff": 1.8846912890480713e-13,
+  "floor_split": 1714111889.622664,
+  "floor_split_str": "1714111889.622664"
+ },
+ {
+  "exam": "1A",
+  "tag": "1",
+  "src": "adult_alloc1base_s1",
+  "data": "adult_alloc1base_s1_fisA",
+  "exam_file": "measured_2way.json",
+  "mode": "none",
+  "questions": 14123,
+  "floor_source": 12144672.776845131,
+  "floor_known": 12144672.776841227,
+  "floor_rel_diff": 3.214663996738433e-13,
+  "floor_split": 24289345.55369027,
+  "floor_split_str": "24289345.55369027"
+ }
+]
