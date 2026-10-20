@@ -32,7 +32,7 @@ from .batchkernel import BatchKernelResult
 from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
 from .state import Workload
-from .stepsize import analytic_step
+from .stepsize import analytic_step, validate_step_parameters
 
 
 def _cupy():
@@ -1426,6 +1426,7 @@ class GpuBatchContext:
         struct_temp: float = float("nan"),
     ) -> BatchKernelResult:
         """构造一轮批量核，输入输出与 CPU build_batch_kernel 对齐。"""
+        validate_step_parameters(damping, max_expected_rows)
         cp = self.cp
         if not (0 < stay_probability < 1):
             raise ValueError("stay_probability 必须落在 (0,1)")

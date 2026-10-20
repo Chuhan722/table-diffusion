@@ -31,7 +31,7 @@ from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .state import Workload, loss_from_residual, table_residual
-from .stepsize import analytic_step
+from .stepsize import analytic_step, validate_step_parameters
 from .tilt import calibrate_beta_flat
 
 
@@ -445,6 +445,7 @@ def build_batch_kernel(
     probe_grid 为正时核构造完成后跑一次 beta 网格探针，
     复用本轮增益与参考分布纯只读，主路径浮点顺序零改动。
     """
+    validate_step_parameters(damping, max_expected_rows)
     if not (0 < stay_probability < 1):
         raise ValueError("stay_probability 必须落在 (0,1)")
     num_groups = grouped.num_groups
@@ -963,6 +964,7 @@ def evolve_batch(
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
+    validate_step_parameters(damping, max_expected_rows)
     if max_frozen_retries < 0:
         raise ValueError("冻结重试次数不能为负")
     if backend not in ("cpu", "gpu"):

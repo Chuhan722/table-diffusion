@@ -13,6 +13,19 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def validate_step_parameters(
+    damping: float,
+    max_expected_rows: float | None = None,
+) -> None:
+    """在冻结或提前停止之前验证外部步长参数。"""
+    if not np.isfinite(damping) or not (0 < damping <= 1):
+        raise ValueError("damping 必须为有限数且落在 (0,1]")
+    if max_expected_rows is not None and (
+        not np.isfinite(max_expected_rows) or max_expected_rows <= 0
+    ):
+        raise ValueError("max_expected_rows 必须为正的有限数或 None")
+
+
 def rates_from_probabilities(
     probabilities: list[NDArray[np.float64]],
 ) -> list[NDArray[np.float64]]:
@@ -76,8 +89,7 @@ def analytic_step(
     damping: float = 1.0,
 ) -> float:
     """解析步长 h=gamma*min(h_feas, D/(2C))，C<=0 时只受可行上限约束。"""
-    if not (0 < damping <= 1):
-        raise ValueError("damping 必须落在 (0,1]")
+    validate_step_parameters(damping)
     if max_leave_rate <= 0 or not np.isfinite(direction_gain) or not np.isfinite(interaction):
         raise FloatingPointError("速率矩非法或非有限")
     feasible = 1.0 / max_leave_rate
@@ -114,8 +126,9 @@ def expected_changed_rows_at_unit_step(
 
 def apply_row_budget(step: float, unit_expected_rows: float, max_expected_rows: float) -> float:
     """期望改行数预算，h=min(h, B_max/H)，在抽样前决定，不看抽样结果。"""
-    if max_expected_rows <= 0:
-        raise ValueError("B_max 必须为正")
+    if max_expected_rows is None:
+        raise ValueError("max_expected_rows 必须为正的有限数")
+    validate_step_parameters(1.0, max_expected_rows)
     if unit_expected_rows <= 0:
         return step
     return min(step, max_expected_rows / unit_expected_rows)

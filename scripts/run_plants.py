@@ -33,6 +33,7 @@ from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
+from resevo.stepsize import validate_step_parameters  # noqa: E402
 
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 FIBER_SEED_BUMP = 100003  # 第二段三个随机种子的偏移，与第一段分流
@@ -823,7 +824,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--damping", type=float, default=1.0,
-        help="步长阻尼系数，乘在解析最优步长与可行上限取小之后，1.0 为现状，须为正",
+        help="步长阻尼系数，乘在解析最优步长与可行上限取小之后，须有限且落在 (0,1]，默认 1.0",
     )
     parser.add_argument(
         "--struct-ruler", type=str, default="off",
@@ -923,8 +924,10 @@ def main() -> None:
             parser.error("--work-frac 与 --work-rows 二选一，不能同时给")
         if not args.batched:
             parser.error("--work-frac 只支持批量路径，请同时带 --batched")
-    if args.damping <= 0:
-        parser.error("--damping 必须为正")
+    try:
+        validate_step_parameters(args.damping)
+    except ValueError as exc:
+        parser.error(f"--{exc}")
     if args.damping != 1.0 and not args.batched:
         parser.error("--damping 只支持批量路径，请同时带 --batched")
     if args.struct_ruler != "off" and not args.batched:

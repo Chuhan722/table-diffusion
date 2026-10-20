@@ -34,7 +34,7 @@ from .editspace import (
 from .engine import BlockKernel, EvolveResult, RoundRecord, build_kernel, sample_next
 from .pairing import PairingBudget, build_paired_supports
 from .state import Workload, loss_from_residual
-from .stepsize import analytic_step
+from .stepsize import analytic_step, validate_step_parameters
 from .tilt import calibrate_beta_flat
 
 
@@ -261,6 +261,7 @@ def build_group_kernel(
     与显式增量实现数学恒等，浮点顺序不同数值容差内一致。
     keep_deltas 为真时额外物化每组增量矩阵供测试对拍，默认不物化。
     """
+    validate_step_parameters(damping, max_expected_rows)
     validate_partition(supports, grouped.num_groups)
     if np.any(grouped.unique_ids < 0) or np.any(grouped.unique_ids >= workload.num_states):
         raise ValueError("组状态编号必须落在贡献矩阵行数范围内")
@@ -474,6 +475,7 @@ def evolve_grouped(
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
+    validate_step_parameters(damping, max_expected_rows)
     if max_frozen_retries < 0:
         raise ValueError("冻结重试次数不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)

@@ -29,6 +29,7 @@ from .stepsize import (
     cross_interaction,
     expected_changed_rows_at_unit_step,
     rates_from_probabilities,
+    validate_step_parameters,
 )
 from .tilt import calibrate_beta
 
@@ -76,6 +77,7 @@ def build_kernel(
     numerical_tol: float = 1e-12,
 ) -> KernelResult:
     """构造一轮的最终核，所有块共用同一个旧残差，不抽样任何表。"""
+    validate_step_parameters(damping, max_expected_rows)
     s = check_state_ids(workload, state_ids)
     n = len(s)
     m = workload.num_states
@@ -273,6 +275,7 @@ def evolve(
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
+    validate_step_parameters(damping, max_expected_rows)
     if support_provider is not None and supports is not None:
         raise ValueError("固定候选与候选提供器只能二选一")
     if support_provider is None and workload is None:
