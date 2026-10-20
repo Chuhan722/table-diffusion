@@ -3,3 +3,19 @@ __pycache__/
 *.pyc
 .pytest_cache/
 outputs/
+
+# 结果产物不入库（10-20 起）：合成表、快照、逐轮曲线、模拟卷、AIM 逐轮快照与大日志
+# 可由代码+数据+种子逐位复现；只保留判定/计时/探针记录/快照点/分数等小文件
+results/**/*.csv
+!results/**/*_probe.csv
+!results/**/*_snaps.csv
+!results/**/*_curve_probe.csv
+!results/**/*_gens.csv
+results/**/*_fisA.json
+results/**/*_fisB.json
+results/**/*_exact.npz
+runs/**/*.csv
+runs/**/exam_round*.json
+runs/**/exam_final.json
+runs/**/engine_log.txt
+logs_eps/stage1/convert.log
