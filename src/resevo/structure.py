@@ -1,0 +1,541 @@
+"""结构签筒，引擎两级接受的第二级，残差打平的方向按结构好坏重分签。
+
+设计动机见工作笔记第二十九步，引擎在残差看不见的零空间方向上按签筒
+（参考分布）盲走，把表越走越平，半空间类考题因此失分。两级设计：
+第一级永远是残差，方向收益由 β 校准保证达标，签筒改形不碰增益不碰步长；
+第二级只改签筒在各方向之间的相对质量，结构变好的方向签多，变坏的签少。
+
+恒温开关，体温计低于门槛（表已过平）才启用第二级，回线即关，
+健康表全程零干预。体温计与 refine.embed_kurtosis 同刻度同种子，
+门槛 -0.05 的六数据集实例标定（18/18）直接沿用。
+
+两把尺，甲整行抱团（完整行模式计数平方和的单行移动增量符号），
+丙表形状（自带 seed 1234 一百二十八维嵌入的超额峰度增量符号，
+与体温计 seed 7 六十四维刻度分离，防止目标与仪表合一自我欺骗）。
+
+签筒改形每组离开质量精确保持，与距离签筒同一原则，同松紧只换形状，
+因此每组保持概率不变，随机矩阵约束与步长语义零改动。
+
+丁尺（连续恒温，工作笔记第三十一步）：丙尺的连续化升级，偏置力度
+随烧度连续——有效力度 boost^min(1, 烧度/满速刻度)，烧度取负体温，
+满速刻度继承原门槛绝对值 0.05：烧满刻度即丙尺满力度，浅烧按幂律降
+力度，体温非负力度归一（零干预），健康表自动逐位等基线。
+丙门+丁药（确诊制，工作笔记第三十三步）：初诊一次定资格——首个
+批量轮体温过绝对门（diagnose，门与丙尺同值）才收治，未收治全程
+零干预，杜绝低烧误诊（adult 实测吃药致半空间一致微伤）；收治后
+连续调药照旧，回温自动停药。个人基准（量真实表定专属体温）经定价
+实算否决：ρ 总额 0.031 下四阶量单行敏感度与判断线同量级，花半数
+预算噪声仍逾 0.05，不可私有化。零新超参：boost、刻度、门全继承。
+（第一版丁尺曾试决赛圈——按作业增益切圈后圈内偏好——nltcs 清 s1
+实测证伪：圈砍掉了结构好而作业次优的路径，偏好在同质圈内空转，
+半空间仅 -0.8%，全程深烧 -0.13 不退，已废弃，正确机制是全域乘性偏置。）
+"""
+from __future__ import annotations
+
+from typing import Sequence
+
+import numpy as np
+from numpy.typing import NDArray
+
+from .refine import EMBED_DIM, EMBED_SEED, HASH_SEED, KURT_GATE_DEFAULT
+
+STRUCT_BOOST_DEFAULT = 4.0
+BING_SEED = 1234
+BING_DIM = 128
+JI_GATE_DEFAULT = 0.5  # 己尺初诊门，聚簇缺口过半才收治（体检三卷分割证据见类 docstring）
+_CHUNK = 16384
+_CHUNK_DEV = 65536  # GPU 版分块，显存 1GB 级
+
+# 体温计嵌入分数的融合核（第五十九步 甲 GPU 侧）：一组一维一线程，按字段序顺次累加，
+# 与原先逐字段 scores += w_t[codes[:, f]] 的加法序列逐位相同（纯加法无 FMA）。
+_EMBED_KERNEL_SRC = r"""
+extern "C" __global__ void embed_scores(const int* __restrict__ codes, const int F,
+                                        const long long G, const int D,
+                                        const double* __restrict__ wcat,
+                                        const long long* __restrict__ woff,
+                                        double* __restrict__ out) {
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= G * D) return;
+    const long long g = i / D;
+    const int e = (int)(i - g * D);
+    double acc = 0.0;
+    for (int f = 0; f < F; ++f)
+        acc += wcat[(woff[f] + codes[g * F + f]) * D + e];
+    out[i] = acc;
+}
+"""
+_embed_kernel_cache: dict = {}
+
+
+def _embed_kernel(cp):
+    dev = cp.cuda.device.get_device_id()
+    k = _embed_kernel_cache.get(dev)
+    if k is None:
+        k = cp.RawKernel(_EMBED_KERNEL_SRC, "embed_scores")
+        _embed_kernel_cache[dev] = k
+    return k
+
+
+def _field_weights(
+    domain_sizes: Sequence[int], dim: int, seed: int
+) -> list[NDArray[np.float64]]:
+    """每字段一张 dim 乘域宽的高斯权重表，生成顺序与 refine 逐位一致。"""
+    rng = np.random.default_rng(seed)
+    return [rng.normal(size=(dim, int(k))) for k in domain_sizes]
+
+
+def _embed_scores(
+    codes_g: NDArray[np.int32], weights: list[NDArray[np.float64]]
+) -> NDArray[np.float64]:
+    """组码矩阵的嵌入分数 G 乘 dim。"""
+    scores = np.zeros((codes_g.shape[0], weights[0].shape[0]))
+    for f, w in enumerate(weights):
+        scores += w.T[codes_g[:, f]]
+    return scores
+
+
+def _weighted_kurtosis(scores: NDArray[np.float64], counts) -> float:
+    """按组重数加权的超额峰度，数学上等于展开表逐行计算。"""
+    w = np.asarray(counts, dtype=np.float64)
+    n = w.sum()
+    mean = (scores * w[:, None]).sum(axis=0) / n
+    d = scores - mean
+    var = (d * d * w[:, None]).sum(axis=0) / n
+    sd = np.sqrt(var)
+    z = d / np.where(sd > 0, sd, 1.0)
+    return float(((z**4 * w[:, None]).sum(axis=0) / n).mean() - 3.0)
+
+
+def _moments_kurt(
+    mom: NDArray[np.float64], n: float
+) -> NDArray[np.float64]:
+    """由原点矩批量算超额峰度，mom 形如 (..., 4, dim)，返回 (...,)。"""
+    mu = mom[..., 0, :] / n
+    ex2 = mom[..., 1, :] / n
+    ex3 = mom[..., 2, :] / n
+    ex4 = mom[..., 3, :] / n
+    var = np.maximum(ex2 - mu * mu, 1e-12)
+    mu4 = ex4 - 4 * mu * ex3 + 6 * mu * mu * ex2 - 3 * mu**4
+    return (mu4 / (var * var)).mean(axis=-1) - 3.0
+
+
+def shape_reference(
+    ref_paths: NDArray[np.float64],
+    offsets: NDArray[np.int64],
+    group: NDArray[np.int64],
+    factors: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """签筒改形，路径质量乘结构因子后按组归还原离开质量。
+
+    每组路径质量总和精确回到改形前，保持概率与步长语义零改动，
+    只在组内重新分签，空组无路径天然不受影响。
+    """
+    shaped = ref_paths * factors
+    starts = np.minimum(offsets[:-1], len(ref_paths))
+    orig = np.add.reduceat(np.r_[ref_paths, 0.0], starts)
+    new = np.add.reduceat(np.r_[shaped, 0.0], starts)
+    empty = np.diff(offsets) == 0
+    orig[empty] = 1.0
+    new[empty] = 1.0
+    scale = np.where(new > 0, orig / np.where(new > 0, new, 1.0), 1.0)
+    return shaped * scale[group]
+
+
+class StructShaper:
+    """结构签筒状态机，量体温，门内算因子，门外零干预。
+
+    ruler 取 watch 只记体温不改签筒（侦察模式，轨迹与不装完全一致），
+    取 jia 或 bing 时体温低于 gate 才产出路径因子，否则返回 None。
+    取 ding 时无门槛，体温为负即产出因子，力度随烧度连续
+    （effective_boost），非负体温零干预。所有随机权重表构造一次复用，
+    体温计自带独立生成器不碰引擎随机流。
+
+    ruler 取 ji 为己尺（聚簇尺）：刻度复用 jia 的整行抱团增量
+    （哈希差分查目标模式计数，Σc² 精确量非投影，无自我欺骗问题），
+    读数改为 Simpson 集中度对买来基准 ji_target 的相对偏差
+    dev=(S-S*)/S*，负为聚不够正为过聚。与当年落选的 jia 裸尺
+    （无基准盲促、恒力、方向永远朝聚）的区别是三味药理全数移植：
+    确诊制（初诊 |dev| 过 JI_GATE_DEFAULT 才收治——体检实测初始表
+    缺口 nltcs -99% / plants -96% 对 adult -9.7%，门在 0.1~0.9 之间
+    取值分割结论不变）、双向药（dev 正负翻转好坏方向，冲过基准
+    自动回拉）、连续药力（boost^min(1,|dev|/门)，达标即停）。
+    基准 S* 部署口径花隐私预算买（Simpson 单行敏感度 2/n 无高阶
+    放大，非乙案 2C^4/n 之覆辙），零噪场退化为精确真值。
+    """
+
+    def __init__(
+        self,
+        ruler: str,
+        domain_sizes: Sequence[int],
+        boost: float = STRUCT_BOOST_DEFAULT,
+        gate: float = KURT_GATE_DEFAULT,
+        ji_target: float | None = None,
+    ):
+        if ruler not in ("watch", "jia", "bing", "ding", "ji"):
+            raise ValueError(f"未知结构刻度 {ruler}")
+        if boost <= 1.0:
+            raise ValueError("签数增幅必须大于 1")
+        if ruler == "ji" and (ji_target is None or ji_target <= 0.0):
+            raise ValueError("己尺必须给正的聚簇基准 ji_target")
+        self.ruler = ruler
+        self.boost = float(boost)
+        self.gate = float(gate)
+        self.ji_target = float(ji_target) if ji_target is not None else None
+        sizes = [int(k) for k in domain_sizes]
+        self._thermo_w = _field_weights(sizes, EMBED_DIM, EMBED_SEED)
+        self._thermo_w_dev = None  # GPU 体温计权重懒上传缓存
+        if ruler in ("jia", "ji"):
+            hk = np.random.default_rng(HASH_SEED)
+            self._keys = hk.integers(
+                1, 2**63, size=(len(sizes), max(sizes)), dtype=np.uint64
+            )
+        elif ruler in ("bing", "ding"):
+            bw = _field_weights(sizes, BING_DIM, BING_SEED)
+            # padded 张量供逐路径花式索引，字段真实域宽之外恒零不被引用
+            self._bing_w = np.zeros((len(sizes), BING_DIM, max(sizes)))
+            for f, w in enumerate(bw):
+                self._bing_w[f, :, : w.shape[1]] = w
+            self._bing_w_dev = None  # GPU 权重表懒上传缓存
+
+    def temperature(self, codes_g: NDArray[np.int32], counts) -> float:
+        """体温计读数；己尺改读聚簇偏差，其余刻度为嵌入峰度。"""
+        if self.ruler == "ji":
+            return self._ji_dev(counts)
+        return _weighted_kurtosis(_embed_scores(codes_g, self._thermo_w), counts)
+
+    def _ji_dev(self, counts) -> float:
+        """己温：Simpson 集中度对买来基准的相对偏差 (S-S*)/S*。"""
+        c = np.asarray(counts, dtype=np.float64)
+        n = c.sum()
+        s = float((c * c).sum() / (n * n))
+        return (s - self.ji_target) / self.ji_target
+
+    def temperature_dev(self, cp, codes_g_dev, counts_dev) -> float:
+        """体温计 GPU 版，与 host 版统计等价（浮点求和顺序不同）。
+
+        权重表首调上传后缓存，逐字段花式索引累加嵌入分数，
+        加权四矩全程在卡上算，只回传一个标量。跨后端读数差在
+        1e-15 量级，同后端同种子逐位确定（工作笔记第三十二步口径）。
+        己尺分支只做组重平方和，天然逐位无悬念。
+        """
+        if self.ruler == "ji":
+            c = counts_dev.astype(cp.float64)
+            n = float(c.sum())
+            s = float((c * c).sum()) / (n * n)
+            return (s - self.ji_target) / self.ji_target
+        if self._thermo_w_dev is None:
+            # 各字段权重表转置后按字段拼接成一张（Σ域宽 × 维数），配字段起点表
+            off = np.zeros(len(self._thermo_w) + 1, dtype=np.int64)
+            np.cumsum([w.shape[1] for w in self._thermo_w], out=off[1:])
+            self._thermo_w_dev = (
+                cp.asarray(np.concatenate([np.ascontiguousarray(w.T) for w in self._thermo_w])),
+                cp.asarray(off),
+            )
+        wcat, woff = self._thermo_w_dev
+        num_groups = int(codes_g_dev.shape[0])
+        num_fields = int(codes_g_dev.shape[1])
+        codes_c = cp.ascontiguousarray(codes_g_dev, dtype=cp.int32)
+        scores = cp.empty((num_groups, EMBED_DIM), dtype=cp.float64)
+        total = num_groups * EMBED_DIM
+        if total:
+            _embed_kernel(cp)(
+                ((total + 255) // 256,), (256,),
+                (codes_c, np.int32(num_fields), np.int64(num_groups), np.int32(EMBED_DIM),
+                 wcat, woff, scores),
+            )
+        w = counts_dev.astype(cp.float64)
+        n = w.sum()
+        mean = (scores * w[:, None]).sum(axis=0) / n
+        d = scores - mean
+        var = (d * d * w[:, None]).sum(axis=0) / n
+        sd = cp.sqrt(var)
+        z = d / cp.where(sd > 0, sd, 1.0)
+        return float(((z**4 * w[:, None]).sum(axis=0) / n).mean() - 3.0)
+
+    def diagnose(self, temperature: float) -> bool:
+        """初诊定资格，丁尺读体温过绝对门，己尺读聚簇缺口过半门。
+
+        丙门+丁药确诊制（工作笔记第三十三步）：个人基准的私有化在
+        ε=1 预算与万行级表下定价不可行（四阶量单行敏感度 2C^4/n 与
+        判断线同量级），退回通用刻度——初诊读初始表体温（后处理免费
+        合规），过绝对门定资格，杜绝 adult 型低烧误诊；收治后连续调药
+        照旧。门与丙尺同值零新参数。己尺的基准已花钱买到（Simpson
+        敏感度 2/n 定价可行），初诊改判 |dev| 过 JI_GATE_DEFAULT，
+        体检实测健康表缺口 -9.7% 病表 -96%~-99%，门不敏感。
+        """
+        if self.ruler == "ji":
+            return abs(temperature) > JI_GATE_DEFAULT
+        return temperature < self.gate
+
+    def active(self, temperature: float) -> bool:
+        """恒温开关，jia/bing 看门槛，ding 无门槛体温为负即启用，
+        己尺偏差非零即启用（药力随偏差连续归零，达标自停）。"""
+        if self.ruler == "ji":
+            return temperature != 0.0
+        if self.ruler == "ding":
+            return temperature < 0.0
+        return self.ruler in ("jia", "bing") and temperature < self.gate
+
+    def treatment_severity(self, temperature: float) -> float:
+        """在治病情深度，治疗平台门用，向零走即好转。
+
+        己尺深度为聚簇偏差绝对值（过冲后回拉同样计好转），
+        丁尺深度为烧度（体温非负即痊愈深度零），其余刻度不参与
+        治疗平台门恒返零。未在治（active 假）深度为零。
+        """
+        if not self.active(temperature):
+            return 0.0
+        if self.ruler == "ji":
+            return abs(temperature)
+        if self.ruler == "ding":
+            return max(0.0, -temperature)
+        return 0.0
+
+    def effective_boost(self, temperature: float) -> float:
+        """连续药力，boost 的幂律连续化，烧满刻度即满力度。
+
+        丁尺指数 min(1, 烧度/|gate|)，体温非负指数为零力度归一；
+        己尺指数 min(1, |dev|/己门)，偏差趋零药力趋一（零干预），
+        冲过基准后好坏方向翻转形成回拉。其余刻度恒返回满力度。
+        """
+        if self.ruler == "ji":
+            return float(self.boost ** min(1.0, abs(temperature) / JI_GATE_DEFAULT))
+        if self.ruler != "ding":
+            return self.boost
+        heat = max(0.0, -temperature)
+        return float(self.boost ** min(1.0, heat / abs(self.gate)))
+
+    def path_factors(
+        self, menu, codes_g: NDArray[np.int32], counts,
+        temperature: float | None = None,
+    ) -> NDArray[np.float64]:
+        """每条菜单路径的签数因子，结构变好乘力度，变坏除力度。
+
+        jia 与 ji 用整行抱团增量，bing 与 ding 用表形状增量；
+        jia/bing 力度恒为 boost，ding/ji 按读数连续调（effective_boost）。
+        ji 的好坏方向由己温符号定：聚不够（dev<0）促聚为好，
+        过聚（dev>0）翻转为抑聚，冲过基准自动回拉。
+        """
+        if self.ruler in ("jia", "ji"):
+            delta = self._jia_delta(menu, codes_g, counts).astype(np.float64)
+            if self.ruler == "ji":
+                if temperature is None:
+                    raise ValueError("己尺路径因子必须给当前己温定方向")
+                if temperature > 0.0:
+                    delta = -delta
+        else:
+            delta = self._bing_delta(menu, codes_g, counts)
+        strength = (
+            self.effective_boost(temperature)
+            if temperature is not None else self.boost
+        )
+        factors = np.ones(menu.num_paths, dtype=np.float64)
+        factors[delta > 0] = strength
+        factors[delta < 0] = 1.0 / strength
+        return factors
+
+    def path_factors_dev(
+        self, menu_dev: dict, codes_g_dev, counts_dev,
+        temperature: float | None = None,
+    ):
+        """路径因子的 GPU 版，bing/ding 专用，全程留在卡上。
+
+        输入为 gpukernel 已上传的菜单字典与组码/组重数组，权重表
+        首次调用懒上传后缓存。数学与 host 版相同，浮点求和顺序
+        不同导致数值边缘（delta≈0）的路径符号可能与 host 不一致，
+        属跨后端统计等价口径（工作笔记第三十一步拍板），同后端
+        确定性不受影响。jia 的哈希查表不搬卡，调用方走 host 老路。
+        """
+        if self.ruler not in ("bing", "ding"):
+            raise ValueError("GPU 因子只支持 bing/ding 刻度")
+        import cupy as cp
+
+        if self._bing_w_dev is None:
+            self._bing_w_dev = cp.asarray(self._bing_w)
+        bw = self._bing_w_dev
+        w = counts_dev.astype(cp.float64)
+        n = float(w.sum())
+        num_fields = codes_g_dev.shape[1]
+        scores = cp.zeros((codes_g_dev.shape[0], BING_DIM))
+        for f in range(num_fields):
+            scores += bw[f].T[codes_g_dev[:, f]]
+        mom = cp.stack(
+            [(scores ** (p + 1) * w[:, None]).sum(axis=0) for p in range(4)]
+        )
+        cur = float(_moments_kurt(mom, n))
+        num_paths = int(menu_dev["num_paths"])
+        delta = cp.empty(num_paths, dtype=cp.float64)
+        for lo in range(0, num_paths, _CHUNK_DEV):
+            hi = min(lo + _CHUNK_DEV, num_paths)
+            grp = menu_dev["group"][lo:hi]
+            s_old = scores[grp]
+            s_new = s_old.copy()
+            for s in range(menu_dev["fields"].shape[1]):
+                fld = menu_dev["fields"][lo:hi, s]
+                mask = fld >= 0
+                f = fld[mask]
+                new = menu_dev["values"][lo:hi][mask, s]
+                old = codes_g_dev[grp[mask], f]
+                s_new[mask] += bw[f, :, new] - bw[f, :, old]
+            m_new = cp.broadcast_to(
+                mom, (hi - lo, 4, BING_DIM)
+            ).copy()
+            po = s_old.copy()
+            pn = s_new.copy()
+            for p in range(4):
+                m_new[:, p, :] += pn - po
+                if p < 3:
+                    po = po * s_old
+                    pn = pn * s_new
+            delta[lo:hi] = _moments_kurt(m_new, n) - cur
+        strength = (
+            self.effective_boost(temperature)
+            if temperature is not None else self.boost
+        )
+        factors = cp.ones(num_paths, dtype=cp.float64)
+        factors[delta > 0] = strength
+        factors[delta < 0] = 1.0 / strength
+        return factors
+
+    def _jia_delta(self, menu, codes_g, counts) -> NDArray[np.int64]:
+        """整行抱团增量，单行从源模式移到目标模式的 Σc² 变化符号。
+
+        分组表按状态去重，模式计数恰等于组重数，目标模式计数用
+        源哈希加字段差分哈希在组哈希表里查，查无此组即计数为零。
+        Δ(Σc²) = 2(c_目标 - c_源 + 1)，返回其符号载体 c_目标 - c_源 + 1。
+        """
+        keys = self._keys
+        num_fields = codes_g.shape[1]
+        cnts = np.asarray(counts, dtype=np.int64)
+        with np.errstate(over="ignore"):
+            h_g = keys[np.arange(num_fields)[None, :], codes_g].sum(
+                axis=1, dtype=np.uint64
+            )
+            dh = np.zeros(menu.num_paths, dtype=np.uint64)
+            for s in range(menu.fields.shape[1]):
+                fld = menu.fields[:, s]
+                mask = fld >= 0
+                f = fld[mask]
+                old = codes_g[menu.group[mask], f]
+                new = menu.values[mask, s]
+                dh[mask] += keys[f, new] - keys[f, old]
+            target = h_g[menu.group] + dh
+        order = np.argsort(h_g, kind="stable")
+        h_sorted = h_g[order]
+        c_sorted = cnts[order]
+        idx = np.searchsorted(h_sorted, target)
+        idx_c = np.minimum(idx, len(h_sorted) - 1)
+        found = h_sorted[idx_c] == target
+        c_target = np.where(found, c_sorted[idx_c], 0)
+        return c_target - cnts[menu.group] + 1
+
+    def _bing_delta(self, menu, codes_g, counts) -> NDArray[np.float64]:
+        """表形状增量，单行移动后自带嵌入超额峰度的变化，分块矢量化。"""
+        w = np.asarray(counts, dtype=np.float64)
+        n = w.sum()
+        scores = np.zeros((codes_g.shape[0], BING_DIM))
+        for f in range(codes_g.shape[1]):
+            scores += self._bing_w[f].T[codes_g[:, f]]
+        mom = np.stack(
+            [(scores ** (p + 1) * w[:, None]).sum(axis=0) for p in range(4)]
+        )
+        cur = float(_moments_kurt(mom, n))
+        out = np.empty(menu.num_paths, dtype=np.float64)
+        for lo in range(0, menu.num_paths, _CHUNK):
+            hi = min(lo + _CHUNK, menu.num_paths)
+            grp = menu.group[lo:hi]
+            s_old = scores[grp]
+            s_new = s_old.copy()
+            for s in range(menu.fields.shape[1]):
+                fld = menu.fields[lo:hi, s]
+                mask = fld >= 0
+                f = fld[mask]
+                new = menu.values[lo:hi][mask, s]
+                old = codes_g[grp[mask], f]
+                s_new[mask] += self._bing_w[f, :, new] - self._bing_w[f, :, old]
+            m_new = np.broadcast_to(
+                mom, (hi - lo, 4, BING_DIM)
+            ).copy()
+            po = s_old.copy()
+            pn = s_new.copy()
+            for p in range(4):
+                m_new[:, p, :] += pn - po
+                if p < 3:
+                    po = po * s_old
+                    pn = pn * s_new
+            out[lo:hi] = _moments_kurt(m_new, n) - cur
+        return out
+
+
+class CompositeShaper:
+    """组合尺：多把尺子同岗，各自确诊、各自连续调药、签数因子相乘。
+
+    设计（组合尺战役）：丁尺方差小（三阶方向稳）、己尺上限高（聚簇
+    总量能对准买来的 S*），单尺各有短板；组合让每条菜单路径的因子
+    取各在治尺子因子之积——两尺同判好则强促，判断相反则互相抵消，
+    等价于"会诊一致才下猛药"。确诊制逐尺独立：初诊各自定资格
+    （丁读体温过绝对门，己读聚簇缺口过半门），未收治的尺全程零干预，
+    在治尺到站（active 归零）即自动停药，不影响另一把。读数为各尺
+    读数元组。ruler="composite" 不入 GPU 药房白名单（jia 哈希键
+    不搬卡），因子走 host 药房，读数走各尺原生 GPU/host 路径。
+    """
+
+    ruler = "composite"
+
+    def __init__(self, shapers: list[StructShaper]):
+        if len(shapers) < 2:
+            raise ValueError("组合尺至少两把尺子")
+        self.shapers = list(shapers)
+        self._admitted: list[bool] | None = None
+
+    def temperature(self, codes_g: NDArray[np.int32], counts) -> tuple:
+        return tuple(s.temperature(codes_g, counts) for s in self.shapers)
+
+    def temperature_dev(self, cp, codes_g_dev, counts_dev) -> tuple:
+        return tuple(
+            s.temperature_dev(cp, codes_g_dev, counts_dev) for s in self.shapers
+        )
+
+    def diagnose(self, temperature: tuple) -> bool:
+        """初诊逐尺定资格并记名，任一收治即开确诊档。"""
+        if self._admitted is None:
+            self._admitted = [
+                s.diagnose(t) for s, t in zip(self.shapers, temperature)
+            ]
+        return any(self._admitted)
+
+    def _treating(self, temperature: tuple) -> list[bool]:
+        admitted = self._admitted or [True] * len(self.shapers)
+        return [
+            adm and s.active(t)
+            for adm, s, t in zip(admitted, self.shapers, temperature)
+        ]
+
+    def active(self, temperature: tuple) -> bool:
+        return any(self._treating(temperature))
+
+    def treatment_severity(self, temperature: tuple) -> float:
+        """各在治尺病情深度之和，治疗平台门用，任何一把仍在好转都算数。"""
+        return float(
+            sum(
+                s.treatment_severity(t)
+                for on, s, t in zip(
+                    self._treating(temperature), self.shapers, temperature
+                )
+                if on
+            )
+        )
+
+    def path_factors(
+        self, menu, codes_g: NDArray[np.int32], counts,
+        temperature: tuple | None = None,
+    ) -> NDArray[np.float64]:
+        if temperature is None:
+            raise ValueError("组合尺路径因子必须给各尺读数元组")
+        factors = np.ones(menu.num_paths, dtype=np.float64)
+        for on, s, t in zip(
+            self._treating(temperature), self.shapers, temperature
+        ):
+            if on:
+                factors *= s.path_factors(menu, codes_g, counts, temperature=t)
+        return factors

@@ -1,0 +1,361 @@
+"""子集配对救援测试，惰性长跑冻结轮的解锁通道。
+
+覆盖伪目标恒等式，损失口径一致，provider 分支选择，
+关闭时对惰性老行为零改变，以及救援轮抽样落回全表的翻译正确性。
+"""
+import numpy as np
+import pytest
+
+from resevo.batchkernel import BatchRoundPlan, evolve_batch, make_batch_provider
+from resevo.dataset import target_from_specs
+from resevo.editspace import EditBudget
+from resevo.engine import build_kernel
+from resevo.pairing import build_rescue_menu
+from resevo.state import table_loss, table_residual
+
+from test_batchkernel import _scene
+
+BUDGET = EditBudget(max_edit_fields=3, donor_copies=3, joint_edits=2, explore_edits=2)
+
+
+def test_rescue_menu_residual_identity():
+    """伪目标修正后小注册表口径的子表残差逐位等于全表残差。"""
+    registry, ids, weights, rng = _scene(0)
+    y = target_from_specs(registry.specs)
+    full_resid = table_residual(registry.build_workload(y, weights), ids)
+    small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+        registry, ids, y, weights, np.random.default_rng(7), 8, BUDGET
+    )
+    assert len(sub_ids) == 8 and len(sub_idx) == 8
+    sub_resid = table_residual(wl, sub_ids)
+    np.testing.assert_allclose(sub_resid, full_resid, rtol=1e-12, atol=1e-12)
+
+
+def test_rescue_kernel_full_table_loss():
+    """救援核报的起点损失就是全表损失，曲线不断档。"""
+    registry, ids, weights, rng = _scene(1)
+    y = target_from_specs(registry.specs)
+    full_loss = table_loss(registry.build_workload(y, weights), ids)
+    small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+        registry, ids, y, weights, np.random.default_rng(5), 8, BUDGET
+    )
+    res = build_kernel(wl, sub_ids, sups)
+    np.testing.assert_allclose(res.old_loss, full_loss, rtol=1e-12)
+
+
+def test_rescue_param_validation():
+    """救援行数为负拒收，为零关闭不进分支。"""
+    registry, ids, weights, rng = _scene(2)
+    y = target_from_specs(registry.specs)
+    with pytest.raises(ValueError):
+        make_batch_provider(
+            registry, y, weights, rng, pairing=True,
+            defer_workload=True, pair_rescue_rows=-1,
+        )
+    with pytest.raises(ValueError):
+        build_rescue_menu(registry, ids, y, weights, rng, 0)
+
+
+def test_provider_branch_selection():
+    """惰性模式连败达门槛才走 rescue，之前只刷菜单，节奏按退避周期。"""
+    registry, ids, weights, _ = _scene(3)
+    y = target_from_specs(registry.specs)
+    on = make_batch_provider(
+        registry, y, weights, np.random.default_rng(11), budget=BUDGET,
+        pairing=True, defer_workload=True, pair_rescue_rows=8,
+        rescue_after=6, pairing_backoff=4,
+    )
+    # 平时轮与门槛前的零星冻结都只刷菜单
+    for streak in (0, 1, 3, 5):
+        assert on(ids, 0, frozen_streak=streak).mode == "batch"
+    plan = on(ids, 0, frozen_streak=6)
+    assert plan.mode == "rescue"
+    assert plan.rescue_registry is not None and len(plan.rescue_ids) == 8
+    assert plan.supports is not None
+    # 门槛后按退避周期，7 到 9 刷菜单，10 再救
+    for streak in (7, 8, 9):
+        assert on(ids, 0, frozen_streak=streak).mode == "batch"
+    assert on(ids, 0, frozen_streak=10).mode == "rescue"
+
+
+def test_rescue_after_validation():
+    """救援门槛非正拒收。"""
+    registry, ids, weights, rng = _scene(3)
+    y = target_from_specs(registry.specs)
+    with pytest.raises(ValueError):
+        make_batch_provider(
+            registry, y, weights, rng, pairing=True,
+            defer_workload=True, pair_rescue_rows=8, rescue_after=0,
+        )
+
+
+def test_rescue_disabled_keeps_lazy_behavior():
+    """救援关闭时惰性模式冻结轮与不带配对的老行为出同一份菜单。"""
+    registry, ids, weights, _ = _scene(4)
+    y = target_from_specs(registry.specs)
+    a = make_batch_provider(
+        registry, y, weights, np.random.default_rng(9), budget=BUDGET,
+        pairing=True, defer_workload=True, pair_rescue_rows=0,
+    )
+    b = make_batch_provider(
+        registry, y, weights, np.random.default_rng(9), budget=BUDGET,
+        pairing=False, defer_workload=True,
+    )
+    pa = a(ids, 0, frozen_streak=2)
+    pb = b(ids, 0, frozen_streak=2)
+    assert pa.mode == pb.mode == "batch"
+    np.testing.assert_array_equal(pa.menu.offsets, pb.menu.offsets)
+    np.testing.assert_array_equal(pa.menu.fields, pb.menu.fields)
+    np.testing.assert_array_equal(pa.menu.values, pb.menu.values)
+
+
+def test_rescue_writeback_translation():
+    """救援轮抽样后只有抽中的行会动，动过的行编号在全局注册表可反查。"""
+    registry, ids, weights, _ = _scene(5)
+    y = target_from_specs(registry.specs)
+
+    def stub_provider(state_ids, round_index, frozen_streak=0):
+        small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+            registry, state_ids, y, weights, np.random.default_rng(13), 8, BUDGET
+        )
+        return BatchRoundPlan(
+            "rescue", wl, supports=sups, rescue_ids=sub_ids,
+            rescue_sub_idx=sub_idx, rescue_registry=small,
+        )
+
+    before = ids.copy()
+    out = evolve_batch(ids, 1, np.random.default_rng(3), stub_provider, registry)
+    after = out.state_ids
+    assert after.shape == before.shape
+    probe = build_rescue_menu(
+        registry, before, y, weights, np.random.default_rng(13), 8, BUDGET
+    )
+    sub_idx = probe[2]
+    changed = np.flatnonzero(after != before)
+    assert np.isin(changed, sub_idx).all(), "只有抽中的行允许变动"
+    for r in changed:
+        tup = registry.state_tuple(int(after[r]))
+        assert len(tup) == registry.schema.num_fields
+    # 落回后的全表损失可在全局注册表口径重算，编号翻译无缝
+    loss_after = table_loss(registry.build_workload(y, weights), after)
+    assert np.isfinite(loss_after)
+
+
+def test_register_edited_many_matches_full():
+    """编辑行增量注册与全量重算的编号与特征逐位一致。"""
+    from resevo.dataset import StateRegistry
+
+    registry, ids, weights, _ = _scene(3)
+    y = target_from_specs(registry.specs)
+    base_rows = [registry.state_tuple(int(i)) for i in ids]
+    mirror = StateRegistry(registry.schema, registry.specs)
+    mirror.register_many(
+        [registry.state_tuple(i) for i in range(registry.num_states)]
+    )
+    assert mirror.num_states == registry.num_states
+    g = np.random.default_rng(11)
+    bases, edits = [], []
+    for _ in range(60):
+        b = base_rows[int(g.integers(len(base_rows)))]
+        e = list(b)
+        for j in g.permutation(len(b))[: int(g.integers(1, 4))]:
+            dom = registry.schema.domains[int(j)]
+            e[int(j)] = dom[int(g.integers(len(dom)))]
+        bases.append(b)
+        edits.append(tuple(e))
+    ids_inc = registry.register_edited_many(bases, edits)
+    ids_full = mirror.register_many(edits)
+    np.testing.assert_array_equal(ids_inc, ids_full)
+    f_inc = registry.build_workload(y, weights).features
+    f_full = mirror.build_workload(y, weights).features
+    np.testing.assert_array_equal(f_inc, f_full)
+
+
+def test_swap_sparse_scores_match_dense():
+    """交换免物化打分与注册物化后的稠密打分同值。"""
+    from resevo.pairing import _score_swaps_sparse
+
+    registry, ids, weights, _ = _scene(4)
+    y = target_from_specs(registry.specs)
+    wl = registry.build_workload(y, weights)
+    resid = table_residual(wl, ids)
+    we = wl.weights * resid
+    s = np.asarray(ids, dtype=np.int64)
+    rows = [registry.state_tuple(int(x)) for x in s]
+    pairs = [(0, 1), (2, 3), (4, 7)]
+    acts, dense = [], []
+    for pidx, (i, k) in enumerate(pairs):
+        ri, rk = rows[i], rows[k]
+        for j in range(len(ri)):
+            if ri[j] == rk[j]:
+                continue
+            acts.append((pidx, j, i, k, ri[j], rk[j]))
+            u, v = list(ri), list(rk)
+            u[j], v[j] = rk[j], ri[j]
+            dense.append(
+                (pidx, registry.register(tuple(u)),
+                 registry.register(tuple(v)), int(s[i]), int(s[k]))
+            )
+    feats = registry.build_workload(y, weights).features
+    w = wl.weights
+    best_dense = np.zeros(len(pairs))
+    for pidx, uid, vid, bi, bk in dense:
+        du = feats[uid] - feats[bi]
+        dv = feats[vid] - feats[bk]
+        tot = (
+            du @ we - ((du * du) @ w) / 2
+            + dv @ we - ((dv * dv) @ w) / 2
+            - (du * dv) @ w
+        )
+        best_dense[pidx] = max(best_dense[pidx], tot)
+    cnt_b, score_b = registry.counts_scores_for_rows(rows)
+    best_sparse = _score_swaps_sparse(
+        registry, cnt_b, score_b, we, w, len(pairs), acts
+    )
+    np.testing.assert_allclose(best_sparse, best_dense, rtol=1e-12, atol=1e-12)
+
+
+def test_sparse_flat_deltas_wide_schema():
+    """单行稀疏差分在字段数超 63 的宽表上与稠密差分同值。
+
+    变动字段组合分组若用整数位掩码，第 63 位起溢出会分组错打分错，
+    本测试专门覆盖高位字段与跨高低位的组合编辑。
+    """
+    from resevo.dataset import QuerySpec, StateRegistry, TableSchema
+    from resevo.pairing import _sparse_flat_deltas
+    from resevo.state import table_residual
+
+    nf = 70
+    schema = TableSchema(
+        tuple(f"f{j}" for j in range(nf)),
+        (("0", "1"),) * nf,
+    )
+    g = np.random.default_rng(29)
+    specs = []
+    for qi, j in enumerate([0, 5, 31, 62, 63, 64, 68, 69]):
+        specs.append(QuerySpec(
+            f"q{qi}",
+            ({"attribute": f"f{j}", "operator": "==", "value": "1"},
+             {"attribute": f"f{(j + 7) % nf}", "operator": "==", "value": "0"}),
+            float(g.integers(1, 9)),
+        ))
+    specs.append(QuerySpec(
+        "qh",
+        ({"operator": "halfspace",
+          "scores": {f"f{j}": {"0": int(g.integers(-3, 4)),
+                               "1": int(g.integers(-3, 4))}
+                     for j in [2, 63, 66, 69]},
+          "threshold": 1},),
+        float(g.integers(1, 9)),
+    ))
+    registry = StateRegistry(schema, specs)
+    base_rows = [
+        tuple(str(int(g.integers(2))) for _ in range(nf)) for _ in range(3)
+    ]
+    ids = registry.register_many(base_rows)
+    y = target_from_specs(specs)
+    weights = np.ones(len(specs))
+    wl = registry.build_workload(y, weights)
+    resid = table_residual(wl, ids)
+    we = wl.weights * resid
+    w = wl.weights
+    flat_rows, flat_base_idx = [], []
+    for r, b in enumerate(base_rows):
+        flat_rows.append(b)
+        flat_base_idx.append(r)
+        for fields in ([64], [68], [3], [5, 68], [62, 63], [1, 33, 69]):
+            e = list(b)
+            for j in fields:
+                e[j] = "1" if e[j] == "0" else "0"
+            flat_rows.append(tuple(e))
+            flat_base_idx.append(r)
+    cnt_b, score_b = registry.counts_scores_for_rows(base_rows)
+    g_flat, ptr, cols, vals = _sparse_flat_deltas(
+        registry, flat_rows, np.array(flat_base_idx), base_rows,
+        cnt_b, score_b, we, w,
+    )
+    mirror = StateRegistry(schema, specs)
+    mirror.register_many(base_rows)
+    fid = mirror.register_many(flat_rows)
+    feats = mirror.build_workload(y, weights).features
+    bid = mirror.register_many(base_rows)
+    for p in range(len(flat_rows)):
+        d = (feats[fid[p]] - feats[bid[flat_base_idx[p]]]).astype(float)
+        g_dense = float(d @ we - ((d * d) @ w) / 2)
+        np.testing.assert_allclose(g_flat[p], g_dense, rtol=1e-12, atol=1e-12)
+        d_rec = np.zeros(len(specs))
+        seg = slice(ptr[p], ptr[p + 1])
+        d_rec[cols[seg]] = vals[seg]
+        np.testing.assert_array_equal(d_rec, d)
+
+
+def _rescue_only_provider(registry, y, weights, rows=8):
+    """每轮固定给救援计划的桩，损失几乎不动，天然衰竭。"""
+
+    def stub(state_ids, round_index, frozen_streak=0):
+        small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+            registry, state_ids, y, weights, np.random.default_rng(13), rows, BUDGET
+        )
+        return BatchRoundPlan(
+            "rescue", wl, supports=sups, rescue_ids=sub_ids,
+            rescue_sub_idx=sub_idx, rescue_registry=small,
+        )
+
+    return stub
+
+
+def test_rescue_stop_triggers_and_matches_replay():
+    """救援衰竭早停在窗口降幅不足时触发，停止点与离线回放同口径。"""
+    registry, ids, weights, _ = _scene(5)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    out = evolve_batch(
+        ids, 50, np.random.default_rng(3), stub, registry,
+        rescue_stop_window=3, rescue_stop_tol=0.5,
+    )
+    assert out.stop_reason == "rescue_exhausted"
+    assert len(out.records) < 50
+    # 回放口径，第 i 次救援起点损失相对第 i-3 次降幅低于阈值的首个 i 即停
+    losses = [r.old_loss for r in out.records]
+    k = len(losses) - 1
+    assert k >= 3
+    assert (losses[k - 3] - losses[k]) / losses[k - 3] < 0.5
+    for i in range(3, k):
+        assert (losses[i - 3] - losses[i]) / losses[i - 3] >= 0.5
+    # 触发轮只记账不落表，返回的是触发轮起点表
+    replay = evolve_batch(
+        ids, k, np.random.default_rng(3), stub, registry,
+    )
+    np.testing.assert_array_equal(out.state_ids, replay.state_ids)
+
+
+def test_rescue_stop_off_is_zero_change():
+    """窗口开着但阈值极小时永不触发，轨迹与完全关闭逐位一致。"""
+    registry, ids, weights, _ = _scene(6)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    base = evolve_batch(ids, 6, np.random.default_rng(7), stub, registry)
+    armed = evolve_batch(
+        ids, 6, np.random.default_rng(7), stub, registry,
+        rescue_stop_window=999, rescue_stop_tol=0.5,
+    )
+    assert armed.stop_reason == base.stop_reason == "round_limit"
+    np.testing.assert_array_equal(base.state_ids, armed.state_ids)
+    assert [r.old_loss for r in base.records] == [r.old_loss for r in armed.records]
+
+
+def test_rescue_stop_param_validation():
+    """救援早停参数非法值直接拒绝。"""
+    registry, ids, weights, _ = _scene(7)
+    y = target_from_specs(registry.specs)
+    stub = _rescue_only_provider(registry, y, weights)
+    with pytest.raises(ValueError):
+        evolve_batch(
+            ids, 1, np.random.default_rng(1), stub, registry,
+            rescue_stop_window=-1,
+        )
+    with pytest.raises(ValueError):
+        evolve_batch(
+            ids, 1, np.random.default_rng(1), stub, registry,
+            rescue_stop_window=2, rescue_stop_tol=-0.1,
+        )
