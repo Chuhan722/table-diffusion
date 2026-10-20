@@ -9,7 +9,7 @@
 避免 4 个进程各开 56 线程挤 56 核。只改调度，不改任何计算，结果逐位不变。
 用法：cd /root/residual-evolution && nohup python3 logs_eps/autostop/cpu_watch.py > /dev/null 2>&1 &
   --once：只采样、打印并写一次掩码（不重绑、不循环）。
-没有 launch_autostop.sh 也没有 run_plants 进程时自动退出。日志 logs_eps/autostop/cpu_watch.log。
+没有发射器（launch_autostop.sh / launch_dense.sh）也没有 run_plants 进程时自动退出。日志 logs_eps/autostop/cpu_watch.log。
 """
 import os
 import subprocess
@@ -49,7 +49,7 @@ def our_pids() -> list:
 
 
 def launcher_alive() -> bool:
-    return bool(procs("logs_eps/autostop/launch_autostop.sh"))
+    return bool(procs("logs_eps/autostop/launch_autostop.sh") or procs("logs_eps/fission/launch_dense.sh"))
 
 
 def cpu_stat() -> dict:

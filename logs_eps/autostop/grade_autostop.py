@@ -96,9 +96,10 @@ def grade_cell(out: Path, log: Path, t: dict) -> dict:
     exam, tag, seed, cell, dec = t["exam"], t["tag"], int(t["seed"]), t["cell"], t["decision"]
     src = f"adult_alloc{tag}base_s{seed}" if exam == "1A" else f"adult_aimrep{tag}_s{seed}"
     fis = ROOT / "results/fission"
+    early = t.get("reasonP") == "fission_rise"  # 第七十三步：P 显著回升停提前收工，终表自然不同于跑到收敛的探针臂
     checks = {
         "P_G": same(out / f"P_{cell}_snapG.csv", fis / f"fis_{cell}_snapG.csv"),
-        "P_终": same(out / f"P_{cell}.csv", fis / f"fis_{cell}.csv"),
+        "P_终": "早停" if early else same(out / f"P_{cell}.csv", fis / f"fis_{cell}.csv"),
     }
     if exam == "1A":
         x1, _ = snap_x1(tag, seed)
@@ -116,8 +117,11 @@ def grade_cell(out: Path, log: Path, t: dict) -> dict:
     fin = stage_secs(log / f"F_{cell}.log")
     p_solo = last_elapsed(fis / f"fis_{cell}_curve.csv")
     arm = arm_secs(exam, tag, seed, dec)
+    gv = d.get("G_vs_final")
+    if gv is None and d.get("L1_B_G") and d.get("L1_B_final"):
+        gv = (d["L1_B_G"] - d["L1_B_final"]) / d["L1_B_final"]
     return dict(cell=cell, exam=exam, tag=tag, seed=seed, dec=dec, dec_ok=dec == expect(exam, tag),
-                g_vs_final=d.get("G_vs_final"), wall=t["wall"], tP=t["tP"] - t["t0"], tD=t["tD"] - t["t0"],
+                g_vs_final=gv, z_final=d.get("z_final"), P_stop=d.get("P_last_elapsed_s"), wall=t["wall"], tP=t["tP"] - t["t0"], tD=t["tD"] - t["t0"],
                 killedF=t.get("killedF"), rcP=t.get("rcP"), rcF=t.get("rcF"), rcS=t.get("rcS"),
                 P_in=pin.get("s1"), F_in=sum(fin.values()) if fin else None, F_stages=fin,
                 seq=(p_solo + arm) if (p_solo is not None and arm is not None) else None, p_solo=p_solo, arm=arm,
@@ -137,7 +141,7 @@ def main() -> None:
         sys.exit(f"{out} 下没有 *_times.json")
     lines = [f"# 第七十二步 探针并行自动停：计时与逐位核对{'（变体 ' + variant + '）' if variant else ''}", "",
              f"格数 {len(rows)}；判停法与第七十一步真值一致 {sum(r['dec_ok'] for r in rows)}/{len(rows)}；"
-             f"逐位核对全同 {sum(all(v in ('同', '—') for v in r['checks'].values()) for r in rows)}/{len(rows)}；"
+             f"逐位核对全同 {sum(all(v in ('同', '—', '早停') for v in r['checks'].values()) for r in rows)}/{len(rows)}；"
              f"rc 全 0 {sum((r['rcP'] == 0) and (r['rcF'] in (0, None) or r['killedF']) and (r['rcS'] in (0, None)) for r in rows)}/{len(rows)}。", "",
              "并行墙钟 = 两进程启动到交表（含载入、编译、判定，秒）；探针到判定 = 探针进程启动到判停法；"
              "顺序估计 = 探针单跑循环内秒 + 所判停法臂循环内秒（不含载入；探针单跑是重负载下测的）。三种子均值。", ""]
@@ -155,19 +159,20 @@ def main() -> None:
             decs = sorted({r["dec"] for r in g})
             seqs = [r["seq"] for r in g if r["seq"] is not None]
             gv = [r["g_vs_final"] for r in g if r["g_vs_final"] is not None]
-            ok = all(all(v in ("同", "—") for v in r["checks"].values()) for r in g)
+            ok = all(all(v in ("同", "—", "早停") for v in r["checks"].values()) for r in g)
             lines.append(f"| {EPS[tag]} | {'/'.join('地板停' if d == 'floor' else ('收敛停' if d == 'conv' else d) for d in decs)}"
                          f"{'' if all(r['dec_ok'] for r in g) else ' ✗'} | {fmt(mean(r['wall'] for r in g))} | {fmt(mean(r['tD'] for r in g))} | "
                          f"{fmt(mean(seqs)) if seqs else '—'} | " + (f"{GSD_SEC[tag]:,} | " if exam == "1A" else "")
                          + f"{'/'.join(f'{v:+.1%}' for v in gv)} | {'全同' if ok else '有异'} |")
         lines.append("")
     lines += ["## 附：逐格", "",
-              "| 格 | 判停法 | G 对终 | 墙钟 | 到判定 | P 循环内 | F 循环内（段） | 顺序估计 = 探针单跑 + 臂 | 杀 F | rc P/F/S | 核对 P_G/P_终/F_G/F_终/交表 | 核 | 收尾负载 |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "| 格 | 判停法 | G 对终 | 终点 z | 墙钟 | 到判定 | P 循环内 | F 循环内（段） | 顺序估计 = 探针单跑 + 臂 | 杀 F | rc P/F/S | 核对 P_G/P_终/F_G/F_终/交表 | 核 | 收尾负载 |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         st = r["F_stages"]
         stg = "+".join(f"{st[k]:.0f}" for k in ("s1", "pool", "s2") if k in st) if st else "—"
         lines.append(f"| {r['cell']} | {r['dec']}{'' if r['dec_ok'] else ' ✗'} | {fmt(r['g_vs_final'] * 100, 2) + '%' if r['g_vs_final'] is not None else '—'} | "
+                     f"{fmt(r['z_final'], 1) if r['z_final'] is not None else '—'} | "
                      f"{fmt(r['wall'])} | {fmt(r['tD'])} | {fmt(r['P_in'])} | {fmt(r['F_in'])}（{stg}） | "
                      f"{fmt(r['seq'])} = {fmt(r['p_solo'])} + {fmt(r['arm'])} | {r['killedF']} | {r['rcP']}/{r['rcF']}/{r['rcS']} | "
                      f"{'/'.join(r['checks'][k] for k in ('P_G', 'P_终', 'F_G', 'F_终', '交表'))} | {r['cores']} | {r['load_end']} |")

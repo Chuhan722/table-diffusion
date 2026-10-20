@@ -11,6 +11,9 @@
 # 用法：bash logs_eps/autostop/autostop.sh 考卷(1A|1B) ε标签 种子 gpu
 #   环境变量 CORES_P / CORES_F：两进程各自的核（默认把该卡的 24 核对半分：P 前 12、F 后 12；FULL=1 则两者都用该卡整条 24 核）；NICE_F：F 的 nice 值（默认 0；给 19 则 P 优先、F 用剩余 CPU）；
 #   FORCE=floor|conv 强制走某分支（只为验证分支）；VARIANT=名 时产物改写到 results/autostop_名 与 logs_eps/autostop_名（对照不同核分配用）。
+#   STOPZ 非空（第七十三步 探针提前停）：P 加分裂探针记账与显著回升停（--fission-exam 模拟卷 --fission-every ${EVERY:-5}
+#   --fission-stop-z STOPZ --fission-stop-runs ${STOPRUNS:-3}）；P 以 fission_rise 收工 → 判地板停（不等收敛、不跑 decide.py），
+#   否则（跑到收敛）→ 判收敛停，decide.py 只作参考写 <格>_decision_endpoint.json。分支动作与原来相同。
 cd /root/residual-evolution || exit 1
 PY=.venv/bin/python
 export CUDA_PATH=/root/residual-evolution/.venv/lib/python3.10/site-packages/nvidia/cuda_runtime
@@ -59,9 +62,11 @@ stamp() { date -u +%FT%TZ; }
 rm -f $OUT/P_${cell}_snapG.csv $OUT/F_${cell}_snapG.csv $OUT/${cell}_out.csv
 t0=$(now)
 echo "$(stamp) [$cell] 开 P(核 $CP) 与 F(核 $CF, nice $NF) 于 gpu$gpu（CPU 分法 $CPU_MODE）"
+PROBE=""
+[ -n "$STOPZ" ] && PROBE="--fission-exam results/fission/${src}_fisB.json --fission-every ${EVERY:-5} --fission-out $OUT/P_${cell}_probe.csv --fission-stop-z $STOPZ --fission-stop-runs ${STOPRUNS:-3}"
 CUDA_VISIBLE_DEVICES=${UUID[$gpu]} taskset -c $CP $PY -u -B scripts/run_plants.py $commonP $SEEDS \
   --save-table $OUT/P_$cell.csv --out $OUT/P_${cell}_curve.csv \
-  --snapshot-group-floor --snapshot-prefix $OUT/P_$cell $extraP > $LOG/P_$cell.log 2>&1 &
+  --snapshot-group-floor --snapshot-prefix $OUT/P_$cell $PROBE $extraP > $LOG/P_$cell.log 2>&1 &
 pidP=$!
 CUDA_VISIBLE_DEVICES=${UUID[$gpu]} nice -n $NF taskset -c $CF $PY -u -B scripts/run_plants.py $commonF $SEEDS \
   --save-table $OUT/F_$cell.csv --out $OUT/F_${cell}_curve.csv \
@@ -69,11 +74,38 @@ CUDA_VISIBLE_DEVICES=${UUID[$gpu]} nice -n $NF taskset -c $CF $PY -u -B scripts/
 pidF=$!
 wait $pidP; rcP=$?; tP=$(now)
 echo "$(stamp) [$cell] P 完 rc=$rcP 用时 $(dt $tP $t0) 秒"
-dec=$($PY logs_eps/autostop/decide.py results/fission/${src}_fisB.json $OUT/P_${cell}_snapG.csv $OUT/P_$cell.csv $OUT/${cell}_decision.json | tail -1)
-tD=$(now)
+reasonP=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['stop_reason'])" $OUT/P_${cell}_curve_groups.json 2>/dev/null)
+if [ -n "$STOPZ" ]; then
+  # 第七十三步：判停只看 P 的停止原因；显著回升停触发 → 地板停，收敛 → 收敛停（终点判停法只作参考）
+  if [ "$reasonP" = "fission_rise" ]; then dec=floor; else dec=conv; fi
+  $PY - "$OUT/P_${cell}_probe.csv" "$OUT/${cell}_decision.json" "$dec" "$reasonP" "$STOPZ" "${STOPRUNS:-3}" <<'PYEOF'
+import csv, json, sys
+probe, out, dec, reason, z, runs = sys.argv[1:7]
+rows = list(csv.DictReader(open(probe, encoding="utf-8")))
+g = [r for r in rows if r["at_group_floor"] == "1"]
+fin = [r for r in rows if r["round"] == "final"]
+num = [r for r in rows if r["round"] != "final"]
+res = dict(decision=dec, rule="fission_rise", stop_reason_P=reason, z=float(z), runs=int(runs), questions=None,
+           G_round=int(g[0]["round"]) if g else None, G_elapsed_s=float(g[0]["elapsed_s"]) if g else None,
+           L1_B_G=float(g[0]["l1_b"]) if g else None,
+           P_last_round=int(num[-1]["round"]) if num else None, P_last_elapsed_s=float(num[-1]["elapsed_s"]) if num else None,
+           L1_B_final=float(fin[0]["l1_b"]) if fin else None,
+           diff_mean=float(fin[0]["diff_mean"]) if fin and fin[0]["diff_mean"] != "" else None,
+           diff_se=float(fin[0]["diff_se"]) if fin and fin[0]["diff_se"] != "" else None)
+res["z_final"] = res["diff_mean"] / res["diff_se"] if res["diff_se"] else None
+json.dump(res, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+PYEOF
+  tD=$(now)
+  if [ "$dec" = "conv" ]; then
+    $PY logs_eps/autostop/decide.py results/fission/${src}_fisB.json $OUT/P_${cell}_snapG.csv $OUT/P_$cell.csv $OUT/${cell}_decision_endpoint.json > /dev/null 2>&1 &
+  fi
+else
+  dec=$($PY logs_eps/autostop/decide.py results/fission/${src}_fisB.json $OUT/P_${cell}_snapG.csv $OUT/P_$cell.csv $OUT/${cell}_decision.json | tail -1)
+  tD=$(now)
+fi
 case "$dec" in floor|conv) ;; *) echo "$(stamp) [$cell] 判定失败（得到 '$dec'），按收敛停交表并记 error"; dec=error;; esac
 [ -n "$FORCE" ] && { echo "$(stamp) [$cell] 判为 $dec，FORCE=$FORCE 强制"; dec=$FORCE; }
-echo "$(stamp) [$cell] 判停法 $dec（判定用时 $(dt $tD $tP) 秒）"
+echo "$(stamp) [$cell] 判停法 $dec（P 停止原因 ${reasonP:-?}，判定用时 $(dt $tD $tP) 秒）"
 rcF=""; rcS=""; tF=""; tS=""; killedF=0
 if [ "$dec" = "floor" ]; then
   while [ ! -s $OUT/F_${cell}_snapG.csv ] && kill -0 $pidF 2>/dev/null; do sleep 1; done
@@ -97,7 +129,7 @@ tE=$(now)
 gsnap=$(stat -c %Y $OUT/F_${cell}_snapG.csv 2>/dev/null || echo "")
 cat > $OUT/${cell}_times.json <<EOF
 {"cell": "$cell", "exam": "$exam", "tag": "$tag", "seed": $seed, "gpu": $gpu, "cores_P": "$CP", "cores_F": "$CF", "nice_F": $NF, "cpu_mode": "$CPU_MODE",
- "decision": "$dec", "force": "${FORCE:-}", "t0": $t0, "tP": $tP, "tD": $tD, "tF": ${tF:-null}, "tS": ${tS:-null}, "tE": $tE,
+ "decision": "$dec", "force": "${FORCE:-}", "stopz": "${STOPZ:-}", "stopruns": "${STOPRUNS:-}", "every": "${EVERY:-}", "reasonP": "${reasonP:-}", "t0": $t0, "tP": $tP, "tD": $tD, "tF": ${tF:-null}, "tS": ${tS:-null}, "tE": $tE,
  "F_snapG_mtime": ${gsnap:-null}, "rcP": $rcP, "rcF": ${rcF:-null}, "rcS": ${rcS:-null}, "killedF": $killedF,
  "wall": $(dt $tE $t0), "load_end": "$(cut -d' ' -f1-3 /proc/loadavg)"}
 EOF

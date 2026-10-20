@@ -937,6 +937,22 @@ class GpuBatchContext:
         per = cp.bincount(group_index_dev, weights=self.weights * residual * residual, minlength=num_groups)
         return cp.asnumpy(per) / 2.0, loss
 
+    def fission_errors_of(self, codes: np.ndarray, state_ids, fission_dev):
+        """分裂探针记账（第七十三步）：当前表对模拟卷的逐题绝对误差 |y_B − q|（卡上向量），全程在卡上算。
+
+        fission_dev 为卡上的模拟卷目标向量（与题序对齐），q = 当前表答案 = target − residual；只读不碰任何演化状态。
+        """
+        from .grouping import group_state_ids
+
+        cp = self.cp
+        grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
+        codes_g = cp.asarray(codes[grouped.unique_ids])
+        counts = cp.asarray(grouped.counts.astype(np.float64))
+        residual, _, _, _, _ = self._state_terms(codes_g, counts)
+        if int(fission_dev.size) != int(residual.size):
+            raise ValueError("模拟卷题数须等于考卷题数")
+        return cp.abs(fission_dev - (self.target - residual))
+
     # ------------------------------------------------------------------
     def _entry_expand(self, j_of, cur_codes, new_codes):
         """条目流展开，按路径序铺开各自字段的依赖列并取通过差。

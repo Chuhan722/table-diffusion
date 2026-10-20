@@ -1,0 +1,1 @@
+{"cell": "1B_eps3_s3", "final_md5_same": true, "snapG_md5_same": true, "rows": 1482, "g_rows": 1, "has_final": true, "G_round": 1349, "G_elapsed_s": 118.37, "L1_B_G": 20.3964665144255, "G_reldiff": 1.741828015302468e-16, "L1_B_final": 20.151521509002144, "final_reldiff": 0.0, "decision_ref": "conv", "G_round_ref": 1349, "last_round": 7395, "last_elapsed_s": 605.161, "ok": true}

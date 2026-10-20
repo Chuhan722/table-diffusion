@@ -1,0 +1,59 @@
+2026-10-20T10:19:39Z START 1A_eps10_s1 gpu0 load=5.27 11.07 23.36
+2026-10-20T10:19:44Z START 1B_eps10_s1 gpu1 load=5.89 11.10 23.30
+2026-10-20T10:39:16Z END 1B_eps10_s1 rc=0 "decision": "conv" wall=1172.2 load=26.35 35.83 39.00
+2026-10-20T10:40:20Z START 1A_eps10_s2 gpu1 load=19.89 31.93 37.43
+2026-10-20T10:42:44Z END 1A_eps10_s1 rc=0 "decision": "conv" wall=1385.0 load=35.52 33.76 37.29
+2026-10-20T10:43:50Z START 1B_eps10_s2 gpu0 load=34.07 33.66 37.01
+2026-10-20T11:04:01Z END 1B_eps10_s2 rc=0 "decision": "conv" wall=1210.5 load=19.37 28.44 38.44
+2026-10-20T11:04:19Z END 1A_eps10_s2 rc=0 "decision": "conv" wall=1438.3 load=16.27 27.16 37.80
+2026-10-20T11:05:07Z START 1A_eps10_s3 gpu0 load=10.62 24.13 36.28
+2026-10-20T11:05:25Z START 1B_eps10_s3 gpu1 load=9.66 23.04 35.66
+2026-10-20T11:26:43Z END 1B_eps10_s3 rc=0 "decision": "conv" wall=1277.9 load=17.56 29.08 39.52
+2026-10-20T11:27:44Z START 1A_eps3_s1 gpu1 load=11.62 25.36 37.59
+2026-10-20T11:28:26Z END 1A_eps10_s3 rc=0 "decision": "conv" wall=1399.3 load=21.28 25.79 37.14
+2026-10-20T11:29:32Z START 1B_eps3_s1 gpu0 load=28.72 27.11 36.83
+2026-10-20T11:35:58Z END 1A_eps3_s1 rc=0 "decision": "floor" wall=494.1 load=56.61 50.27 44.50
+2026-10-20T11:36:59Z START 1A_eps3_s2 gpu1 load=40.89 46.90 43.70
+2026-10-20T11:44:01Z END 1A_eps3_s2 rc=0 "decision": "floor" wall=422.6 load=40.81 47.47 46.04
+2026-10-20T11:44:18Z END 1B_eps3_s1 rc=0 "decision": "conv" wall=886.1 load=34.12 45.68 45.48
+2026-10-20T11:45:08Z START 1B_eps3_s2 gpu1 load=20.36 40.10 43.59
+2026-10-20T11:45:22Z START 1A_eps3_s3 gpu0 load=22.00 39.46 43.32
+2026-10-20T11:52:51Z END 1A_eps3_s3 rc=0 "decision": "floor" wall=449.6 load=55.11 54.34 49.34
+2026-10-20T11:53:55Z START 1B_eps3_s3 gpu0 load=39.38 49.99 48.16
+2026-10-20T11:59:58Z END 1B_eps3_s2 rc=0 "decision": "conv" wall=890.0 load=42.56 45.98 47.29
+2026-10-20T12:00:59Z START 1A_eps1_s1 gpu1 load=35.73 43.46 46.34
+2026-10-20T12:02:32Z END 1A_eps1_s1 rc=0 "decision": "floor" wall=93.5 load=48.72 45.55 46.78
+2026-10-20T12:03:37Z START 1B_eps1_s1 gpu1 load=37.20 42.75 45.73
+2026-10-20T12:08:13Z END 1B_eps3_s3 rc=0 "decision": "conv" wall=857.7 load=40.43 40.73 44.12
+2026-10-20T12:09:14Z START 1A_eps1_s2 gpu0 load=34.51 38.95 43.29
+2026-10-20T12:11:03Z END 1A_eps1_s2 rc=0 "decision": "floor" wall=109.3 load=50.95 43.41 44.39
+2026-10-20T12:12:09Z START 1B_eps1_s2 gpu0 load=38.31 41.12 43.53
+2026-10-20T12:16:55Z END 1B_eps1_s1 rc=0 "decision": "conv" wall=797.9 load=42.35 41.56 43.12
+2026-10-20T12:17:59Z START 1A_eps1_s3 gpu1 load=34.42 39.37 42.25
+2026-10-20T12:20:00Z END 1A_eps1_s3 rc=0 "decision": "floor" wall=121.6 load=40.58 40.65 42.40
+2026-10-20T12:21:06Z START 1B_eps1_s3 gpu1 load=19.13 34.59 40.21
+2026-10-20T12:24:14Z END 1B_eps1_s2 rc=0 "decision": "conv" wall=725.6 load=42.63 37.87 40.31
+2026-10-20T12:25:20Z START 1A_eps0p3_s1 gpu0 load=35.79 36.74 39.75
+2026-10-20T12:26:18Z END 1A_eps0p3_s1 rc=0 "decision": "floor" wall=57.5 load=43.58 38.82 40.28
+2026-10-20T12:27:23Z START 1B_eps0p3_s1 gpu0 load=34.73 37.13 39.59
+2026-10-20T12:31:44Z END 1B_eps1_s3 rc=0 "decision": "conv" wall=638.2 load=43.53 40.12 40.10
+2026-10-20T12:32:50Z START 1A_eps0p3_s2 gpu1 load=26.56 35.92 38.66
+2026-10-20T12:33:47Z END 1A_eps0p3_s2 rc=0 "decision": "floor" wall=57.0 load=24.45 33.60 37.69
+2026-10-20T12:34:52Z START 1B_eps0p3_s2 gpu1 load=19.34 30.22 36.24
+2026-10-20T12:37:16Z END 1B_eps0p3_s1 rc=0 "decision": "conv" wall=592.3 load=40.55 34.89 37.11
+2026-10-20T12:38:21Z START 1A_eps0p3_s3 gpu0 load=33.53 33.94 36.63
+2026-10-20T12:39:24Z END 1A_eps0p3_s3 rc=0 "decision": "floor" wall=62.6 load=43.83 36.71 37.39
+2026-10-20T12:40:28Z START 1B_eps0p3_s3 gpu0 load=28.99 33.89 36.39
+2026-10-20T12:45:29Z END 1B_eps0p3_s2 rc=0 "decision": "conv" wall=636.4 load=39.83 38.23 37.46
+2026-10-20T12:46:35Z START 1A_eps0p1_s2 gpu1 load=33.86 36.17 36.76
+2026-10-20T12:47:44Z END 1A_eps0p1_s2 rc=0 "decision": "floor" wall=69.3 load=29.89 34.43 36.11
+2026-10-20T12:48:50Z START 1B_eps0p1_s2 gpu1 load=21.02 30.75 34.71
+2026-10-20T12:51:15Z END 1B_eps0p3_s3 rc=0 "decision": "conv" wall=647.3 load=40.55 35.16 35.78
+2026-10-20T12:52:21Z START 1A_eps0p1_s3 gpu0 load=28.89 33.56 35.23
+2026-10-20T12:53:15Z END 1A_eps0p1_s3 rc=0 "decision": "floor" wall=54.5 load=27.36 32.03 34.59
+2026-10-20T12:54:21Z START 1B_eps0p1_s3 gpu0 load=20.44 29.05 33.38
+2026-10-20T12:55:47Z END 1B_eps0p1_s2 rc=0 "decision": "conv" wall=417.1 load=37.54 32.43 34.19
+2026-10-20T12:55:47Z GPU1 LANE DONE
+2026-10-20T13:01:49Z END 1B_eps0p1_s3 rc=0 "decision": "conv" wall=448.2 load=15.67 22.13 29.20
+2026-10-20T13:01:49Z GPU0 LANE DONE
+2026-10-20T13:01:49Z ALL DONE AUTOSTOP
