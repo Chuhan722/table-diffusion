@@ -15,6 +15,9 @@ dependencies = [
     "torch>=2.0",
 ]
 
+[project.scripts]
+resevo-generate = "resevo.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",

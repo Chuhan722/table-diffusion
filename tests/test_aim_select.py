@@ -1,6 +1,7 @@
 """AIM 选择外壳组件测试，投影器与考卷写出与指数机制与候选权重。"""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -95,3 +96,22 @@ def test_noise_floor_mixed_sigma():
         {"clique": ("b",), "y": np.zeros(4), "sigma": 0.5},
     ]
     assert sh.noise_floor(meas) == 0.5 * (2 * 9.0 + 4 * 0.25)
+
+
+def test_engine_uses_current_interpreter(tmp_path, monkeypatch):
+    sh = _load_shell()
+    calls = []
+
+    def capture(command, **kwargs):
+        calls.append((command, kwargs))
+
+    monkeypatch.setattr(sh.subprocess, "run", capture)
+    sh.run_engine(
+        "public_test", tmp_path / "exam.json", tmp_path / "initial.csv",
+        10, 1.0, 7, "--batched", tmp_path / "out.csv", tmp_path / "run.log",
+    )
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command[0] == sys.executable
+    assert command[1].endswith("scripts/run_plants.py")
+    assert "--batched" in command and options["check"] is True

@@ -1,5 +1,7 @@
 """AIM 选择层移植，select-measure-generate 全套循环，生成段换残差演化引擎。
 
+历史基准外壳，schema/N 与产物隔离仍需独立审查，不是已完成的私有发布入口。
+
 照搬 AIM 官方算法结构，见 private-pgm/mechanisms/aim.py 与论文 arXiv 2201.12677，
 选择用指数机制挑当前表答得最差的边际，测量用高斯机制，逐轮入卷引擎热启动续跑。
 与官方的三处差异，一是树宽过滤整个拆除，引擎无模型内存约束候选永远全量入围，
@@ -164,7 +166,7 @@ def run_engine(
     log_path: Path,
 ) -> None:
     cmd = [
-        str(REPO / ".venv" / "bin" / "python"),
+        sys.executable,
         str(REPO / "scripts" / "run_plants.py"),
         "--data", data_name,
         "--exam", str(exam_path),

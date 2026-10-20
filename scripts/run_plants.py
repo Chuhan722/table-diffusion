@@ -1,5 +1,8 @@
 """plants 真数据端到端实验，编辑候选加候选提供器跑满演化并输出损失曲线。
 
+历史基准适配器，会从原表推断 schema/N；不作为隔离的私有生成入口。
+只依赖显式公开输入的基础入口为 python -m resevo。
+
 初始表默认按考卷二阶答案边缘化出的一阶比例逐字段独立抽样，
 不偷看真实表的联合结构，关联结构留给演化去修，
 目标 y 直接取查询负载里的真实答案，权重单位对角，
@@ -1098,7 +1101,7 @@ def main() -> None:
                 lock = lock_real_targets(schema, specs, stage1, stage1_rows)
                 specs2 = lock["locked_specs"] + extra
                 # 第二段地板 = 每题平均差一个人：½ Σ w·1²。伪题目标是洗牌平均（非整数、无测量噪声），
-                # 表只能整人挪动，拟到每格差不到一个人以内再拟无意义；第一段的噪声地板对第二段不适用
+                # 这是加权平均平方误差尺度的启发式，不保证逐题误差小于一人；第一段噪声地板不适用
                 stop_floor2 = 0.5 * float(exam_weights(args, parser, specs2).sum())
                 print(f"第二段地板停：每题平均差一个人即停，阈值 ½Σw = {stop_floor2:.6f}（{len(specs2)} 题），兜底平台早停与轮数上限")
             elif args.stop_floor > 0.0:

@@ -14,6 +14,7 @@ sigma 等于根号下灵敏度平方除以二倍每边际预算，
 ./.venv/bin/python scripts/make_noisy_exam.py \
     --data nltcs --epsilon 1 --delta 1e-5 --noise-seed 1
 输出目录 data/<data>_eps<E>_s<seed>，表复制成目录同名，噪声训练卷同名替换。
+该目录含原表副本和可复现噪声信息，仅用于基准内部对照，不能作为 DP 发布包。
 """
 from __future__ import annotations
 

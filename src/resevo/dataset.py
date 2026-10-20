@@ -34,7 +34,7 @@ class TableSchema:
 
 @dataclass(frozen=True)
 class QuerySpec:
-    """一个计数查询，conditions 为结构化条件列表，result 为真实表上的答案。"""
+    """一个计数查询，conditions 为结构化条件列表，result 为已提供的目标（可带噪）。"""
 
     query_id: str
     conditions: tuple[dict, ...]
@@ -58,12 +58,18 @@ def load_table(csv_path: str) -> tuple[TableSchema, list[tuple[str, ...]]]:
     return TableSchema(tuple(header), domains), rows
 
 
-def load_queries(json_path: str) -> list[QuerySpec]:
-    """读查询 JSON，只接受行数计数口径。"""
+def load_queries(json_path: str, *, expected_record_count: int | None = None) -> list[QuerySpec]:
+    """读计数查询；提供公开行数时同时核对记录数元数据。"""
     with open(json_path, encoding="utf-8") as f:
         payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise ValueError("查询文件必须是 JSON 对象")
     if payload.get("result_unit") != "records":
         raise ValueError("只支持行数计数口径的查询负载")
+    if expected_record_count is not None:
+        count = payload.get("record_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count != expected_record_count:
+            raise ValueError("查询文件 record_count 必须与公开行数一致")
     specs = []
     for q in payload["queries"]:
         sigma = q.get("sigma")
