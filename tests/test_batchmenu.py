@@ -1,0 +1,166 @@
+"""批量菜单模块测试，编码重构对拍与规范化语义。"""
+import numpy as np
+import pytest
+
+from resevo.batchmenu import (
+    BatchMenu,
+    CodeBook,
+    _normalize_grid,
+    _normalize_menu,
+    build_query_structure,
+    condition_counts,
+    generate_batch_menu,
+    halfspace_scores,
+    reconstruct_features,
+)
+from resevo.dataset import QuerySpec, StateRegistry, TableSchema
+from resevo.editspace import EditBudget
+
+
+def _mixed_setup(seed: int):
+    """混合域大小与三种算子的小场景，够碰到全部代码路径。"""
+    rng = np.random.default_rng(seed)
+    schema = TableSchema(
+        ("a", "b", "c", "d", "e"),
+        (("0", "1"), ("0", "1", "2"), ("0", "1"), ("0", "1", "2"), ("0", "1")),
+    )
+    specs = [
+        QuerySpec("q0", ({"attribute": "a", "operator": "==", "value": "1"},
+                          {"attribute": "b", "operator": "==", "value": "2"}), 5.0),
+        QuerySpec("q1", ({"attribute": "b", "operator": "between", "lower": 1, "upper": 2},
+                          {"attribute": "c", "operator": "==", "value": "0"}), 7.0),
+        QuerySpec("q2", ({"attribute": "d", "operator": ">=", "value": 1},
+                          {"attribute": "e", "operator": "==", "value": "1"},
+                          {"attribute": "a", "operator": "==", "value": "0"}), 3.0),
+        QuerySpec("q3", ({"attribute": "b", "operator": "==", "value": "0"},
+                          {"attribute": "b", "operator": "between", "lower": 0, "upper": 1},
+                          {"attribute": "d", "operator": "==", "value": "2"}), 2.0),
+        QuerySpec("q4", ({"operator": "halfspace",
+                          "scores": {"a": {"0": -3, "1": 5},
+                                     "b": {"0": 0, "1": 2, "2": -4},
+                                     "d": {"0": 1, "2": 6}},
+                          "threshold": 4},), 6.0),
+        QuerySpec("q5", ({"operator": "halfspace",
+                          "scores": {"c": {"0": 7, "1": -2},
+                                     "e": {"0": -1, "1": 3}},
+                          "threshold": 3},), 4.0),
+    ]
+    registry = StateRegistry(schema, specs)
+    rows = [
+        tuple(str(rng.integers(len(dom))) for dom in schema.domains) for _ in range(40)
+    ]
+    ids = registry.register_table(rows)
+    return registry, ids, rng
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_condition_counts_reconstruct_features(seed):
+    """条件计数加半空间分数的重构特征逐位等于注册表特征。"""
+    registry, ids, _ = _mixed_setup(seed)
+    codebook = CodeBook(registry)
+    qs = build_query_structure(registry, codebook)
+    codes = codebook.sync()
+    cnt, _ = condition_counts(qs, codes)
+    score = halfspace_scores(qs, codes)
+    rebuilt = reconstruct_features(qs, cnt, score)
+    workload = registry.build_workload(
+        np.zeros(len(registry.specs)), np.ones(len(registry.specs))
+    )
+    np.testing.assert_array_equal(rebuilt, np.asarray(workload.features))
+
+
+def test_normalize_menu_semantics():
+    """无效槽清空，落回源丢弃，组内重复合并质量且保持首现顺序。"""
+    codes_g = np.array([[0, 1], [1, 0]], dtype=np.int32)
+    group = np.array([0, 0, 0, 0, 1], dtype=np.int64)
+    fields = np.array(
+        [[0, -1, -1], [0, 1, -1], [0, -1, -1], [1, 0, -1], [1, -1, -1]],
+        dtype=np.int32,
+    )
+    values = np.array(
+        [[1, -1, -1], [0, 1, -1], [1, -1, -1], [1, 1, -1], [0, -1, -1]],
+        dtype=np.int32,
+    )
+    # 路径 0 与 2 相同，路径 1 两槽全是无效变化应整条丢弃，
+    # 路径 3 的字段 1 槽无效只剩字段 0 改 1，与路径 0 相同合并成质量 3，
+    # 组 1 的路径替代值等于当前值是落回源，整条丢弃
+    menu = _normalize_menu(group, fields, values, codes_g, 2)
+    assert menu.offsets.tolist() == [0, 1, 1]
+    assert menu.group.tolist() == [0]
+    assert menu.fields[0].tolist() == [0, -1, -1]
+    assert menu.values[0].tolist() == [1, -1, -1]
+    assert menu.mass.tolist() == [3.0]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_normalize_grid_matches_generic(seed):
+    """组主序快路径与通用规范化逐位同，含重复、落回源、全无效与超宽值域回退。"""
+    rng = np.random.default_rng(seed)
+    wide = seed % 3 == 2  # 值域超宽触发单键位宽不够的回退路径
+    num_groups, num_fields, k_per = int(rng.integers(1, 40)), int(rng.integers(1, 12)), int(rng.integers(1, 70))
+    sizes = rng.integers(1, 200000 if wide else 7, size=num_fields).astype(np.int32)
+    codes_g = (rng.random((num_groups, num_fields)) * sizes).astype(np.int32)
+    fields = rng.integers(-1, num_fields, size=(num_groups, k_per, 3)).astype(np.int32)
+    values = np.where(
+        fields >= 0,
+        (rng.random((num_groups, k_per, 3)) * (sizes[np.maximum(fields, 0)] + 1)).astype(np.int32) - 1,
+        -1,
+    ).astype(np.int32)
+    if k_per > 1:  # 制造组内重复
+        dup = rng.integers(0, k_per, size=(num_groups, k_per // 2 + 1))
+        src = rng.integers(0, k_per, size=dup.shape)
+        rows = np.arange(num_groups)[:, None]
+        fields[rows, dup] = fields[rows, src]
+        values[rows, dup] = values[rows, src]
+    group = np.repeat(np.arange(num_groups, dtype=np.int64), k_per)
+    ref = _normalize_menu(group, fields.reshape(-1, 3).copy(), values.reshape(-1, 3).copy(), codes_g, num_groups)
+    got = _normalize_grid(fields.copy(), values.copy(), codes_g)
+    for name in ("offsets", "group", "fields", "values", "mass"):
+        a, b = getattr(ref, name), getattr(got, name)
+        assert a.dtype == b.dtype, name
+        np.testing.assert_array_equal(a, b, err_msg=name)
+
+
+def test_generate_batch_menu_empty_groups():
+    """零组输入给出空菜单，供体与联合类在零组下不抽随机数也不报错。"""
+    menu = generate_batch_menu(
+        np.empty((0, 3), dtype=np.int32), np.empty(0, dtype=np.int64),
+        np.array([2, 3, 2], dtype=np.int32), np.random.default_rng(0), EditBudget(), [(0, 1)],
+    )
+    assert menu.num_paths == 0 and menu.offsets.tolist() == [0]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_generate_batch_menu_paths_valid(seed):
+    """生成的菜单全部路径有效，无落回源，组内签名唯一，值码在域内。"""
+    registry, ids, rng = _mixed_setup(seed)
+    codebook = CodeBook(registry)
+    codes = codebook.sync()
+    from resevo.grouping import group_state_ids
+
+    grouped = group_state_ids(ids)
+    menu = generate_batch_menu(
+        codes[grouped.unique_ids], grouped.counts, codebook.domain_sizes,
+        rng, EditBudget(), [(0, 1), (1, 2, 3)],
+    )
+    codes_g = codes[grouped.unique_ids]
+    seen = set()
+    for p in range(menu.num_paths):
+        g = int(menu.group[p])
+        changes = []
+        for slot in range(3):
+            j = int(menu.fields[p, slot])
+            if j < 0:
+                assert menu.values[p, slot] < 0
+                continue
+            v = int(menu.values[p, slot])
+            assert 0 <= v < codebook.domain_sizes[j]
+            assert v != codes_g[g, j], "替代值不得等于当前值"
+            changes.append((j, v))
+        assert changes, "路径必须至少一个有效变化"
+        assert changes == sorted(changes), "槽位按字段升序"
+        key = (g, tuple(changes))
+        assert key not in seen, "组内签名必须唯一"
+        seen.add(key)
+    assert menu.offsets[-1] == menu.num_paths
+    assert np.all(np.diff(menu.offsets) >= 0)

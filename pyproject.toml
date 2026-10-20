@@ -9,14 +9,21 @@ description = "表格扩散演化生成器"
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "scipy",
     "pandas",
     "pyyaml",
     "torch>=2.0",
 ]
 
+[project.scripts]
+resevo-generate = "resevo.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
+]
+resevo-gpu = [
+    "cupy-cuda12x>=13,<14",
 ]
 
 [tool.setuptools.packages.find]

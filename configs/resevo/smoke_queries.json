@@ -1,0 +1,40 @@
+{
+  "record_count": 64,
+  "query_count": 4,
+  "result_unit": "records",
+  "description": "公开构造的二元相关性示例，不来自训练或测试表",
+  "queries": [
+    {
+      "id": "q00",
+      "conditions": [
+        {"attribute": "a", "operator": "==", "value": "0"},
+        {"attribute": "b", "operator": "==", "value": "0"}
+      ],
+      "result": 24
+    },
+    {
+      "id": "q01",
+      "conditions": [
+        {"attribute": "a", "operator": "==", "value": "0"},
+        {"attribute": "b", "operator": "==", "value": "1"}
+      ],
+      "result": 8
+    },
+    {
+      "id": "q10",
+      "conditions": [
+        {"attribute": "a", "operator": "==", "value": "1"},
+        {"attribute": "b", "operator": "==", "value": "0"}
+      ],
+      "result": 8
+    },
+    {
+      "id": "q11",
+      "conditions": [
+        {"attribute": "a", "operator": "==", "value": "1"},
+        {"attribute": "b", "operator": "==", "value": "1"}
+      ],
+      "result": 24
+    }
+  ]
+}

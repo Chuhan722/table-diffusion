@@ -1,0 +1,1334 @@
+"""批量核构造与抽样落地，在差分菜单上直接算增益概率与漂移。
+
+候选不注册，增益的两项都从稀疏答案差算出，
+线性项 d@(We) 与二次项 ||d||_W^2 共用一个路径乘查询的稀疏差矩阵，
+漂移 v_g=sum_p r_p d_p 按组聚合成稀疏矩阵后与权重直接组装交互项，
+熵校准与解析步长复用平铺版实现，数学主线与组核完全一致，
+只有抽中落地的新状态才进注册表，每轮注册量不超过实际改动行数。
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+
+import numpy as np
+from numpy.typing import NDArray
+from scipy.sparse import coo_matrix, csr_matrix
+
+from .batchmenu import (
+    BatchMenu,
+    CntCache,
+    CodeBook,
+    QueryStructure,
+    build_query_structure,
+    condition_counts,
+    generate_batch_menu,
+    halfspace_scores,
+)
+from .dataset import StateRegistry
+from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
+from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
+from .grouping import GroupedTable, group_state_ids, grouped_residual
+from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
+from .state import Workload, loss_from_residual, table_residual
+from .stepsize import analytic_step, validate_step_parameters
+from .tilt import calibrate_beta_flat
+
+
+@dataclass
+class BatchKernelResult:
+    """批量核输出，flat 数组按组分段，每段索引 0 恒为保持项。"""
+
+    menu: BatchMenu
+    grouped: GroupedTable
+    offsets: NDArray[np.int64]  # G+1，含保持项的段边界
+    probabilities: NDArray[np.float64]  # 段内 0 位是保持概率
+    old_loss: float
+    beta: float
+    direction_gain: float
+    interaction: float
+    step: float
+    expected_loss: float
+    analytic_upper_bound: float
+    expected_changed_rows: float
+    max_gain_sum: float
+    required_gain: float
+    status: str
+    group_scores: NDArray[np.float64] | None = None  # 每组错位分，供工作批挑组
+    probe: tuple[float, float] | None = None  # beta 网格探针 (beta_best, j_best)，未开启为 None
+
+
+def _delta_parts(
+    menu: BatchMenu,
+    qs: QueryStructure,
+    cnt: NDArray[np.int16],
+    codes_g: NDArray[np.int32],
+    num_queries: int,
+) -> list[tuple[csr_matrix, NDArray[np.int64]]]:
+    """构造答案差稀疏块，返回若干 (差矩阵, 对应路径索引) 对。
+
+    单字段路径每行列唯一且有序，按依赖表直接拼出规范稀疏阵免排序免合并，
+    多字段路径同一查询可能收到多个字段的计数调整，走坐标格式合并，
+    新旧通过判断都由计数与字段组个数的比较得出，与逐查询求值精确同值。
+    """
+    parts: list[tuple[csr_matrix, NDArray[np.int64]]] = []
+    valid = menu.fields >= 0
+    nslots = valid.sum(axis=1)
+    dep_sizes = np.array([len(d) for d in qs.dep], dtype=np.int64)
+
+    def _finish(indptr, indices, adj, path_idx):
+        """计数调整还原成答案差，通过当且仅当计数打满字段组个数。
+
+        计数与调整都是小整数，比较全程走整型，最后才落成浮点差，
+        组号先按路径取一次再展开到非零位，省去嵌套花式索引，
+        恰为零的答案差直接滤掉，下游矩阵向量积与漂移聚合按序累加，
+        去掉精确零加项每行部分和逐位不变。
+        """
+        grp_of = menu.group[path_idx]
+        row_of = np.repeat(np.arange(len(path_idx), dtype=np.int64), np.diff(indptr))
+        cnt_vals = cnt[grp_of[row_of], indices]
+        need = qs.ncond[indices]
+        delta_i8 = (cnt_vals + adj == need).astype(np.int8)
+        delta_i8 -= cnt_vals == need
+        nz = np.flatnonzero(delta_i8)
+        row_nnz = np.bincount(row_of[nz], minlength=len(path_idx))
+        new_indptr = np.zeros(len(path_idx) + 1, dtype=np.int64)
+        np.cumsum(row_nnz, out=new_indptr[1:])
+        sparse = csr_matrix(
+            (delta_i8[nz].astype(np.float64), indices[nz], new_indptr),
+            shape=(len(path_idx), num_queries),
+        )
+        parts.append((sparse, path_idx))
+
+    # 单字段路径，行内列直接取依赖表本身有序，免通用排序与合并
+    singles = np.flatnonzero(nslots == 1)
+    if len(singles):
+        j_of = menu.fields[singles, 0]
+        v_of = menu.values[singles, 0]
+        row_nnz = dep_sizes[j_of]
+        indptr = np.zeros(len(singles) + 1, dtype=np.int64)
+        np.cumsum(row_nnz, out=indptr[1:])
+        indices = np.empty(int(indptr[-1]), dtype=np.int64)
+        adj = np.empty(int(indptr[-1]), dtype=np.int8)
+        order = np.argsort(j_of, kind="stable")
+        bounds = np.flatnonzero(
+            np.r_[True, j_of[order][1:] != j_of[order][:-1], True]
+        )
+        for b in range(len(bounds) - 1):
+            sel = order[bounds[b] : bounds[b + 1]]
+            j = int(j_of[sel[0]])
+            dep_j = qs.dep[j]
+            if len(dep_j) == 0:
+                continue
+            g_sel = menu.group[singles[sel]]
+            cur_pass = qs.allow[j][:, codes_g[g_sel, j]]  # mj 乘 n
+            new_pass = qs.allow[j][:, v_of[sel]]
+            block_adj = (new_pass.astype(np.int8) - cur_pass.astype(np.int8)).T
+            slots = indptr[sel][:, None] + np.arange(len(dep_j))[None, :]
+            indices[slots.ravel()] = np.tile(dep_j, len(sel))
+            adj[slots.ravel()] = block_adj.ravel()
+        _finish(indptr, indices, adj, singles.astype(np.int64))
+
+    # 多字段路径，坐标格式合并同查询的多字段调整
+    multis = np.flatnonzero(nslots >= 2)
+    if len(multis):
+        rows_parts = []
+        cols_parts = []
+        adj_parts = []
+        for slot in range(3):
+            live = multis[menu.fields[multis, slot] >= 0]
+            if len(live) == 0:
+                continue
+            j_of = menu.fields[live, slot]
+            order = np.argsort(j_of, kind="stable")
+            live = live[order]
+            j_sorted = j_of[order]
+            bounds = np.flatnonzero(
+                np.r_[True, j_sorted[1:] != j_sorted[:-1], True]
+            )
+            for b in range(len(bounds) - 1):
+                sel = live[bounds[b] : bounds[b + 1]]
+                j = int(j_sorted[bounds[b]])
+                dep_j = qs.dep[j]
+                if len(dep_j) == 0:
+                    continue
+                g_sel = menu.group[sel]
+                cur_pass = qs.allow[j][:, codes_g[g_sel, j]]
+                new_pass = qs.allow[j][:, menu.values[sel, slot]]
+                block_adj = (new_pass.astype(np.int8) - cur_pass.astype(np.int8)).T
+                loc = np.searchsorted(multis, sel)  # multis 升序，局部行号直接二分
+                rows_parts.append(np.repeat(loc, len(dep_j)))
+                cols_parts.append(np.tile(dep_j, len(sel)))
+                adj_parts.append(block_adj.ravel())
+        coo = coo_matrix(
+            (
+                np.concatenate(adj_parts),
+                (np.concatenate(rows_parts), np.concatenate(cols_parts)),
+            ),
+            shape=(len(multis), num_queries),
+        )
+        sparse = coo.tocsr()  # tocsr 已合并重复并排序列下标，无需再 sum_duplicates
+        _finish(sparse.indptr, sparse.indices, sparse.data, multis.astype(np.int64))
+    return parts
+
+
+def _halfspace_delta(
+    menu: BatchMenu,
+    qs: QueryStructure,
+    score_g: NDArray[np.int64],
+    codes_g: NDArray[np.int32],
+) -> NDArray[np.float64] | None:
+    """半空间通道的答案差，路径乘半空间的稠密矩阵，无半空间时返回 None。
+
+    半空间一般依赖全部字段，答案差在半空间列上天然稠密，
+    每槽的分数调整按字段分桶整列查表，通过判断全程整型，
+    新旧过线之差才落成浮点，与逐查询求值精确同值。
+    """
+    num_hs = qs.num_halfspaces
+    if num_hs == 0 or menu.num_paths == 0:
+        return None
+    adj = np.zeros((menu.num_paths, num_hs), dtype=np.int64)
+    for slot in range(3):
+        live = np.flatnonzero(menu.fields[:, slot] >= 0)
+        if len(live) == 0:
+            continue
+        j_of = menu.fields[live, slot]
+        order = np.argsort(j_of, kind="stable")
+        live_s = live[order]
+        j_s = j_of[order]
+        bounds = np.flatnonzero(np.r_[True, j_s[1:] != j_s[:-1], True])
+        for b in range(len(bounds) - 1):
+            sel = live_s[bounds[b] : bounds[b + 1]]
+            j = int(j_s[bounds[b]])
+            tab = qs.hs_score[j]
+            if not (tab.size and tab.any()):
+                continue
+            cur = codes_g[menu.group[sel], j]
+            new = menu.values[sel, slot]
+            adj[sel] += (tab[:, new] - tab[:, cur]).T
+    base = score_g[menu.group]
+    thresh = qs.hs_threshold[None, :]
+    delta = ((base + adj) >= thresh).astype(np.float64)
+    delta -= base >= thresh
+    return delta
+
+
+def _distance_reference(
+    menu: BatchMenu,
+    codes_g: NDArray[np.int32],
+    counts: NDArray[np.float64],
+    num_groups: int,
+    stay_probability: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """距离衰减参考分布，host 端一份实现供双后端共用保证逐位一致。
+
+    每条路径的距离 d 为候选与源行真正不同的字段数，路径权重 mass*c^d，
+    源权重 1，块内归一化，折扣 c 由锚定方程解出，
+    非空组按行数加权的平均保持概率恰等于 stay_probability，
+    与均匀签筒同松紧只换形状，空组保持概率仍为 1。
+    方程左端关于 c 严格单调递减，翻倍括上界后二分，纯确定性。
+    返回 (源概率 G 维, 路径概率 P 维)。
+    """
+    slots = menu.fields >= 0
+    src_vals = np.where(
+        slots, codes_g[menu.group[:, None], np.maximum(menu.fields, 0)], -1
+    )
+    dist = (slots & (menu.values != src_vals)).sum(axis=1)
+    # 距离系数按组聚合，S_g(c)=sum_k coef[k,g]*c^(k+1)，槽结构保证 d 不超过 3
+    max_d = 3
+    coef = np.zeros((max_d, num_groups), dtype=np.float64)
+    for k in range(1, max_d + 1):
+        sel = dist == k
+        if np.any(sel):
+            coef[k - 1] = np.bincount(
+                menu.group[sel], weights=menu.mass[sel], minlength=num_groups
+            )
+    nonempty = np.diff(menu.offsets) > 0
+    total_ne = float(counts[nonempty].sum())
+    target = stay_probability * total_ne
+
+    def stay_mass(c: float) -> float:
+        s = coef[0] * c + coef[1] * (c * c) + coef[2] * (c * c * c)
+        return float((counts[nonempty] / (1.0 + s[nonempty])).sum())
+
+    lo, hi = 0.0, 1.0
+    while stay_mass(hi) > target:
+        lo, hi = hi, hi * 2.0
+        if hi > 1e12:
+            break
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if mid == lo or mid == hi:
+            break
+        if stay_mass(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    c = 0.5 * (lo + hi)
+    s_g = coef[0] * c + coef[1] * (c * c) + coef[2] * (c * c * c)
+    ref_src = np.where(nonempty, 1.0 / (1.0 + s_g), 1.0)
+    ref_paths = menu.mass * np.power(c, dist) * ref_src[menu.group]
+    return ref_src, ref_paths
+
+
+def _reference_arrays(
+    menu: BatchMenu,
+    codes_g: NDArray[np.int32],
+    counts: NDArray[np.float64],
+    num_groups: int,
+    stay_probability: float,
+    ref_shape: str,
+    path_factors: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """host 端参考分布装配，CPU 主路径与 GPU 结构签筒路径共用。
+
+    返回 (源概率 G 维, 路径概率 P 维)，path_factors 给出时按结构签筒
+    改形，每组离开质量精确保持，同松紧只换形状。
+    """
+    if ref_shape == "distance":
+        ref_src, ref_paths = _distance_reference(
+            menu, codes_g, counts, num_groups, stay_probability
+        )
+    elif ref_shape == "uniform":
+        mass_sum = np.add.reduceat(
+            np.r_[menu.mass, 0.0], np.minimum(menu.offsets[:-1], len(menu.mass))
+        )
+        empty = np.diff(menu.offsets) == 0
+        mass_sum[empty] = 1.0
+        ref_paths = (1 - stay_probability) * menu.mass / mass_sum[menu.group]
+        ref_src = np.where(empty, 1.0, stay_probability)
+    else:
+        raise ValueError(f"未知参考分布形状 {ref_shape}")
+    if path_factors is not None:
+        from .structure import shape_reference
+
+        ref_paths = shape_reference(
+            ref_paths, menu.offsets, menu.group, path_factors
+        )
+    return ref_src, ref_paths
+
+
+def _probe_beta_grid(
+    gains_flat: NDArray[np.float64],
+    ref_flat: NDArray[np.float64],
+    offsets: NDArray[np.int64],
+    counts: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    num_queries: int,
+    menu: BatchMenu,
+    parts,
+    delta_hs,
+    hs_cols,
+    damping: float,
+    max_expected_rows: float | None,
+    max_gain_sum: float,
+    grid_size: int = 16,
+) -> tuple[float, float]:
+    """beta 网格探针，每点算最优步长下的期望下降 J，返回网格最优点。
+
+    纯只读的确定性计算，不碰随机流不写任何主路径状态，
+    J=h*D-h^2*C，h 与主路径同口径含可行上限行预算与阻尼，
+    网格取 0 加上从饱和点向下十四个二倍程的对数均匀十五点，
+    饱和点为 D 达到 0.99M 的最小翻倍探点，D 随 beta 单调必可达，
+    漂移键基座一轮组装一次十六个方向分布复用，D 非正的点下降记零跳过。
+    """
+    seg_starts = offsets[:-1]
+    lengths = np.diff(offsets)
+    num_groups = len(lengths)
+    seg_ids = np.repeat(np.arange(num_groups), lengths)
+    path_pos = np.arange(menu.num_paths, dtype=np.int64) + menu.group + 1
+    gmax = np.maximum.reduceat(gains_flat, seg_starts)
+    centered = gains_flat - gmax[seg_ids]
+
+    def tilted(beta: float):
+        zw = ref_flat * np.exp(beta * centered)
+        norm = np.add.reduceat(zw, seg_starts)
+        P = zw / norm[seg_ids]
+        D = float(counts @ np.add.reduceat(P * gains_flat, seg_starts))
+        return P, D
+
+    target = 0.99 * max_gain_sum
+    beta_sat = 1.0 / max(max_gain_sum, 1e-300)
+    _, dv = tilted(beta_sat)
+    for _ in range(200):
+        if dv >= target:
+            break
+        beta_sat *= 2.0
+        _, dv = tilted(beta_sat)
+
+    key_parts, data_parts, path_parts = [], [], []
+    for sparse, path_idx in parts:
+        grp_of = menu.group[path_idx]
+        row_of = np.repeat(
+            np.arange(len(path_idx), dtype=np.int64), np.diff(sparse.indptr)
+        )
+        key_parts.append(grp_of[row_of] * num_queries + sparse.indices)
+        data_parts.append(sparse.data)
+        path_parts.append(path_idx[row_of])
+    keys = (
+        np.concatenate(key_parts) if key_parts else np.zeros(0, dtype=np.int64)
+    )
+    base_data = (
+        np.concatenate(data_parts)
+        if data_parts
+        else np.zeros(0, dtype=np.float64)
+    )
+    entry_paths = (
+        np.concatenate(path_parts) if path_parts else np.zeros(0, dtype=np.int64)
+    )
+
+    grid = [0.0] + list(np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1))
+    best_beta, best_j = 0.0, 0.0
+    for beta in grid:
+        P, D = tilted(float(beta))
+        if D <= 0.0:
+            continue
+        rates_flat = P.copy()
+        rates_flat[seg_starts] = 0.0
+        leave = np.add.reduceat(rates_flat, seg_starts)
+        max_leave = float(leave.max())
+        if max_leave <= 0.0:
+            continue
+        rates_paths = rates_flat[path_pos]
+        drifts = np.bincount(
+            keys,
+            weights=base_data * rates_paths[entry_paths],
+            minlength=num_groups * num_queries,
+        ).reshape(num_groups, num_queries)
+        if delta_hs is not None:
+            weighted = delta_hs * rates_paths[:, None]
+            starts = np.minimum(menu.offsets[:-1], len(weighted))
+            padded = np.vstack([weighted, np.zeros((1, delta_hs.shape[1]))])
+            seg = np.add.reduceat(padded, starts, axis=0)
+            seg[np.diff(menu.offsets) == 0] = 0.0
+            drifts[:, hs_cols] += seg
+        drift_total = counts @ drifts
+        self_cross = float(counts @ ((drifts * drifts) @ weights))
+        interaction = float(
+            (np.dot(drift_total * weights, drift_total) - self_cross) / 2
+        )
+        h_star = analytic_step(max_leave, D, interaction)
+        unit_rows = float(counts @ leave)
+        if max_expected_rows is not None and unit_rows > 0:
+            step = damping * min(h_star, max_expected_rows / unit_rows)
+        else:
+            step = damping * h_star
+        j = step * D - step * step * interaction
+        if j > best_j:
+            best_j, best_beta = j, float(beta)
+    return best_beta, best_j
+
+
+def build_batch_kernel(
+    workload: Workload,
+    grouped: GroupedTable,
+    menu: BatchMenu,
+    qs: QueryStructure,
+    codes: NDArray[np.int32],
+    stay_probability: float = 0.9,
+    alpha: float = 0.5,
+    damping: float = 1.0,
+    max_expected_rows: float | None = None,
+    numerical_tol: float = 1e-12,
+    cnt_cache: CntCache | None = None,
+    beta_hint: float | None = None,
+    want_scores: bool = False,
+    probe_grid: int = 0,
+    ref_shape: str = "uniform",
+    path_factors: NDArray[np.float64] | None = None,
+) -> BatchKernelResult:
+    """构造一轮批量核，与组核的数学定义逐项相同，浮点顺序不同。
+
+    增益 G=d@(We)-||d||_W^2/2 在稀疏差矩阵上一次算完全部路径，
+    参考分布保持概率之外按合并质量比例分配，与迁移率语义一致，
+    整代矩按重数加权，交互项的总漂移与自交叉扣除都在稀疏结构上组装。
+    probe_grid 为正时核构造完成后跑一次 beta 网格探针，
+    复用本轮增益与参考分布纯只读，主路径浮点顺序零改动。
+    """
+    validate_step_parameters(damping, max_expected_rows)
+    if not (0 < stay_probability < 1):
+        raise ValueError("stay_probability 必须落在 (0,1)")
+    num_groups = grouped.num_groups
+    residual = grouped_residual(workload, grouped)
+    old_loss = loss_from_residual(workload, residual)
+    group_scores = None
+    if want_scores:
+        # 组错位分，组覆盖的题按绝对加权残差求和，供工作批挑组
+        group_scores = workload.features[grouped.unique_ids] @ (
+            workload.weights * np.abs(residual)
+        )
+
+    codes_g = codes[grouped.unique_ids]
+    if cnt_cache is not None:
+        cnt_all, score_all = cnt_cache.sync(codes)
+        cnt = cnt_all[grouped.unique_ids]
+        score_g = score_all[grouped.unique_ids]
+    else:
+        cnt, _ = condition_counts(qs, codes_g)
+        score_g = halfspace_scores(qs, codes_g)
+    parts = _delta_parts(menu, qs, cnt, codes_g, workload.num_queries)
+    delta_hs = _halfspace_delta(menu, qs, score_g, codes_g)
+    we = workload.weights * residual
+    gains_paths = np.zeros(menu.num_paths, dtype=np.float64)
+    for sparse, path_idx in parts:
+        # 平方阵共享下标结构只换数据，免整块拷贝
+        squared = csr_matrix(
+            (sparse.data * sparse.data, sparse.indices, sparse.indptr),
+            shape=sparse.shape,
+        )
+        gains_paths[path_idx] = sparse @ we - (squared @ workload.weights) / 2
+    if delta_hs is not None:
+        w_hs = workload.weights[qs.hs_cols]
+        gains_paths += delta_hs @ we[qs.hs_cols]
+        gains_paths -= (delta_hs * delta_hs) @ w_hs / 2
+
+    # flat 结构，每段索引 0 是保持项，其后依次是该组菜单路径
+    lengths = np.diff(menu.offsets) + 1
+    offsets = np.zeros(num_groups + 1, dtype=np.int64)
+    np.cumsum(lengths, out=offsets[1:])
+    total = int(offsets[-1])
+    seg_starts = offsets[:-1]
+    path_pos = np.arange(menu.num_paths, dtype=np.int64) + menu.group + 1
+    gains_flat = np.zeros(total, dtype=np.float64)
+    gains_flat[path_pos] = gains_paths
+    ref_flat = np.zeros(total, dtype=np.float64)
+    ref_src, ref_paths = _reference_arrays(
+        menu, codes_g, grouped.counts.astype(np.float64),
+        num_groups, stay_probability, ref_shape, path_factors,
+    )
+    ref_flat[path_pos] = ref_paths
+    ref_flat[seg_starts] = ref_src
+
+    counts = grouped.counts.astype(np.float64)
+    tilt = calibrate_beta_flat(
+        gains_flat, ref_flat, offsets, old_loss,
+        alpha=alpha, numerical_tol=numerical_tol, multiplicities=counts,
+        beta_hint=beta_hint,
+    )
+    if tilt.frozen:
+        return BatchKernelResult(
+            menu, grouped, offsets, tilt.probabilities, old_loss,
+            0.0, 0.0, 0.0, 0.0, old_loss, old_loss, 0.0,
+            tilt.max_gain_sum, tilt.required_gain, "no_positive_direction",
+            group_scores,
+        )
+
+    rates_flat = tilt.probabilities.copy()
+    rates_flat[seg_starts] = 0.0
+    leave = np.add.reduceat(rates_flat, seg_starts)
+    rates_paths = rates_flat[path_pos]
+    # 漂移 v_g=sum_p r_p d_p，组乘查询键上按整数桶累加免排序合并
+    key_parts = []
+    weight_parts = []
+    for sparse, path_idx in parts:
+        grp_of = menu.group[path_idx]
+        row_of = np.repeat(
+            np.arange(len(path_idx), dtype=np.int64), np.diff(sparse.indptr)
+        )
+        key_parts.append(
+            grp_of[row_of] * workload.num_queries + sparse.indices
+        )
+        weight_parts.append(sparse.data * rates_paths[path_idx][row_of])
+    drifts = np.bincount(
+        np.concatenate(key_parts) if key_parts else np.zeros(0, dtype=np.int64),
+        weights=np.concatenate(weight_parts) if weight_parts else None,
+        minlength=num_groups * workload.num_queries,
+    ).reshape(num_groups, workload.num_queries)
+    if delta_hs is not None:
+        # 菜单路径组内连续，半空间漂移按段边界一次 reduceat 聚合
+        weighted = delta_hs * rates_paths[:, None]
+        starts = np.minimum(menu.offsets[:-1], len(weighted))
+        padded = np.vstack([weighted, np.zeros((1, delta_hs.shape[1]))])
+        seg = np.add.reduceat(padded, starts, axis=0)
+        seg[np.diff(menu.offsets) == 0] = 0.0
+        drifts[:, qs.hs_cols] += seg
+    drift_total = counts @ drifts
+    self_cross = float(counts @ ((drifts * drifts) @ workload.weights))
+    interaction = float(
+        (np.dot(drift_total * workload.weights, drift_total) - self_cross) / 2
+    )
+    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
+    unit_rows = float(counts @ leave)
+    if max_expected_rows is not None and unit_rows > 0:
+        step = damping * min(h_star, max_expected_rows / unit_rows)
+    else:
+        step = damping * h_star
+
+    probs_flat = step * rates_flat
+    stay = 1.0 - np.add.reduceat(probs_flat, seg_starts)
+    if np.any(stay < -1e-12):
+        raise FloatingPointError("步长违反随机矩阵约束")
+    probs_flat[seg_starts] = np.maximum(stay, 0.0)
+    negative = np.flatnonzero(stay < 0)
+    for b in negative:
+        lo, hi = int(offsets[b]), int(offsets[b + 1])
+        probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
+
+    expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
+    upper = old_loss - step * tilt.direction_gain / 2
+    probe = None
+    if probe_grid > 0:
+        probe = _probe_beta_grid(
+            gains_flat, ref_flat, offsets, counts, workload.weights,
+            workload.num_queries, menu, parts, delta_hs,
+            qs.hs_cols if delta_hs is not None else None,
+            damping, max_expected_rows, tilt.max_gain_sum, probe_grid,
+        )
+    return BatchKernelResult(
+        menu, grouped, offsets, probs_flat, old_loss,
+        tilt.beta, tilt.direction_gain, interaction, step,
+        expected_loss, upper, step * unit_rows,
+        tilt.max_gain_sum, tilt.required_gain, "ok",
+        group_scores,
+        probe,
+    )
+
+
+def sample_batch_next(
+    result: BatchKernelResult,
+    state_ids,
+    rng: np.random.Generator,
+    registry: StateRegistry,
+) -> NDArray[np.int64]:
+    """按批量核抽下一代并落地，抽中的新状态此刻才注册。
+
+    每组先按二项分布抽离开行数再对非保持路径抽条件多项分布，
+    这是组内独立单行核抽样的精确分解，与直接多项抽样同分布，
+    行按组内升序切段分配，先落保持行再落各路径行。
+    """
+    s = np.asarray(state_ids)
+    out = s.astype(np.int64, copy=True)
+    grouped = result.grouped
+    menu = result.menu
+    schema = registry.schema
+    offsets = result.offsets
+    probs = result.probabilities
+    stay = probs[offsets[:-1]]
+    movers = rng.binomial(grouped.counts, np.minimum(1.0, np.maximum(0.0, 1.0 - stay)))
+    for g in np.flatnonzero(movers):
+        lo, hi = int(offsets[g]), int(offsets[g + 1])
+        seg = probs[lo + 1 : hi]
+        total = seg.sum()
+        if total <= 0:
+            continue
+        counts_g = rng.multinomial(int(movers[g]), seg / total)
+        rows = grouped.row_lists[int(g)]
+        base_id = int(grouped.unique_ids[int(g)])
+        base = registry.state_tuple(base_id)
+        pos = len(rows) - int(movers[g])  # 前段保持原状态
+        mlo = int(menu.offsets[g])
+        for t, c in enumerate(counts_g):
+            if c == 0:
+                continue
+            p = mlo + t
+            edited = list(base)
+            for slot in range(3):
+                j = int(menu.fields[p, slot])
+                if j < 0:
+                    break
+                edited[j] = schema.domains[j][int(menu.values[p, slot])]
+            uid = registry.register_edit(base_id, tuple(edited))
+            out[rows[pos : pos + int(c)]] = uid
+            pos += int(c)
+    return out
+
+
+@dataclass
+class BatchRoundPlan:
+    """批量提供器每轮的计划，批量路径行级回退路径或子集救援路径三选一。"""
+
+    mode: str  # "batch" 或 "rows" 或 "rescue" 或 "tree"
+    workload: Workload
+    grouped: GroupedTable | None = None
+    menu: BatchMenu | None = None
+    supports: list | None = None
+    rescue_ids: NDArray[np.int64] | None = None  # 抽中行在小注册表的编号
+    rescue_sub_idx: NDArray[np.int64] | None = None  # 抽中行的全表行下标
+    rescue_registry: StateRegistry | None = None  # 临时小注册表，用后即弃
+
+
+def make_batch_provider(
+    registry: StateRegistry,
+    target,
+    weights,
+    menu_rng: np.random.Generator,
+    budget: EditBudget | None = None,
+    joint_field_sets: list[tuple[int, ...]] | None = None,
+    pairing_budget: PairingBudget | None = None,
+    pairing: bool = False,
+    pairing_backoff: int = 4,
+    defer_workload: bool = False,
+    pair_rescue_rows: int = 0,
+    rescue_after: int = 6,
+    rescue_gpu: bool = False,
+    work_rows: int = 0,
+    work_random_frac: float = 0.25,
+    select_rng: np.random.Generator | None = None,
+    work_below_step: float = 0.0,
+    retry_select: bool = False,
+    tree_sampler=None,
+    tree_every: int = 0,
+    tree_pool: int = 256,
+    tree_per_row: int = 2,
+):
+    """批量候选提供器，平时全矢量出菜单，冻结重试轮可回退行级配对。
+
+    配对退避，冻结重试的前三次都上配对，之后每 pairing_backoff 次上一次，
+    其余重试轮只刷新便宜的批量菜单，重试语义与总次数上限不变，
+    backoff 取 1 即每次重试都配对，等价旧行为。
+    defer_workload 为真时批量轮的计划只携带目标与权重不物化特征矩阵，
+    供 GPU 后端配合惰性注册表使用，行级回退轮仍取完整负载。
+
+    子集救援，pair_rescue_rows 为正时惰性模式的冻结重试轮不再只刷菜单，
+    抽该数量的行走行级配对，临时小注册表隔离特征物化，
+    伪目标修正保持全表残差口径，其余行保持不动，默认 0 关闭零改变，
+    非惰性模式不受此参数影响仍走全表行级配对老路。
+    救援门槛，rescue_after 控制连败多少次才第一次动用救援，
+    之前的重试轮只刷便宜的批量菜单，零星冻结靠换菜单自愈不烧重炮，
+    达门槛后每 pairing_backoff 次连败再救一次，救援成功连败清零重计。
+
+    工作批，work_rows 为正时每轮按上一轮核回传的组错位分挑组上场，
+    定向额度按分数降序装组，其余名额从剩下的组随机装到 work_rows 行，
+    未选组本轮菜单为空段等价保持概率 1，行原地不动不进核，
+    没上过场的新状态分数视为无穷大必入选，冻结重试轮回退全量搜索，
+    首轮尚无分数也走全量，work_rows 取 0 与旧行为逐位一致。
+    work_below_step 为正时早期全量演化，观测到某轮步长低于该值才开闸裁组，
+    单向切换不来回抖，早期残差处处大全员上场步长本就顶格，裁组只会自缚手脚。
+    retry_select 为真时冻结重试轮不再回退全量，照常错位挑组换一批上场，
+    长跑账本显示后期九成重试轮全量也找不到方向，全量构核纯烧钱，
+    挑组的随机名额与菜单刷新天然换视野，属有损开关轨迹从首个冻结轮起分叉，
+    需终点与阅卷双验收，默认关闭零改变。
+    """
+    if pairing_backoff < 1:
+        raise ValueError("配对退避周期必须为正")
+    if pair_rescue_rows < 0:
+        raise ValueError("救援行数不能为负")
+    if rescue_after < 1:
+        raise ValueError("救援门槛必须为正")
+    if tree_every < 0 or tree_pool < 1 or tree_per_row < 1:
+        raise ValueError("树采样轮参数必须为正")
+    if tree_every > 0:
+        if tree_sampler is None:
+            raise ValueError("开树采样轮必须给树采样器")
+        if not (pairing and defer_workload and pair_rescue_rows > 0):
+            raise ValueError("树采样轮复用子集救援管线，需要惰性配对与救援行数")
+    if not (0.0 <= work_random_frac <= 1.0):
+        raise ValueError("随机名额比例必须落在 [0,1]")
+    sel_rng = select_rng if select_rng is not None else np.random.default_rng(0)
+    codebook = CodeBook(registry)
+    structure_box: list[QueryStructure] = []
+    cache_box: list[CntCache] = []
+    score_box: list[NDArray[np.float64]] = [np.empty(0, dtype=np.float64)]
+    gate_box = [work_below_step <= 0.0]  # 阈值非正则立即启用
+
+    def note_step(step: float) -> None:
+        """观测批量轮步长，低于阈值后永久开闸启用工作批。"""
+        if not gate_box[0] and step < work_below_step:
+            gate_box[0] = True
+
+    def feed_scores(unique_ids, scores) -> None:
+        """按状态号记组错位分，数组按需扩容，新号默认无穷大。"""
+        arr = score_box[0]
+        uids = np.asarray(unique_ids, dtype=np.int64)
+        need = int(uids.max()) + 1 if uids.size else 0
+        if need > len(arr):
+            grown = np.full(max(need, 2 * len(arr)), np.inf, dtype=np.float64)
+            grown[: len(arr)] = arr
+            score_box[0] = arr = grown
+        arr[uids] = scores
+
+    def _select_groups(grouped: GroupedTable) -> NDArray[np.int64] | None:
+        """挑本轮上场的组，返回升序组索引，None 表示全量。"""
+        arr = score_box[0]
+        if work_rows <= 0 or arr.size == 0 or not gate_box[0]:
+            return None
+        counts = grouped.counts
+        if int(counts.sum()) <= work_rows:
+            return None
+        uids = grouped.unique_ids
+        scores = np.full(len(uids), np.inf, dtype=np.float64)
+        known = uids < len(arr)
+        scores[known] = arr[uids[known]]
+        # 分数降序，平分按状态号升序，保证同种子可复现
+        order = np.lexsort((uids, -scores))
+        directed = int(round(work_rows * (1.0 - work_random_frac)))
+        chosen = order[:0]
+        taken = 0
+        if directed > 0:
+            cum = np.cumsum(counts[order])
+            j = int(np.searchsorted(cum, directed, side="left"))
+            chosen = order[: j + 1]
+            taken = int(cum[j])
+        rest = order[len(chosen):]
+        remaining = work_rows - taken
+        if remaining > 0 and len(rest) > 0:
+            perm = rest[sel_rng.permutation(len(rest))]
+            cum2 = np.cumsum(counts[perm])
+            j2 = min(int(np.searchsorted(cum2, remaining, side="left")), len(perm) - 1)
+            chosen = np.concatenate([chosen, perm[: j2 + 1]])
+        return np.sort(chosen)
+
+    def provider(state_ids, round_index: int, frozen_streak: int = 0) -> BatchRoundPlan:
+        # 惰性负载模式的全表行级配对被禁，物化全部历史状态特征会打爆内存，
+        # pair_rescue_rows 为正时改走子集救援，小注册表隔离物化其余行保持
+        pairing_turn = frozen_streak <= 3 or frozen_streak % pairing_backoff == 0
+        if pairing and not defer_workload and frozen_streak > 0 and pairing_turn:
+            table = tuples_from_ids(registry, state_ids)
+            singles = generate_edit_supports(
+                table, registry.schema, registry, menu_rng, budget, joint_field_sets
+            )
+            menu = build_paired_supports(
+                state_ids, singles, registry, target, weights, menu_rng, pairing_budget
+            )
+            return BatchRoundPlan("rows", menu.workload, supports=menu.supports)
+        rescue_turn = (
+            frozen_streak >= rescue_after
+            and (frozen_streak - rescue_after) % pairing_backoff == 0
+        )
+        # 树采样输血轮（整行采样棋步战役）：平台场景批量轮每轮微降
+        # 永不连败，救援重炮全程没有出场机会，输血轮按轮数周期强制
+        # 上场，不等连败。轮走救援同一条小注册表配对管线，候选在编辑
+        # 菜单之外混入树采样整行，接受照旧看残差核算，引擎不想吃自然
+        # 全落回保持。撞上真救援轮时合并出场并记名救援，衰竭账本不缺账。
+        tree_turn = (
+            tree_every > 0
+            and round_index > 0
+            and round_index % tree_every == 0
+        )
+        if (
+            pairing and defer_workload and pair_rescue_rows > 0
+            and (rescue_turn or tree_turn)
+        ):
+            extra = tree_sampler.sample(menu_rng, tree_pool) if tree_turn else None
+            small, sub_ids, sub_idx, wl, sups = build_rescue_menu(
+                registry, state_ids, target, weights, menu_rng,
+                pair_rescue_rows, budget, joint_field_sets, pairing_budget,
+                use_gpu=rescue_gpu,
+                extra_rows=extra, extra_per_row=tree_per_row,
+            )
+            return BatchRoundPlan(
+                "rescue" if rescue_turn else "tree",
+                wl, supports=sups, rescue_ids=sub_ids,
+                rescue_sub_idx=sub_idx, rescue_registry=small,
+            )
+        if not structure_box:
+            structure_box.append(build_query_structure(registry, codebook))
+            cache_box.append(CntCache(structure_box[0]))
+        codes = codebook.sync()
+        grouped = group_state_ids(state_ids)
+        codes_g = codes[grouped.unique_ids]
+        sel = _select_groups(grouped) if (retry_select or frozen_streak == 0) else None
+        if sel is None:
+            menu = generate_batch_menu(
+                codes_g, grouped.counts, codebook.domain_sizes,
+                menu_rng, budget, joint_field_sets,
+            )
+        else:
+            # 只给选中组生成路径，再散回全组编号，未选组为空段
+            sub = generate_batch_menu(
+                codes_g[sel], grouped.counts[sel], codebook.domain_sizes,
+                menu_rng, budget, joint_field_sets,
+            )
+            per_group = np.zeros(grouped.num_groups, dtype=np.int64)
+            per_group[sel] = np.diff(sub.offsets)
+            offsets_full = np.zeros(grouped.num_groups + 1, dtype=np.int64)
+            np.cumsum(per_group, out=offsets_full[1:])
+            menu = BatchMenu(
+                offsets_full, sel[sub.group], sub.fields, sub.values, sub.mass
+            )
+        if defer_workload:
+            workload = Workload(
+                np.empty((0, len(np.asarray(target)))),
+                np.asarray(target, dtype=np.float64),
+                np.asarray(weights, dtype=np.float64),
+            )
+        else:
+            workload = registry.build_workload(target, weights)
+        return BatchRoundPlan("batch", workload, grouped, menu)
+
+    provider.codebook = codebook
+    provider.structure = structure_box
+    provider.cnt_cache = cache_box
+    provider.feed_scores = feed_scores
+    provider.note_step = note_step
+    provider.wants_scores = work_rows > 0
+    return provider
+
+
+def evolve_batch(
+    state_ids,
+    num_rounds: int,
+    rng: np.random.Generator,
+    plan_provider,
+    registry: StateRegistry,
+    stay_probability: float = 0.9,
+    alpha: float = 0.5,
+    damping: float = 1.0,
+    max_expected_rows: float | None = None,
+    max_frozen_retries: int = 0,
+    backend: str = "cpu",
+    stop_threshold: float = 0.0,
+    stop_lag: int = 100,
+    rescue_stop_window: int = 0,
+    rescue_stop_tol: float = 0.02,
+    gpu_entry_budget: int = 0,
+    noise_floor: float = 0.0,
+    stop_threshold_noisy: float = 0.0,
+    progress_every: int = 0,
+    probe_interval: int = 0,
+    ref_shape: str = "uniform",
+    struct_shaper=None,
+    treat_stop_tol: float = 0.0,
+    stop_floor: float = 0.0,
+    nullswap_phase=None,
+    nullswap_every: int = 0,
+    nullswap_after: int = 0,
+    gpu_direct: bool | None = None,
+    gpu_sparse: bool | None = None,
+    snapshot_losses=None,
+    snapshot_hook=None,
+    group_index=None,
+    group_floors=None,
+    stop_floor_groups: bool = False,
+    group_snapshot_hook=None,
+) -> EvolveResult:
+    """批量路径多轮循环，冻结与重试语义与组路径完全一致。
+
+    group_index 配 group_floors 启用分档地板记账（第六十八步）：group_index 为每题档号
+    （0..G-1，按 σ 分档由调用方定），group_floors 为各档地板 ½ Σ_{i∈g} w_i σ_i²；
+    启用后每轮起点表的各档损失 ½ Σ_{i∈g} w_i e_i² 记入返回值 group_losses
+    （GPU 后端在卡上由当前表重算残差，CPU 后端只在带全表负载的轮记账，小注册表轮跳过）。
+    stop_floor_groups 为真时某轮起点各档损失全部不高于各自地板即收工，停止原因记
+    group_floor_reached，返回触发轮起点表（与硬地板停同语义：总和到地板 ≠ 每档到地板，
+    σ 参差的卷里权重大的档先过拟合、权重小的档还远未拟合，改由最慢的档说了算）。
+    group_snapshot_hook 给出时在首个全档过线的轮调一次 hook(round_index, old_loss,
+    group_losses, state_ids) 交出起点表副本，不停也能记下该点（跑到收敛的对照场用），
+    触发在损失快照之后、硬地板停之前。全部默认 None/False 关闭零改变，记账只读不碰随机流。
+    snapshot_losses 配 snapshot_hook 启用损失快照（第六十一步，纯记账）：
+    某轮起点损失首次不高于某个给定值时，把该轮起点表的状态编号副本交给
+    钩子 hook(index, threshold, round_index, old_loss, state_ids)，每个给定值
+    只触发一次，同一轮可触发多个；触发在判停与抽样之前，停止轮也能触发，
+    不碰随机流不改轨迹，默认 None 关闭零改变。
+    backend 取 gpu 时批量轮核构造走 cupy 后端，数学定义一致，
+    抽样与行级回退轮仍在 CPU，随机数语义不变。
+    stop_threshold 大于零启用平台早停，参考 GSD 的窗口相对改进判据，
+    每 stop_lag 轮到窗口边界比一次，上窗最优损失到本窗最优损失的
+    相对改进低于阈值即停，停止原因记 loss_plateau。窗口取最优值防抽样抖动。
+    判停只读损失，不碰核菜单抽样与随机流，停前轨迹与不停的跑逐位一致，
+    返回的表是触发轮的起点表。冻结重试停照旧并存，默认 0 关闭零改变。
+    rescue_stop_window 大于零启用救援衰竭早停，救援模式下轮窗口判据
+    永远差一口气够不着，改按救援次数开窗直接审计救援性价比，
+    第 i 次救援轮起点损失相对第 i-window 次的降幅低于 rescue_stop_tol
+    即认定衰竭停跑，停止原因记 rescue_exhausted，触发轮只记账不落表，
+    返回触发轮起点表，与曲线离线回放同语义，默认 0 关闭零改变，
+    默认阈值由 plants 种子 1 两条长跑曲线回放校准，窗口 10 降幅 2% 一带
+    停止点对窗口与阈值取值不敏感。
+    gpu_entry_budget 为正时 GPU 批量轮条目流按该预算分块，
+    收益逐位不变，漂移改块序累加，大域宽数据防显存爆，默认 0 不分块。
+    noise_floor 与 stop_threshold_noisy 同时为正启用噪声版两段平台停，
+    这是基于特定基准回放的停止启发式，不是噪声自适应估计表的通用风险界。窗口最优损失一旦
+    低于地板，平台判据阈值就从 stop_threshold 切换到更粗的
+    stop_threshold_noisy 尽快收工，停止原因记 noise_plateau，
+    地板取 c 乘格子数乘计数 sigma 平方，sigma 只由公开机制参数决定，
+    九条 eps 1 曲线回放校准 c 0.5 粗阈 1e-3 一带甜点区宽，
+    是否误停或改善真实效用需要独立验证，默认 0 关闭零改变。
+    progress_every 为正时每该数轮打印一行进度并立即刷出，
+    冻结与救援等非常规轮无条件打印，只写标准输出不碰任何计算，默认 0 静默。
+    probe_interval 为正时每该数轮的批量轮跑一次 beta 网格探针，
+    记实际所用与网格最优的期望下降到旁路日志，探针纯只读确定性，
+    不消耗抽样随机数不改演化路径，默认 0 关闭零改变。
+    struct_shaper 给出 StructShaper 时启用结构签筒两级机制，
+    每个批量轮先量体温（独立生成器不碰引擎随机流），watch 模式只记录，
+    jia 或 bing 模式体温低于门槛才把菜单路径的结构因子交给核构造改签筒，
+    ding 模式无门槛，体温为负即交因子，偏置力度随烧度连续，
+    体温逐轮记入返回值 temps（非批量轮记 nan），默认 None 零改变。
+    treat_stop_tol 大于零启用治疗平台门（组合尺战役加噪 s1 验尸定案，
+    平台停出口不问治疗进度，药没喂完被赶下课到站凭运气）：损失平台
+    触发时读在治尺病情深度（treatment_severity，丁烧度己偏差绝对值，
+    多尺相加），本窗口深度比上窗结算点改善不少于该阈值即放行续跑，
+    只拦平台停不拦连败停与救援衰竭停（引擎无棋可走拦也无用），
+    放行打印一行审计，轮数硬顶兜底，默认 0 关门零改变。
+    nullswap_phase 配 nullswap_every 为正启用零空间换位相位（第四十一步）：
+    每该数轮的轮首把当前表码矩阵交给 NullSwapPhase 跑一场保二阶四行
+    换位（恒温器门槛与接受率自熄内置在相位对象里），动过的行注册回
+    全局注册表落回原位。换位构造性不动全部一阶二阶；损失不变只适用于这些被保持的查询，
+    不能推广到含三阶或半空间的任意 workload。
+    不产轮记录不碰引擎随机流；相位仅批量提供器可用（需码本）。
+    nullswap_after 为暖场轮数，此前不开场。默认 None 加 0 关闭零改变。
+    gpu_direct 控制 GPU 后端的单元格直算通路（第五十六步提速），
+    None 自动识别考卷结构，True 强制，False 走通用通路，
+    直算与通用通路同种子逐位同结果，只省时间不改任何数学。
+    gpu_sparse 控制 GPU 后端的稀疏整表项/漂移项（第五十九步 乙），None 在直算布局
+    且无半空间题时自动开，True 强制，False 走稠密老路；稀疏与稠密数学相同、答案与
+    残差逐位相同，组分与漂移项浮点求和顺序不同、末位可异，轨迹如换种子（分布同），
+    要逐位复现旧表时取 False。
+    """
+    if num_rounds < 1:
+        raise ValueError("轮数必须为正")
+    validate_step_parameters(damping, max_expected_rows)
+    if max_frozen_retries < 0:
+        raise ValueError("冻结重试次数不能为负")
+    if backend not in ("cpu", "gpu"):
+        raise ValueError(f"未知后端 {backend}")
+    if stop_threshold < 0.0:
+        raise ValueError("早停阈值不能为负")
+    if stop_lag < 1:
+        raise ValueError("早停窗口轮数必须为正")
+    if rescue_stop_window < 0:
+        raise ValueError("救援早停窗口不能为负")
+    if rescue_stop_tol < 0.0:
+        raise ValueError("救援早停阈值不能为负")
+    if gpu_entry_budget < 0:
+        raise ValueError("条目流分块预算不能为负")
+    if noise_floor < 0.0:
+        raise ValueError("噪声地板不能为负")
+    if stop_floor < 0.0:
+        raise ValueError("硬地板不能为负")
+    if stop_threshold_noisy < 0.0:
+        raise ValueError("追噪区粗阈值不能为负")
+    if (noise_floor > 0.0) != (stop_threshold_noisy > 0.0):
+        raise ValueError("噪声地板与追噪区粗阈值须同时给出")
+    if noise_floor > 0.0 and stop_threshold <= 0.0:
+        raise ValueError("两段平台停须先启用 stop_threshold 平台判据")
+    if probe_interval < 0:
+        raise ValueError("探针间隔不能为负")
+    if ref_shape not in ("uniform", "distance"):
+        raise ValueError(f"未知参考分布形状 {ref_shape}")
+    if treat_stop_tol < 0.0:
+        raise ValueError("治疗平台门阈值不能为负")
+    if treat_stop_tol > 0.0 and struct_shaper is None:
+        raise ValueError("治疗平台门须配合结构尺使用")
+    if nullswap_every < 0:
+        raise ValueError("换位相位周期不能为负")
+    if nullswap_after < 0:
+        raise ValueError("换位相位暖场轮数不能为负")
+    if (nullswap_phase is not None) != (nullswap_every > 0):
+        raise ValueError("换位相位对象与周期须同时给出")
+    if (snapshot_losses is not None) != (snapshot_hook is not None):
+        raise ValueError("快照损失值与快照钩子须同时给出")
+    snap_thresholds: list[float] = (
+        [float(x) for x in snapshot_losses] if snapshot_losses is not None else []
+    )
+    if any(not np.isfinite(x) or x <= 0.0 for x in snap_thresholds):
+        raise ValueError("快照损失值必须为正的有限数")
+    snap_pending = list(range(len(snap_thresholds)))  # 尚未触发的快照序号
+    if (group_index is None) != (group_floors is None):
+        raise ValueError("分档索引与分档地板须同时给出")
+    if group_index is None and (stop_floor_groups or group_snapshot_hook is not None):
+        raise ValueError("分档地板停与分档快照需要分档索引与分档地板")
+    group_curve: list | None = None
+    group_pending = False  # 分档过线事件（快照/停）尚未发生
+    if group_index is not None:
+        group_index = np.asarray(group_index)
+        group_floors = np.asarray(group_floors, dtype=np.float64)
+        if (
+            group_index.ndim != 1 or group_index.size == 0
+            or not np.issubdtype(group_index.dtype, np.integer)
+            or group_floors.ndim != 1 or group_floors.size == 0
+        ):
+            raise ValueError("分档索引须为非空一维整数向量，分档地板须为非空一维向量")
+        group_index = group_index.astype(np.int64, copy=True)
+        if group_index.min() < 0 or group_index.max() >= group_floors.size:
+            raise ValueError("分档索引越界")
+        if not np.isfinite(group_floors).all() or (group_floors <= 0.0).any():
+            raise ValueError("分档地板必须为正的有限数")
+        group_curve = []
+        group_pending = True
+    group_index_dev = None  # 卡上档号向量，惰性上传一次
+    current = np.asarray(state_ids).astype(np.int64, copy=True)
+    records: list[RoundRecord] = []
+    probes: list[ProbeRecord] = []
+    temps: list[float] | None = [] if struct_shaper is not None else None
+    frozen_streak = 0
+    window_best: float | None = None  # 本窗口内最优损失
+    prev_window_best: float | None = None  # 上一窗口最优损失
+    rescue_losses: list[float] = []  # 各救援轮起点损失，衰竭判据用
+    last_beta: float | None = None  # 上一批量轮的根作下一轮括根热启动
+    ding_admitted: bool | None = None  # 确诊制初诊资格（丁/己尺），None 表示未初诊
+    last_sev: float | None = None  # 最近批量轮在治病情深度，治疗平台门用
+    prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
+    gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
+
+    def group_losses_now(plan):
+        """分档地板记账：当前起点表各档损失，读 current 与 gpu_ctx 的最新绑定，只读。"""
+        nonlocal group_index_dev
+        if backend == "gpu":
+            if gpu_ctx is None:
+                return None
+            if group_index_dev is None:
+                group_index_dev = gpu_ctx.cp.asarray(group_index)
+            per, _ = gpu_ctx.group_losses_of(
+                plan_provider.codebook.sync(), current, group_index_dev, group_floors.size,
+            )
+            return per
+        wl = plan.workload
+        if wl.features.shape[0] <= int(current.max()):
+            return None  # 惰性负载或小注册表轮，本轮不记
+        if wl.target.size != group_index.size:
+            raise ValueError("分档索引长度须等于题数")
+        e = table_residual(wl, current)
+        return np.bincount(group_index, weights=wl.weights * e * e, minlength=group_floors.size) / 2.0
+
+    t_loop = time.perf_counter()  # 记账用，只读
+    for k in range(num_rounds):
+        if (
+            nullswap_phase is not None
+            and k > 0
+            and k >= nullswap_after
+            and k % nullswap_every == 0
+            and not nullswap_phase.dead
+        ):
+            codebook = getattr(plan_provider, "codebook", None)
+            if codebook is None:
+                raise ValueError("换位相位需要批量提供器的码本")
+            codes_now = np.asarray(codebook.sync())[current]
+            new_codes, ns_stats = nullswap_phase.run(codes_now)
+            if new_codes is not None:
+                moved = (new_codes != codes_now).any(axis=1)
+                schema_ns = registry.schema
+                moved_tuples = [
+                    tuple(schema_ns.domains[f][int(c)] for f, c in enumerate(row))
+                    for row in new_codes[moved]
+                ]
+                gids = registry.register_table(moved_tuples)
+                current = current.copy()
+                current[np.flatnonzero(moved)] = gids
+            if progress_every > 0 and "skipped" not in ns_stats:
+                print(
+                    f"轮 {k} 换位相 峰度 {ns_stats['kurt']:.3f}"
+                    f"->{ns_stats.get('kurt_after', ns_stats['kurt']):.3f} "
+                    f"提议 {ns_stats['proposals']} 接受 {ns_stats['accepts']}"
+                    f"{' 熄火' if ns_stats['dead'] else ''}",
+                    flush=True,
+                )
+        plan = plan_provider(current, k, frozen_streak)
+        round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
+        if plan.mode in ("rows", "rescue", "tree"):
+            kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
+            result = build_kernel(
+                plan.workload, kernel_ids, plan.supports,
+                stay_probability, alpha, damping, max_expected_rows,
+            )
+        elif plan.mode == "batch":
+            probe_now = probe_interval > 0 and k % probe_interval == 0
+            struct_factors = None
+            struct_dev_args: dict = {}
+            if struct_shaper is not None:
+                codes_now = plan_provider.codebook.sync()
+                codes_g_now = codes_now[plan.grouped.unique_ids]
+                if backend == "gpu":
+                    import cupy as _cp  # backend 校验已保证可用
+
+                    round_temp = struct_shaper.temperature_dev(
+                        _cp, _cp.asarray(codes_g_now),
+                        _cp.asarray(plan.grouped.counts),
+                    )
+                else:
+                    round_temp = struct_shaper.temperature(
+                        codes_g_now, plan.grouped.counts
+                    )
+                if struct_shaper.ruler in ("ding", "ji", "composite"):
+                    # 确诊制（丁尺读体温，己尺读聚簇偏差，组合尺逐尺）：
+                    # 首个批量轮初诊定资格，未收治全程零干预
+                    if ding_admitted is None:
+                        ding_admitted = struct_shaper.diagnose(round_temp)
+                    treat = ding_admitted and struct_shaper.active(round_temp)
+                    if ding_admitted:
+                        # 治疗平台门读数：在治病情深度，到站自动归零
+                        last_sev = struct_shaper.treatment_severity(round_temp)
+                else:
+                    treat = struct_shaper.active(round_temp)
+                if treat:
+                    on_gpu_pharmacy = (
+                        backend == "gpu"
+                        and struct_shaper.ruler in ("bing", "ding")
+                        and ref_shape == "uniform"
+                    )
+                    if on_gpu_pharmacy:
+                        # 卡内药房：因子与装配都在 GPU 里做，免 host 慢路
+                        struct_dev_args = dict(
+                            struct_shaper=struct_shaper,
+                            struct_temp=round_temp,
+                        )
+                    else:
+                        struct_factors = struct_shaper.path_factors(
+                            plan.menu, codes_g_now, plan.grouped.counts,
+                            temperature=round_temp,
+                        )
+            if backend == "gpu":
+                if gpu_ctx is None:
+                    from .gpukernel import GpuBatchContext
+
+                    gpu_ctx = GpuBatchContext(
+                        plan_provider.structure[0],
+                        plan.workload.target, plan.workload.weights,
+                        direct=gpu_direct, sparse=gpu_sparse,
+                    )
+                result = gpu_ctx.build(
+                    plan.grouped, plan.menu, plan_provider.codebook.sync(),
+                    stay_probability, alpha, damping, max_expected_rows,
+                    beta_hint=last_beta,
+                    entry_budget=gpu_entry_budget,
+                    probe_grid=16 if probe_now else 0,
+                    ref_shape=ref_shape,
+                    path_factors=struct_factors,
+                    **struct_dev_args,
+                )
+            else:
+                cache = getattr(plan_provider, "cnt_cache", None)
+                result = build_batch_kernel(
+                    plan.workload, plan.grouped, plan.menu,
+                    plan_provider.structure[0], plan_provider.codebook.sync(),
+                    stay_probability, alpha, damping, max_expected_rows,
+                    cnt_cache=cache[0] if cache else None,
+                    beta_hint=last_beta,
+                    want_scores=bool(getattr(plan_provider, "wants_scores", False)),
+                    probe_grid=16 if probe_now else 0,
+                    ref_shape=ref_shape,
+                    path_factors=struct_factors,
+                )
+            if result.probe is not None:
+                probes.append(
+                    ProbeRecord(
+                        k, result.beta, result.old_loss - result.expected_loss,
+                        result.probe[0], result.probe[1],
+                    )
+                )
+            if result.beta > 0.0:
+                last_beta = result.beta
+            feed = getattr(plan_provider, "feed_scores", None)
+            if feed is not None and result.group_scores is not None:
+                feed(result.grouped.unique_ids, result.group_scores)
+            note = getattr(plan_provider, "note_step", None)
+            if note is not None and result.status == "ok":
+                note(result.step)
+        else:
+            raise ValueError(f"未知计划模式 {plan.mode}")
+        if plan.mode == "batch":
+            n_cand = int(result.menu.num_paths)
+        else:
+            n_cand = int(sum(len(b.rows) * (len(b.outcomes) - 1) for b in result.blocks))
+        records.append(
+            RoundRecord(
+                k, result.old_loss, result.beta, result.direction_gain,
+                result.interaction, result.step, result.expected_loss, result.status,
+                result.max_gain_sum,
+                mode=plan.mode, candidates=n_cand,
+                moved_rows=float(result.expected_changed_rows),
+                elapsed=time.perf_counter() - t_loop,
+            )
+        )
+        if temps is not None:
+            temps.append(round_temp)
+        if progress_every > 0 and (
+            plan.mode != "batch" or result.status != "ok"
+            or k % progress_every == 0
+        ):
+            print(
+                f"轮 {k} 模式 {plan.mode} 损失 {result.old_loss:.1f} "
+                f"步长 {result.step:.4f} 预测降 "
+                f"{result.old_loss - result.expected_loss:.2f} "
+                f"{result.status} 连败 {frozen_streak}",
+                flush=True,
+            )
+        if snap_pending:
+            # 损失快照：起点损失首次不高于给定值即交出起点表副本，只读不碰计算
+            fired = [i for i in snap_pending if result.old_loss <= snap_thresholds[i]]
+            for i in fired:
+                snapshot_hook(i, snap_thresholds[i], k, result.old_loss, current.copy())
+                snap_pending.remove(i)
+        if group_curve is not None:
+            # 分档地板记账（第六十八步）：各档损失逐轮入账，首个全档过线的轮交快照、按开关收工
+            per = group_losses_now(plan)
+            if per is not None:
+                group_curve.append((k, per))
+                if group_pending and bool(np.all(per <= group_floors)):
+                    group_pending = False
+                    if group_snapshot_hook is not None:
+                        group_snapshot_hook(k, result.old_loss, per.copy(), current.copy())
+                    if stop_floor_groups:
+                        return EvolveResult(
+                            current, records, "group_floor_reached", probes, temps, group_curve
+                        )
+        if stop_floor > 0.0 and result.old_loss <= stop_floor:
+            # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
+            # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
+            # 地板由公开机制参数外算（0.5×格子数×计数 sigma²，
+            # 恰为真表对理顺卷损失的理论锚点），压得更深即背错题。
+            # 触发轮只记账不落表，与平台停同语义，默认 0 关闭零改变。
+            return EvolveResult(
+                current, records, "floor_reached", probes, temps, group_curve
+            )
+        if rescue_stop_window > 0 and plan.mode == "rescue":
+            rescue_losses.append(result.old_loss)
+            if len(rescue_losses) > rescue_stop_window:
+                base = rescue_losses[-1 - rescue_stop_window]
+                if base <= 0.0 or (
+                    (base - rescue_losses[-1]) / base < rescue_stop_tol
+                ):
+                    return EvolveResult(
+                        current, records, "rescue_exhausted", probes, temps, group_curve
+                    )
+        if stop_threshold > 0.0:
+            loss = result.old_loss
+            window_best = loss if window_best is None else min(window_best, loss)
+            if (k + 1) % stop_lag == 0:
+                armed = noise_floor > 0.0 and window_best <= noise_floor
+                threshold = stop_threshold_noisy if armed else stop_threshold
+                plateau = prev_window_best is not None and (
+                    prev_window_best <= 0.0
+                    or (prev_window_best - window_best) / prev_window_best
+                    < threshold
+                )
+                if (
+                    plateau
+                    and treat_stop_tol > 0.0
+                    and last_sev is not None
+                    and prev_gate_sev is not None
+                    and prev_gate_sev - last_sev >= treat_stop_tol
+                ):
+                    # 治疗平台门：药还在起效（病情深度仍在明显好转），
+                    # 平台停放行续跑，治疗自身也平台才准停
+                    print(
+                        f"轮 {k} 治疗平台门放行 深度 "
+                        f"{prev_gate_sev:.4f}->{last_sev:.4f}",
+                        flush=True,
+                    )
+                    plateau = False
+                if plateau:
+                    return EvolveResult(
+                        current, records,
+                        "noise_plateau" if armed else "loss_plateau",
+                        probes,
+                        temps,
+                        group_curve,
+                    )
+                prev_window_best = window_best
+                window_best = None
+                prev_gate_sev = last_sev
+        if result.status == "no_positive_direction":
+            frozen_streak += 1
+            if frozen_streak > max_frozen_retries:
+                return EvolveResult(
+                    current, records, "no_positive_direction", probes, temps, group_curve
+                )
+            continue
+        frozen_streak = 0
+        if plan.mode == "rows":
+            current = sample_next(result, current, rng)
+        elif plan.mode in ("rescue", "tree"):
+            # 小注册表编号抽样，动过的行翻译回全局编号落回全表对应位置，
+            # 全局注册仍走惰性路径不物化特征，小注册表出作用域即弃
+            new_small = sample_next(result, plan.rescue_ids, rng)
+            moved = new_small != plan.rescue_ids
+            if moved.any():
+                tuples = [
+                    plan.rescue_registry.state_tuple(int(i))
+                    for i in new_small[moved]
+                ]
+                gids = registry.register_table(tuples)
+                current = current.copy()
+                current[plan.rescue_sub_idx[moved]] = gids
+        else:
+            current = sample_batch_next(result, current, rng, registry)
+    return EvolveResult(current, records, "round_limit", probes, temps, group_curve)
