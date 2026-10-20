@@ -1,0 +1,9 @@
+2026-10-19T08:23:45Z [1A_eps1_s1] 开 P(核 0-11) 与 F(核 12-23) 于 gpu0
+2026-10-19T08:35:58Z [1A_eps1_s1] P 完 rc=0 用时 733.2 秒
+Traceback (most recent call last):
+  File "/root/residual-evolution/logs_eps/autostop/decide.py", line 13, in <module>
+    import pandas as pd
+ModuleNotFoundError: No module named 'pandas'
+2026-10-19T08:35:58Z [1A_eps1_s1] 判停法 （判定用时 0.2 秒）
+2026-10-19T08:37:03Z [1A_eps1_s1] F 完 rc=0 用时 798.3 秒
+2026-10-19T08:37:03Z [1A_eps1_s1] 交表 1A_eps1_s1_out.csv 墙钟 798.3 秒
