@@ -61,8 +61,9 @@ def test_sparse_state_terms(seed, kw):
     dense, sparse = _pair(registry, weights)
     codes_g = cp.asarray(codes[grouped.unique_ids])
     counts = cp.asarray(grouped.counts.astype(np.float64))
-    r1, l1, s1, hs1, _ = dense._state_terms(codes_g, counts)
-    r2, l2, s2, hs2, _ = sparse._state_terms(codes_g, counts)
+    r1, l1, s1, hs1, _, answers1 = dense._state_terms(codes_g, counts)
+    r2, l2, s2, hs2, _, answers2 = sparse._state_terms(codes_g, counts)
+    np.testing.assert_array_equal(cp.asnumpy(answers2), cp.asnumpy(answers1))
     np.testing.assert_array_equal(cp.asnumpy(r2), cp.asnumpy(r1))
     assert l2 == l1
     np.testing.assert_allclose(cp.asnumpy(s2), cp.asnumpy(s1), rtol=1e-12, atol=0)

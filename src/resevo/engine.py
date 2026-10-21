@@ -20,7 +20,7 @@ from .candidates import (
     normalize_block,
     validate_partition,
 )
-from .gain import block_deltas, block_gains
+from .gain import ExactGainOracle, block_deltas, block_gains, integral_values
 from .state import Workload, check_state_ids, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step,
@@ -88,6 +88,10 @@ def build_kernel(
 
     residual = table_residual(workload, s)
     old_loss = loss_from_residual(workload, residual)
+    max_feature = max(float(workload.features.max()), -float(workload.features.min()))
+    exact_counts = integral_values(workload.features) and max_feature * len(s) <= 2.0**50
+    integer_inputs = exact_counts and integral_values(workload.target, workload.weights, residual)
+    oracle = ExactGainOracle.from_workload(workload, s)
 
     normalized: list[NormalizedBlock] = []
     deltas_list: list[NDArray[np.float64]] = []
@@ -95,7 +99,11 @@ def build_kernel(
     for spec in supports:
         nb = normalize_block(spec, s, m, stay_probability)
         d = block_deltas(workload.features, nb.outcomes[0], nb.outcomes)
-        g = block_gains(d, residual, workload.weights)
+        g = block_gains(
+            d, residual, workload.weights, numerical_tol=numerical_tol,
+            exact_gain=lambda row: oracle.block_gain(workload.features, nb.outcomes[0], nb.outcomes[row]),
+            integer_inputs=integer_inputs,
+        )
         normalized.append(nb)
         deltas_list.append(d)
         gains_list.append(g)
