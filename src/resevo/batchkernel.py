@@ -30,7 +30,7 @@ from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
 from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
-from .state import Workload, loss_from_residual, table_residual
+from .state import Workload, loss_from_residual, table_answers, table_residual
 from .stepsize import analytic_step, validate_step_parameters
 from .tilt import calibrate_beta_flat
 
@@ -891,6 +891,11 @@ def evolve_batch(
     group_floors=None,
     stop_floor_groups: bool = False,
     group_snapshot_hook=None,
+    fission_targets=None,
+    fission_every: int = 0,
+    fission_hook=None,
+    fission_stop_z: float = 0.0,
+    fission_stop_runs: int = 3,
 ) -> EvolveResult:
     """批量路径多轮循环，冻结与重试语义与组路径完全一致。
 
@@ -904,6 +909,18 @@ def evolve_batch(
     group_snapshot_hook 给出时在首个全档过线的轮调一次 hook(round_index, old_loss,
     group_losses, state_ids) 交出起点表副本，不停也能记下该点（跑到收敛的对照场用），
     触发在损失快照之后、硬地板停之前。全部默认 None/False 关闭零改变，记账只读不碰随机流。
+    fission_targets 配 fission_every 与 fission_hook 启用分裂探针记账（第七十三步）：
+    fission_targets 为模拟卷 y_B（与题序对齐），每 fission_every 轮、以及分档全过线的轮，
+    用起点表算逐题误差 e = |y_B − q|（q 为起点表答案 = target − residual）与 L1_B = mean e；
+    分档全过线轮的 e 存为参照 e_G，其后每次记账算配对差 d = e − e_G 的均值 diff_mean 与
+    标准误 diff_se = std(d, ddof=1)/√n（参照未设时两者为 None），一并交给
+    hook(round_index, old_loss, l1_b, elapsed_s, at_group_floor, diff_mean, diff_se)；
+    GPU 后端在卡上由当前表重算，CPU 后端只在带全表负载的轮记账（全过线轮若不可记，
+    参照取其后首次可记的轮）。只记不停时不改轨迹，默认 None/0 关闭零改变。
+    fission_stop_z 大于零启用显著回升停（需分档地板记账，参照由全过线轮定）：参照之后
+    连续 fission_stop_runs 次记账都满足 diff_mean ≥ fission_stop_z × diff_se（起点表对
+    模拟卷显著比全过线表差）即收工，停止原因记 fission_rise，返回触发轮起点表；
+    判停只读记账值，停前轨迹与不停的跑逐位一致。
     snapshot_losses 配 snapshot_hook 启用损失快照（第六十一步，纯记账）：
     某轮起点损失首次不高于某个给定值时，把该轮起点表的状态编号副本交给
     钩子 hook(index, threshold, round_index, old_loss, state_ids)，每个给定值
@@ -1035,6 +1052,24 @@ def evolve_batch(
         group_curve = []
         group_pending = True
     group_index_dev = None  # 卡上档号向量，惰性上传一次
+    if fission_every < 0:
+        raise ValueError("分裂探针记账间隔不能为负")
+    if (fission_targets is not None) != (fission_every > 0) or (fission_targets is not None) != (fission_hook is not None):
+        raise ValueError("分裂探针的模拟卷、间隔与钩子须同时给出")
+    if fission_targets is not None:
+        fission_targets = np.asarray(fission_targets, dtype=np.float64)
+        if fission_targets.ndim != 1 or fission_targets.size == 0 or not np.isfinite(fission_targets).all():
+            raise ValueError("模拟卷目标须为非空一维有限向量")
+    if fission_stop_z < 0.0 or not np.isfinite(fission_stop_z):
+        raise ValueError("显著回升停的标准误倍数不能为负")
+    if fission_stop_runs < 1:
+        raise ValueError("显著回升停的连续次数须为正")
+    if fission_stop_z > 0.0 and (fission_targets is None or group_index is None):
+        raise ValueError("显著回升停需同时启用分裂探针记账与分档地板记账")
+    fission_dev = None  # 卡上的模拟卷目标，惰性上传一次
+    fission_ref = None  # 全过线轮起点表的逐题误差 e_G（配对差的参照）
+    fission_ref_pending = False  # 全过线已到但参照尚未记下（该轮不可记时顺延）
+    fission_rise_streak = 0  # 连续"显著更差"的记账次数
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     probes: list[ProbeRecord] = []
@@ -1068,6 +1103,33 @@ def evolve_batch(
             raise ValueError("分档索引长度须等于题数")
         e = table_residual(wl, current)
         return np.bincount(group_index, weights=wl.weights * e * e, minlength=group_floors.size) / 2.0
+
+    def fission_errors_now(plan):
+        """分裂探针记账（第七十三步）：当前起点表对模拟卷的逐题绝对误差 |y_B − q|，只读。
+
+        GPU 后端返回卡上向量，CPU 后端返回 numpy 向量；不可记的轮返回 None。
+        """
+        nonlocal fission_dev
+        if backend == "gpu":
+            if gpu_ctx is None:
+                return None
+            if fission_dev is None:
+                fission_dev = gpu_ctx.cp.asarray(fission_targets)
+            return gpu_ctx.fission_errors_of(plan_provider.codebook.sync(), current, fission_dev)
+        wl = plan.workload
+        if wl.features.shape[0] <= int(current.max()):
+            return None
+        if wl.target.size != fission_targets.size:
+            raise ValueError("模拟卷题数须等于考卷题数")
+        return np.abs(fission_targets - table_answers(wl, current))
+
+    def fission_diff_stats(errors):
+        """配对差 d = e − e_G 的均值与标准误（std 用 ddof=1，题按独立近似），同时适用 numpy 与 cupy 向量。"""
+        xp = np if isinstance(errors, np.ndarray) else gpu_ctx.cp
+        d = errors - fission_ref
+        n = int(d.size)
+        se = float(xp.std(d, ddof=1)) / np.sqrt(n) if n > 1 else 0.0
+        return float(xp.mean(d)), se
 
     t_loop = time.perf_counter()  # 记账用，只读
     for k in range(num_rounds):
@@ -1237,6 +1299,7 @@ def evolve_batch(
             for i in fired:
                 snapshot_hook(i, snap_thresholds[i], k, result.old_loss, current.copy())
                 snap_pending.remove(i)
+        at_group_floor = False
         if group_curve is not None:
             # 分档地板记账（第六十八步）：各档损失逐轮入账，首个全档过线的轮交快照、按开关收工
             per = group_losses_now(plan)
@@ -1244,12 +1307,38 @@ def evolve_batch(
                 group_curve.append((k, per))
                 if group_pending and bool(np.all(per <= group_floors)):
                     group_pending = False
+                    at_group_floor = True
                     if group_snapshot_hook is not None:
                         group_snapshot_hook(k, result.old_loss, per.copy(), current.copy())
-                    if stop_floor_groups:
-                        return EvolveResult(
-                            current, records, "group_floor_reached", probes, temps, group_curve
-                        )
+        if fission_targets is not None and (k % fission_every == 0 or at_group_floor):
+            # 分裂探针记账（第七十三步）：定期与分档过线轮用起点表阅模拟卷；过线轮存参照，
+            # 其后每次记配对差统计，开关打开时连续显著更差即收工，只读记账值不碰随机流
+            errors = fission_errors_now(plan)
+            if at_group_floor:
+                fission_ref_pending = True
+            if errors is not None:
+                xp = np if isinstance(errors, np.ndarray) else gpu_ctx.cp
+                l1_b = float(xp.mean(errors))
+                diff_mean = diff_se = None
+                if fission_ref_pending:
+                    fission_ref = errors
+                    fission_ref_pending = False
+                elif fission_ref is not None:
+                    diff_mean, diff_se = fission_diff_stats(errors)
+                    if fission_stop_z > 0.0:
+                        if diff_se > 0.0 and diff_mean >= fission_stop_z * diff_se:
+                            fission_rise_streak += 1
+                        else:
+                            fission_rise_streak = 0
+                fission_hook(k, result.old_loss, l1_b, time.perf_counter() - t_loop, at_group_floor, diff_mean, diff_se)
+                if fission_stop_z > 0.0 and fission_rise_streak >= fission_stop_runs:
+                    return EvolveResult(
+                        current, records, "fission_rise", probes, temps, group_curve
+                    )
+        if at_group_floor and stop_floor_groups:
+            return EvolveResult(
+                current, records, "group_floor_reached", probes, temps, group_curve
+            )
         if stop_floor > 0.0 and result.old_loss <= stop_floor:
             # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
             # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
