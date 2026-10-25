@@ -19,3 +19,11 @@ runs/**/exam_round*.json
 runs/**/exam_final.json
 runs/**/engine_log.txt
 logs_eps/stage1/convert.log
+
+# 派生试卷不入库（10-25 起，可由出卷脚本+种子重生成）：分裂学习卷目录、纤维/推断卷的表与题目
+data/*_fisA/
+data/*_fiber/*.csv
+data/*_fiber/measured_*.json
+data/*_fiberp1u/*.csv
+data/*_fiberp1u/measured_*.json
+data/*_infer/*.csv

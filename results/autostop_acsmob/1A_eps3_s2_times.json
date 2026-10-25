@@ -1,0 +1,4 @@
+{"cell": "1A_eps3_s2", "dataset": "acsmob", "exam": "1A", "tag": "3", "seed": 2, "gpu": 0, "cores_P": "7,15,16,17,18,21,23,27,28,29,30,31,34,35", "cores_F": "37,38,41,42,43,44,45,46,48,52,53,54,58,64", "nice_F": 0, "cpu_mode": "watch56",
+ "decision": "conv", "force": "conv", "stopz": "2", "stopruns": "3", "every": "", "reasonP": "loss_plateau", "t0": 1792836295.550961240, "tP": 1792839804.704662473, "tD": 1792839804.810403334, "tF": 1792839804.820055541, "tS": null, "tE": 1792839804.839962003,
+ "F_snapG_mtime": 1792836602, "rcP": 0, "rcF": 0, "rcS": null, "killedF": 0,
+ "wall": 3509.3, "load_end": "32.89 37.92 40.85"}

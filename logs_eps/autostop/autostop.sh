@@ -23,6 +23,7 @@ declare -A HALF_A=([0]=0-11 [1]=24-35)
 declare -A HALF_B=([0]=12-23 [1]=36-47)
 exam=$1; tag=$2; seed=$3; gpu=$4
 cell=${exam}_eps${tag}_s${seed}
+DS=${DS:-adult}   # 10-24 第七十四步：数据集名（adult|acsmob|…），默认 adult，命令与产物名不变
 if [ -n "$FULL" ]; then CP=${CORES_P:-${LANE[$gpu]}}; CF=${CORES_F:-${LANE[$gpu]}}; else CP=${CORES_P:-${HALF_A[$gpu]}}; CF=${CORES_F:-${HALF_B[$gpu]}}; fi
 CPU_MODE=fixed
 # 10-19 用户令"看哪个空闲用哪个，总数不超过一半"：有 cpu_watch.py 写的 56 核掩码时，本道取其中 28 核，P/F 各 14 核起步
@@ -44,13 +45,13 @@ mkdir -p $OUT $LOG
 SEEDS="--menu-seed $((20260920 + seed)) --sample-seed $seed --init-seed $seed"
 STOP="--rounds 30000 --stop-threshold 1e-4 --stop-lag 100"
 if [ "$exam" = "1B" ]; then
-  src=adult_aimrep${tag}_s${seed}
+  src=${DS}_aimrep${tag}_s${seed}
   commonP="--data ${src}_fisA $STOP --init-oneway --exam-weights sigma"
   commonF="--data ${src} $STOP --init-oneway --exam-weights sigma"
   extraP="$EXTRA --oneway-pool 2 --oneway-pool-scope uncovered"
   extraF="$EXTRA --fiber-passes 100 --fiber-lock-real --oneway-pool 2 --oneway-pool-scope uncovered"
 else
-  src=adult_alloc${tag}base_s${seed}
+  src=${DS}_alloc${tag}base_s${seed}
   commonP="--data ${src}_fisA --exam measured_2way.json $STOP --init-avg --init-clean --exam-weights none"
   commonF="--data ${src} --exam measured_2way.json $STOP --init-avg --init-clean --exam-weights none"
   extraP="$EXTRA --gpu-sparse auto"
@@ -128,7 +129,7 @@ fi
 tE=$(now)
 gsnap=$(stat -c %Y $OUT/F_${cell}_snapG.csv 2>/dev/null || echo "")
 cat > $OUT/${cell}_times.json <<EOF
-{"cell": "$cell", "exam": "$exam", "tag": "$tag", "seed": $seed, "gpu": $gpu, "cores_P": "$CP", "cores_F": "$CF", "nice_F": $NF, "cpu_mode": "$CPU_MODE",
+{"cell": "$cell", "dataset": "$DS", "exam": "$exam", "tag": "$tag", "seed": $seed, "gpu": $gpu, "cores_P": "$CP", "cores_F": "$CF", "nice_F": $NF, "cpu_mode": "$CPU_MODE",
  "decision": "$dec", "force": "${FORCE:-}", "stopz": "${STOPZ:-}", "stopruns": "${STOPRUNS:-}", "every": "${EVERY:-}", "reasonP": "${reasonP:-}", "t0": $t0, "tP": $tP, "tD": $tD, "tF": ${tF:-null}, "tS": ${tS:-null}, "tE": $tE,
  "F_snapG_mtime": ${gsnap:-null}, "rcP": $rcP, "rcF": ${rcF:-null}, "rcS": ${rcS:-null}, "killedF": $killedF,
  "wall": $(dt $tE $t0), "load_end": "$(cut -d' ' -f1-3 /proc/loadavg)"}

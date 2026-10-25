@@ -1,0 +1,17 @@
+{
+ "stop_reason": "fission_rise",
+ "rounds": 596,
+ "groups": [
+  {
+   "group": 0,
+   "sigmas": [
+    696.7646354378338
+   ],
+   "questions": 10895,
+   "weight_min": 1.0,
+   "weight_max": 1.0,
+   "floor": 2644657514.3297095,
+   "share": 1.0
+  }
+ ]
+}

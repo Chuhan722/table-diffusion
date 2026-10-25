@@ -3,12 +3,12 @@
 # 规矩：GPU 空闲（<5120 MB 连续两次、间隔 60 s）才开；GPU0 道核 0-23、GPU1 道核 24-47，一道同一时刻只跑一格。两道共用队列（mkdir 锁抢格），已交表的格跳过。
 # 用法：cd /root/residual-evolution && (nohup bash logs_eps/autostop/launch_autostop.sh < /dev/null > logs_eps/autostop/launch_autostop.log 2>&1 &)
 #   参数为空格分隔的 "考卷:ε标签:种子" 列表，默认全部 30 格。
-#   VARIANT/STOPZ/STOPRUNS/EVERY/FORCE/NICE_F 等环境变量原样传给 autostop.sh（第七十三步：VARIANT=sig STOPZ=2 STOPRUNS=3）。
+#   VARIANT/STOPZ/STOPRUNS/EVERY/FORCE/NICE_F/DS 等环境变量原样传给 autostop.sh（第七十三步：VARIANT=sig STOPZ=2 STOPRUNS=3；第七十四步 acsmob：DS=acsmob VARIANT=acsmob STOPZ=2 STOPRUNS=3）。
 cd /root/residual-evolution || exit 1
 ALL=""
 for t in 10 3 1 0p3 0p1; do for s in 1 2 3; do ALL="$ALL 1A:$t:$s 1B:$t:$s"; done; done
 JOBS=${1:-"$ALL"}
-export VARIANT STOPZ STOPRUNS EVERY FORCE NICE_F
+export VARIANT STOPZ STOPRUNS EVERY FORCE NICE_F DS
 OUT=results/autostop${VARIANT:+_$VARIANT}
 LOG=logs_eps/autostop${VARIANT:+_$VARIANT}
 LOCK=$LOG/locks

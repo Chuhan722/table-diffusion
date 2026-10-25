@@ -1,0 +1,17 @@
+{
+ "stop_reason": "loss_plateau",
+ "rounds": 8400,
+ "groups": [
+  {
+   "group": 0,
+   "sigmas": [
+    492.6869986090649
+   ],
+   "questions": 10895,
+   "weight_min": 1.0,
+   "weight_max": 1.0,
+   "floor": 1322328757.1648548,
+   "share": 1.0
+  }
+ ]
+}

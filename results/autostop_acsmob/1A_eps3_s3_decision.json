@@ -1,0 +1,17 @@
+{
+ "decision": "conv",
+ "rule": "fission_rise",
+ "stop_reason_P": "loss_plateau",
+ "z": 2.0,
+ "runs": 3,
+ "questions": null,
+ "G_round": 1069,
+ "G_elapsed_s": 207.498,
+ "L1_B_G": 29.976918647230722,
+ "P_last_round": 17495,
+ "P_last_elapsed_s": 3261.148,
+ "L1_B_final": 29.6861733178493,
+ "diff_mean": -0.2907453293814213,
+ "diff_se": 0.16969421881728902,
+ "z_final": -1.713348465303163
+}

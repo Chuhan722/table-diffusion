@@ -1,0 +1,17 @@
+{
+ "stop_reason": "rescue_exhausted",
+ "rounds": 10425,
+ "groups": [
+  {
+   "group": 0,
+   "sigmas": [
+    5.429480895293932
+   ],
+   "questions": 14123,
+   "weight_min": 1.0,
+   "weight_max": 1.0,
+   "floor": 208167.8142083264,
+   "share": 1.0
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "decision": "floor",
+ "rule": "fission_rise",
+ "stop_reason_P": "fission_rise",
+ "z": 2.0,
+ "runs": 3,
+ "questions": null,
+ "G_round": 111,
+ "G_elapsed_s": 32.282,
+ "L1_B_G": 587.0508811057587,
+ "P_last_round": 1125,
+ "P_last_elapsed_s": 216.407,
+ "L1_B_final": 591.1128169033515,
+ "diff_mean": 4.06193579759287,
+ "diff_se": 2.009607602786693,
+ "z_final": 2.021258175954472
+}
