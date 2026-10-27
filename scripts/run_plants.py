@@ -308,7 +308,7 @@ def run_stage(
 
     failure_output = (
         getattr(args, "save_table", None) or getattr(args, "out", None)
-        or getattr(args, "snapshot_prefix", None)
+        or getattr(args, "snapshot_prefix", None) or None
     )
     with save_numerical_failure(registry, failure_output, stage="stage2" if label else "stage1"):
         if args.batched:

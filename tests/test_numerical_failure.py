@@ -242,7 +242,8 @@ def test_public_cli_real_underflow_saves_checkpoint_and_exits_nonzero(tmp_path, 
 
 
 @pytest.mark.parametrize("mode", ([], ["--grouped"], ["--batched"]))
-def test_legacy_driver_real_underflow_also_saves_failure(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("save_output", (False, True))
+def test_legacy_driver_real_underflow_also_saves_failure(tmp_path, monkeypatch, mode, save_output):
     spec = importlib.util.spec_from_file_location("run_plants_failure", ROOT / "scripts" / "run_plants.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -251,13 +252,16 @@ def test_legacy_driver_real_underflow_also_saves_failure(tmp_path, monkeypatch, 
     _tiny_inputs(directory)
     (directory / "toy.csv").write_text("v\n0\n1\n")
     output = tmp_path / "table.csv"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(module, "DATA_ROOT", directory.parent)
     monkeypatch.setattr(sys, "argv", [
         "run_plants.py", "--data", "toy", "--uniform-init", "--init-seed", "11",
-        "--alpha", "5e-324", "--rounds", "3", "--save-table", str(output), *mode,
+        "--alpha", "5e-324", "--rounds", "3", *mode,
+        *(["--save-table", str(output)] if save_output else []),
     ])
     with pytest.raises(NumericalEvolutionError):
         module.main()
     assert not output.exists()
-    manifests = list(tmp_path.glob("table.csv.failed-*/failure.json"))
+    pattern = "table.csv.failed-*/failure.json" if save_output else "outputs/resevo.failed-*/failure.json"
+    manifests = list(tmp_path.glob(pattern))
     assert len(manifests) == 1 and json.loads(manifests[0].read_text())["stage"] == "stage1"
