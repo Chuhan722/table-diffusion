@@ -64,7 +64,7 @@ def write_numerical_failure(
         "stage": stage,
         "rows": len(rows),
         "completed_rounds": len(result.records),
-        "checkpoint_phase": "before_failed_round",
+        "checkpoint_phase": "before_failed_operation",
         "normal_output_published": False,
         "resumable": False,
         "files_sha256": hashes,

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pickle
 import subprocess
 import sys
 
@@ -161,6 +162,19 @@ def _failure():
     return registry, NumericalEvolutionError("numerical_indeterminate: fixture", result)
 
 
+def test_numerical_exception_pickles_with_its_diagnostic_state():
+    _, error = _failure()
+    error.review_context = {"case": "transport"}
+    restored = pickle.loads(pickle.dumps(error))
+    assert type(restored) is NumericalEvolutionError
+    assert restored.args == error.args and str(restored) == str(error)
+    assert restored.review_context == error.review_context
+    np.testing.assert_array_equal(restored.partial_result.state_ids, error.partial_result.state_ids)
+    assert restored.partial_result.stop_reason == "numerical_indeterminate"
+    assert restored.partial_result.records[0].old_loss == 2.0
+    np.testing.assert_array_equal(restored.partial_result.group_losses[0][1], [0.5, 1.5])
+
+
 def test_failure_files_are_distinct_complete_and_not_normal_outputs(tmp_path):
     registry, error = _failure()
     output = tmp_path / "table.csv"
@@ -171,6 +185,7 @@ def test_failure_files_are_distinct_complete_and_not_normal_outputs(tmp_path):
     manifest = json.loads((a / "failure.json").read_text())
     assert manifest["status"] == "failed" and manifest["stop_reason"] == "numerical_indeterminate"
     assert manifest["stage"] == "stage2" and manifest["completed_rounds"] == 1
+    assert manifest["checkpoint_phase"] == "before_failed_operation"
     assert manifest["normal_output_published"] is False and manifest["resumable"] is False
     for filename, digest in manifest["files_sha256"].items():
         assert hashlib.sha256((a / filename).read_bytes()).hexdigest() == digest

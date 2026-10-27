@@ -261,11 +261,14 @@ class EvolveResult:
 
 
 class NumericalEvolutionError(FloatingPointError):
-    """数值中断，携带失败轮之前的当前表与已完成记录，不是成功返回值。"""
+    """数值中断，携带失败点之前的当前表与已完成记录，不是成功返回值。"""
 
     def __init__(self, message: str, partial_result: EvolveResult):
         super().__init__(message)
         self.partial_result = partial_result
+
+    def __reduce__(self):
+        return type(self), (str(self), self.partial_result), self.__dict__
 
 
 _Result = TypeVar("_Result")
