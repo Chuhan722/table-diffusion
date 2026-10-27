@@ -31,7 +31,7 @@ from scipy.optimize import brentq
 from .batchkernel import BatchKernelResult
 from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
-from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask
+from .gain import ExactGainOracle, exact_sparse_path_gains, integral_values, validate_numerical_tol
 from .state import Workload
 from .stepsize import analytic_step, validate_step_parameters
 from .tilt import calibration_requirement, validate_tilt_parameters, validate_tilt_result
@@ -296,6 +296,37 @@ __global__ void part_gains(const double* __restrict__ data, const long long* __r
     }
 }
 
+// 局部复核掩码、异常位和选中数量合并；正常空掩码也必须核验异常位。
+__global__ void gain_recheck(const double* __restrict__ gains,
+                             const double* __restrict__ magnitudes,
+                             const long long* __restrict__ terms,
+                             const long long n, const int integral,
+                             const double tolerance, const double unit_roundoff,
+                             const double smallest, const double exact_limit,
+                             bool* __restrict__ mask,
+                             unsigned long long* __restrict__ status) {
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const double g = gains[i], m = magnitudes[i];
+    unsigned long long flags = 0;
+    if (!isfinite(g) || !isfinite(m)) flags |= 1;
+    if (m < 0.0) flags |= 2;
+    const double operations = __dmul_rn(8.0, __dadd_rn((double)terms[i], 1.0));
+    const double ku = __dmul_rn(operations, unit_roundoff);
+    if (ku >= 0.5) flags |= 4;
+    if (m > exact_limit) flags |= 8;
+    bool selected = false;
+    if (!(flags & 7) && (!integral || m > exact_limit)) {
+        const double gamma = __ddiv_rn(ku, __dsub_rn(1.0, ku));
+        const double relative = fmax(tolerance, __ddiv_rn(gamma, __dsub_rn(1.0, gamma)));
+        const double threshold = fmax(__dmul_rn(relative, m), __dmul_rn(operations, smallest));
+        selected = terms[i] > 0 && fabs(g) <= threshold;
+    }
+    mask[i] = selected;
+    if (selected) atomicAdd(status, 1ULL);
+    if (flags) atomicOr(status + 1, flags);
+}
+
 }
 """
 _tilt_module_cache = {}
@@ -312,6 +343,7 @@ def _tilt_kernels(cp):
             "gain": raw.get_function("tilt_gain"),
             "part_gains": raw.get_function("part_gains"),
             "drift_kv": raw.get_function("drift_kv"),
+            "gain_recheck": raw.get_function("gain_recheck"),
         }
         _tilt_module_cache[dev] = mod
     return mod
@@ -591,8 +623,13 @@ class GpuBatchContext:
         self.hs_threshold = cp.asarray(qs.hs_threshold)
         self.hs_score = [cp.asarray(t) for t in qs.hs_score]
         self.num_hs = qs.num_halfspaces
-        self.target = cp.asarray(np.asarray(target, dtype=np.float64))
-        self.weights = cp.asarray(np.asarray(weights, dtype=np.float64))
+        self._target_host = np.array(target, dtype=np.float64, copy=True)
+        self._weights_host = np.array(weights, dtype=np.float64, copy=True)
+        self._target_host.setflags(write=False)
+        self._weights_host.setflags(write=False)
+        self._integral_gain_inputs = integral_values(self._target_host, self._weights_host)
+        self.target = cp.asarray(self._target_host)
+        self.weights = cp.asarray(self._weights_host)
         self.num_queries = int(self.target.size)
         # 依赖表拼接缓存，供条目流展开一次取数，免去按字段的小核循环
         sizes_np = np.array([d.size for d in qs.dep], dtype=np.int64)
@@ -1422,6 +1459,30 @@ class GpuBatchContext:
         self_cross = float(cp.sum(cg * self.weights[q_idx] * sums * sums))
         return drift_total, self_cross
 
+    def _gain_recheck_mask(self, gains, magnitudes, terms, numerical_tol):
+        """固定量整数性已缓存；检查状态与选中数量只回传一次。"""
+        validate_numerical_tol(numerical_tol)
+        cp = self.cp
+        size = int(gains.size)
+        mask = cp.empty(size, dtype=cp.bool_)
+        if not size:
+            return mask, 0
+        status = cp.zeros(2, dtype=cp.uint64)
+        _tilt_kernels(cp)["gain_recheck"](
+            ((size + 255) // 256,), (256,),
+            (gains, magnitudes, terms, np.int64(size), np.int32(self._integral_gain_inputs),
+             np.float64(numerical_tol), np.float64(np.finfo(np.float64).eps / 2.0),
+             np.float64(np.nextafter(0.0, 1.0)), np.float64(2.0**50), mask, status),
+        )
+        selected, flags = (int(value) for value in cp.asnumpy(status))
+        if flags & 1:
+            raise FloatingPointError("numerical_indeterminate: 局部增益或运算规模非有限")
+        if flags & 2:
+            raise FloatingPointError("numerical_indeterminate: 局部运算规模不能为负")
+        if flags & 4 and (not self._integral_gain_inputs or flags & 8):
+            raise FloatingPointError("numerical_indeterminate: 无法建立有效的局部舍入界")
+        return mask, selected
+
     # ------------------------------------------------------------------
     def build(
         self,
@@ -1499,16 +1560,11 @@ class GpuBatchContext:
             magnitudes += cp.abs(delta_hs) @ cp.abs(we[self.hs_cols]) + quadratic_hs
             gain_terms += cp.count_nonzero(delta_hs, axis=1)
 
-        integral = (
-            bool(cp.all(self.target == cp.rint(self.target)))
-            and bool(cp.all(self.weights == cp.rint(self.weights)))
-            and bool(cp.all(residual == cp.rint(residual)))
+        recheck, selected_count = self._gain_recheck_mask(
+            gains_paths, magnitudes, gain_terms, numerical_tol,
         )
-        recheck = gain_recheck_mask(
-            gains_paths, magnitudes, gain_terms, numerical_tol, integral=integral, xp=cp,
-        )
-        selected_dev = cp.flatnonzero(recheck)
-        if selected_dev.size:
+        if selected_count:
+            selected_dev = cp.flatnonzero(recheck)
             selected_parts = []
             for part in parts:
                 rows = cp.flatnonzero(recheck[part["path_idx"]])
@@ -1527,7 +1583,7 @@ class GpuBatchContext:
             corrected = exact_sparse_path_gains(
                 cp.asnumpy(selected_dev), selected_parts,
                 ExactGainOracle.from_answers(
-                    cp.asnumpy(self.target), cp.asnumpy(self.weights), cp.asnumpy(answers),
+                    self._target_host, self._weights_host, cp.asnumpy(answers),
                 ),
                 None if delta_hs is None else cp.asnumpy(delta_hs[selected_dev]),
                 cp.asnumpy(self.hs_cols),
