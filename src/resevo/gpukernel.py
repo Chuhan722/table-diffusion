@@ -33,7 +33,9 @@ from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
 from .gain import ExactGainOracle, exact_sparse_path_gains, integral_values, validate_numerical_tol
 from .state import Workload
-from .stepsize import analytic_step, validate_step_parameters
+from .stepsize import (
+    analytic_step, expected_improvement, final_probabilities, kernel_statistics, validate_step_parameters,
+)
 from .tilt import calibration_requirement, validate_tilt_parameters, validate_tilt_result
 
 
@@ -1355,13 +1357,12 @@ class GpuBatchContext:
             interaction = float(
                 ((drift_total * self.weights) @ drift_total - self_cross) / 2
             )
-            h_star = analytic_step(max_leave, D, interaction)
             unit_rows = float(counts @ leave)
-            if max_expected_rows is not None and unit_rows > 0:
-                step = damping * min(h_star, max_expected_rows / unit_rows)
-            else:
-                step = damping * h_star
-            j = step * D - step * step * interaction
+            step = analytic_step(
+                max_leave, D, interaction, damping,
+                unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+            )
+            j = expected_improvement(step, D, interaction)
             if j > best_j:
                 best_j, best_beta = j, float(beta)
         return best_beta, best_j
@@ -1704,25 +1705,15 @@ class GpuBatchContext:
         # 标量与拼接向量回传，步长与越界修正走 CPU 原语义
         leave_np = cp.asnumpy(leave)
         rates_np = cp.asnumpy(rates_flat)
-        h_star = analytic_step(float(leave_np.max()), direction_gain, interaction)
         unit_rows = float(np.dot(grouped.counts.astype(np.float64), leave_np))
-        if max_expected_rows is not None and unit_rows > 0:
-            step = damping * min(h_star, max_expected_rows / unit_rows)
-        else:
-            step = damping * h_star
-
-        probs_flat = step * rates_np
-        stay = 1.0 - np.add.reduceat(probs_flat, offsets_np[:-1])
-        if np.any(stay < -1e-12):
-            raise FloatingPointError("步长违反随机矩阵约束")
-        probs_flat[offsets_np[:-1]] = np.maximum(stay, 0.0)
-        negative = np.flatnonzero(stay < 0)
-        for b in negative:
-            lo, hi = int(offsets_np[b]), int(offsets_np[b + 1])
-            probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
-
-        expected_loss = old_loss - step * direction_gain + step * step * interaction
-        upper = old_loss - step * direction_gain / 2
+        step = analytic_step(
+            float(leave_np.max()), direction_gain, interaction, damping,
+            unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+        )
+        probs_flat, has_movement = final_probabilities(rates_np, step, offsets_np)
+        expected_loss, upper, expected_rows = kernel_statistics(
+            old_loss, direction_gain, interaction, step, unit_rows, has_movement,
+        )
         probe = None
         if probe_grid > 0:
             probe = self._probe_grid(
@@ -1733,7 +1724,7 @@ class GpuBatchContext:
         return BatchKernelResult(
             menu, grouped, offsets_np, probs_flat, old_loss,
             beta, direction_gain, interaction, step,
-            expected_loss, upper, step * unit_rows,
+            expected_loss, upper, expected_rows,
             max_gain_sum, requirement, "ok",
             cp.asnumpy(scores_gpu),
             probe,

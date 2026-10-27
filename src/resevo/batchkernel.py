@@ -34,7 +34,9 @@ from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, i
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .state import Workload, loss_from_residual, table_residual
-from .stepsize import analytic_step, validate_step_parameters
+from .stepsize import (
+    analytic_step, expected_improvement, final_probabilities, kernel_statistics, validate_step_parameters,
+)
 from .tilt import calibrate_beta_flat
 
 
@@ -410,13 +412,12 @@ def _probe_beta_grid(
         interaction = float(
             (np.dot(drift_total * weights, drift_total) - self_cross) / 2
         )
-        h_star = analytic_step(max_leave, D, interaction)
         unit_rows = float(counts @ leave)
-        if max_expected_rows is not None and unit_rows > 0:
-            step = damping * min(h_star, max_expected_rows / unit_rows)
-        else:
-            step = damping * h_star
-        j = step * D - step * step * interaction
+        step = analytic_step(
+            max_leave, D, interaction, damping,
+            unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+        )
+        j = expected_improvement(step, D, interaction)
         if j > best_j:
             best_j, best_beta = j, float(beta)
     return best_beta, best_j
@@ -582,25 +583,15 @@ def build_batch_kernel(
     interaction = float(
         (np.dot(drift_total * workload.weights, drift_total) - self_cross) / 2
     )
-    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
     unit_rows = float(counts @ leave)
-    if max_expected_rows is not None and unit_rows > 0:
-        step = damping * min(h_star, max_expected_rows / unit_rows)
-    else:
-        step = damping * h_star
-
-    probs_flat = step * rates_flat
-    stay = 1.0 - np.add.reduceat(probs_flat, seg_starts)
-    if np.any(stay < -1e-12):
-        raise FloatingPointError("步长违反随机矩阵约束")
-    probs_flat[seg_starts] = np.maximum(stay, 0.0)
-    negative = np.flatnonzero(stay < 0)
-    for b in negative:
-        lo, hi = int(offsets[b]), int(offsets[b + 1])
-        probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
-
-    expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
-    upper = old_loss - step * tilt.direction_gain / 2
+    step = analytic_step(
+        float(leave.max()), tilt.direction_gain, interaction, damping,
+        unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+    )
+    probs_flat, has_movement = final_probabilities(rates_flat, step, offsets)
+    expected_loss, upper, expected_rows = kernel_statistics(
+        old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
+    )
     probe = None
     if probe_grid > 0:
         probe = _probe_beta_grid(
@@ -612,7 +603,7 @@ def build_batch_kernel(
     return BatchKernelResult(
         menu, grouped, offsets, probs_flat, old_loss,
         tilt.beta, tilt.direction_gain, interaction, step,
-        expected_loss, upper, step * unit_rows,
+        expected_loss, upper, expected_rows,
         tilt.max_gain_sum, tilt.required_gain, "ok",
         group_scores,
         probe,
