@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -259,6 +260,28 @@ class EvolveResult:
     group_losses: list | None = None  # 分档地板记账（第六十八步）：(轮号, 各档损失向量) 列表，未开启为 None
 
 
+class NumericalEvolutionError(FloatingPointError):
+    """数值中断，携带失败轮之前的当前表与已完成记录，不是成功返回值。"""
+
+    def __init__(self, message: str, partial_result: EvolveResult):
+        super().__init__(message)
+        self.partial_result = partial_result
+
+
+_Result = TypeVar("_Result")
+
+
+def _with_numerical_checkpoint(
+    operation: Callable[..., _Result], checkpoint: Callable[[], EvolveResult], *args, **kwargs,
+) -> _Result:
+    try:
+        return operation(*args, **kwargs)
+    except FloatingPointError as exc:
+        if not str(exc).startswith("numerical_indeterminate:"):
+            raise
+        raise NumericalEvolutionError(str(exc), checkpoint()) from exc
+
+
 def evolve(
     workload: Workload | None,
     state_ids,
@@ -279,7 +302,7 @@ def evolve(
     提供器模式下负载允许只增不改地扩状态，旧编号贡献行必须保持前缀一致。
     冻结不再必然立即停，随机菜单本轮无正增益不是全局证书，
     连续冻结超过 max_frozen_retries 次才停，0 保持旧行为冻结即停。
-    最简占位，停止只区分冻结与轮数上限，数值不确定等状态留待后续版本。
+    数值不确定继续抛异常，附带失败轮之前的当前状态供驱动保存诊断，不返回成功产物。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -296,12 +319,19 @@ def evolve(
         current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
+
+    def checkpoint():
+        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+
     for k in range(num_rounds):
         if support_provider is not None:
-            round_workload, round_supports = support_provider(current, k, frozen_streak)
+            round_workload, round_supports = _with_numerical_checkpoint(
+                support_provider, checkpoint, current, k, frozen_streak,
+            )
         else:
             round_workload, round_supports = workload, supports
-        result = build_kernel(
+        result = _with_numerical_checkpoint(
+            build_kernel, checkpoint,
             round_workload, current, round_supports,
             stay_probability, alpha, damping, max_expected_rows,
         )

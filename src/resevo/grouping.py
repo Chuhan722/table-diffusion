@@ -31,7 +31,9 @@ from .editspace import (
     generate_edit_supports,
     tuples_from_ids,
 )
-from .engine import BlockKernel, EvolveResult, RoundRecord, build_kernel, sample_next
+from .engine import (
+    BlockKernel, EvolveResult, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
+)
 from .gain import ExactGainOracle, gain_recheck_mask, integral_values
 from .pairing import PairingBudget, build_paired_supports
 from .state import Workload, loss_from_residual
@@ -500,15 +502,21 @@ def evolve_grouped(
     records: list[RoundRecord] = []
     frozen_streak = 0
     quad_cache: dict = {}  # 状态对二次项跨轮缓存，权重固定时增量恒定
+
+    def checkpoint():
+        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+
     for k in range(num_rounds):
-        plan = plan_provider(current, k, frozen_streak)
+        plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
         if plan.mode == "rows":
-            result = build_kernel(
+            result = _with_numerical_checkpoint(
+                build_kernel, checkpoint,
                 plan.workload, current, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "grouped":
-            result = build_group_kernel(
+            result = _with_numerical_checkpoint(
+                build_group_kernel, checkpoint,
                 plan.workload, plan.grouped, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
                 quad_cache=quad_cache,

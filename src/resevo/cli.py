@@ -11,6 +11,7 @@ import numpy as np
 from .batchkernel import evolve_batch, make_batch_provider
 from .dataset import StateRegistry, TableSchema, load_queries, target_from_specs
 from .editspace import tuples_from_ids
+from .failure import save_numerical_failure
 from .initialization import derive_first_order, sample_initial_rows
 from .stepsize import validate_step_parameters
 
@@ -104,12 +105,13 @@ def main(argv: list[str] | None = None) -> None:
         work_rows=args.work_rows, work_below_step=args.work_below,
         select_rng=np.random.default_rng(200000 + args.seed),
     )
-    result = evolve_batch(
-        ids, args.rounds, np.random.default_rng(300000 + args.seed), provider, registry,
-        alpha=args.alpha, stay_probability=args.stay, damping=args.damping,
-        max_expected_rows=args.max_expected_rows, max_frozen_retries=args.retries,
-        backend=args.backend, gpu_entry_budget=args.gpu_entry_budget,
-    )
+    with save_numerical_failure(registry, args.output):
+        result = evolve_batch(
+            ids, args.rounds, np.random.default_rng(300000 + args.seed), provider, registry,
+            alpha=args.alpha, stay_probability=args.stay, damping=args.damping,
+            max_expected_rows=args.max_expected_rows, max_frozen_retries=args.retries,
+            backend=args.backend, gpu_entry_budget=args.gpu_entry_budget,
+        )
     final_rows = tuples_from_ids(registry, result.state_ids)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8", newline="") as stream:

@@ -27,7 +27,9 @@ from .batchmenu import (
 )
 from .dataset import StateRegistry
 from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
-from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
+from .engine import (
+    EvolveResult, ProbeRecord, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
+)
 from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, integral_values
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
@@ -1082,6 +1084,13 @@ def evolve_batch(
     prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
 
+    def checkpoint():
+        return EvolveResult(
+            current.copy(), records.copy(), "numerical_indeterminate", probes.copy(),
+            None if temps is None else temps.copy(),
+            None if group_curve is None else [(k, losses.copy()) for k, losses in group_curve],
+        )
+
     def group_losses_now(plan):
         """分档地板记账：当前起点表各档损失，读 current 与 gpu_ctx 的最新绑定，只读。"""
         nonlocal group_index_dev
@@ -1134,11 +1143,12 @@ def evolve_batch(
                     f"{' 熄火' if ns_stats['dead'] else ''}",
                     flush=True,
                 )
-        plan = plan_provider(current, k, frozen_streak)
+        plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
         round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
         if plan.mode in ("rows", "rescue", "tree"):
             kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
-            result = build_kernel(
+            result = _with_numerical_checkpoint(
+                build_kernel, checkpoint,
                 plan.workload, kernel_ids, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
@@ -1197,7 +1207,8 @@ def evolve_batch(
                         plan.workload.target, plan.workload.weights,
                         direct=gpu_direct, sparse=gpu_sparse,
                     )
-                result = gpu_ctx.build(
+                result = _with_numerical_checkpoint(
+                    gpu_ctx.build, checkpoint,
                     plan.grouped, plan.menu, plan_provider.codebook.sync(),
                     stay_probability, alpha, damping, max_expected_rows,
                     beta_hint=last_beta,
@@ -1209,7 +1220,8 @@ def evolve_batch(
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
-                result = build_batch_kernel(
+                result = _with_numerical_checkpoint(
+                    build_batch_kernel, checkpoint,
                     plan.workload, plan.grouped, plan.menu,
                     plan_provider.structure[0], plan_provider.codebook.sync(),
                     stay_probability, alpha, damping, max_expected_rows,
