@@ -13,15 +13,16 @@ sigma 等于根号下灵敏度平方除以二倍每边际预算，
 须知，cdp_rho 换算内置 IBM cdp2adp 参考实现，与官方所用 snsynth 同源零偏差，
 ./.venv/bin/python scripts/make_noisy_exam.py \
     --data nltcs --epsilon 1 --delta 1e-5 --noise-seed 1
-输出目录 data/<data>_eps<E>_s<seed>，表复制成目录同名，噪声训练卷同名替换。
-该目录含原表副本和可复现噪声信息，仅用于基准内部对照，不能作为 DP 发布包。
+输出目录 data/<data>_eps<E><tag>_s<seed> 必须不存在，只写噪声训练卷和说明。
+本脚本只读取输入考卷，使用其中声明的 record_count，不读取或复制原始表。
+生成请使用公开输入入口 python -m resevo，显式提供公开 schema/N；
+新目录不再适配依赖同名原表 CSV 的历史生成入口。
+目录仍含可复现噪声信息，仅用于基准内部对照，不能作为 DP 发布包。
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -72,7 +73,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", required=True, help="真实数据目录名")
+    parser.add_argument("--data", required=True, help="data 下包含唯一 measured_*query.json 的目录名，无需原表")
     parser.add_argument("--epsilon", type=float, required=True)
     parser.add_argument("--delta", type=float, default=1e-5)
     parser.add_argument("--noise-seed", type=int, required=True)
@@ -126,8 +127,10 @@ def main() -> None:
     eps_txt = f"{args.epsilon:g}".replace(".", "p")
     out_name = f"{args.data}_eps{eps_txt}{args.tag}_s{args.noise_seed}"
     out_dir = REPO / "data" / out_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src_dir / f"{args.data}.csv", out_dir / f"{out_name}.csv")
+    try:
+        out_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise SystemExit(f"拒绝复用已有输出路径：{out_dir}；请使用新的 --tag，旧内容不会被清理") from exc
 
     for q, nf in zip(queries, noisy_freq):
         q["result"] = float(nf * n_rows)
@@ -145,17 +148,18 @@ def main() -> None:
     with open(exam_out, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False)
 
-    md5 = hashlib.md5((out_dir / f"{out_name}.csv").read_bytes()).hexdigest()
     with open(out_dir / "README.md", "w", encoding="utf-8") as fh:
         fh.write(
             f"# {out_name} 噪声考卷\n\n"
-            f"1. 来源，data/{args.data} 的训练卷加高斯噪声，表原样复制，md5 {md5}。\n"
+            f"1. 来源，data/{args.data} 的训练卷加高斯噪声；只读取考卷，不读取或复制原表。\n"
             f"2. 口径，epsilon {args.epsilon}，delta {args.delta}，cdp_rho 换算总 rho {rho_total:.6g}，"
             f"预留 {args.reserve_rho:.6g} 给结构基准 S* 购买，考卷 rho {rho:.6g}，"
             f"边际数 {m} 均分，每边际 rho {rho_per:.6g}，灵敏度 根号2/{n_rows}，"
             f"频率 sigma {sigma:.6g}，计数 sigma {sigma * n_rows:.4f}。\n"
             f"3. 噪声种子 {args.noise_seed}，numpy default_rng，按考卷条目顺序逐格一次生成。\n"
-            f"4. 裁剪触发 {clipped} 格，评价一律用真实目录的考卷，本目录只供拟合。\n"
+            f"4. 裁剪触发 {clipped} 格，生成结束后独立用真实目录的考卷评价，本目录只供拟合。\n"
+            "5. 生成使用 python -m resevo，显式提供公开 schema/N；不适配依赖同名原表 CSV 的旧入口。\n"
+            "6. 仍含可复现噪声信息，仅用于基准内部对照，不能作为 DP 发布包。\n"
         )
     print(
         f"rho {rho:.6g} 边际 {m} 每边际 {rho_per:.6g} 频率sigma {sigma:.6g} "
