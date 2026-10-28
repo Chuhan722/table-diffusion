@@ -148,6 +148,8 @@ def main():
         exact_recheck_paths=counters["exact_recheck_paths"] if exact is not None else None,
         stop_reason=result.stop_reason, records=records, state_ids=result.state_ids.tolist(),
         menu_rng=menu_rng, sample_rng=sample_rng,
+        sampling_precision_reported=hasattr(result, "sampling_precision"),
+        sampling_precision=[asdict(row) for row in getattr(result, "sampling_precision", None) or []],
         python=sys.version, numpy=np.__version__, cupy=cp.__version__,
         cuda_driver=cp.cuda.runtime.driverGetVersion(),
         device=cp.cuda.runtime.getDeviceProperties(0)["name"].decode(),

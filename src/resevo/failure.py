@@ -13,6 +13,7 @@ import tempfile
 from .dataset import StateRegistry
 from .editspace import tuples_from_ids
 from .engine import NumericalEvolutionError, ProbeRecord, RoundRecord
+from .sampling import SAMPLING_CONTRACT, SamplingPrecision
 
 
 def write_numerical_failure(
@@ -48,6 +49,8 @@ def write_numerical_failure(
     save_records("records.csv", result.records, RoundRecord)
     if result.probes is not None:
         save_records("probes.csv", result.probes, ProbeRecord)
+    if result.sampling_precision:
+        save_records("sampling_precision.csv", result.sampling_precision, SamplingPrecision)
     if result.temps is not None:
         save_csv("temperatures.csv", ["round", "temperature"], enumerate(result.temps))
     if result.group_losses:
@@ -67,6 +70,7 @@ def write_numerical_failure(
         "checkpoint_phase": "before_failed_operation",
         "normal_output_published": False,
         "resumable": False,
+        "sampling_contract": SAMPLING_CONTRACT,
         "files_sha256": hashes,
     }
     manifest_path = directory / "failure.json.tmp"
