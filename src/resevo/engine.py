@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,7 +21,7 @@ from .candidates import (
     normalize_block,
     validate_partition,
 )
-from .gain import block_deltas, block_gains
+from .gain import ExactGainOracle, block_deltas, block_gains, integral_values
 from .state import Workload, check_state_ids, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step,
@@ -88,6 +89,10 @@ def build_kernel(
 
     residual = table_residual(workload, s)
     old_loss = loss_from_residual(workload, residual)
+    max_feature = max(float(workload.features.max()), -float(workload.features.min()))
+    exact_counts = integral_values(workload.features) and max_feature * len(s) <= 2.0**50
+    integer_inputs = exact_counts and integral_values(workload.target, workload.weights, residual)
+    oracle = ExactGainOracle.from_workload(workload, s)
 
     normalized: list[NormalizedBlock] = []
     deltas_list: list[NDArray[np.float64]] = []
@@ -95,7 +100,11 @@ def build_kernel(
     for spec in supports:
         nb = normalize_block(spec, s, m, stay_probability)
         d = block_deltas(workload.features, nb.outcomes[0], nb.outcomes)
-        g = block_gains(d, residual, workload.weights)
+        g = block_gains(
+            d, residual, workload.weights, numerical_tol=numerical_tol,
+            exact_gain=lambda row: oracle.block_gain(workload.features, nb.outcomes[0], nb.outcomes[row]),
+            integer_inputs=integer_inputs,
+        )
         normalized.append(nb)
         deltas_list.append(d)
         gains_list.append(g)
@@ -251,6 +260,31 @@ class EvolveResult:
     group_losses: list | None = None  # 分档地板记账（第六十八步）：(轮号, 各档损失向量) 列表，未开启为 None
 
 
+class NumericalEvolutionError(FloatingPointError):
+    """数值中断，携带失败点之前的当前表与已完成记录，不是成功返回值。"""
+
+    def __init__(self, message: str, partial_result: EvolveResult):
+        super().__init__(message)
+        self.partial_result = partial_result
+
+    def __reduce__(self):
+        return type(self), (str(self), self.partial_result), self.__dict__
+
+
+_Result = TypeVar("_Result")
+
+
+def _with_numerical_checkpoint(
+    operation: Callable[..., _Result], checkpoint: Callable[[], EvolveResult], *args, **kwargs,
+) -> _Result:
+    try:
+        return operation(*args, **kwargs)
+    except FloatingPointError as exc:
+        if not str(exc).startswith("numerical_indeterminate:"):
+            raise
+        raise NumericalEvolutionError(str(exc), checkpoint()) from exc
+
+
 def evolve(
     workload: Workload | None,
     state_ids,
@@ -271,7 +305,7 @@ def evolve(
     提供器模式下负载允许只增不改地扩状态，旧编号贡献行必须保持前缀一致。
     冻结不再必然立即停，随机菜单本轮无正增益不是全局证书，
     连续冻结超过 max_frozen_retries 次才停，0 保持旧行为冻结即停。
-    最简占位，停止只区分冻结与轮数上限，数值不确定等状态留待后续版本。
+    数值不确定继续抛异常，附带失败轮之前的当前状态供驱动保存诊断，不返回成功产物。
     """
     if num_rounds < 1:
         raise ValueError("轮数必须为正")
@@ -288,12 +322,19 @@ def evolve(
         current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
     frozen_streak = 0
+
+    def checkpoint():
+        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+
     for k in range(num_rounds):
         if support_provider is not None:
-            round_workload, round_supports = support_provider(current, k, frozen_streak)
+            round_workload, round_supports = _with_numerical_checkpoint(
+                support_provider, checkpoint, current, k, frozen_streak,
+            )
         else:
             round_workload, round_supports = workload, supports
-        result = build_kernel(
+        result = _with_numerical_checkpoint(
+            build_kernel, checkpoint,
             round_workload, current, round_supports,
             stay_probability, alpha, damping, max_expected_rows,
         )

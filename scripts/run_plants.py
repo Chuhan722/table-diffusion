@@ -32,6 +32,7 @@ from resevo.dataset import (  # noqa: E402
 from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
+from resevo.failure import save_numerical_failure  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
@@ -305,57 +306,62 @@ def run_stage(
             write_snapshot("G", float(group_floor["floors"].sum()), round_index, old_loss, ids)
             print(f"{label}分档快照 各档损失÷地板 " + " ".join(f"{r:.3f}" for r in per / group_floor["floors"]), flush=True)
 
-    if args.batched:
-        out = evolve_batch(
-            ids, rounds,
-            np.random.default_rng(sample_seed),
-            provider, registry,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-            backend="gpu" if args.gpu else "cpu",
-            stop_threshold=args.stop_threshold,
-            stop_lag=args.stop_lag,
-            rescue_stop_window=args.rescue_stop_window,
-            rescue_stop_tol=args.rescue_stop_tol,
-            gpu_entry_budget=args.gpu_entry_budget,
-            gpu_direct=gpu_direct,
-            gpu_sparse=gpu_sparse,
-            noise_floor=args.noise_floor,
-            stop_threshold_noisy=args.stop_threshold_noisy,
-            progress_every=args.progress,
-            probe_interval=args.probe_interval,
-            ref_shape=args.ref_shape,
-            stay_probability=args.stay,
-            damping=args.damping,
-            struct_shaper=shaper,
-            treat_stop_tol=args.treat_stop_tol,
-            stop_floor=stop_floor,
-            nullswap_phase=nullswap,
-            nullswap_every=args.nullswap_every,
-            nullswap_after=args.nullswap_after,
-            snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
-            snapshot_hook=snapshot_hook,
-            group_index=None if group_floor is None else group_floor["index"],
-            group_floors=None if group_floor is None else group_floor["floors"],
-            stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
-            group_snapshot_hook=group_snapshot_hook,
-        )
-    elif args.grouped:
-        out = evolve_grouped(
-            ids, rounds,
-            np.random.default_rng(sample_seed),
-            provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
-    else:
-        out = evolve(
-            None, ids, rounds,
-            np.random.default_rng(sample_seed),
-            support_provider=provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
+    failure_output = (
+        getattr(args, "save_table", None) or getattr(args, "out", None)
+        or getattr(args, "snapshot_prefix", None) or None
+    )
+    with save_numerical_failure(registry, failure_output, stage="stage2" if label else "stage1"):
+        if args.batched:
+            out = evolve_batch(
+                ids, rounds,
+                np.random.default_rng(sample_seed),
+                provider, registry,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+                backend="gpu" if args.gpu else "cpu",
+                stop_threshold=args.stop_threshold,
+                stop_lag=args.stop_lag,
+                rescue_stop_window=args.rescue_stop_window,
+                rescue_stop_tol=args.rescue_stop_tol,
+                gpu_entry_budget=args.gpu_entry_budget,
+                gpu_direct=gpu_direct,
+                gpu_sparse=gpu_sparse,
+                noise_floor=args.noise_floor,
+                stop_threshold_noisy=args.stop_threshold_noisy,
+                progress_every=args.progress,
+                probe_interval=args.probe_interval,
+                ref_shape=args.ref_shape,
+                stay_probability=args.stay,
+                damping=args.damping,
+                struct_shaper=shaper,
+                treat_stop_tol=args.treat_stop_tol,
+                stop_floor=stop_floor,
+                nullswap_phase=nullswap,
+                nullswap_every=args.nullswap_every,
+                nullswap_after=args.nullswap_after,
+                snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
+                snapshot_hook=snapshot_hook,
+                group_index=None if group_floor is None else group_floor["index"],
+                group_floors=None if group_floor is None else group_floor["floors"],
+                stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
+                group_snapshot_hook=group_snapshot_hook,
+            )
+        elif args.grouped:
+            out = evolve_grouped(
+                ids, rounds,
+                np.random.default_rng(sample_seed),
+                provider,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+            )
+        else:
+            out = evolve(
+                None, ids, rounds,
+                np.random.default_rng(sample_seed),
+                support_provider=provider,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+            )
     elapsed = time.perf_counter() - t0
 
     if args.gpu:

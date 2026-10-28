@@ -31,7 +31,10 @@ from .editspace import (
     generate_edit_supports,
     tuples_from_ids,
 )
-from .engine import BlockKernel, EvolveResult, RoundRecord, build_kernel, sample_next
+from .engine import (
+    BlockKernel, EvolveResult, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
+)
+from .gain import ExactGainOracle, gain_recheck_mask, integral_values
 from .pairing import PairingBudget, build_paired_supports
 from .state import Workload, loss_from_residual
 from .stepsize import analytic_step, validate_step_parameters
@@ -290,7 +293,8 @@ def build_group_kernel(
 
     source_rep = outcome_ids[seg_starts][seg_ids]
     # 增益 G=phi(u)-phi(s)-quad(s,u)/2，phi 一次矩阵向量积，quad 跨轮缓存
-    phi = workload.features @ (workload.weights * residual)
+    we = workload.weights * residual
+    phi = workload.features @ we
     quad_flat = np.zeros(total, dtype=np.float64)
     if quad_cache is None:
         quad_cache = {}
@@ -309,6 +313,22 @@ def build_group_kernel(
             quad_cache[key] = q
         quad_flat[t] = q
     gains_flat = phi[outcome_ids] - phi[source_rep] - quad_flat / 2
+    max_feature = max(float(features.max()), -float(features.min())) if features.size else 0.0
+    exact_counts = integral_values(features) and max_feature * float(grouped.counts.sum()) <= 2.0**50
+    # phi 内部也可能消减；先用保守界筛选，再只对所选路径按局部增量复核。
+    magnitudes = 2.0 * max_feature * float(np.abs(we).sum()) + quad_flat / 2
+    recheck = gain_recheck_mask(
+        gains_flat, magnitudes, 3 * workload.num_queries, numerical_tol,
+        integral=(
+            exact_counts and integral_values(workload.target, weights, residual)
+        ),
+    )
+    recheck[seg_starts] = False
+    paths = np.flatnonzero(recheck)
+    if paths.size:
+        oracle = ExactGainOracle.from_workload(workload, grouped.unique_ids, grouped.counts)
+        for path in paths:
+            gains_flat[path] = oracle.block_gain(features, (source_rep[path],), (outcome_ids[path],))
 
     deltas_flat = None
     if keep_deltas:
@@ -482,15 +502,21 @@ def evolve_grouped(
     records: list[RoundRecord] = []
     frozen_streak = 0
     quad_cache: dict = {}  # 状态对二次项跨轮缓存，权重固定时增量恒定
+
+    def checkpoint():
+        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+
     for k in range(num_rounds):
-        plan = plan_provider(current, k, frozen_streak)
+        plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
         if plan.mode == "rows":
-            result = build_kernel(
+            result = _with_numerical_checkpoint(
+                build_kernel, checkpoint,
                 plan.workload, current, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "grouped":
-            result = build_group_kernel(
+            result = _with_numerical_checkpoint(
+                build_group_kernel, checkpoint,
                 plan.workload, plan.grouped, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
                 quad_cache=quad_cache,

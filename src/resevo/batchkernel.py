@@ -27,7 +27,10 @@ from .batchmenu import (
 )
 from .dataset import StateRegistry
 from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
-from .engine import EvolveResult, ProbeRecord, RoundRecord, build_kernel, sample_next
+from .engine import (
+    EvolveResult, ProbeRecord, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
+)
+from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, integral_values
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .state import Workload, loss_from_residual, table_residual
@@ -470,17 +473,49 @@ def build_batch_kernel(
     delta_hs = _halfspace_delta(menu, qs, score_g, codes_g)
     we = workload.weights * residual
     gains_paths = np.zeros(menu.num_paths, dtype=np.float64)
+    magnitudes = np.zeros(menu.num_paths, dtype=np.float64)
+    gain_terms = np.zeros(menu.num_paths, dtype=np.int64)
     for sparse, path_idx in parts:
         # 平方阵共享下标结构只换数据，免整块拷贝
         squared = csr_matrix(
             (sparse.data * sparse.data, sparse.indices, sparse.indptr),
             shape=sparse.shape,
         )
-        gains_paths[path_idx] = sparse @ we - (squared @ workload.weights) / 2
+        linear = sparse @ we
+        quadratic = (squared @ workload.weights) / 2
+        gains_paths[path_idx] = linear - quadratic
+        absolute = csr_matrix(
+            (np.abs(sparse.data), sparse.indices, sparse.indptr), shape=sparse.shape,
+        )
+        magnitudes[path_idx] = absolute @ np.abs(we) + quadratic
+        gain_terms[path_idx] = np.diff(sparse.indptr)
     if delta_hs is not None:
         w_hs = workload.weights[qs.hs_cols]
         gains_paths += delta_hs @ we[qs.hs_cols]
-        gains_paths -= (delta_hs * delta_hs) @ w_hs / 2
+        quadratic_hs = (delta_hs * delta_hs) @ w_hs / 2
+        gains_paths -= quadratic_hs
+        magnitudes += np.abs(delta_hs) @ np.abs(we[qs.hs_cols]) + quadratic_hs
+        gain_terms += np.count_nonzero(delta_hs, axis=1)
+
+    recheck = gain_recheck_mask(
+        gains_paths, magnitudes, gain_terms, numerical_tol,
+        integral=integral_values(workload.target, workload.weights, residual),
+    )
+    selected_paths = np.flatnonzero(recheck)
+    if selected_paths.size:
+        selected_parts = []
+        for sparse, path_idx in parts:
+            rows = np.flatnonzero(recheck[path_idx])
+            if rows.size:
+                selected = sparse[rows]
+                selected_parts.append(
+                    (path_idx[rows], selected.indptr, selected.indices, selected.data)
+                )
+        gains_paths[selected_paths] = exact_sparse_path_gains(
+            selected_paths, selected_parts,
+            ExactGainOracle.from_workload(workload, grouped.unique_ids, grouped.counts),
+            None if delta_hs is None else delta_hs[selected_paths], qs.hs_cols,
+        )
 
     # flat 结构，每段索引 0 是保持项，其后依次是该组菜单路径
     lengths = np.diff(menu.offsets) + 1
@@ -1049,6 +1084,13 @@ def evolve_batch(
     prev_gate_sev: float | None = None  # 上一窗口结算点的病情深度
     gpu_ctx = None  # GPU 上下文惰性建，静态量只上传一次
 
+    def checkpoint():
+        return EvolveResult(
+            current.copy(), records.copy(), "numerical_indeterminate", probes.copy(),
+            None if temps is None else temps.copy(),
+            None if group_curve is None else [(k, losses.copy()) for k, losses in group_curve],
+        )
+
     def group_losses_now(plan):
         """分档地板记账：当前起点表各档损失，读 current 与 gpu_ctx 的最新绑定，只读。"""
         nonlocal group_index_dev
@@ -1101,11 +1143,12 @@ def evolve_batch(
                     f"{' 熄火' if ns_stats['dead'] else ''}",
                     flush=True,
                 )
-        plan = plan_provider(current, k, frozen_streak)
+        plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
         round_temp = float("nan")  # 非批量轮体温不量，占位对齐 records
         if plan.mode in ("rows", "rescue", "tree"):
             kernel_ids = current if plan.mode == "rows" else plan.rescue_ids
-            result = build_kernel(
+            result = _with_numerical_checkpoint(
+                build_kernel, checkpoint,
                 plan.workload, kernel_ids, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
@@ -1164,7 +1207,8 @@ def evolve_batch(
                         plan.workload.target, plan.workload.weights,
                         direct=gpu_direct, sparse=gpu_sparse,
                     )
-                result = gpu_ctx.build(
+                result = _with_numerical_checkpoint(
+                    gpu_ctx.build, checkpoint,
                     plan.grouped, plan.menu, plan_provider.codebook.sync(),
                     stay_probability, alpha, damping, max_expected_rows,
                     beta_hint=last_beta,
@@ -1176,7 +1220,8 @@ def evolve_batch(
                 )
             else:
                 cache = getattr(plan_provider, "cnt_cache", None)
-                result = build_batch_kernel(
+                result = _with_numerical_checkpoint(
+                    build_batch_kernel, checkpoint,
                     plan.workload, plan.grouped, plan.menu,
                     plan_provider.structure[0], plan_provider.codebook.sync(),
                     stay_probability, alpha, damping, max_expected_rows,
