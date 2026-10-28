@@ -143,7 +143,7 @@ def calibrate_beta_flat(
                     break
                 hi = probe
             else:
-                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         else:
             lo = probe
             for _ in range(100):
@@ -154,7 +154,7 @@ def calibrate_beta_flat(
                     break
                 lo = probe
             else:
-                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         # 布伦特法求根，区间保证收缩且超线性收敛，容差与纯二分版同为相对 1e-13
         beta = float(
             brentq(
@@ -270,7 +270,7 @@ def calibrate_beta(
                 break
             hi *= 2.0
         else:
-            raise FloatingPointError("无法括住 beta 根，检查数值条件")
+            raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         for _ in range(80):
             mid = (lo + hi) / 2.0
             _, D_mid = tilted_distributions(gains, references, mid, multiplicities)
