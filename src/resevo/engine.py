@@ -22,6 +22,7 @@ from .candidates import (
     validate_partition,
 )
 from .gain import ExactGainOracle, block_deltas, block_gains, integral_values
+from .probe import ProbeDiagnostics
 from .state import Workload, check_state_ids, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step,
@@ -240,8 +241,9 @@ class ProbeRecord:
     round_index: int
     beta_used: float
     j_used: float  # 实际所用 beta 的期望下降，old_loss-expected_loss
-    beta_best: float
-    j_best: float  # 网格上最优的期望下降
+    beta_best: float | None
+    j_best: float | None  # 诊断不可用时不伪造最优值
+    diagnostics: ProbeDiagnostics | None = None
 
 
 @dataclass

@@ -32,9 +32,10 @@ from .batchkernel import BatchKernelResult
 from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
 from .gain import ExactGainOracle, exact_sparse_path_gains, integral_values, validate_numerical_tol
+from .probe import ProbeAccumulator
 from .state import Workload
 from .stepsize import (
-    analytic_step, expected_improvement, final_probabilities, kernel_statistics, validate_step_parameters,
+    analytic_step, final_probabilities, kernel_statistics, validate_step_parameters,
 )
 from .tilt import calibration_requirement, validate_tilt_parameters, validate_tilt_result
 
@@ -1262,22 +1263,17 @@ class GpuBatchContext:
             D = float(counts @ _seg_sum(cp, P * gains_flat, offsets))
             return P, D
 
-        target = 0.99 * max_gain_sum
-        beta_sat = 1.0 / max(max_gain_sum, 1e-300)
-        _, dv = tilted(beta_sat)
-        for _ in range(200):
-            if dv >= target:
-                break
-            beta_sat *= 2.0
-            _, dv = tilted(beta_sat)
+        probe = ProbeAccumulator()
+        grid = probe.grid(tilted, max_gain_sum, grid_size)
+        if not grid:
+            return probe.finish()
 
         kern = _seg_kernels(cp)["run"]
-        grid = [0.0] + list(
-            np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1)
-        )
-        best_beta, best_j = 0.0, 0.0
         for beta in grid:
             P, D = tilted(float(beta))
+            if not np.isfinite(D):
+                probe.unavailable(beta, "numerical_indeterminate: 诊断方向增益非有限")
+                continue
             if D <= 0.0:
                 continue
             rates_flat = P.copy()
@@ -1285,6 +1281,7 @@ class GpuBatchContext:
             leave = _seg_sum(cp, rates_flat, offsets)
             max_leave = float(leave.max())
             if max_leave <= 0.0:
+                probe.unavailable(beta, "numerical_indeterminate: 正方向诊断的离开速率非正")
                 continue
             rates_paths = rates_flat[path_pos]
             drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
@@ -1358,14 +1355,10 @@ class GpuBatchContext:
                 ((drift_total * self.weights) @ drift_total - self_cross) / 2
             )
             unit_rows = float(counts @ leave)
-            step = analytic_step(
-                max_leave, D, interaction, damping,
-                unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+            probe.evaluate(
+                beta, max_leave, D, interaction, damping, unit_rows, max_expected_rows,
             )
-            j = expected_improvement(step, D, interaction)
-            if j > best_j:
-                best_j, best_beta = j, float(beta)
-        return best_beta, best_j
+        return probe.finish()
 
     # ------------------------------------------------------------------
     def _merge_keys(self, keys, wvals):
@@ -1715,8 +1708,9 @@ class GpuBatchContext:
             old_loss, direction_gain, interaction, step, unit_rows, has_movement,
         )
         probe = None
+        probe_diagnostics = None
         if probe_grid > 0:
-            probe = self._probe_grid(
+            probe, probe_diagnostics = self._probe_grid(
                 gains_flat, ref_flat, offsets, seg_ids, counts, menu_gpu,
                 parts, delta_hs, path_pos, damping, max_expected_rows,
                 max_gain_sum, entry_budget, probe_grid,
@@ -1728,4 +1722,5 @@ class GpuBatchContext:
             max_gain_sum, requirement, "ok",
             cp.asnumpy(scores_gpu),
             probe,
+            probe_diagnostics,
         )
