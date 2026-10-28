@@ -1209,7 +1209,7 @@ class GpuBatchContext:
                         break
                     hi = probe
                 else:
-                    raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                    raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
             else:
                 lo = probe
                 for _ in range(100):
@@ -1220,7 +1220,7 @@ class GpuBatchContext:
                         break
                     lo = probe
                 else:
-                    raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                    raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
             beta = float(
                 brentq(
                     lambda b: evaluate(b)[1] - requirement,
