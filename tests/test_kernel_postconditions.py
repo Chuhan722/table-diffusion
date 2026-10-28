@@ -109,13 +109,14 @@ def test_nonfinite_clock_fails_before_kernel_or_sampler(backend):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_finite_row_budget_can_bound_an_unrepresentable_feasibility_limit(backend):
+    # 保持预算约束上限的测试目标；更小、保持项不可区分的预算另由采样精度回归覆盖。
     result = _clock_kernel(
-        backend, weight=200.0, mobility=1e-320, alpha=2e-323, max_expected_rows=1e-100,
+        backend, weight=200.0, mobility=1e-320, alpha=2e-323, max_expected_rows=1e-12,
     )
     assert result.status == "ok" and 0 < result.step < np.inf
     assert np.isfinite(_probabilities(result)).all()
     assert np.isfinite(result.expected_loss)
-    assert result.expected_changed_rows == pytest.approx(1e-100, rel=1e-12, abs=0.0)
+    assert result.expected_changed_rows == pytest.approx(1e-12, rel=1e-12, abs=0.0)
 
 
 @pytest.mark.parametrize("rates", ([0.0, np.nan], [0.0, np.inf], [0.0, -0.1], [0.0, 1.1]))

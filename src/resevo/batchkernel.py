@@ -34,6 +34,7 @@ from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, i
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
 from .probe import ProbeAccumulator, ProbeDiagnostics
+from .sampling import SamplingPrecision, flat_sampling_mass, record_sampling_precision
 from .state import Workload, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step, final_probabilities, kernel_statistics, validate_step_parameters,
@@ -63,6 +64,7 @@ class BatchKernelResult:
     group_scores: NDArray[np.float64] | None = None  # 每组错位分，供工作批挑组
     probe: tuple[float, float] | None = None  # 未开启或诊断不可用时为 None，区别见 probe_diagnostics
     probe_diagnostics: ProbeDiagnostics | None = None
+    sampling_precision: SamplingPrecision | None = None
 
 
 def _delta_parts(
@@ -589,6 +591,7 @@ def build_batch_kernel(
     expected_loss, upper, expected_rows = kernel_statistics(
         old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
     )
+    _, precision = flat_sampling_mass(probs_flat, offsets)
     probe = None
     probe_diagnostics = None
     if probe_grid > 0:
@@ -605,7 +608,8 @@ def build_batch_kernel(
         tilt.max_gain_sum, tilt.required_gain, "ok",
         group_scores,
         probe,
-        probe_diagnostics,
+        probe_diagnostics=probe_diagnostics,
+        sampling_precision=precision,
     )
 
 
@@ -618,7 +622,8 @@ def sample_batch_next(
     """按批量核抽下一代并落地，抽中的新状态此刻才注册。
 
     每组先按二项分布抽离开行数再对非保持路径抽条件多项分布，
-    这是组内独立单行核抽样的精确分解，与直接多项抽样同分布，
+    实数概率下这是组内独立单行核抽样的等价分解；当前实现保留 NumPy 有限精度近似，
+    只恢复被保持项补数回算消为零的正参数，不保证任意微小概率严格可采样。
     行按组内升序切段分配，先落保持行再落各路径行。
     """
     s = np.asarray(state_ids)
@@ -628,8 +633,10 @@ def sample_batch_next(
     schema = registry.schema
     offsets = result.offsets
     probs = result.probabilities
-    stay = probs[offsets[:-1]]
-    movers = rng.binomial(grouped.counts, np.minimum(1.0, np.maximum(0.0, 1.0 - stay)))
+    move, _ = flat_sampling_mass(
+        probs, offsets, emit_warning=getattr(result, "sampling_precision", None) is None,
+    )
+    movers = rng.binomial(grouped.counts, move)
     for g in np.flatnonzero(movers):
         lo, hi = int(offsets[g]), int(offsets[g + 1])
         seg = probs[lo + 1 : hi]
@@ -1062,6 +1069,7 @@ def evolve_batch(
     group_index_dev = None  # 卡上档号向量，惰性上传一次
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    precision_records: list[SamplingPrecision] = []
     probes: list[ProbeRecord] = []
     temps: list[float] | None = [] if struct_shaper is not None else None
     frozen_streak = 0
@@ -1079,6 +1087,13 @@ def evolve_batch(
             current.copy(), records.copy(), "numerical_indeterminate", probes.copy(),
             None if temps is None else temps.copy(),
             None if group_curve is None else [(k, losses.copy()) for k, losses in group_curve],
+            sampling_precision=precision_records.copy() or None,
+        )
+
+    def finish(reason):
+        return EvolveResult(
+            current, records, reason, probes, temps, group_curve,
+            sampling_precision=precision_records or None,
         )
 
     def group_losses_now(plan):
@@ -1240,6 +1255,7 @@ def evolve_batch(
                 note(result.step)
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
+        record_sampling_precision(getattr(result, "sampling_precision", None), k, precision_records)
         if plan.mode == "batch":
             n_cand = int(result.menu.num_paths)
         else:
@@ -1283,18 +1299,14 @@ def evolve_batch(
                     if group_snapshot_hook is not None:
                         group_snapshot_hook(k, result.old_loss, per.copy(), current.copy())
                     if stop_floor_groups:
-                        return EvolveResult(
-                            current, records, "group_floor_reached", probes, temps, group_curve
-                        )
+                        return finish("group_floor_reached")
         if stop_floor > 0.0 and result.old_loss <= stop_floor:
             # 硬地板停（一致化战役）：理顺卷可被拟合到远超真表水平，
             # 两段平台停按改进率判全程拦不住，损失一旦不高于地板直接收工，
             # 地板由公开机制参数外算（0.5×格子数×计数 sigma²，
             # 恰为真表对理顺卷损失的理论锚点），压得更深即背错题。
             # 触发轮只记账不落表，与平台停同语义，默认 0 关闭零改变。
-            return EvolveResult(
-                current, records, "floor_reached", probes, temps, group_curve
-            )
+            return finish("floor_reached")
         if rescue_stop_window > 0 and plan.mode == "rescue":
             rescue_losses.append(result.old_loss)
             if len(rescue_losses) > rescue_stop_window:
@@ -1302,9 +1314,7 @@ def evolve_batch(
                 if base <= 0.0 or (
                     (base - rescue_losses[-1]) / base < rescue_stop_tol
                 ):
-                    return EvolveResult(
-                        current, records, "rescue_exhausted", probes, temps, group_curve
-                    )
+                    return finish("rescue_exhausted")
         if stop_threshold > 0.0:
             loss = result.old_loss
             window_best = loss if window_best is None else min(window_best, loss)
@@ -1332,22 +1342,14 @@ def evolve_batch(
                     )
                     plateau = False
                 if plateau:
-                    return EvolveResult(
-                        current, records,
-                        "noise_plateau" if armed else "loss_plateau",
-                        probes,
-                        temps,
-                        group_curve,
-                    )
+                    return finish("noise_plateau" if armed else "loss_plateau")
                 prev_window_best = window_best
                 window_best = None
                 prev_gate_sev = last_sev
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(
-                    current, records, "no_positive_direction", probes, temps, group_curve
-                )
+                return finish("no_positive_direction")
             continue
         frozen_streak = 0
         if plan.mode == "rows":
@@ -1367,4 +1369,4 @@ def evolve_batch(
                 current[plan.rescue_sub_idx[moved]] = gids
         else:
             current = sample_batch_next(result, current, rng, registry)
-    return EvolveResult(current, records, "round_limit", probes, temps, group_curve)
+    return finish("round_limit")

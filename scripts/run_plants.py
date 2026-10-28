@@ -37,6 +37,7 @@ from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
 from resevo.probe import probe_diagnostic_columns  # noqa: E402
+from resevo.sampling import sampling_summary  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 from resevo.stepsize import validate_step_parameters  # noqa: E402
 
@@ -392,6 +393,15 @@ def run_stage(
             f"{label}分档结算（轮 {k_last} 起点）各档损失÷地板 " + " ".join(f"{r:.3f}" for r in ratios)
             + f"，最慢档 {ratios.max():.3f}，总和÷地板 {per.sum() / group_floor['floors'].sum():.3f}"
         )
+    if getattr(out, "sampling_precision", None):
+        info = sampling_summary(out.sampling_precision)
+        print(
+            f"{label}采样精度限制：{info['affected_rounds']} 轮、"
+            f"{info['limited_segment_occurrences']} 段次，"
+            f"最大受限质量 {info['max_limited_mass']:.6g}；"
+            "继续使用 NumPy 有限精度近似，不作为严格支持保留证明",
+            flush=True,
+        )
     return StageResult(out, registry, y, w, initial_loss, final_loss, elapsed, len(specs))
 
 
@@ -474,11 +484,14 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         has_temp = out.temps is not None
+        precision = {row.round_index: row for row in getattr(out, "sampling_precision", None) or []}
         header = ["round", "old_loss", "beta", "direction_gain", "interaction",
                   "step", "expected_loss", "status", "max_gain_sum"]
         if has_temp:
             header.append("temp")
         header += ["mode", "candidates", "moved_rows", "elapsed_s"]  # 第六十步记账列
+        if precision:
+            header += ["sampling_limited_segments", "sampling_max_limited_mass"]
         writer.writerow(header)
         for i, r in enumerate(out.records):
             row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
@@ -490,11 +503,17 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
                     if isinstance(t, tuple) else t
                 )
             row += [r.mode, r.candidates, r.moved_rows, r.elapsed]
+            if precision:
+                info = precision.get(r.round_index)
+                row += [0, 0.0] if info is None else [info.limited_segments, info.max_limited_mass]
             writer.writerow(row)
         final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
         if has_temp:
             final_row.append("")
         final_row += ["", "", "", ""]
+        if precision:
+            info = sampling_summary(out.sampling_precision)
+            final_row += [info["limited_segment_occurrences"], info["max_limited_mass"]]
         writer.writerow(final_row)
     print(f"{what}已写入 {out_path}")
     if out.probes:

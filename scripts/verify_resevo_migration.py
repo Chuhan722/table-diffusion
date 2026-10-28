@@ -101,6 +101,8 @@ def small():
         rows=tuples_from_ids(registry, result.state_ids), state_ids=result.state_ids.tolist(),
         records=records(result), stop_reason=result.stop_reason,
         menu_rng=menu_rng.bit_generator.state, sample_rng=sample_rng.bit_generator.state,
+        sampling_precision_reported=hasattr(result, "sampling_precision"),
+        sampling_precision=[asdict(row) for row in getattr(result, "sampling_precision", None) or []],
     ))
     print("small", args.small, args.seed, result.stop_reason, len(result.records))
 
@@ -218,6 +220,8 @@ def large():
         seconds=observed["seconds"], gpu_pool_reserved_mib=observed["gpu_pool_reserved_mib"],
         peak_rss_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
         source_query_sha256=sha(query_path),
+        sampling_precision_reported=hasattr(result, "sampling_precision"),
+        sampling_precision=[asdict(row) for row in getattr(result, "sampling_precision", None) or []],
     )
     dump(args.out / "records.json", records(result))
     dump(args.out / "summary.json", summary)

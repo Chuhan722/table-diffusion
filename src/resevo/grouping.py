@@ -36,6 +36,7 @@ from .engine import (
 )
 from .gain import ExactGainOracle, gain_recheck_mask, integral_values
 from .pairing import PairingBudget, build_paired_supports
+from .sampling import SamplingPrecision, flat_sampling_mass, record_sampling_precision
 from .state import Workload, loss_from_residual
 from .stepsize import analytic_step, final_probabilities, kernel_statistics, validate_step_parameters
 from .tilt import calibrate_beta_flat
@@ -194,6 +195,7 @@ class GroupKernelResult:
     max_gain_sum: float
     required_gain: float
     status: str
+    sampling_precision: SamplingPrecision | None = None
 
 
 def _normalize_group_block(
@@ -387,12 +389,13 @@ def build_group_kernel(
     expected_loss, upper, expected_rows = kernel_statistics(
         old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
     )
+    _, precision = flat_sampling_mass(probs_flat, offsets)
 
     blocks = _blocks_from_flat(rates_flat, probs_flat)
     return GroupKernelResult(
         blocks, grouped, old_loss, tilt.beta, tilt.direction_gain, interaction,
         step, expected_loss, upper, expected_rows,
-        tilt.max_gain_sum, tilt.required_gain, "ok",
+        tilt.max_gain_sum, tilt.required_gain, "ok", sampling_precision=precision,
     )
 
 
@@ -403,8 +406,8 @@ def sample_group_next(
 ) -> NDArray[np.int64]:
     """按组核抽下一代，每组按多项分布抽各后继的数量。
 
-    组内 c 行独立按同一单行核抽样，其计数向量精确服从多项分布，
-    因此这里不是近似而是同分布的等价实现，行按组内升序切段分配，
+    实数概率下，组内 c 行独立抽样的计数向量服从多项分布；
+    当前 NumPy 实现仍受有限精度限制，不承诺任意小正质量严格保真。行按组内升序切段分配，
     表是多重集，把哪个计数分给哪个具体行不影响任何查询答案。
     """
     s = np.asarray(state_ids)
@@ -490,11 +493,15 @@ def evolve_grouped(
         raise ValueError("冻结重试次数不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    precision_records: list[SamplingPrecision] = []
     frozen_streak = 0
     quad_cache: dict = {}  # 状态对二次项跨轮缓存，权重固定时增量恒定
 
     def checkpoint():
-        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+        return EvolveResult(
+            current.copy(), records.copy(), "numerical_indeterminate",
+            sampling_precision=precision_records.copy() or None,
+        )
 
     for k in range(num_rounds):
         plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
@@ -513,6 +520,7 @@ def evolve_grouped(
             )
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
+        record_sampling_precision(getattr(result, "sampling_precision", None), k, precision_records)
         records.append(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
@@ -523,11 +531,13 @@ def evolve_grouped(
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(current, records, "no_positive_direction")
+                return EvolveResult(
+                    current, records, "no_positive_direction", sampling_precision=precision_records or None,
+                )
             continue
         frozen_streak = 0
         if plan.mode == "rows":
             current = sample_next(result, current, rng)
         else:
             current = sample_group_next(result, current, rng)
-    return EvolveResult(current, records, "round_limit")
+    return EvolveResult(current, records, "round_limit", sampling_precision=precision_records or None)

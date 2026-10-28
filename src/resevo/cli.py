@@ -13,6 +13,7 @@ from .dataset import StateRegistry, TableSchema, load_queries, target_from_specs
 from .editspace import tuples_from_ids
 from .failure import save_numerical_failure
 from .initialization import derive_first_order, sample_initial_rows
+from .sampling import SAMPLING_CONTRACT, sampling_summary
 from .stepsize import validate_step_parameters
 
 
@@ -122,4 +123,6 @@ def main(argv: list[str] | None = None) -> None:
         "output": str(args.output), "rows": len(final_rows),
         "rounds": len(result.records), "stop_reason": result.stop_reason,
         "backend": args.backend, "seed": args.seed,
+        "sampling_contract": SAMPLING_CONTRACT,
+        "sampling_precision": sampling_summary(result.sampling_precision),
     }, ensure_ascii=False))

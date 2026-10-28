@@ -33,6 +33,7 @@ from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
 from .gain import ExactGainOracle, exact_sparse_path_gains, integral_values, validate_numerical_tol
 from .probe import ProbeAccumulator
+from .sampling import flat_sampling_mass
 from .state import Workload
 from .stepsize import (
     analytic_step, final_probabilities, kernel_statistics, validate_step_parameters,
@@ -1707,6 +1708,7 @@ class GpuBatchContext:
         expected_loss, upper, expected_rows = kernel_statistics(
             old_loss, direction_gain, interaction, step, unit_rows, has_movement,
         )
+        _, precision = flat_sampling_mass(probs_flat, offsets_np)
         probe = None
         probe_diagnostics = None
         if probe_grid > 0:
@@ -1722,5 +1724,6 @@ class GpuBatchContext:
             max_gain_sum, requirement, "ok",
             cp.asnumpy(scores_gpu),
             probe,
-            probe_diagnostics,
+            probe_diagnostics=probe_diagnostics,
+            sampling_precision=precision,
         )

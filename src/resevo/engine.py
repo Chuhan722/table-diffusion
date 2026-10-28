@@ -23,6 +23,7 @@ from .candidates import (
 )
 from .gain import ExactGainOracle, block_deltas, block_gains, integral_values
 from .probe import ProbeDiagnostics
+from .sampling import SamplingPrecision, record_sampling_precision, resolve_sampling_mass
 from .state import Workload, check_state_ids, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step,
@@ -68,6 +69,7 @@ class KernelResult:
     max_gain_sum: float  # M
     required_gain: float  # delta=alpha*M
     status: str  # "ok" 或 "no_positive_direction"
+    sampling_precision: SamplingPrecision | None = None
 
 
 def build_kernel(
@@ -152,11 +154,15 @@ def build_kernel(
     expected_loss, upper, expected_rows = kernel_statistics(
         old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
     )
+    _, precision = resolve_sampling_mass(
+        np.array([block.probabilities[0] for block in blocks]),
+        np.array([block.probabilities[1:].sum() for block in blocks]),
+    )
     marginals = _row_marginals(blocks, n, m)
     return KernelResult(
         blocks, marginals, old_loss, tilt.beta, tilt.direction_gain, interaction,
         step, expected_loss, upper, expected_rows,
-        tilt.max_gain_sum, tilt.required_gain, "ok",
+        tilt.max_gain_sum, tilt.required_gain, "ok", sampling_precision=precision,
     )
 
 
@@ -204,6 +210,7 @@ def sample_next(
     """按最终核抽下一代，每块只抽一次，把整个后继元组写入新表。
 
     多行块绝不能按行级边缘独立抽样，那会破坏联合分布。
+    此处保留现有 NumPy categorical；浮点累计区间不保证任意小正概率严格可达。
     """
     s = np.asarray(state_ids)
     out = s.astype(np.int64, copy=True)
@@ -256,6 +263,7 @@ class EvolveResult:
     probes: list[ProbeRecord] | None = None  # beta 探针旁路日志，未开启为 None
     temps: list[float] | None = None  # 逐轮体温计读数，结构签筒未开启为 None，非批量轮记 nan
     group_losses: list | None = None  # 分档地板记账（第六十八步）：(轮号, 各档损失向量) 列表，未开启为 None
+    sampling_precision: list[SamplingPrecision] | None = None
 
 
 class NumericalEvolutionError(FloatingPointError):
@@ -319,10 +327,14 @@ def evolve(
     else:
         current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    precision_records: list[SamplingPrecision] = []
     frozen_streak = 0
 
     def checkpoint():
-        return EvolveResult(current.copy(), records.copy(), "numerical_indeterminate")
+        return EvolveResult(
+            current.copy(), records.copy(), "numerical_indeterminate",
+            sampling_precision=precision_records.copy() or None,
+        )
 
     for k in range(num_rounds):
         if support_provider is not None:
@@ -336,6 +348,7 @@ def evolve(
             round_workload, current, round_supports,
             stay_probability, alpha, damping, max_expected_rows,
         )
+        record_sampling_precision(getattr(result, "sampling_precision", None), k, precision_records)
         records.append(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
@@ -346,8 +359,10 @@ def evolve(
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(current, records, "no_positive_direction")
+                return EvolveResult(
+                    current, records, "no_positive_direction", sampling_precision=precision_records or None,
+                )
             continue  # 冻结轮整表保持不动，提供器下一轮刷新菜单再试
         frozen_streak = 0
         current = sample_next(result, current, rng)
-    return EvolveResult(current, records, "round_limit")
+    return EvolveResult(current, records, "round_limit", sampling_precision=precision_records or None)
