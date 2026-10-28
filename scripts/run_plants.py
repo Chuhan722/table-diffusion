@@ -314,8 +314,11 @@ def run_stage(
     if fission_targets is not None:
         fission_path = Path(args.fission_out)
         fission_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(fission_path, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(["round", "elapsed_s", "old_loss", "l1_b", "at_group_floor", "diff_mean", "diff_se"])
+        try:
+            with open(fission_path, "x", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(["round", "elapsed_s", "old_loss", "l1_b", "at_group_floor", "diff_mean", "diff_se"])
+        except FileExistsError:
+            parser.error(f"--fission-out 已存在，拒绝覆盖：{fission_path}")
 
         def fission_hook(round_index, old_loss, l1_b, elapsed_s, at_group_floor, diff_mean, diff_se):
             """分裂探针记账（第七十三步）：每条一行追加，分档全过线轮另打一行；参照未设时统计列留空。"""
@@ -605,6 +608,49 @@ def write_table(table_path: Path, schema, rows, what: str = "终表") -> None:
     print(f"{what}已写入 {table_path}")
 
 
+def validate_fission_output(args, inputs: list[Path]) -> None:
+    """记账文件须为新路径，并与输入、正常产物及其派生文件分开。"""
+    destination = Path(args.fission_out)
+    outputs = []
+    if args.out:
+        curve = Path(args.out)
+        curves = [curve]
+        if args.fiber_passes > 0:
+            curves.append(curve.with_name(curve.stem + "_stage1" + curve.suffix))
+        for path in curves:
+            outputs.extend([path, path.with_name(path.stem + "_probe.csv")])
+        groups = curve.with_name(curve.stem + "_groups" + curve.suffix)
+        outputs.extend([groups, groups.with_suffix(".json")])
+    if args.save_table:
+        table = Path(args.save_table)
+        outputs.append(table)
+        if args.fiber_passes > 0:
+            outputs.append(table.with_name(table.stem + "_stage1" + table.suffix))
+    if args.fiber_lock_real and (args.save_table or args.out):
+        base = Path(args.save_table or args.out)
+        outputs.append(base.with_name(base.stem + "_lock.json"))
+    if args.snapshot_prefix:
+        prefixes = [Path(args.snapshot_prefix)]
+        if args.fiber_passes > 0:
+            prefixes.append(Path(args.snapshot_prefix + "_stage2"))
+        for prefix in prefixes:
+            outputs.append(prefix.with_name(prefix.name + "_snaps.csv"))
+            indices = list(range(len(args.snapshot_losses or [])))
+            if args.snapshot_group_floor:
+                indices.append("G")
+            outputs.extend(prefix.with_name(prefix.name + f"_snap{i}.csv") for i in indices)
+    resolved = destination.resolve()
+    for path in [*inputs, *outputs]:
+        # resolve 检出相对路径和软链接；samefile 另检出不同路径的硬链接。
+        same = resolved == path.resolve()
+        if not same and destination.exists() and path.exists():
+            same = destination.samefile(path)
+        if same:
+            raise ValueError(f"--fission-out 与输入或其他输出冲突：{path}")
+    if destination.exists() or destination.is_symlink():
+        raise ValueError(f"--fission-out 已存在，拒绝覆盖：{destination}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="真数据端到端实验")
     parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
@@ -726,12 +772,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--fission-out", type=str, default="",
-        help="分裂探针记账输出 CSV（round, elapsed_s, old_loss, l1_b, at_group_floor, diff_mean, diff_se；"
+        help="分裂探针记账的新 CSV 路径，禁止覆盖或与输入/其他输出重名（round, elapsed_s, old_loss, l1_b, at_group_floor, diff_mean, diff_se；"
         "后两列为起点表对全过线表在模拟卷上的逐题误差配对差均值与标准误，全过线前留空）",
     )
     parser.add_argument(
         "--fission-stop-z", type=float, default=0.0,
-        help="显著回升停（第七十三步）：分档全过线后，起点表对全过线表的配对差均值 ≥ 该倍数×标准误、"
+        help="显著回升停（经验规则）：分档全过线后，标准误须大于零，且起点表对全过线表的配对差均值 ≥ 该倍数×标准误、"
         "连续 --fission-stop-runs 次记账即收工（停止原因 fission_rise，交触发轮起点表）；"
         "0 关闭；需分裂探针记账与 --snapshot-group-floor",
     )
@@ -1090,6 +1136,13 @@ def main() -> None:
             fpath = data_dir / args.fission_exam
         if not fpath.exists():
             parser.error(f"--fission-exam 找不到 {args.fission_exam}")
+        inputs = [data_dir / f"{args.data}.csv", exam_path, fpath]
+        if args.init_table:
+            inputs.append(Path(args.init_table))
+        try:
+            validate_fission_output(args, inputs)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         fspecs = load_queries(str(fpath))
         if len(fspecs) != len(specs):
             parser.error(f"模拟卷题数 {len(fspecs)} 与考卷 {len(specs)} 不一致")

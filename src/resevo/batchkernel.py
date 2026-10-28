@@ -943,15 +943,16 @@ def evolve_batch(
     触发在损失快照之后、硬地板停之前。全部默认 None/False 关闭零改变，记账只读不碰随机流。
     fission_targets 配 fission_every 与 fission_hook 启用分裂探针记账（第七十三步）：
     fission_targets 为模拟卷 y_B（与题序对齐），每 fission_every 轮、以及分档全过线的轮，
-    用起点表算逐题误差 e = |y_B − q|（q 为起点表答案 = target − residual）与 L1_B = mean e；
+    用起点表算逐题误差 e = |y_B − q|（q 直接取起点表计数）与 L1_B = mean e；
     分档全过线轮的 e 存为参照 e_G，其后每次记账算配对差 d = e − e_G 的均值 diff_mean 与
     标准误 diff_se = std(d, ddof=1)/√n（参照未设时两者为 None），一并交给
     hook(round_index, old_loss, l1_b, elapsed_s, at_group_floor, diff_mean, diff_se)；
-    GPU 后端在卡上由当前表重算，CPU 后端只在带全表负载的轮记账（全过线轮若不可记，
+    GPU 后端在卡上由当前表重算，CPU 后端跳过 rescue/tree 临时注册表轮与惰性负载轮（全过线轮若不可记，
     参照取其后首次可记的轮）。只记不停时不改轨迹，默认 None/0 关闭零改变。
     fission_stop_z 大于零启用显著回升停（需分档地板记账，参照由全过线轮定）：参照之后
-    连续 fission_stop_runs 次记账都满足 diff_mean ≥ fission_stop_z × diff_se（起点表对
-    模拟卷显著比全过线表差）即收工，停止原因记 fission_rise，返回触发轮起点表；
+    连续 fission_stop_runs 次记账都满足 diff_se > 0 且 diff_mean ≥ fission_stop_z × diff_se
+    即收工，停止原因记 fission_rise，返回触发轮起点表；标准误为零（包括各题差相同且为正）
+    不计入回升次数，并清零连续计数。这是配对标准化差的经验规则，不保证单次或反复观察误报率；
     判停只读记账值，停前轨迹与不停的跑逐位一致。
     snapshot_losses 配 snapshot_hook 启用损失快照（第六十一步，纯记账）：
     某轮起点损失首次不高于某个给定值时，把该轮起点表的状态编号副本交给
@@ -1143,6 +1144,8 @@ def evolve_batch(
                 plan_provider.codebook.sync(), current, group_index_dev, group_floors.size,
             )
             return per
+        if plan.mode in ("rescue", "tree"):
+            return None  # 临时编号与 current 的全局编号不在同一命名空间，即使均未越界也不可混用。
         wl = plan.workload
         if wl.features.shape[0] <= int(current.max()):
             return None  # 惰性负载或小注册表轮，本轮不记
@@ -1163,6 +1166,8 @@ def evolve_batch(
             if fission_dev is None:
                 fission_dev = gpu_ctx.cp.asarray(fission_targets)
             return gpu_ctx.fission_errors_of(plan_provider.codebook.sync(), current, fission_dev)
+        if plan.mode in ("rescue", "tree"):
+            return None  # 同分档地板：临时小注册表不能用全局 current 读取。
         wl = plan.workload
         if wl.features.shape[0] <= int(current.max()):
             return None
@@ -1171,7 +1176,7 @@ def evolve_batch(
         return np.abs(fission_targets - table_answers(wl, current))
 
     def fission_diff_stats(errors):
-        """配对差 d = e − e_G 的均值与标准误（std 用 ddof=1，题按独立近似），同时适用 numpy 与 cupy 向量。"""
+        """配对差 d = e − e_G 的均值与样本标准误；供经验规则使用，不据此保证检验误报率。"""
         xp = np if isinstance(errors, np.ndarray) else gpu_ctx.cp
         d = errors - fission_ref
         n = int(d.size)

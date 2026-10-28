@@ -1,6 +1,6 @@
 """分裂探针记账与显著回升停（工作笔记第七十三步）：默认关闭零改变；记账值 = 起点表对模拟卷的 mean|y_B − q|；
 分档全过线轮必记且与分档快照同表；全过线后的配对差均值/标准误与暴力重算一致；显著回升停停在
-不停跑记账里首个连续 runs 次满足 diff_mean ≥ z·diff_se 的轮、交该轮起点表、停前轨迹逐位同；
+不停跑记账里首个连续 runs 次满足 diff_se > 0 且 diff_mean ≥ z·diff_se 的轮、交该轮起点表、停前轨迹逐位同；
 运行脚本端到端（CPU 批量路径）：轨迹与终表同默认跑、终表行与暴力计数一致、停法与参数校验；
 GPU 记账路径（有卡才跑）：逐题误差与 CPU 重算一致，且不依赖状态项函数返回元组的长度。"""
 import csv
@@ -82,7 +82,7 @@ def _gpu_or_skip():
 
 def test_fission_errors_gpu_matches_cpu_and_ignores_extra_state_terms():
     """GPU 记账路径（通用与直算两条通路）：逐题误差与 CPU 按表答案重算一致、题数不符报错；
-    状态项函数的返回元组若多出成员，记账只取残差一项，不受影响。"""
+    状态项函数的返回元组若在尾部多出成员，记账取原始答案项，不受影响。"""
     cp = _gpu_or_skip()
     from test_gpu_direct import _cell_scene
 

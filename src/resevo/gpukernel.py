@@ -992,7 +992,7 @@ class GpuBatchContext:
     def fission_errors_of(self, codes: np.ndarray, state_ids, fission_dev):
         """分裂探针记账（第七十三步）：当前表对模拟卷的逐题绝对误差 |y_B − q|（卡上向量），全程在卡上算。
 
-        fission_dev 为卡上的模拟卷目标向量（与题序对齐），q = 当前表答案 = target − residual；只读不碰任何演化状态。
+        fission_dev 为卡上的模拟卷目标向量（与题序对齐），q 直接取当前表的原始计数；只读不碰演化状态。
         """
         from .grouping import group_state_ids
 
@@ -1000,11 +1000,12 @@ class GpuBatchContext:
         grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
         codes_g = cp.asarray(codes[grouped.unique_ids])
         counts = cp.asarray(grouped.counts.astype(np.float64))
-        # 只取残差一项，不按个数拆包：_state_terms 的返回元组若扩充，此处不受影响。
-        residual = self._state_terms(codes_g, counts)[0]
-        if int(fission_dev.size) != int(residual.size):
+        # 第六项是作残差之前保留的原始答案；不能由 target - residual 反推，
+        # 大目标相减时整数计数可能已被舍入。尾部扩充元组不影响此处。
+        answers = self._state_terms(codes_g, counts)[5]
+        if int(fission_dev.size) != int(answers.size):
             raise ValueError("模拟卷题数须等于考卷题数")
-        return cp.abs(fission_dev - (self.target - residual))
+        return cp.abs(fission_dev - answers)
 
     # ------------------------------------------------------------------
     def _entry_expand(self, j_of, cur_codes, new_codes):
