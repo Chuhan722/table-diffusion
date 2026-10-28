@@ -33,10 +33,11 @@ from .engine import (
 from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, integral_values
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
+from .probe import ProbeAccumulator, ProbeDiagnostics
 from .sampling import SamplingPrecision, flat_sampling_mass, record_sampling_precision
 from .state import Workload, loss_from_residual, table_residual
 from .stepsize import (
-    analytic_step, expected_improvement, final_probabilities, kernel_statistics, validate_step_parameters,
+    analytic_step, final_probabilities, kernel_statistics, validate_step_parameters,
 )
 from .tilt import calibrate_beta_flat
 
@@ -61,7 +62,8 @@ class BatchKernelResult:
     required_gain: float
     status: str
     group_scores: NDArray[np.float64] | None = None  # 每组错位分，供工作批挑组
-    probe: tuple[float, float] | None = None  # beta 网格探针 (beta_best, j_best)，未开启为 None
+    probe: tuple[float, float] | None = None  # 未开启或诊断不可用时为 None，区别见 probe_diagnostics
+    probe_diagnostics: ProbeDiagnostics | None = None
     sampling_precision: SamplingPrecision | None = None
 
 
@@ -330,7 +332,7 @@ def _probe_beta_grid(
     max_expected_rows: float | None,
     max_gain_sum: float,
     grid_size: int = 16,
-) -> tuple[float, float]:
+) -> tuple[tuple[float, float] | None, ProbeDiagnostics]:
     """beta 网格探针，每点算最优步长下的期望下降 J，返回网格最优点。
 
     纯只读的确定性计算，不碰随机流不写任何主路径状态，
@@ -338,6 +340,7 @@ def _probe_beta_grid(
     网格取 0 加上从饱和点向下十四个二倍程的对数均匀十五点，
     饱和点为 D 达到 0.99M 的最小翻倍探点，D 随 beta 单调必可达，
     漂移键基座一轮组装一次十六个方向分布复用，D 非正的点下降记零跳过。
+    数值不可用点只记录诊断，不中断有效主核；全不可用时不伪造最优值。
     """
     seg_starts = offsets[:-1]
     lengths = np.diff(offsets)
@@ -354,14 +357,10 @@ def _probe_beta_grid(
         D = float(counts @ np.add.reduceat(P * gains_flat, seg_starts))
         return P, D
 
-    target = 0.99 * max_gain_sum
-    beta_sat = 1.0 / max(max_gain_sum, 1e-300)
-    _, dv = tilted(beta_sat)
-    for _ in range(200):
-        if dv >= target:
-            break
-        beta_sat *= 2.0
-        _, dv = tilted(beta_sat)
+    probe = ProbeAccumulator()
+    grid = probe.grid(tilted, max_gain_sum, grid_size)
+    if not grid:
+        return probe.finish()
 
     key_parts, data_parts, path_parts = [], [], []
     for sparse, path_idx in parts:
@@ -384,10 +383,11 @@ def _probe_beta_grid(
         np.concatenate(path_parts) if path_parts else np.zeros(0, dtype=np.int64)
     )
 
-    grid = [0.0] + list(np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1))
-    best_beta, best_j = 0.0, 0.0
     for beta in grid:
         P, D = tilted(float(beta))
+        if not np.isfinite(D):
+            probe.unavailable(beta, "numerical_indeterminate: 诊断方向增益非有限")
+            continue
         if D <= 0.0:
             continue
         rates_flat = P.copy()
@@ -395,6 +395,7 @@ def _probe_beta_grid(
         leave = np.add.reduceat(rates_flat, seg_starts)
         max_leave = float(leave.max())
         if max_leave <= 0.0:
+            probe.unavailable(beta, "numerical_indeterminate: 正方向诊断的离开速率非正")
             continue
         rates_paths = rates_flat[path_pos]
         drifts = np.bincount(
@@ -415,14 +416,10 @@ def _probe_beta_grid(
             (np.dot(drift_total * weights, drift_total) - self_cross) / 2
         )
         unit_rows = float(counts @ leave)
-        step = analytic_step(
-            max_leave, D, interaction, damping,
-            unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+        probe.evaluate(
+            beta, max_leave, D, interaction, damping, unit_rows, max_expected_rows,
         )
-        j = expected_improvement(step, D, interaction)
-        if j > best_j:
-            best_j, best_beta = j, float(beta)
-    return best_beta, best_j
+    return probe.finish()
 
 
 def build_batch_kernel(
@@ -596,8 +593,9 @@ def build_batch_kernel(
     )
     _, precision = flat_sampling_mass(probs_flat, offsets)
     probe = None
+    probe_diagnostics = None
     if probe_grid > 0:
-        probe = _probe_beta_grid(
+        probe, probe_diagnostics = _probe_beta_grid(
             gains_flat, ref_flat, offsets, counts, workload.weights,
             workload.num_queries, menu, parts, delta_hs,
             qs.hs_cols if delta_hs is not None else None,
@@ -610,6 +608,7 @@ def build_batch_kernel(
         tilt.max_gain_sum, tilt.required_gain, "ok",
         group_scores,
         probe,
+        probe_diagnostics=probe_diagnostics,
         sampling_precision=precision,
     )
 
@@ -1238,11 +1237,12 @@ def evolve_batch(
                     ref_shape=ref_shape,
                     path_factors=struct_factors,
                 )
-            if result.probe is not None:
+            if result.probe_diagnostics is not None:
+                beta_best, j_best = result.probe if result.probe is not None else (None, None)
                 probes.append(
                     ProbeRecord(
                         k, result.beta, result.old_loss - result.expected_loss,
-                        result.probe[0], result.probe[1],
+                        beta_best, j_best, result.probe_diagnostics,
                     )
                 )
             if result.beta > 0.0:

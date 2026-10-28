@@ -12,7 +12,8 @@ import tempfile
 
 from .dataset import StateRegistry
 from .editspace import tuples_from_ids
-from .engine import NumericalEvolutionError, ProbeRecord, RoundRecord
+from .engine import NumericalEvolutionError, RoundRecord
+from .probe import probe_diagnostic_columns
 from .sampling import SAMPLING_CONTRACT, SamplingPrecision
 
 
@@ -48,7 +49,12 @@ def write_numerical_failure(
     save_csv("current.csv", registry.schema.fields, rows)
     save_records("records.csv", result.records, RoundRecord)
     if result.probes is not None:
-        save_records("probes.csv", result.probes, ProbeRecord)
+        names = ["round_index", "beta_used", "j_used", "beta_best", "j_best"]
+        extra_names, extra_rows = probe_diagnostic_columns([p.diagnostics for p in result.probes])
+        save_csv(
+            "probes.csv", names + extra_names,
+            ([getattr(p, key) for key in names] + extra for p, extra in zip(result.probes, extra_rows)),
+        )
     if result.sampling_precision:
         save_records("sampling_precision.csv", result.sampling_precision, SamplingPrecision)
     if result.temps is not None:

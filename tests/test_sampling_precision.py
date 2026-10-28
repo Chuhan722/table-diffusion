@@ -1,5 +1,7 @@
 """保持项回算的有限精度合同：整体退化报错，部分受限明示，正常调用不变。"""
+from dataclasses import asdict
 import csv
+import hashlib
 import importlib.util
 import json
 import os
@@ -17,12 +19,14 @@ from resevo.dataset import QuerySpec, StateRegistry, TableSchema
 from resevo.engine import NumericalEvolutionError, build_kernel, evolve
 from resevo.failure import save_numerical_failure
 from resevo.grouping import RoundPlan, build_group_kernel, evolve_grouped, group_state_ids
+from resevo.probe import ProbeDiagnostics, ProbeNumericalWarning
 from resevo.sampling import (
-    SAMPLING_CONTRACT, SamplingPrecisionWarning, flat_sampling_mass,
+    SAMPLING_CONTRACT, SamplingPrecision, SamplingPrecisionWarning, flat_sampling_mass,
     resolve_sampling_mass, sampling_summary,
 )
 from test_kernel_postconditions import _clock_kernel
 from test_local_gain_freeze import BACKENDS, _build, _gpu_context
+from test_probe_numerics import _plants
 
 ROOT = Path(__file__).resolve().parents[1]
 TINY_MASS = 2.0**-53 / 3
@@ -51,15 +55,15 @@ def _partial_scene(weight=100.0):
     return registry, ids, workload, grouped, supports, book, qs, menu
 
 
-def _partial_kernel(backend, scene):
+def _partial_kernel(backend, scene, **kwargs):
     _, ids, wl, grouped, supports, book, qs, menu = scene
     if backend == "rows":
-        return build_kernel(wl, ids, supports)
+        return build_kernel(wl, ids, supports, **kwargs)
     if backend == "groups":
-        return build_group_kernel(wl, grouped, supports)
+        return build_group_kernel(wl, grouped, supports, **kwargs)
     if backend == "batch":
-        return build_batch_kernel(wl, grouped, menu, qs, book.sync())
-    return _gpu_context(qs, wl.target, wl.weights).build(grouped, menu, book.sync())
+        return build_batch_kernel(wl, grouped, menu, qs, book.sync(), **kwargs)
+    return _gpu_context(qs, wl.target, wl.weights).build(grouped, menu, book.sync(), **kwargs)
 
 
 def _partial_run(backend, *, fail_after_first=False, round_limit=None, **kwargs):
@@ -316,3 +320,111 @@ def test_public_cli_declares_finite_precision_contract(tmp_path):
     assert info["sampling_precision"]["contract"] == SAMPLING_CONTRACT
     assert info["sampling_precision"]["affected_rounds"] == 0
     assert output.exists()
+
+
+@pytest.fixture(params=("ok", "unavailable"))
+def probe_state(request, monkeypatch):
+    if request.param == "unavailable":
+        from resevo import probe
+
+        def unavailable(*args, **kwargs):
+            raise FloatingPointError("numerical_indeterminate: combined diagnostic fixture")
+
+        monkeypatch.setattr(probe, "analytic_step", unavailable)
+    return request.param
+
+
+@pytest.mark.parametrize("backend", ("batch", "gpu"))
+def test_kernel_preserves_both_diagnostic_types(backend, probe_state, recwarn):
+    scene = _partial_scene()
+    plain = _partial_kernel(backend, scene)
+    probed = _partial_kernel(backend, scene, probe_grid=16)
+    np.testing.assert_array_equal(probed.probabilities, plain.probabilities)
+    assert probed.step == plain.step and probed.expected_loss == plain.expected_loss
+    assert isinstance(probed.sampling_precision, SamplingPrecision)
+    assert probed.sampling_precision == plain.sampling_precision
+    assert isinstance(probed.probe_diagnostics, ProbeDiagnostics)
+    assert probed.probe_diagnostics.status == probe_state
+    assert any(issubclass(w.category, SamplingPrecisionWarning) for w in recwarn)
+    if probe_state == "unavailable":
+        assert probed.probe is None
+        assert any(issubclass(w.category, ProbeNumericalWarning) for w in recwarn)
+    else:
+        assert probed.probe is not None
+
+
+@pytest.mark.parametrize("backend", ("batch", "gpu"))
+def test_combined_diagnostics_do_not_change_table_records_or_rng(backend, probe_state, recwarn):
+    _, _, reference_rng, reference_run = _partial_run(backend)
+    reference = reference_run()
+    _, _, rng, run = _partial_run(backend, probe_interval=1)
+    result = run()
+    np.testing.assert_array_equal(result.state_ids, reference.state_ids)
+    assert rng.bit_generator.state == reference_rng.bit_generator.state
+    assert result.sampling_precision == reference.sampling_precision
+    assert len(result.probes) == 1 and result.probes[0].diagnostics.status == probe_state
+    for before, after in zip(reference.records, result.records):
+        a, b = asdict(before), asdict(after)
+        del a["elapsed"], b["elapsed"]
+        assert a == b
+    assert len(result.records) == len(reference.records)
+
+
+@pytest.mark.parametrize("backend", ("batch", "gpu"))
+def test_curve_and_later_failure_keep_both_diagnostics(tmp_path, backend, probe_state, recwarn):
+    _, _, _, run = _partial_run(backend, probe_interval=1)
+    result = run()
+    _plants().write_curve(tmp_path / "curve.csv", result, 0.0)
+    with (tmp_path / "curve.csv").open(newline="") as stream:
+        curve = list(csv.DictReader(stream))
+    assert curve[0]["sampling_limited_segments"] == curve[-1]["sampling_limited_segments"] == "1"
+    with (tmp_path / "curve_probe.csv").open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        probes = list(reader)
+        columns = reader.fieldnames
+    if probe_state == "unavailable":
+        assert probes[0]["probe_status"] == "unavailable"
+        assert probes[0]["beta_best"] == probes[0]["J_best"] == ""
+        assert json.loads(probes[0]["probe_unavailable_points"])
+    else:
+        assert columns == ["round", "beta_used", "J_used", "beta_best", "J_best"]
+
+    registry, initial, _, run = _partial_run(backend, probe_interval=1, fail_after_first=True)
+    with pytest.raises(NumericalEvolutionError, match="after precision warning") as caught:
+        with save_numerical_failure(registry, tmp_path / "table.csv"):
+            run()
+    partial = caught.value.partial_result
+    assert len(partial.records) == len(partial.probes) == len(partial.sampling_precision) == 1
+    assert not np.array_equal(partial.state_ids, initial)
+    assert partial.probes[0].diagnostics.status == probe_state
+    assert partial.sampling_precision[0].limited_segments == 1
+    assert not (tmp_path / "table.csv").exists()
+    manifests = list(tmp_path.glob("table.csv.failed-*/failure.json"))
+    assert len(manifests) == 1
+    metadata = json.loads(manifests[0].read_text())
+    assert metadata["sampling_contract"] == SAMPLING_CONTRACT
+    assert {"probes.csv", "sampling_precision.csv"} <= metadata["files_sha256"].keys()
+    for name, digest in metadata["files_sha256"].items():
+        assert hashlib.sha256((manifests[0].parent / name).read_bytes()).hexdigest() == digest
+    with (manifests[0].parent / "sampling_precision.csv").open(newline="") as stream:
+        saved = list(csv.DictReader(stream))
+    assert saved[0]["round_index"] == "0" and saved[0]["limited_segments"] == "1"
+    with (manifests[0].parent / "probes.csv").open(newline="") as stream:
+        saved = list(csv.DictReader(stream))
+    if probe_state == "unavailable":
+        assert saved[0]["probe_status"] == "unavailable"
+        assert saved[0]["beta_best"] == saved[0]["j_best"] == ""
+        assert json.loads(saved[0]["probe_unavailable_points"])
+
+
+@pytest.mark.parametrize("backend", ("batch", "gpu"))
+def test_whole_sampling_failure_is_not_downgraded_to_probe_warning(backend, monkeypatch, recwarn):
+    from resevo import probe
+
+    def unavailable(*args, **kwargs):
+        raise FloatingPointError("numerical_indeterminate: diagnostic fixture")
+
+    monkeypatch.setattr(probe, "analytic_step", unavailable)
+    with pytest.raises(FloatingPointError, match="全部非保持质量"):
+        _build(backend, [np.nextafter(0.5, np.inf)], current=(0, 0, 0, 0), probe_grid=16)
+    assert not any(issubclass(w.category, ProbeNumericalWarning) for w in recwarn)
