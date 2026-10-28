@@ -19,6 +19,33 @@ from numpy.typing import NDArray
 from scipy.optimize import brentq
 from scipy.special import logsumexp
 
+from .gain import validate_numerical_tol
+
+
+def validate_tilt_parameters(alpha: float, numerical_tol: float) -> None:
+    if not (0 < alpha < 1):
+        raise ValueError("alpha 必须落在 (0,1)")
+    validate_numerical_tol(numerical_tol)
+
+
+def calibration_requirement(max_gain_sum: float, alpha: float, old_loss: float) -> float:
+    """旧损失仅检查是否可表示，不参与方向存在性或精度阈值。"""
+    if not np.isfinite(old_loss) or not np.isfinite(max_gain_sum):
+        raise FloatingPointError("numerical_indeterminate: 损失或最大增益和非有限")
+    if max_gain_sum < 0:
+        raise FloatingPointError("numerical_indeterminate: 最大增益和不能为负")
+    requirement = alpha * max_gain_sum
+    if max_gain_sum > 0 and (requirement <= 0 or not np.isfinite(requirement)):
+        raise FloatingPointError("numerical_indeterminate: 正收益要求无法以 float64 表示")
+    return requirement
+
+
+def validate_tilt_result(direction_gain, requirement, max_gain_sum, numerical_tol):
+    if not np.isfinite(direction_gain) or direction_gain <= 0:
+        raise FloatingPointError("numerical_indeterminate: 校准方向增益须为正的有限数")
+    if direction_gain < requirement and (requirement - direction_gain) / max_gain_sum > numerical_tol:
+        raise FloatingPointError("numerical_indeterminate: 校准误差超过局部增益相对容差")
+
 
 @dataclass
 class FlatTiltResult:
@@ -52,10 +79,9 @@ def calibrate_beta_flat(
     根与逐块版在容差内一致，末几位小数可能不同，
     beta_hint 给出括根起点，典型取上一轮的根，省掉从 1/M 起的翻倍串。
     """
-    if not (0 < alpha < 1):
-        raise ValueError("alpha 必须落在 (0,1)")
-    if not np.isfinite(numerical_tol) or numerical_tol < 0:
-        raise ValueError("numerical_tol 必须有限且非负")
+    validate_tilt_parameters(alpha, numerical_tol)
+    if not np.isfinite(gains_flat).all():
+        raise FloatingPointError("numerical_indeterminate: 输入增益非有限")
     offsets = np.asarray(segment_offsets, dtype=np.int64)
     if offsets.ndim != 1 or offsets.size < 2 or offsets[0] != 0:
         raise ValueError("段边界必须从 0 开始且至少一段")
@@ -75,10 +101,11 @@ def calibrate_beta_flat(
 
     gmax = np.maximum.reduceat(gains_flat, seg_starts)
     max_gain_sum = float(mult @ np.maximum(gmax, 0.0))
-    requirement = alpha * max_gain_sum
-    scale = max(1.0, old_loss)
+    requirement = calibration_requirement(max_gain_sum, alpha, old_loss)
 
-    if max_gain_sum <= numerical_tol * scale:
+    if max_gain_sum == 0.0:
+        if np.any(gmax > 0):
+            raise FloatingPointError("numerical_indeterminate: 正增益在聚合中丢失")
         frozen = np.zeros_like(references_flat)
         frozen[seg_starts] = 1.0
         return FlatTiltResult(0.0, frozen, 0.0, max_gain_sum, requirement, True)
@@ -87,6 +114,8 @@ def calibrate_beta_flat(
     centered = gains_flat - gmax[seg_ids]
 
     def evaluate(beta: float):
+        if not np.isfinite(beta):
+            raise FloatingPointError("numerical_indeterminate: beta 超出有限表示范围")
         zw = references_flat * np.exp(beta * centered)
         norm = np.add.reduceat(zw, seg_starts)
         P = zw / norm[seg_ids]
@@ -114,7 +143,7 @@ def calibrate_beta_flat(
                     break
                 hi = probe
             else:
-                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         else:
             lo = probe
             for _ in range(100):
@@ -125,7 +154,7 @@ def calibrate_beta_flat(
                     break
                 lo = probe
             else:
-                raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         # 布伦特法求根，区间保证收缩且超线性收敛，容差与纯二分版同为相对 1e-13
         beta = float(
             brentq(
@@ -144,8 +173,7 @@ def calibrate_beta_flat(
                 break
             beta = beta * (1.0 + 4e-13) if beta > 0 else hi * 1e-16
             ps, D = evaluate(beta)
-    if D <= 0:
-        raise FloatingPointError("方向增益必须严格为正")
+    validate_tilt_result(D, requirement, max_gain_sum, numerical_tol)
     return FlatTiltResult(beta, ps, D, max_gain_sum, requirement, False)
 
 
@@ -172,6 +200,8 @@ def tilted_distributions(
     multiplicities 给出每个块的重数，c 个相同块共享同一份 P，
     平均增益按重数加权 D=sum_g c_g*(P_g@g_g)，None 走原逐块路径逐位不变。
     """
+    if not np.isfinite(beta):
+        raise FloatingPointError("numerical_indeterminate: beta 超出有限表示范围")
     ps = []
     total = 0.0
     for idx, (g, R) in enumerate(zip(gains, references)):
@@ -196,28 +226,30 @@ def calibrate_beta(
 ) -> TiltResult:
     """求共享 beta 与方向分布。
 
-    old_loss 只用来给冻结判据定尺度，判据与参考实现一致，
-    M 不超过 numerical_tol*max(1,old_loss) 时视为没有正方向，返回冻结结果。
+    给定的增益须已由构造层处理局部消减；只有 M=0 才返回冻结结果。
+    old_loss 保留用于兼容和有限性检查，不能改变方向存在性。
+    numerical_tol 用于校准误差相对 M 的检查，不是物理收益停止门槛。
     multiplicities 给出每个块的重数，M 与 D 都按重数加权，
     等价于把每块展开成重数份相同块，None 走原路径逐位不变。
     """
-    if not (0 < alpha < 1):
-        raise ValueError("alpha 必须落在 (0,1)")
-    if not np.isfinite(numerical_tol) or numerical_tol < 0:
-        raise ValueError("numerical_tol 必须有限且非负")
+    validate_tilt_parameters(alpha, numerical_tol)
+    if any(not np.isfinite(g).all() for g in gains):
+        raise FloatingPointError("numerical_indeterminate: 输入增益非有限")
+    maxima = [max(float(np.max(g)), 0.0) for g in gains]
     if multiplicities is not None:
         mult = np.asarray(multiplicities, dtype=np.float64)
         if mult.shape != (len(gains),) or np.any(mult < 1) or not np.isfinite(mult).all():
             raise ValueError("multiplicities 必须与块数等长且每项至少为 1")
         max_gain_sum = float(
-            sum(float(c) * max(float(np.max(g)), 0.0) for c, g in zip(mult, gains))
+            sum(float(c) * maximum for c, maximum in zip(mult, maxima))
         )
     else:
-        max_gain_sum = float(sum(max(float(np.max(g)), 0.0) for g in gains))
-    requirement = alpha * max_gain_sum
-    scale = max(1.0, old_loss)
+        max_gain_sum = float(sum(maxima))
+    requirement = calibration_requirement(max_gain_sum, alpha, old_loss)
 
-    if max_gain_sum <= numerical_tol * scale:
+    if max_gain_sum == 0.0:
+        if any(maximum > 0 for maximum in maxima):
+            raise FloatingPointError("numerical_indeterminate: 正增益在聚合中丢失")
         # 没有正的一阶方向，本轮整体保持不动，明确报告停滞而不是静默收敛
         frozen_ps = []
         for R in references:
@@ -238,7 +270,7 @@ def calibrate_beta(
                 break
             hi *= 2.0
         else:
-            raise FloatingPointError("无法括住 beta 根，检查数值条件")
+            raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
         for _ in range(80):
             mid = (lo + hi) / 2.0
             _, D_mid = tilted_distributions(gains, references, mid, multiplicities)
@@ -248,6 +280,5 @@ def calibrate_beta(
                 lo = mid
         beta = hi  # 取满足约束的上端点
         ps, D = tilted_distributions(gains, references, beta, multiplicities)
-    if D <= 0:
-        raise FloatingPointError("方向增益必须严格为正")
+    validate_tilt_result(D, requirement, max_gain_sum, numerical_tol)
     return TiltResult(beta, ps, D, max_gain_sum, requirement, False)

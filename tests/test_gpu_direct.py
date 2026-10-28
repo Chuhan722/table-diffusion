@@ -154,8 +154,9 @@ def test_direct_feats_bitwise(seed, kw):
     feats_got, score_got = ctx._feats_direct(codes_g)
     np.testing.assert_array_equal(cp.asnumpy(feats_got), cp.asnumpy(feats_ref))
     np.testing.assert_array_equal(cp.asnumpy(score_got), cp.asnumpy(score_g))
-    r1, l1, s1 = ctx._residual_from_feats(feats_ref, counts)
-    r2, l2, s2 = ctx._residual_from_feats(feats_got, counts)
+    r1, l1, s1, answers1 = ctx._residual_from_feats(feats_ref, counts)
+    r2, l2, s2, answers2 = ctx._residual_from_feats(feats_got, counts)
+    np.testing.assert_array_equal(cp.asnumpy(answers2), cp.asnumpy(answers1))
     assert l1 == l2
     np.testing.assert_array_equal(cp.asnumpy(r1), cp.asnumpy(r2))
     np.testing.assert_array_equal(cp.asnumpy(s1), cp.asnumpy(s2))

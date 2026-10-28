@@ -31,10 +31,14 @@ from .editspace import (
     generate_edit_supports,
     tuples_from_ids,
 )
-from .engine import BlockKernel, EvolveResult, RoundRecord, build_kernel, sample_next
+from .engine import (
+    BlockKernel, EvolveResult, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
+)
+from .gain import ExactGainOracle, gain_recheck_mask, integral_values
 from .pairing import PairingBudget, build_paired_supports
+from .sampling import SamplingPrecision, flat_sampling_mass, record_sampling_precision
 from .state import Workload, loss_from_residual
-from .stepsize import analytic_step, validate_step_parameters
+from .stepsize import analytic_step, final_probabilities, kernel_statistics, validate_step_parameters
 from .tilt import calibrate_beta_flat
 
 
@@ -191,6 +195,7 @@ class GroupKernelResult:
     max_gain_sum: float
     required_gain: float
     status: str
+    sampling_precision: SamplingPrecision | None = None
 
 
 def _normalize_group_block(
@@ -290,7 +295,8 @@ def build_group_kernel(
 
     source_rep = outcome_ids[seg_starts][seg_ids]
     # 增益 G=phi(u)-phi(s)-quad(s,u)/2，phi 一次矩阵向量积，quad 跨轮缓存
-    phi = workload.features @ (workload.weights * residual)
+    we = workload.weights * residual
+    phi = workload.features @ we
     quad_flat = np.zeros(total, dtype=np.float64)
     if quad_cache is None:
         quad_cache = {}
@@ -309,6 +315,22 @@ def build_group_kernel(
             quad_cache[key] = q
         quad_flat[t] = q
     gains_flat = phi[outcome_ids] - phi[source_rep] - quad_flat / 2
+    max_feature = max(float(features.max()), -float(features.min())) if features.size else 0.0
+    exact_counts = integral_values(features) and max_feature * float(grouped.counts.sum()) <= 2.0**50
+    # phi 内部也可能消减；先用保守界筛选，再只对所选路径按局部增量复核。
+    magnitudes = 2.0 * max_feature * float(np.abs(we).sum()) + quad_flat / 2
+    recheck = gain_recheck_mask(
+        gains_flat, magnitudes, 3 * workload.num_queries, numerical_tol,
+        integral=(
+            exact_counts and integral_values(workload.target, weights, residual)
+        ),
+    )
+    recheck[seg_starts] = False
+    paths = np.flatnonzero(recheck)
+    if paths.size:
+        oracle = ExactGainOracle.from_workload(workload, grouped.unique_ids, grouped.counts)
+        for path in paths:
+            gains_flat[path] = oracle.block_gain(features, (source_rep[path],), (outcome_ids[path],))
 
     deltas_flat = None
     if keep_deltas:
@@ -357,32 +379,23 @@ def build_group_kernel(
         (np.dot(drift_total * workload.weights, drift_total)
          - np.sum(counts[:, None] * drifts * drifts * workload.weights)) / 2
     )
-    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
     # 单行组的非保持后继恰好改一行，期望改行数就是重数加权离开率
     unit_rows = float(counts @ leave)
-    if max_expected_rows is not None and unit_rows > 0:
-        step = damping * min(h_star, max_expected_rows / unit_rows)
-    else:
-        step = damping * h_star
-
-    probs_flat = step * rates_flat
-    stay = 1.0 - np.add.reduceat(probs_flat, seg_starts)
-    if np.any(stay < -1e-12):
-        raise FloatingPointError("步长违反随机矩阵约束")
-    probs_flat[seg_starts] = np.maximum(stay, 0.0)
-    negative = np.flatnonzero(stay < 0)
-    for b in negative:
-        # 只做舍入清理，不是按目标的接受或修改
-        lo, hi = int(offsets[b]), int(offsets[b + 1])
-        probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
+    step = analytic_step(
+        float(leave.max()), tilt.direction_gain, interaction, damping,
+        unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+    )
+    probs_flat, has_movement = final_probabilities(rates_flat, step, offsets)
+    expected_loss, upper, expected_rows = kernel_statistics(
+        old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
+    )
+    _, precision = flat_sampling_mass(probs_flat, offsets)
 
     blocks = _blocks_from_flat(rates_flat, probs_flat)
-    expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
-    upper = old_loss - step * tilt.direction_gain / 2
     return GroupKernelResult(
         blocks, grouped, old_loss, tilt.beta, tilt.direction_gain, interaction,
-        step, expected_loss, upper, step * unit_rows,
-        tilt.max_gain_sum, tilt.required_gain, "ok",
+        step, expected_loss, upper, expected_rows,
+        tilt.max_gain_sum, tilt.required_gain, "ok", sampling_precision=precision,
     )
 
 
@@ -393,8 +406,8 @@ def sample_group_next(
 ) -> NDArray[np.int64]:
     """按组核抽下一代，每组按多项分布抽各后继的数量。
 
-    组内 c 行独立按同一单行核抽样，其计数向量精确服从多项分布，
-    因此这里不是近似而是同分布的等价实现，行按组内升序切段分配，
+    实数概率下，组内 c 行独立抽样的计数向量服从多项分布；
+    当前 NumPy 实现仍受有限精度限制，不承诺任意小正质量严格保真。行按组内升序切段分配，
     表是多重集，把哪个计数分给哪个具体行不影响任何查询答案。
     """
     s = np.asarray(state_ids)
@@ -480,23 +493,34 @@ def evolve_grouped(
         raise ValueError("冻结重试次数不能为负")
     current = np.asarray(state_ids).astype(np.int64, copy=True)
     records: list[RoundRecord] = []
+    precision_records: list[SamplingPrecision] = []
     frozen_streak = 0
     quad_cache: dict = {}  # 状态对二次项跨轮缓存，权重固定时增量恒定
+
+    def checkpoint():
+        return EvolveResult(
+            current.copy(), records.copy(), "numerical_indeterminate",
+            sampling_precision=precision_records.copy() or None,
+        )
+
     for k in range(num_rounds):
-        plan = plan_provider(current, k, frozen_streak)
+        plan = _with_numerical_checkpoint(plan_provider, checkpoint, current, k, frozen_streak)
         if plan.mode == "rows":
-            result = build_kernel(
+            result = _with_numerical_checkpoint(
+                build_kernel, checkpoint,
                 plan.workload, current, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
             )
         elif plan.mode == "grouped":
-            result = build_group_kernel(
+            result = _with_numerical_checkpoint(
+                build_group_kernel, checkpoint,
                 plan.workload, plan.grouped, plan.supports,
                 stay_probability, alpha, damping, max_expected_rows,
                 quad_cache=quad_cache,
             )
         else:
             raise ValueError(f"未知计划模式 {plan.mode}")
+        record_sampling_precision(getattr(result, "sampling_precision", None), k, precision_records)
         records.append(
             RoundRecord(
                 k, result.old_loss, result.beta, result.direction_gain,
@@ -507,11 +531,13 @@ def evolve_grouped(
         if result.status == "no_positive_direction":
             frozen_streak += 1
             if frozen_streak > max_frozen_retries:
-                return EvolveResult(current, records, "no_positive_direction")
+                return EvolveResult(
+                    current, records, "no_positive_direction", sampling_precision=precision_records or None,
+                )
             continue
         frozen_streak = 0
         if plan.mode == "rows":
             current = sample_next(result, current, rng)
         else:
             current = sample_group_next(result, current, rng)
-    return EvolveResult(current, records, "round_limit")
+    return EvolveResult(current, records, "round_limit", sampling_precision=precision_records or None)

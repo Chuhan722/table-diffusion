@@ -31,8 +31,14 @@ from scipy.optimize import brentq
 from .batchkernel import BatchKernelResult
 from .batchmenu import BatchMenu, QueryStructure
 from .grouping import GroupedTable
+from .gain import ExactGainOracle, exact_sparse_path_gains, integral_values, validate_numerical_tol
+from .probe import ProbeAccumulator
+from .sampling import flat_sampling_mass
 from .state import Workload
-from .stepsize import analytic_step, validate_step_parameters
+from .stepsize import (
+    analytic_step, final_probabilities, kernel_statistics, validate_step_parameters,
+)
+from .tilt import calibration_requirement, validate_tilt_parameters, validate_tilt_result
 
 
 def _cupy():
@@ -259,30 +265,70 @@ __global__ void part_gains(const double* __restrict__ data, const long long* __r
                            const double* __restrict__ we, const double* __restrict__ w,
                            const long long* __restrict__ indptr,
                            const long long* __restrict__ path_idx,
-                           double* __restrict__ gains, const long long nseg) {
+                           double* __restrict__ gains, double* __restrict__ magnitudes,
+                           const long long nseg) {
     const long long s = blockIdx.x;
     if (s >= nseg) return;
     const long long lo = indptr[s], hi = indptr[s + 1];
     __shared__ double buf1[128];
     __shared__ double buf2[128];
-    double a1 = 0.0, a2 = 0.0;
+    __shared__ double absbuf[128];
+    double a1 = 0.0, a2 = 0.0, absolute = 0.0;
     for (long long k = lo + threadIdx.x; k < hi; k += blockDim.x) {
         const double d = data[k];
         const long long q = indices[k];
-        a1 = __dadd_rn(a1, __dmul_rn(d, we[q]));
+        const double linear = __dmul_rn(d, we[q]);
+        a1 = __dadd_rn(a1, linear);
         a2 = __dadd_rn(a2, __dmul_rn(__dmul_rn(d, d), w[q]));
+        absolute = __dadd_rn(absolute, fabs(linear));
     }
     buf1[threadIdx.x] = a1;
     buf2[threadIdx.x] = a2;
+    absbuf[threadIdx.x] = absolute;
     __syncthreads();
     for (int step = 64; step > 0; step >>= 1) {
         if (threadIdx.x < step) {
             buf1[threadIdx.x] = __dadd_rn(buf1[threadIdx.x], buf1[threadIdx.x + step]);
             buf2[threadIdx.x] = __dadd_rn(buf2[threadIdx.x], buf2[threadIdx.x + step]);
+            absbuf[threadIdx.x] = __dadd_rn(absbuf[threadIdx.x], absbuf[threadIdx.x + step]);
         }
         __syncthreads();
     }
-    if (threadIdx.x == 0) gains[path_idx[s]] = __dsub_rn(buf1[0], __ddiv_rn(buf2[0], 2.0));
+    if (threadIdx.x == 0) {
+        gains[path_idx[s]] = __dsub_rn(buf1[0], __ddiv_rn(buf2[0], 2.0));
+        magnitudes[path_idx[s]] = __dadd_rn(absbuf[0], __ddiv_rn(buf2[0], 2.0));
+    }
+}
+
+// 局部复核掩码、异常位和选中数量合并；正常空掩码也必须核验异常位。
+__global__ void gain_recheck(const double* __restrict__ gains,
+                             const double* __restrict__ magnitudes,
+                             const long long* __restrict__ terms,
+                             const long long n, const int integral,
+                             const double tolerance, const double unit_roundoff,
+                             const double smallest, const double exact_limit,
+                             bool* __restrict__ mask,
+                             unsigned long long* __restrict__ status) {
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const double g = gains[i], m = magnitudes[i];
+    unsigned long long flags = 0;
+    if (!isfinite(g) || !isfinite(m)) flags |= 1;
+    if (m < 0.0) flags |= 2;
+    const double operations = __dmul_rn(8.0, __dadd_rn((double)terms[i], 1.0));
+    const double ku = __dmul_rn(operations, unit_roundoff);
+    if (ku >= 0.5) flags |= 4;
+    if (m > exact_limit) flags |= 8;
+    bool selected = false;
+    if (!(flags & 7) && (!integral || m > exact_limit)) {
+        const double gamma = __ddiv_rn(ku, __dsub_rn(1.0, ku));
+        const double relative = fmax(tolerance, __ddiv_rn(gamma, __dsub_rn(1.0, gamma)));
+        const double threshold = fmax(__dmul_rn(relative, m), __dmul_rn(operations, smallest));
+        selected = terms[i] > 0 && fabs(g) <= threshold;
+    }
+    mask[i] = selected;
+    if (selected) atomicAdd(status, 1ULL);
+    if (flags) atomicOr(status + 1, flags);
 }
 
 }
@@ -301,6 +347,7 @@ def _tilt_kernels(cp):
             "gain": raw.get_function("tilt_gain"),
             "part_gains": raw.get_function("part_gains"),
             "drift_kv": raw.get_function("drift_kv"),
+            "gain_recheck": raw.get_function("gain_recheck"),
         }
         _tilt_module_cache[dev] = mod
     return mod
@@ -580,8 +627,13 @@ class GpuBatchContext:
         self.hs_threshold = cp.asarray(qs.hs_threshold)
         self.hs_score = [cp.asarray(t) for t in qs.hs_score]
         self.num_hs = qs.num_halfspaces
-        self.target = cp.asarray(np.asarray(target, dtype=np.float64))
-        self.weights = cp.asarray(np.asarray(weights, dtype=np.float64))
+        self._target_host = np.array(target, dtype=np.float64, copy=True)
+        self._weights_host = np.array(weights, dtype=np.float64, copy=True)
+        self._target_host.setflags(write=False)
+        self._weights_host.setflags(write=False)
+        self._integral_gain_inputs = integral_values(self._target_host, self._weights_host)
+        self.target = cp.asarray(self._target_host)
+        self.weights = cp.asarray(self._weights_host)
         self.num_queries = int(self.target.size)
         # 依赖表拼接缓存，供条目流展开一次取数，免去按字段的小核循环
         sizes_np = np.array([d.size for d in qs.dep], dtype=np.int64)
@@ -687,7 +739,7 @@ class GpuBatchContext:
         loss = float((residual * self.weights) @ residual / 2)
         wr = self.weights * cp.abs(residual)
         scores = cp.where(valid, wr[cp.maximum(q, 0)], 0.0).sum(axis=1)
-        return residual, loss, scores, self._hs_scores(codes_g), None
+        return residual, loss, scores, self._hs_scores(codes_g), None, answers
 
     def _direct_entries(self, sub, menu_gpu, codes_g, multi: bool, pairs_total=None):
         """给定路径子集，直算每条路径的答案差稀疏块，条目按（路径，题号）升序。
@@ -890,7 +942,7 @@ class GpuBatchContext:
         loss = float((residual * self.weights) @ residual / 2)
         # 组错位分，组覆盖的题按绝对加权残差求和，供工作批挑组
         scores = feats @ (self.weights * cp.abs(residual))
-        return residual, loss, scores
+        return residual, loss, scores, answers
 
     def _residual_loss(self, cnt, score_g, counts):
         """由条件计数重构特征算残差损失与组错位分，整数数据下与 CPU 逐位相同。"""
@@ -902,11 +954,11 @@ class GpuBatchContext:
             if self.sparse:
                 return self._state_terms_sparse(codes_g, counts)
             feats, score_g = self._feats_direct(codes_g)
-            residual, loss, scores = self._residual_from_feats(feats, counts)
-            return residual, loss, scores, score_g, None
+            residual, loss, scores, answers = self._residual_from_feats(feats, counts)
+            return residual, loss, scores, score_g, None, answers
         cnt, score_g = self._condition_counts(codes_g)
-        residual, loss, scores = self._residual_loss(cnt, score_g, counts)
-        return residual, loss, scores, score_g, cnt
+        residual, loss, scores, answers = self._residual_loss(cnt, score_g, counts)
+        return residual, loss, scores, score_g, cnt, answers
 
     def loss_of(self, codes: np.ndarray, state_ids) -> float:
         """当前表的损失，全程在卡上算，等价 CPU 的 table_loss。"""
@@ -916,7 +968,7 @@ class GpuBatchContext:
         grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
         codes_g = cp.asarray(codes[grouped.unique_ids])
         counts = cp.asarray(grouped.counts.astype(np.float64))
-        _, loss, _, _, _ = self._state_terms(codes_g, counts)
+        _, loss, _, _, _, _ = self._state_terms(codes_g, counts)
         return loss
 
     def group_losses_of(self, codes: np.ndarray, state_ids, group_index_dev, num_groups: int):
@@ -931,7 +983,7 @@ class GpuBatchContext:
         grouped = group_state_ids(np.asarray(state_ids, dtype=np.int64))
         codes_g = cp.asarray(codes[grouped.unique_ids])
         counts = cp.asarray(grouped.counts.astype(np.float64))
-        residual, loss, _, _, _ = self._state_terms(codes_g, counts)
+        residual, loss, _, _, _, _ = self._state_terms(codes_g, counts)
         if int(group_index_dev.size) != int(residual.size):
             raise ValueError("分档索引长度须等于题数")
         per = cp.bincount(group_index_dev, weights=self.weights * residual * residual, minlength=num_groups)
@@ -1122,13 +1174,17 @@ class GpuBatchContext:
         每次评估只在卡上做一轮指数扫描。
         """
         cp = self.cp
+        validate_tilt_parameters(alpha, numerical_tol)
+        if not bool(cp.all(cp.isfinite(gains_flat))):
+            raise FloatingPointError("numerical_indeterminate: 输入增益非有限")
 
         num_groups = offsets.size - 1
         gmax = _seg_max(cp, gains_flat, offsets)
         max_gain_sum = float(counts @ cp.maximum(gmax, 0.0))
-        requirement = alpha * max_gain_sum
-        scale = max(1.0, old_loss)
-        if max_gain_sum <= numerical_tol * scale:
+        requirement = calibration_requirement(max_gain_sum, alpha, old_loss)
+        if max_gain_sum == 0.0:
+            if bool(cp.any(gmax > 0)):
+                raise FloatingPointError("numerical_indeterminate: 正增益在聚合中丢失")
             return None, max_gain_sum, requirement
 
         centered = gains_flat - gmax[seg_ids]
@@ -1146,6 +1202,8 @@ class GpuBatchContext:
         per_group = cp.zeros(nseg, dtype=cp.float64)
 
         def evaluate(beta: float):
+            if not np.isfinite(beta):
+                raise FloatingPointError("numerical_indeterminate: beta 超出有限表示范围")
             # 两个融合核（见 _TILT_KERNEL_SRC），与 ref·exp(beta·centered) / seg_sum / 归一 / seg_sum 逐位相同
             if nseg and total:
                 kern["norm"]((nseg,), (128,), (ref_c, centered, np.float64(beta), off64, zw, norm, np.int64(nseg)))
@@ -1172,7 +1230,7 @@ class GpuBatchContext:
                         break
                     hi = probe
                 else:
-                    raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                    raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
             else:
                 lo = probe
                 for _ in range(100):
@@ -1183,7 +1241,7 @@ class GpuBatchContext:
                         break
                     lo = probe
                 else:
-                    raise FloatingPointError("无法括住 beta 根，检查数值条件")
+                    raise FloatingPointError("numerical_indeterminate: 无法括住 beta 根，检查数值条件")
             beta = float(
                 brentq(
                     lambda b: evaluate(b)[1] - requirement,
@@ -1196,8 +1254,7 @@ class GpuBatchContext:
                     break
                 beta = beta * (1.0 + 4e-13) if beta > 0 else hi * 1e-16
                 ps, D = evaluate(beta)
-        if D <= 0:
-            raise FloatingPointError("方向增益必须严格为正")
+        validate_tilt_result(D, requirement, max_gain_sum, numerical_tol)
         return (beta, ps, D), max_gain_sum, requirement
 
     # ------------------------------------------------------------------
@@ -1224,22 +1281,17 @@ class GpuBatchContext:
             D = float(counts @ _seg_sum(cp, P * gains_flat, offsets))
             return P, D
 
-        target = 0.99 * max_gain_sum
-        beta_sat = 1.0 / max(max_gain_sum, 1e-300)
-        _, dv = tilted(beta_sat)
-        for _ in range(200):
-            if dv >= target:
-                break
-            beta_sat *= 2.0
-            _, dv = tilted(beta_sat)
+        probe = ProbeAccumulator()
+        grid = probe.grid(tilted, max_gain_sum, grid_size)
+        if not grid:
+            return probe.finish()
 
         kern = _seg_kernels(cp)["run"]
-        grid = [0.0] + list(
-            np.geomspace(beta_sat / 2 ** 14, beta_sat, grid_size - 1)
-        )
-        best_beta, best_j = 0.0, 0.0
         for beta in grid:
             P, D = tilted(float(beta))
+            if not np.isfinite(D):
+                probe.unavailable(beta, "numerical_indeterminate: 诊断方向增益非有限")
+                continue
             if D <= 0.0:
                 continue
             rates_flat = P.copy()
@@ -1247,6 +1299,7 @@ class GpuBatchContext:
             leave = _seg_sum(cp, rates_flat, offsets)
             max_leave = float(leave.max())
             if max_leave <= 0.0:
+                probe.unavailable(beta, "numerical_indeterminate: 正方向诊断的离开速率非正")
                 continue
             rates_paths = rates_flat[path_pos]
             drifts = cp.zeros(num_groups * num_queries, dtype=cp.float64)
@@ -1319,16 +1372,11 @@ class GpuBatchContext:
             interaction = float(
                 ((drift_total * self.weights) @ drift_total - self_cross) / 2
             )
-            h_star = analytic_step(max_leave, D, interaction)
             unit_rows = float(counts @ leave)
-            if max_expected_rows is not None and unit_rows > 0:
-                step = damping * min(h_star, max_expected_rows / unit_rows)
-            else:
-                step = damping * h_star
-            j = step * D - step * step * interaction
-            if j > best_j:
-                best_j, best_beta = j, float(beta)
-        return best_beta, best_j
+            probe.evaluate(
+                beta, max_leave, D, interaction, damping, unit_rows, max_expected_rows,
+            )
+        return probe.finish()
 
     # ------------------------------------------------------------------
     def _merge_keys(self, keys, wvals):
@@ -1423,6 +1471,30 @@ class GpuBatchContext:
         self_cross = float(cp.sum(cg * self.weights[q_idx] * sums * sums))
         return drift_total, self_cross
 
+    def _gain_recheck_mask(self, gains, magnitudes, terms, numerical_tol):
+        """固定量整数性已缓存；检查状态与选中数量只回传一次。"""
+        validate_numerical_tol(numerical_tol)
+        cp = self.cp
+        size = int(gains.size)
+        mask = cp.empty(size, dtype=cp.bool_)
+        if not size:
+            return mask, 0
+        status = cp.zeros(2, dtype=cp.uint64)
+        _tilt_kernels(cp)["gain_recheck"](
+            ((size + 255) // 256,), (256,),
+            (gains, magnitudes, terms, np.int64(size), np.int32(self._integral_gain_inputs),
+             np.float64(numerical_tol), np.float64(np.finfo(np.float64).eps / 2.0),
+             np.float64(np.nextafter(0.0, 1.0)), np.float64(2.0**50), mask, status),
+        )
+        selected, flags = (int(value) for value in cp.asnumpy(status))
+        if flags & 1:
+            raise FloatingPointError("numerical_indeterminate: 局部增益或运算规模非有限")
+        if flags & 2:
+            raise FloatingPointError("numerical_indeterminate: 局部运算规模不能为负")
+        if flags & 4 and (not self._integral_gain_inputs or flags & 8):
+            raise FloatingPointError("numerical_indeterminate: 无法建立有效的局部舍入界")
+        return mask, selected
+
     # ------------------------------------------------------------------
     def build(
         self,
@@ -1463,7 +1535,7 @@ class GpuBatchContext:
 
         # 残差由条件计数重构特征得出，整数数据下与 CPU 逐位相同；
         # 单元格直算通路改由格号散射特征，答案差直接取旧格新格两项
-        residual, old_loss, scores_gpu, score_g, cnt = self._state_terms(codes_g, counts)
+        residual, old_loss, scores_gpu, score_g, cnt, answers = self._state_terms(codes_g, counts)
         # 组分数回传推迟到出口处，免得在此处同步截断后续核的提交
 
         if self.direct:
@@ -1473,6 +1545,8 @@ class GpuBatchContext:
         delta_hs = self._halfspace_delta(menu_gpu, score_g, codes_g)
         we = cp.ascontiguousarray(self.weights * residual, dtype=cp.float64)
         gains_paths = cp.zeros(menu.num_paths, dtype=cp.float64)
+        magnitudes = cp.zeros(menu.num_paths, dtype=cp.float64)
+        gain_terms = cp.zeros(menu.num_paths, dtype=cp.int64)
         part_gain_kern = _tilt_kernels(cp)["part_gains"]
         for part in parts:
             # 一路径一块的融合核：lin = Σ d·we[q]，quad = Σ (d·d)·w[q]，写入 lin − quad/2，
@@ -1487,12 +1561,46 @@ class GpuBatchContext:
                  we, self.weights,
                  cp.ascontiguousarray(part["indptr"], dtype=cp.int64),
                  cp.ascontiguousarray(part["path_idx"], dtype=cp.int64),
-                 gains_paths, np.int64(nseg_part)),
+                 gains_paths, magnitudes, np.int64(nseg_part)),
             )
+            gain_terms[part["path_idx"]] = cp.diff(part["indptr"])
         if delta_hs is not None:
             w_hs = self.weights[self.hs_cols]
             gains_paths += delta_hs @ we[self.hs_cols]
-            gains_paths -= (delta_hs * delta_hs) @ w_hs / 2
+            quadratic_hs = (delta_hs * delta_hs) @ w_hs / 2
+            gains_paths -= quadratic_hs
+            magnitudes += cp.abs(delta_hs) @ cp.abs(we[self.hs_cols]) + quadratic_hs
+            gain_terms += cp.count_nonzero(delta_hs, axis=1)
+
+        recheck, selected_count = self._gain_recheck_mask(
+            gains_paths, magnitudes, gain_terms, numerical_tol,
+        )
+        if selected_count:
+            selected_dev = cp.flatnonzero(recheck)
+            selected_parts = []
+            for part in parts:
+                rows = cp.flatnonzero(recheck[part["path_idx"]])
+                if not rows.size:
+                    continue
+                starts = part["indptr"][rows]
+                lengths = part["indptr"][rows + 1] - starts
+                indptr = cp.concatenate([cp.zeros(1, dtype=cp.int64), cp.cumsum(lengths)])
+                total = int(indptr[-1])
+                row_of = _seg_ids(cp, indptr, total)
+                entries = cp.arange(total) + (starts - indptr[:-1])[row_of]
+                selected_parts.append((
+                    cp.asnumpy(part["path_idx"][rows]), cp.asnumpy(indptr),
+                    cp.asnumpy(part["indices"][entries]), cp.asnumpy(part["data"][entries]),
+                ))
+            corrected = exact_sparse_path_gains(
+                cp.asnumpy(selected_dev), selected_parts,
+                ExactGainOracle.from_answers(
+                    self._target_host, self._weights_host, cp.asnumpy(answers),
+                ),
+                None if delta_hs is None else cp.asnumpy(delta_hs[selected_dev]),
+                cp.asnumpy(self.hs_cols),
+            )
+            gains_paths[selected_dev] = cp.asarray(corrected)
 
         # flat 结构，每段索引 0 是保持项
         lengths_np = np.diff(menu.offsets) + 1
@@ -1608,28 +1716,20 @@ class GpuBatchContext:
         # 标量与拼接向量回传，步长与越界修正走 CPU 原语义
         leave_np = cp.asnumpy(leave)
         rates_np = cp.asnumpy(rates_flat)
-        h_star = analytic_step(float(leave_np.max()), direction_gain, interaction)
         unit_rows = float(np.dot(grouped.counts.astype(np.float64), leave_np))
-        if max_expected_rows is not None and unit_rows > 0:
-            step = damping * min(h_star, max_expected_rows / unit_rows)
-        else:
-            step = damping * h_star
-
-        probs_flat = step * rates_np
-        stay = 1.0 - np.add.reduceat(probs_flat, offsets_np[:-1])
-        if np.any(stay < -1e-12):
-            raise FloatingPointError("步长违反随机矩阵约束")
-        probs_flat[offsets_np[:-1]] = np.maximum(stay, 0.0)
-        negative = np.flatnonzero(stay < 0)
-        for b in negative:
-            lo, hi = int(offsets_np[b]), int(offsets_np[b + 1])
-            probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
-
-        expected_loss = old_loss - step * direction_gain + step * step * interaction
-        upper = old_loss - step * direction_gain / 2
+        step = analytic_step(
+            float(leave_np.max()), direction_gain, interaction, damping,
+            unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+        )
+        probs_flat, has_movement = final_probabilities(rates_np, step, offsets_np)
+        expected_loss, upper, expected_rows = kernel_statistics(
+            old_loss, direction_gain, interaction, step, unit_rows, has_movement,
+        )
+        _, precision = flat_sampling_mass(probs_flat, offsets_np)
         probe = None
+        probe_diagnostics = None
         if probe_grid > 0:
-            probe = self._probe_grid(
+            probe, probe_diagnostics = self._probe_grid(
                 gains_flat, ref_flat, offsets, seg_ids, counts, menu_gpu,
                 parts, delta_hs, path_pos, damping, max_expected_rows,
                 max_gain_sum, entry_budget, probe_grid,
@@ -1637,8 +1737,10 @@ class GpuBatchContext:
         return BatchKernelResult(
             menu, grouped, offsets_np, probs_flat, old_loss,
             beta, direction_gain, interaction, step,
-            expected_loss, upper, step * unit_rows,
+            expected_loss, upper, expected_rows,
             max_gain_sum, requirement, "ok",
             cp.asnumpy(scores_gpu),
             probe,
+            probe_diagnostics=probe_diagnostics,
+            sampling_precision=precision,
         )

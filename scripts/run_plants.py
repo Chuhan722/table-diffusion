@@ -32,9 +32,12 @@ from resevo.dataset import (  # noqa: E402
 from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
+from resevo.failure import save_numerical_failure  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
+from resevo.probe import probe_diagnostic_columns  # noqa: E402
+from resevo.sampling import sampling_summary  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 from resevo.stepsize import validate_step_parameters  # noqa: E402
 
@@ -331,62 +334,67 @@ def run_stage(
                 fission_ids_g.append(ids.copy())
                 _group_snapshot_hook(round_index, old_loss, per, ids)
 
-    if args.batched:
-        out = evolve_batch(
-            ids, rounds,
-            np.random.default_rng(sample_seed),
-            provider, registry,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-            backend="gpu" if args.gpu else "cpu",
-            stop_threshold=args.stop_threshold,
-            stop_lag=args.stop_lag,
-            rescue_stop_window=args.rescue_stop_window,
-            rescue_stop_tol=args.rescue_stop_tol,
-            gpu_entry_budget=args.gpu_entry_budget,
-            gpu_direct=gpu_direct,
-            gpu_sparse=gpu_sparse,
-            noise_floor=args.noise_floor,
-            stop_threshold_noisy=args.stop_threshold_noisy,
-            progress_every=args.progress,
-            probe_interval=args.probe_interval,
-            ref_shape=args.ref_shape,
-            stay_probability=args.stay,
-            damping=args.damping,
-            struct_shaper=shaper,
-            treat_stop_tol=args.treat_stop_tol,
-            stop_floor=stop_floor,
-            nullswap_phase=nullswap,
-            nullswap_every=args.nullswap_every,
-            nullswap_after=args.nullswap_after,
-            snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
-            snapshot_hook=snapshot_hook,
-            group_index=None if group_floor is None else group_floor["index"],
-            group_floors=None if group_floor is None else group_floor["floors"],
-            stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
-            group_snapshot_hook=group_snapshot_hook,
-            fission_targets=fission_targets,
-            fission_every=args.fission_every if fission_targets is not None else 0,
-            fission_hook=fission_hook,
-            fission_stop_z=args.fission_stop_z if fission_targets is not None else 0.0,
-            fission_stop_runs=args.fission_stop_runs,
-        )
-    elif args.grouped:
-        out = evolve_grouped(
-            ids, rounds,
-            np.random.default_rng(sample_seed),
-            provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
-    else:
-        out = evolve(
-            None, ids, rounds,
-            np.random.default_rng(sample_seed),
-            support_provider=provider,
-            alpha=args.alpha,
-            max_frozen_retries=args.retries,
-        )
+    failure_output = (
+        getattr(args, "save_table", None) or getattr(args, "out", None)
+        or getattr(args, "snapshot_prefix", None) or None
+    )
+    with save_numerical_failure(registry, failure_output, stage="stage2" if label else "stage1"):
+        if args.batched:
+            out = evolve_batch(
+                ids, rounds,
+                np.random.default_rng(sample_seed),
+                provider, registry,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+                backend="gpu" if args.gpu else "cpu",
+                stop_threshold=args.stop_threshold,
+                stop_lag=args.stop_lag,
+                rescue_stop_window=args.rescue_stop_window,
+                rescue_stop_tol=args.rescue_stop_tol,
+                gpu_entry_budget=args.gpu_entry_budget,
+                gpu_direct=gpu_direct,
+                gpu_sparse=gpu_sparse,
+                noise_floor=args.noise_floor,
+                stop_threshold_noisy=args.stop_threshold_noisy,
+                progress_every=args.progress,
+                probe_interval=args.probe_interval,
+                ref_shape=args.ref_shape,
+                stay_probability=args.stay,
+                damping=args.damping,
+                struct_shaper=shaper,
+                treat_stop_tol=args.treat_stop_tol,
+                stop_floor=stop_floor,
+                nullswap_phase=nullswap,
+                nullswap_every=args.nullswap_every,
+                nullswap_after=args.nullswap_after,
+                snapshot_losses=snapshot_losses if snapshot_hook is not None else None,
+                snapshot_hook=snapshot_hook,
+                group_index=None if group_floor is None else group_floor["index"],
+                group_floors=None if group_floor is None else group_floor["floors"],
+                stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
+                group_snapshot_hook=group_snapshot_hook,
+                fission_targets=fission_targets,
+                fission_every=args.fission_every if fission_targets is not None else 0,
+                fission_hook=fission_hook,
+                fission_stop_z=args.fission_stop_z if fission_targets is not None else 0.0,
+                fission_stop_runs=args.fission_stop_runs,
+            )
+        elif args.grouped:
+            out = evolve_grouped(
+                ids, rounds,
+                np.random.default_rng(sample_seed),
+                provider,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+            )
+        else:
+            out = evolve(
+                None, ids, rounds,
+                np.random.default_rng(sample_seed),
+                support_provider=provider,
+                alpha=args.alpha,
+                max_frozen_retries=args.retries,
+            )
     elapsed = time.perf_counter() - t0
 
     if args.gpu:
@@ -433,6 +441,15 @@ def run_stage(
             csv.writer(f).writerow(["final", f"{elapsed:.3f}", final_loss, repr(l1_final), 0, *diff_cols])
         tail = f"，对全过线表 配对差 {float(diff_cols[0]):+.6f} ± {float(diff_cols[1]):.6f}" if fission_ids_g else ""
         print(f"{label}分裂探针 终表 模拟卷 L1_B {l1_final:.6f}（{len(out.records)} 轮）{tail}", flush=True)
+    if getattr(out, "sampling_precision", None):
+        info = sampling_summary(out.sampling_precision)
+        print(
+            f"{label}采样精度限制：{info['affected_rounds']} 轮、"
+            f"{info['limited_segment_occurrences']} 段次，"
+            f"最大受限质量 {info['max_limited_mass']:.6g}；"
+            "继续使用 NumPy 有限精度近似，不作为严格支持保留证明",
+            flush=True,
+        )
     return StageResult(out, registry, y, w, initial_loss, final_loss, elapsed, len(specs))
 
 
@@ -515,11 +532,14 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         has_temp = out.temps is not None
+        precision = {row.round_index: row for row in getattr(out, "sampling_precision", None) or []}
         header = ["round", "old_loss", "beta", "direction_gain", "interaction",
                   "step", "expected_loss", "status", "max_gain_sum"]
         if has_temp:
             header.append("temp")
         header += ["mode", "candidates", "moved_rows", "elapsed_s"]  # 第六十步记账列
+        if precision:
+            header += ["sampling_limited_segments", "sampling_max_limited_mass"]
         writer.writerow(header)
         for i, r in enumerate(out.records):
             row = [r.round_index, r.old_loss, r.beta, r.direction_gain,
@@ -531,21 +551,28 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
                     if isinstance(t, tuple) else t
                 )
             row += [r.mode, r.candidates, r.moved_rows, r.elapsed]
+            if precision:
+                info = precision.get(r.round_index)
+                row += [0, 0.0] if info is None else [info.limited_segments, info.max_limited_mass]
             writer.writerow(row)
         final_row = ["final", final_loss, "", "", "", "", "", out.stop_reason, ""]
         if has_temp:
             final_row.append("")
         final_row += ["", "", "", ""]
+        if precision:
+            info = sampling_summary(out.sampling_precision)
+            final_row += [info["limited_segment_occurrences"], info["max_limited_mass"]]
         writer.writerow(final_row)
     print(f"{what}已写入 {out_path}")
     if out.probes:
         probe_path = out_path.with_name(out_path.stem + "_probe.csv")
+        extra_names, extra_rows = probe_diagnostic_columns([p.diagnostics for p in out.probes])
         with open(probe_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"])
-            for p in out.probes:
+            writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"] + extra_names)
+            for p, extra in zip(out.probes, extra_rows):
                 writer.writerow(
-                    [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
+                    [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best] + extra
                 )
         print(f"探针已写入 {probe_path}")
 
