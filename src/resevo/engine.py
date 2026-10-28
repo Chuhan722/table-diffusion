@@ -22,6 +22,7 @@ from .candidates import (
     validate_partition,
 )
 from .gain import ExactGainOracle, block_deltas, block_gains, integral_values
+from .probe import ProbeDiagnostics
 from .state import Workload, check_state_ids, loss_from_residual, table_residual
 from .stepsize import (
     analytic_step,
@@ -29,6 +30,8 @@ from .stepsize import (
     block_leave_rates,
     cross_interaction,
     expected_changed_rows_at_unit_step,
+    final_probabilities,
+    kernel_statistics,
     rates_from_probabilities,
     validate_step_parameters,
 )
@@ -133,32 +136,26 @@ def build_kernel(
     leave = block_leave_rates(rates)
     drifts = block_drifts(rates, deltas_list)
     interaction = cross_interaction(drifts, workload.weights)
-    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
     unit_rows = expected_changed_rows_at_unit_step(rates, [nb.outcomes for nb in normalized])
-    if max_expected_rows is not None and unit_rows > 0:
-        # 期望改行数预算按文档 h=gamma*min(h*, B_max/H)，在抽样前决定
-        step = damping * min(h_star, max_expected_rows / unit_rows)
-    else:
-        step = damping * h_star
+    step = analytic_step(
+        float(leave.max()), tilt.direction_gain, interaction, damping,
+        unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+    )
 
     blocks = []
+    has_movement = False
     for nb, d, g, r in zip(normalized, deltas_list, gains_list, rates):
-        probabilities = step * r
-        probabilities[0] = 1.0 - float(probabilities[1:].sum())
-        # 只做舍入清理，不是按目标的接受或修改
-        if probabilities[0] < -1e-12:
-            raise FloatingPointError("步长违反随机矩阵约束")
-        if probabilities[0] < 0:
-            probabilities[0] = 0.0
-            probabilities /= probabilities.sum()
+        probabilities, moving = final_probabilities(r, step)
+        has_movement |= moving
         blocks.append(BlockKernel(nb.rows, nb.outcomes, nb.reference, d, g, r, probabilities))
 
+    expected_loss, upper, expected_rows = kernel_statistics(
+        old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
+    )
     marginals = _row_marginals(blocks, n, m)
-    expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
-    upper = old_loss - step * tilt.direction_gain / 2
     return KernelResult(
         blocks, marginals, old_loss, tilt.beta, tilt.direction_gain, interaction,
-        step, expected_loss, upper, step * unit_rows,
+        step, expected_loss, upper, expected_rows,
         tilt.max_gain_sum, tilt.required_gain, "ok",
     )
 
@@ -244,8 +241,9 @@ class ProbeRecord:
     round_index: int
     beta_used: float
     j_used: float  # 实际所用 beta 的期望下降，old_loss-expected_loss
-    beta_best: float
-    j_best: float  # 网格上最优的期望下降
+    beta_best: float | None
+    j_best: float | None  # 诊断不可用时不伪造最优值
+    diagnostics: ProbeDiagnostics | None = None
 
 
 @dataclass

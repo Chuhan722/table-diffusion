@@ -154,19 +154,30 @@ def large():
         schema = TableSchema(tuple(fields), tuple(tuple(domain) for domain in domains))
         target = target_from_specs(specs)
         marginals = derive_first_order(specs, schema, n)
-        rows = sample_initial_rows(marginals, schema, n, np.random.default_rng(args.seed))
+        init_rng = np.random.default_rng(args.seed)
+        rows = sample_initial_rows(marginals, schema, n, init_rng)
         registry = StateRegistry(schema, specs)
         registry.set_lazy_features(backend == "gpu")
         ids = registry.register_table(rows)
+        menu_rng = np.random.default_rng(100000 + args.seed)
+        select_rng = np.random.default_rng(200000 + args.seed)
         provider = make_batch_provider(
-            registry, target, np.ones(len(specs)), np.random.default_rng(100000 + args.seed),
+            registry, target, np.ones(len(specs)), menu_rng,
             pairing=False, defer_workload=backend == "gpu",
             work_rows=work_rows, work_below_step=0.2 if work_rows else 0.0,
-            select_rng=np.random.default_rng(200000 + args.seed),
+            select_rng=select_rng,
         )
-        result = observe(ids, 400, np.random.default_rng(300000 + args.seed), provider, registry,
+        sample_rng = np.random.default_rng(300000 + args.seed)
+        result = observe(ids, 400, sample_rng, provider, registry,
                          max_frozen_retries=6, backend=backend, gpu_entry_budget=40000000)
         write_table(output, schema, tuples_from_ids(registry, result.state_ids))
+        dump(args.out / "state.json", {
+            "state_ids": result.state_ids.tolist(),
+            "init_rng": init_rng.bit_generator.state,
+            "menu_rng": menu_rng.bit_generator.state,
+            "select_rng": select_rng.bit_generator.state,
+            "sample_rng": sample_rng.bit_generator.state,
+        })
     else:
         from resevo import cli
 

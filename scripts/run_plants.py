@@ -36,6 +36,7 @@ from resevo.failure import save_numerical_failure  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
+from resevo.probe import probe_diagnostic_columns  # noqa: E402
 from resevo.state import table_loss  # noqa: E402
 from resevo.stepsize import validate_step_parameters  # noqa: E402
 
@@ -498,12 +499,13 @@ def write_curve(out_path: Path, out, final_loss: float, what: str = "曲线") ->
     print(f"{what}已写入 {out_path}")
     if out.probes:
         probe_path = out_path.with_name(out_path.stem + "_probe.csv")
+        extra_names, extra_rows = probe_diagnostic_columns([p.diagnostics for p in out.probes])
         with open(probe_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"])
-            for p in out.probes:
+            writer.writerow(["round", "beta_used", "J_used", "beta_best", "J_best"] + extra_names)
+            for p, extra in zip(out.probes, extra_rows):
                 writer.writerow(
-                    [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best]
+                    [p.round_index, p.beta_used, p.j_used, p.beta_best, p.j_best] + extra
                 )
         print(f"探针已写入 {probe_path}")
 

@@ -37,7 +37,7 @@ from .engine import (
 from .gain import ExactGainOracle, gain_recheck_mask, integral_values
 from .pairing import PairingBudget, build_paired_supports
 from .state import Workload, loss_from_residual
-from .stepsize import analytic_step, validate_step_parameters
+from .stepsize import analytic_step, final_probabilities, kernel_statistics, validate_step_parameters
 from .tilt import calibrate_beta_flat
 
 
@@ -377,31 +377,21 @@ def build_group_kernel(
         (np.dot(drift_total * workload.weights, drift_total)
          - np.sum(counts[:, None] * drifts * drifts * workload.weights)) / 2
     )
-    h_star = analytic_step(float(leave.max()), tilt.direction_gain, interaction)
     # 单行组的非保持后继恰好改一行，期望改行数就是重数加权离开率
     unit_rows = float(counts @ leave)
-    if max_expected_rows is not None and unit_rows > 0:
-        step = damping * min(h_star, max_expected_rows / unit_rows)
-    else:
-        step = damping * h_star
-
-    probs_flat = step * rates_flat
-    stay = 1.0 - np.add.reduceat(probs_flat, seg_starts)
-    if np.any(stay < -1e-12):
-        raise FloatingPointError("步长违反随机矩阵约束")
-    probs_flat[seg_starts] = np.maximum(stay, 0.0)
-    negative = np.flatnonzero(stay < 0)
-    for b in negative:
-        # 只做舍入清理，不是按目标的接受或修改
-        lo, hi = int(offsets[b]), int(offsets[b + 1])
-        probs_flat[lo:hi] /= probs_flat[lo:hi].sum()
+    step = analytic_step(
+        float(leave.max()), tilt.direction_gain, interaction, damping,
+        unit_expected_rows=unit_rows, max_expected_rows=max_expected_rows,
+    )
+    probs_flat, has_movement = final_probabilities(rates_flat, step, offsets)
+    expected_loss, upper, expected_rows = kernel_statistics(
+        old_loss, tilt.direction_gain, interaction, step, unit_rows, has_movement,
+    )
 
     blocks = _blocks_from_flat(rates_flat, probs_flat)
-    expected_loss = old_loss - step * tilt.direction_gain + step * step * interaction
-    upper = old_loss - step * tilt.direction_gain / 2
     return GroupKernelResult(
         blocks, grouped, old_loss, tilt.beta, tilt.direction_gain, interaction,
-        step, expected_loss, upper, step * unit_rows,
+        step, expected_loss, upper, expected_rows,
         tilt.max_gain_sum, tilt.required_gain, "ok",
     )
 

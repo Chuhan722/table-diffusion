@@ -5,7 +5,7 @@
 C 可正可负，不允许先截成零。
 解析步长在 D>0 时 h*=min(h_feas, D/(2C))（C>0）否则 h_feas=1/max b，
 可选阻尼 gamma 与期望改行数预算 B_max 都必须在抽样前决定。
-运算顺序与参考实现一致，便于对拍逐位核对。
+步长限额与概率归一化保留原运算顺序；预测账本使用等价的稳定表达式。
 """
 from __future__ import annotations
 
@@ -87,14 +87,119 @@ def analytic_step(
     direction_gain: float,
     interaction: float,
     damping: float = 1.0,
+    *,
+    unit_expected_rows: float | None = None,
+    max_expected_rows: float | None = None,
 ) -> float:
-    """解析步长 h=gamma*min(h_feas, D/(2C))，C<=0 时只受可行上限约束。"""
-    validate_step_parameters(damping)
-    if max_leave_rate <= 0 or not np.isfinite(direction_gain) or not np.isfinite(interaction):
-        raise FloatingPointError("速率矩非法或非有限")
+    """解析步长，先取可行/曲率/改行预算上限，再阻尼并验证最终表示。"""
+    validate_step_parameters(damping, max_expected_rows)
+    if (
+        not np.isfinite(max_leave_rate) or max_leave_rate <= 0
+        or not np.isfinite(direction_gain) or direction_gain <= 0
+        or not np.isfinite(interaction)
+    ):
+        raise FloatingPointError("numerical_indeterminate: 速率矩非法或非有限")
+    if unit_expected_rows is not None and (
+        not np.isfinite(unit_expected_rows) or unit_expected_rows <= 0
+    ):
+        raise FloatingPointError("numerical_indeterminate: 正方向的单位期望改行数须正且有限")
+    if max_expected_rows is not None and unit_expected_rows is None:
+        raise ValueError("改行预算需要 unit_expected_rows")
     feasible = 1.0 / max_leave_rate
     optimal = min(feasible, direction_gain / (2 * interaction)) if interaction > 0 else feasible
-    return damping * optimal
+    if max_expected_rows is not None:
+        optimal = min(optimal, max_expected_rows / unit_expected_rows)
+    step = damping * optimal
+    _validate_positive_step(step)
+    return step
+
+
+def _validate_positive_step(step: float) -> None:
+    if not np.isfinite(step) or step <= 0:
+        raise FloatingPointError("numerical_indeterminate: 正步长无法以非零有限 float64 表示")
+
+
+def final_probabilities(
+    rates: NDArray[np.float64],
+    step: float,
+    segment_offsets: NDArray[np.int64] | None = None,
+) -> tuple[NDArray[np.float64], bool]:
+    """按原求和/清理顺序构造最终概率，并返回是否保留了非保持质量。
+
+    单块保留原 sum，拼接布局保留原 reduceat；不改为从舍入后的保持项反推质量。
+    """
+    _validate_positive_step(step)
+    if rates.ndim != 1 or rates.size == 0:
+        raise ValueError("速率须为非空一维向量")
+    if segment_offsets is None:
+        starts = np.array([0], dtype=np.int64)
+    else:
+        offsets = np.asarray(segment_offsets)
+        if (
+            offsets.ndim != 1 or offsets.size < 2
+            or not np.issubdtype(offsets.dtype, np.integer)
+            or offsets[0] != 0 or offsets[-1] != rates.size
+            or np.any(np.diff(offsets) < 1)
+        ):
+            raise ValueError("概率段边界须覆盖全部非空段")
+        starts = offsets[:-1]
+    if np.any(rates[starts] != 0.0):
+        raise FloatingPointError("numerical_indeterminate: 保持项速率必须为零")
+    probabilities = step * rates
+    if not np.isfinite(probabilities).all() or np.any(probabilities < 0.0):
+        raise FloatingPointError("numerical_indeterminate: 最终概率非有限或为负")
+    if segment_offsets is None:
+        mass = float(probabilities[1:].sum())
+        stay = 1.0 - mass
+        if not np.isfinite(mass) or stay < -1e-12:
+            raise FloatingPointError("numerical_indeterminate: 步长违反随机矩阵约束")
+        probabilities[0] = max(stay, 0.0)
+        if stay < 0.0:
+            probabilities /= probabilities.sum()
+        return probabilities, mass > 0.0
+    mass = np.add.reduceat(probabilities, starts)
+    stay = 1.0 - mass
+    if not np.isfinite(mass).all() or np.any(stay < -1e-12):
+        raise FloatingPointError("numerical_indeterminate: 步长违反随机矩阵约束")
+    probabilities[starts] = np.maximum(stay, 0.0)
+    for b in np.flatnonzero(stay < 0.0):
+        lo, hi = int(offsets[b]), int(offsets[b + 1])
+        probabilities[lo:hi] /= probabilities[lo:hi].sum()
+    return probabilities, bool(np.any(mass > 0.0))
+
+
+def expected_improvement(step: float, direction_gain: float, interaction: float) -> float:
+    """同一 hD-h²C，用 h(D-hC) 避免先平方巨大/微小步长。"""
+    _validate_positive_step(step)
+    if not np.isfinite(direction_gain) or direction_gain <= 0 or not np.isfinite(interaction):
+        raise FloatingPointError("numerical_indeterminate: 方向增益或交互项非法")
+    improvement = step * (direction_gain - step * interaction)
+    if not np.isfinite(improvement) or improvement < 0:
+        raise FloatingPointError("numerical_indeterminate: 预测下降量无法可靠表示")
+    return improvement
+
+
+def kernel_statistics(
+    old_loss: float,
+    direction_gain: float,
+    interaction: float,
+    step: float,
+    unit_expected_rows: float,
+    has_movement: bool,
+) -> tuple[float, float, float]:
+    """验证活跃核的可发布账本；真实冻结在构造器中另行返回。"""
+    if not has_movement:
+        raise FloatingPointError("numerical_indeterminate: 正方向的最终非保持质量全部下溢")
+    if not np.isfinite(old_loss) or old_loss < 0 or not np.isfinite(unit_expected_rows) or unit_expected_rows <= 0:
+        raise FloatingPointError("numerical_indeterminate: 损失或期望改行数非法")
+    expected_loss = old_loss - expected_improvement(step, direction_gain, interaction)
+    # 先将较大的因子减半，避免 hD 的中间上溢或先减半微小因子的下溢。
+    half_gain = (max(step, direction_gain) * 0.5) * min(step, direction_gain)
+    upper = old_loss - half_gain
+    expected_rows = step * unit_expected_rows
+    if not all(np.isfinite(value) for value in (expected_loss, upper, expected_rows)) or expected_rows <= 0:
+        raise FloatingPointError("numerical_indeterminate: 最终预测账本非有限或改行数下溢")
+    return expected_loss, upper, expected_rows
 
 
 def expected_changed_rows_at_unit_step(
@@ -129,6 +234,12 @@ def apply_row_budget(step: float, unit_expected_rows: float, max_expected_rows: 
     if max_expected_rows is None:
         raise ValueError("max_expected_rows 必须为正的有限数")
     validate_step_parameters(1.0, max_expected_rows)
-    if unit_expected_rows <= 0:
+    if not np.isfinite(unit_expected_rows) or unit_expected_rows < 0 or np.isnan(step) or step < 0:
+        raise FloatingPointError("numerical_indeterminate: 改行预算的步长或单位改行数非法")
+    if unit_expected_rows == 0:
+        if not np.isfinite(step):
+            raise FloatingPointError("numerical_indeterminate: 无改行时步长仍须有限")
         return step
-    return min(step, max_expected_rows / unit_expected_rows)
+    bounded = min(step, max_expected_rows / unit_expected_rows)
+    _validate_positive_step(bounded)
+    return bounded
