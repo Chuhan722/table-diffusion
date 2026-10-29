@@ -15,6 +15,8 @@ sigma 等于根号下灵敏度平方除以二倍每边际预算，
     --data nltcs --epsilon 1 --delta 1e-5 --noise-seed 1
 输出目录 data/<data>_eps<E><tag>_s<seed> 必须不存在，只写噪声训练卷和说明。
 本脚本只读取输入考卷，使用其中声明的 record_count，不读取或复制原始表。
+考卷须为 JSON 对象，record_count 为正整数（不接受浮点数或布尔值），
+result_unit 必须为 records；不合规元数据在计算和新建产物之前拒绝。
 生成请使用公开输入入口 python -m resevo，显式提供公开 schema/N；
 新目录不再适配依赖同名原表 CSV 的历史生成入口。
 目录仍含可复现噪声信息，仅用于基准内部对照，不能作为 DP 发布包。
@@ -97,7 +99,13 @@ def main() -> None:
         raise SystemExit(f"{src_dir} 下 measured_*query.json 须恰有一个")
     with open(found[0], encoding="utf-8") as fh:
         payload = json.load(fh)
-    n_rows = int(payload["record_count"])
+    if not isinstance(payload, dict):
+        raise SystemExit("输入考卷必须是 JSON 对象")
+    if payload.get("result_unit") != "records":
+        raise SystemExit('输入考卷 result_unit 必须为 "records"')
+    n_rows = payload.get("record_count")
+    if isinstance(n_rows, bool) or not isinstance(n_rows, int) or n_rows <= 0:
+        raise SystemExit("输入考卷 record_count 必须为正整数，不接受浮点数、布尔值或字符串")
     queries = payload["queries"]
 
     # 按字段对分组，组内条目顺序即格子顺序，组序即考卷条目顺序
