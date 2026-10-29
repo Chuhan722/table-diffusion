@@ -51,7 +51,7 @@ def test_runner_rejects_fission_path_conflicts_before_writing(tmp_path, monkeypa
         "--init-table", str(initial), "--rounds", "1", "--out", str(curve), "--save-table", str(table),
         "--fission-exam", str(fission), "--fission-every", "1", "--fission-out", str(paths[destination]),
         "--snapshot-group-floor", "--snapshot-loss", "1000000000000", "--snapshot-prefix", str(prefix),
-        "--floor-group-min", "1", "--fiber-passes", "1", "--fiber-rounds", "1", "--fiber-lock-real",
+        "--floor-group-min", "1", "--probe-interval", "1", "--fiber-passes", "1", "--fiber-rounds", "1", "--fiber-lock-real",
     ])
     with pytest.raises(SystemExit) as caught:
         rp.main()

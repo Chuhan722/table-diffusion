@@ -33,6 +33,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.failure import save_numerical_failure  # noqa: E402
+from resevo.fission import finite_mean  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
@@ -434,12 +435,12 @@ def run_stage(
 
         q_final = registry.answers_for_rows(tuples_from_ids(registry, out.state_ids))
         e_final = np.abs(fission_targets - q_final)
-        l1_final = float(np.mean(e_final))
+        l1_final = finite_mean(e_final)
         diff_cols = ["", ""]
         if fission_ids_g:
             e_g = np.abs(fission_targets - registry.answers_for_rows(tuples_from_ids(registry, fission_ids_g[0])))
             d = e_final - e_g
-            diff_cols = [repr(float(np.mean(d))), repr(float(np.std(d, ddof=1) / np.sqrt(d.size))) if d.size > 1 else "0.0"]
+            diff_cols = [repr(finite_mean(d)), repr(float(np.std(d, ddof=1) / np.sqrt(d.size))) if d.size > 1 else "0.0"]
         with open(fission_path, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(["final", f"{elapsed:.3f}", final_loss, repr(l1_final), 0, *diff_cols])
         tail = f"，对全过线表 配对差 {float(diff_cols[0]):+.6f} ± {float(diff_cols[1]):.6f}" if fission_ids_g else ""
@@ -609,7 +610,7 @@ def write_table(table_path: Path, schema, rows, what: str = "终表") -> None:
 
 
 def validate_fission_output(args, inputs: list[Path]) -> None:
-    """记账文件须为新路径，并与输入、正常产物及其派生文件分开。"""
+    """探针开启时，全部预期输出不得覆盖输入或互相冲突；记账文件须为新路径。"""
     destination = Path(args.fission_out)
     outputs = []
     if args.out:
@@ -618,9 +619,12 @@ def validate_fission_output(args, inputs: list[Path]) -> None:
         if args.fiber_passes > 0:
             curves.append(curve.with_name(curve.stem + "_stage1" + curve.suffix))
         for path in curves:
-            outputs.extend([path, path.with_name(path.stem + "_probe.csv")])
-        groups = curve.with_name(curve.stem + "_groups" + curve.suffix)
-        outputs.extend([groups, groups.with_suffix(".json")])
+            outputs.append(path)
+            if args.probe_interval > 0:
+                outputs.append(path.with_name(path.stem + "_probe.csv"))
+        if args.stop_floor_groups or args.snapshot_group_floor:
+            groups = curve.with_name(curve.stem + "_groups" + curve.suffix)
+            outputs.extend([groups, groups.with_suffix(".json")])
     if args.save_table:
         table = Path(args.save_table)
         outputs.append(table)
@@ -630,23 +634,29 @@ def validate_fission_output(args, inputs: list[Path]) -> None:
         base = Path(args.save_table or args.out)
         outputs.append(base.with_name(base.stem + "_lock.json"))
     if args.snapshot_prefix:
-        prefixes = [Path(args.snapshot_prefix)]
-        if args.fiber_passes > 0:
-            prefixes.append(Path(args.snapshot_prefix + "_stage2"))
-        for prefix in prefixes:
+        for stage in ("", "_stage2"):
+            if stage and not (args.fiber_passes > 0 and args.snapshot_losses):
+                continue
+            prefix = Path(args.snapshot_prefix + stage)
             outputs.append(prefix.with_name(prefix.name + "_snaps.csv"))
             indices = list(range(len(args.snapshot_losses or [])))
-            if args.snapshot_group_floor:
+            if not stage and args.snapshot_group_floor:
                 indices.append("G")
             outputs.extend(prefix.with_name(prefix.name + f"_snap{i}.csv") for i in indices)
-    resolved = destination.resolve()
-    for path in [*inputs, *outputs]:
-        # resolve 检出相对路径和软链接；samefile 另检出不同路径的硬链接。
-        same = resolved == path.resolve()
-        if not same and destination.exists() and path.exists():
-            same = destination.samefile(path)
-        if same:
-            raise ValueError(f"--fission-out 与输入或其他输出冲突：{path}")
+    protected = [(path, path.resolve()) for path in inputs]
+    for path in [*outputs, destination]:
+        resolved = path.resolve()
+        for other, other_resolved in protected:
+            # resolve 检查相对路径/软链接；samefile 检查硬链接。
+            same = resolved == other_resolved
+            if not same and path.exists() and other.exists():
+                same = path.samefile(other)
+            # 两个文件还不能互为父路径，否则创建输出目录就会与文件用途冲突。
+            if same or resolved in other_resolved.parents or other_resolved in resolved.parents:
+                raise ValueError(f"输出路径与输入或其他输出冲突：{path} 与 {other}")
+        if path.is_dir():
+            raise ValueError(f"输出路径是已有目录：{path}")
+        protected.append((path, resolved))
     if destination.exists() or destination.is_symlink():
         raise ValueError(f"--fission-out 已存在，拒绝覆盖：{destination}")
 
@@ -1107,7 +1117,10 @@ def main() -> None:
         if len(found) != 1:
             parser.error(f"数据目录 {data_dir} 下 measured_*query.json 须恰有一个，实有 {len(found)}")
         exam_path = found[0]
-    specs = load_queries(str(exam_path))
+    try:
+        specs = load_queries(str(exam_path), expected_record_count=len(real_rows) if fission_on else None)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.pair_pool > 0.0 and args.oneway_pool <= 0.0:
         parser.error("--pair-pool 须与 --oneway-pool 同开")
     if args.oneway_pool > 0.0:
@@ -1143,7 +1156,10 @@ def main() -> None:
             validate_fission_output(args, inputs)
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
-        fspecs = load_queries(str(fpath))
+        try:
+            fspecs = load_queries(str(fpath), expected_record_count=len(real_rows))
+        except ValueError as exc:
+            parser.error(str(exc))
         if len(fspecs) != len(specs):
             parser.error(f"模拟卷题数 {len(fspecs)} 与考卷 {len(specs)} 不一致")
         for a, b in zip(fspecs, specs):

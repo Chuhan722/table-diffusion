@@ -30,6 +30,7 @@ from .editspace import EditBudget, generate_edit_supports, tuples_from_ids
 from .engine import (
     EvolveResult, ProbeRecord, RoundRecord, _with_numerical_checkpoint, build_kernel, sample_next,
 )
+from .fission import finite_mean
 from .gain import ExactGainOracle, exact_sparse_path_gains, gain_recheck_mask, integral_values
 from .grouping import GroupedTable, group_state_ids, grouped_residual
 from .pairing import PairingBudget, build_paired_supports, build_rescue_menu
@@ -1181,7 +1182,9 @@ def evolve_batch(
         d = errors - fission_ref
         n = int(d.size)
         se = float(xp.std(d, ddof=1)) / np.sqrt(n) if n > 1 else 0.0
-        return float(xp.mean(d)), se
+        if not np.isfinite(se):
+            raise FloatingPointError("numerical_indeterminate: 分裂探针标准误非有限")
+        return finite_mean(d, xp=xp), se
 
     t_loop = time.perf_counter()  # 记账用，只读
     for k in range(num_rounds):
@@ -1375,13 +1378,13 @@ def evolve_batch(
                 fission_ref_pending = True
             if errors is not None:
                 xp = np if isinstance(errors, np.ndarray) else gpu_ctx.cp
-                l1_b = float(xp.mean(errors))
+                l1_b = _with_numerical_checkpoint(finite_mean, checkpoint, errors, xp=xp)
                 diff_mean = diff_se = None
                 if fission_ref_pending:
                     fission_ref = errors
                     fission_ref_pending = False
                 elif fission_ref is not None:
-                    diff_mean, diff_se = fission_diff_stats(errors)
+                    diff_mean, diff_se = _with_numerical_checkpoint(fission_diff_stats, checkpoint, errors)
                     if fission_stop_z > 0.0:
                         if diff_se > 0.0 and diff_mean >= fission_stop_z * diff_se:
                             fission_rise_streak += 1
