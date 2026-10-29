@@ -417,8 +417,11 @@ def run_stage(
         f"{label}实际轮数 {len(out.records)}，停止原因 {out.stop_reason}，"
         f"冻结轮数 {frozen_rounds}，注册状态数 {registry.num_states}"
     )
+    initial_ratio_text = (
+        "未定义（初始损失为0）" if initial_loss == 0.0 else f"{final_loss / initial_loss:.4%}"
+    )
     print(
-        f"{label}最终损失 {final_loss:.6f}，初始比 {final_loss / initial_loss:.4%}，"
+        f"{label}最终损失 {final_loss:.6f}，初始比 {initial_ratio_text}，"
         f"耗时 {elapsed:.1f} 秒，平均每轮 {elapsed / len(out.records) * 1000:.0f} 毫秒"
     )
     if group_floor is not None and out.group_losses:
@@ -514,8 +517,12 @@ def report_lock_check(args, lock: dict, extra, stage1: StageResult, final: Stage
         f"，÷地板 {info['final_over_floor']:.4f}（第一段终表 {info['stage1_over_floor']:.4f}）"
         if floor1 > 0 else ""
     )
+    ratio = info["final_over_stage1"]
+    ratio_text = (
+        "第一段终表损失为0，比值未定义" if ratio is None else f"是第一段终表的 {ratio:.4f} 倍"
+    )
     print(
-        f"第二段核对：终表真题损失 {real_loss_final:.6f}，是第一段终表的 {info['final_over_stage1']:.4f} 倍{floor_txt}；"
+        f"第二段核对：终表真题损失 {real_loss_final:.6f}，{ratio_text}{floor_txt}；"
         f"第二段起步损失 {final.initial_loss:.6f} 对纯伪题损失 {pseudo_init:.6f}，"
         f"第二段终损失 ÷ 第二段地板 {info['stage2_over_floor'] if info['stage2_over_floor'] is None else round(info['stage2_over_floor'], 4)}；"
         f"收工 第一段 {info['stage1_stop_reason']}（{info['stage1_rounds']} 轮）/ 第二段 {info['stage2_stop_reason']}（{info['stage2_rounds']} 轮）"
