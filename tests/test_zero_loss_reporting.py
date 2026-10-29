@@ -33,7 +33,7 @@ def _specs(rows, schema, sets, shift):
     return specs
 
 
-def _run_scene(tmp_path, monkeypatch, kind, backend):
+def _run_scene(tmp_path, monkeypatch, kind, backend, *, fission=False):
     if backend == "gpu":
         cp = pytest.importorskip("cupy")
         try:
@@ -87,10 +87,21 @@ def _run_scene(tmp_path, monkeypatch, kind, backend):
         argv += ["--fiber-passes", "100", "--fiber-rounds", "3", "--fiber-seed", "7", "--fiber-lock-real"]
     if backend == "gpu":
         argv.append("--gpu")
+    if fission:
+        validation = json.loads((source / "measured_query.json").read_text())
+        for query in validation["queries"]:
+            query["result"] += 0.25
+        (source / "validation.json").write_text(json.dumps(validation))
+        argv += [
+            "--fission-exam", str(source / "validation.json"),
+            "--fission-every", "1", "--fission-out", str(output / "fission.csv"),
+        ]
+    input_bytes = {path: path.read_bytes() for path in source.iterdir()}
     rp = _load_run_plants()
     monkeypatch.setattr(rp, "DATA_ROOT", source.parent)
     monkeypatch.setattr(sys, "argv", argv)
     rp.main()
+    assert {path: path.read_bytes() for path in source.iterdir()} == input_bytes
     with (output / "table.csv").open(newline="") as stream:
         final = list(csv.reader(stream))
     assert final[0] == list(schema.fields) and len(final) == len(rows) + 1
@@ -137,6 +148,38 @@ def test_small_positive_initial_loss_keeps_percentage(tmp_path, monkeypatch, cap
     with (output / "curve.csv").open(newline="") as stream:
         curve = list(csv.DictReader(stream))
     assert 0.0 < float(curve[0]["old_loss"]) < 1e-12
+
+
+@pytest.mark.parametrize("kind", ("single_zero", "first_zero", "second_zero", "both_zero"))
+@pytest.mark.parametrize("backend", ("cpu", "gpu"))
+def test_zero_loss_with_fission_publishes_complete_first_stage_probe(
+    tmp_path, monkeypatch, capsys, kind, backend,
+):
+    """PR81+89: zero loss must still publish both ordinary outputs and the probe's final row."""
+    rp, output, schema, specs, _ = _run_scene(
+        tmp_path, monkeypatch, kind, backend, fission=True,
+    )
+    assert "初始比 未定义（初始损失为0）" in capsys.readouterr().out
+    stage1_table = output / ("table.csv" if kind == "single_zero" else "table_stage1.csv")
+    with stage1_table.open(newline="") as stream:
+        table = list(csv.reader(stream))[1:]
+    answers = StateRegistry(schema, specs).answers_for_rows([tuple(row) for row in table])
+    with (output / "fission.csv").open(newline="") as stream:
+        probe = list(csv.DictReader(stream))
+    assert probe[0]["round"] == "0"
+    assert [row["round"] for row in probe].count("final") == 1
+    assert probe[-1]["round"] == "final"
+    assert all(np.isfinite(float(row["l1_b"])) for row in probe)
+    assert float(probe[-1]["l1_b"]) == np.mean(np.abs(target_from_specs(specs) + 0.25 - answers))
+    assert float(probe[-1]["old_loss"]) == rp.weighted_half_loss(
+        target_from_specs(specs), answers, np.ones(len(specs)),
+    )
+    if kind != "single_zero":
+        info = json.loads((output / "table_lock.json").read_text())
+        if kind in ("first_zero", "both_zero"):
+            assert info["stage1_real_loss"] == 0.0 and info["final_over_stage1"] is None
+        else:
+            assert info["stage2_initial_loss"] == info["stage2_final_loss"] == 0.0
 
 
 def test_zero_final_loss_keeps_defined_percentage(tmp_path, monkeypatch, capsys):

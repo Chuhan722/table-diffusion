@@ -33,6 +33,7 @@ from resevo.batchkernel import evolve_batch, make_batch_provider  # noqa: E402
 from resevo.editspace import EditBudget, make_edit_provider  # noqa: E402
 from resevo.engine import evolve  # noqa: E402
 from resevo.failure import save_numerical_failure  # noqa: E402
+from resevo.fission import finite_mean  # noqa: E402
 from resevo.grouping import evolve_grouped, make_grouped_provider  # noqa: E402
 from resevo.initialization import chow_liu_rows, clean_first_order, derive_first_order, derive_first_order_avg, derive_first_order_direct, sample_initial_rows  # noqa: E402
 from resevo.pairing import PairingBudget, make_paired_provider  # noqa: E402
@@ -308,6 +309,35 @@ def run_stage(
             write_snapshot("G", float(group_floor["floors"].sum()), round_index, old_loss, ids)
             print(f"{label}分档快照 各档损失÷地板 " + " ".join(f"{r:.3f}" for r in per / group_floor["floors"]), flush=True)
 
+    fission_targets = getattr(args, "fission_targets", None) if not label else None
+    fission_hook = None
+    fission_ids_g: list = []  # 分档全过线轮起点表（终表行算配对差统计用）
+    if fission_targets is not None:
+        fission_path = Path(args.fission_out)
+        fission_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(fission_path, "x", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(["round", "elapsed_s", "old_loss", "l1_b", "at_group_floor", "diff_mean", "diff_se"])
+        except FileExistsError:
+            parser.error(f"--fission-out 已存在，拒绝覆盖：{fission_path}")
+
+        def fission_hook(round_index, old_loss, l1_b, elapsed_s, at_group_floor, diff_mean, diff_se):
+            """分裂探针记账（第七十三步）：每条一行追加，分档全过线轮另打一行；参照未设时统计列留空。"""
+            with open(fission_path, "a", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow([
+                    round_index, f"{elapsed_s:.3f}", old_loss, repr(float(l1_b)), int(at_group_floor),
+                    "" if diff_mean is None else repr(float(diff_mean)), "" if diff_se is None else repr(float(diff_se)),
+                ])
+            if at_group_floor:
+                print(f"{label}分裂探针 分档全过线轮 {round_index} 模拟卷 L1_B {l1_b:.6f}", flush=True)
+
+        if want_group_snap:
+            _group_snapshot_hook = group_snapshot_hook
+
+            def group_snapshot_hook(round_index, old_loss, per, ids):
+                fission_ids_g.append(ids.copy())
+                _group_snapshot_hook(round_index, old_loss, per, ids)
+
     failure_output = (
         getattr(args, "save_table", None) or getattr(args, "out", None)
         or getattr(args, "snapshot_prefix", None) or None
@@ -347,6 +377,11 @@ def run_stage(
                 group_floors=None if group_floor is None else group_floor["floors"],
                 stop_floor_groups=bool(group_floor is not None and args.stop_floor_groups),
                 group_snapshot_hook=group_snapshot_hook,
+                fission_targets=fission_targets,
+                fission_every=args.fission_every if fission_targets is not None else 0,
+                fission_hook=fission_hook,
+                fission_stop_z=args.fission_stop_z if fission_targets is not None else 0.0,
+                fission_stop_runs=args.fission_stop_runs,
             )
         elif args.grouped:
             out = evolve_grouped(
@@ -396,6 +431,23 @@ def run_stage(
             f"{label}分档结算（轮 {k_last} 起点）各档损失÷地板 " + " ".join(f"{r:.3f}" for r in ratios)
             + f"，最慢档 {ratios.max():.3f}，总和÷地板 {per.sum() / group_floor['floors'].sum():.3f}"
         )
+    if fission_hook is not None:
+        # 终表一行在 CPU 上由行重算（answers_for_rows 与卡上答案同为整数计数），轮号记 final；
+        # 有全过线快照时另算终表对全过线表的配对差均值与标准误（与离线判停的 z 值同式）
+        from resevo.editspace import tuples_from_ids
+
+        q_final = registry.answers_for_rows(tuples_from_ids(registry, out.state_ids))
+        e_final = np.abs(fission_targets - q_final)
+        l1_final = finite_mean(e_final)
+        diff_cols = ["", ""]
+        if fission_ids_g:
+            e_g = np.abs(fission_targets - registry.answers_for_rows(tuples_from_ids(registry, fission_ids_g[0])))
+            d = e_final - e_g
+            diff_cols = [repr(finite_mean(d)), repr(float(np.std(d, ddof=1) / np.sqrt(d.size))) if d.size > 1 else "0.0"]
+        with open(fission_path, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(["final", f"{elapsed:.3f}", final_loss, repr(l1_final), 0, *diff_cols])
+        tail = f"，对全过线表 配对差 {float(diff_cols[0]):+.6f} ± {float(diff_cols[1]):.6f}" if fission_ids_g else ""
+        print(f"{label}分裂探针 终表 模拟卷 L1_B {l1_final:.6f}（{len(out.records)} 轮）{tail}", flush=True)
     if getattr(out, "sampling_precision", None):
         info = sampling_summary(out.sampling_precision)
         print(
@@ -564,6 +616,58 @@ def write_table(table_path: Path, schema, rows, what: str = "终表") -> None:
     print(f"{what}已写入 {table_path}")
 
 
+def validate_fission_output(args, inputs: list[Path]) -> None:
+    """探针开启时，全部预期输出不得覆盖输入或互相冲突；记账文件须为新路径。"""
+    destination = Path(args.fission_out)
+    outputs = []
+    if args.out:
+        curve = Path(args.out)
+        curves = [curve]
+        if args.fiber_passes > 0:
+            curves.append(curve.with_name(curve.stem + "_stage1" + curve.suffix))
+        for path in curves:
+            outputs.append(path)
+            if args.probe_interval > 0:
+                outputs.append(path.with_name(path.stem + "_probe.csv"))
+        if args.stop_floor_groups or args.snapshot_group_floor:
+            groups = curve.with_name(curve.stem + "_groups" + curve.suffix)
+            outputs.extend([groups, groups.with_suffix(".json")])
+    if args.save_table:
+        table = Path(args.save_table)
+        outputs.append(table)
+        if args.fiber_passes > 0:
+            outputs.append(table.with_name(table.stem + "_stage1" + table.suffix))
+    if args.fiber_lock_real and (args.save_table or args.out):
+        base = Path(args.save_table or args.out)
+        outputs.append(base.with_name(base.stem + "_lock.json"))
+    if args.snapshot_prefix:
+        for stage in ("", "_stage2"):
+            if stage and not (args.fiber_passes > 0 and args.snapshot_losses):
+                continue
+            prefix = Path(args.snapshot_prefix + stage)
+            outputs.append(prefix.with_name(prefix.name + "_snaps.csv"))
+            indices = list(range(len(args.snapshot_losses or [])))
+            if not stage and args.snapshot_group_floor:
+                indices.append("G")
+            outputs.extend(prefix.with_name(prefix.name + f"_snap{i}.csv") for i in indices)
+    protected = [(path, path.resolve()) for path in inputs]
+    for path in [*outputs, destination]:
+        resolved = path.resolve()
+        for other, other_resolved in protected:
+            # resolve 检查相对路径/软链接；samefile 检查硬链接。
+            same = resolved == other_resolved
+            if not same and path.exists() and other.exists():
+                same = path.samefile(other)
+            # 两个文件还不能互为父路径，否则创建输出目录就会与文件用途冲突。
+            if same or resolved in other_resolved.parents or other_resolved in resolved.parents:
+                raise ValueError(f"输出路径与输入或其他输出冲突：{path} 与 {other}")
+        if path.is_dir():
+            raise ValueError(f"输出路径是已有目录：{path}")
+        protected.append((path, resolved))
+    if destination.exists() or destination.is_symlink():
+        raise ValueError(f"--fission-out 已存在，拒绝覆盖：{destination}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="真数据端到端实验")
     parser.add_argument("--data", type=str, default="plants", help="数据目录名，表名须同名")
@@ -672,6 +776,31 @@ def main() -> None:
         "--snapshot-group-floor", action="store_true",
         help="分档全过线快照：第一段首个各档损失全不高于各自地板的轮，把起点表写成 前缀_snapG.csv"
         "（不停也记，跑到收敛的对照场用），需 --snapshot-prefix 与 --batched",
+    )
+    parser.add_argument(
+        "--fission-exam", type=str, default="",
+        help="分裂探针记账（第七十三步，纯记账不改轨迹）：模拟卷 JSON 路径（题目与考卷同序同题面，"
+        "只换 result），第一段每 --fission-every 轮与分档全过线轮用起点表算 mean|y_B−q| 写到 --fission-out，"
+        "收工再记终表一行；需 --batched，与 --fission-every、--fission-out 同给",
+    )
+    parser.add_argument(
+        "--fission-every", type=int, default=0,
+        help="分裂探针记账间隔（轮），0 关闭",
+    )
+    parser.add_argument(
+        "--fission-out", type=str, default="",
+        help="分裂探针记账的新 CSV 路径，禁止覆盖或与输入/其他输出重名（round, elapsed_s, old_loss, l1_b, at_group_floor, diff_mean, diff_se；"
+        "后两列为起点表对全过线表在模拟卷上的逐题误差配对差均值与标准误，全过线前留空）",
+    )
+    parser.add_argument(
+        "--fission-stop-z", type=float, default=0.0,
+        help="显著回升停（经验规则）：分档全过线后，标准误须大于零，且起点表对全过线表的配对差均值 ≥ 该倍数×标准误、"
+        "连续 --fission-stop-runs 次记账即收工（停止原因 fission_rise，交触发轮起点表）；"
+        "0 关闭；需分裂探针记账与 --snapshot-group-floor",
+    )
+    parser.add_argument(
+        "--fission-stop-runs", type=int, default=3,
+        help="显著回升停的连续记账次数（默认 3）",
     )
     parser.add_argument(
         "--snapshot-loss", type=str, default="",
@@ -929,6 +1058,17 @@ def main() -> None:
         parser.error("--snapshot-prefix 需配 --snapshot-loss 或 --snapshot-group-floor")
     if (args.snapshot_loss or args.snapshot_group_floor) and not args.batched:
         parser.error("快照只支持批量路径，请同时带 --batched")
+    fission_on = bool(args.fission_exam) or args.fission_every != 0 or bool(args.fission_out)
+    if fission_on and not (args.fission_exam and args.fission_every > 0 and args.fission_out):
+        parser.error("--fission-exam、--fission-every（正整数）、--fission-out 须同时给")
+    if fission_on and not args.batched:
+        parser.error("分裂探针记账只支持批量路径，请同时带 --batched")
+    if args.fission_stop_z < 0.0 or not np.isfinite(args.fission_stop_z):
+        parser.error("--fission-stop-z 须为非负有限数")
+    if args.fission_stop_runs < 1:
+        parser.error("--fission-stop-runs 须为正整数")
+    if args.fission_stop_z > 0.0 and not (fission_on and args.snapshot_group_floor):
+        parser.error("--fission-stop-z 需分裂探针记账（--fission-exam 等）与 --snapshot-group-floor")
     if args.stop_floor_groups and not args.batched:
         parser.error("--stop-floor-groups 只支持批量路径，请同时带 --batched")
     if args.stop_floor_groups and args.stop_floor > 0.0:
@@ -984,7 +1124,10 @@ def main() -> None:
         if len(found) != 1:
             parser.error(f"数据目录 {data_dir} 下 measured_*query.json 须恰有一个，实有 {len(found)}")
         exam_path = found[0]
-    specs = load_queries(str(exam_path))
+    try:
+        specs = load_queries(str(exam_path), expected_record_count=len(real_rows) if fission_on else None)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.pair_pool > 0.0 and args.oneway_pool <= 0.0:
         parser.error("--pair-pool 须与 --oneway-pool 同开")
     if args.oneway_pool > 0.0:
@@ -1006,6 +1149,31 @@ def main() -> None:
                 f"二阶独立清洗 z={args.pair_pool:g}：对 {st2['pairs']}，格子 {st2['cells']}，"
                 f"未测出格子 {st2['pooled']}（{st2['pooled'] / max(st2['cells'], 1):.1%}）"
             )
+    args.fission_targets = None
+    if args.fission_exam:
+        fpath = Path(args.fission_exam)
+        if not fpath.exists():
+            fpath = data_dir / args.fission_exam
+        if not fpath.exists():
+            parser.error(f"--fission-exam 找不到 {args.fission_exam}")
+        inputs = [data_dir / f"{args.data}.csv", exam_path, fpath]
+        if args.init_table:
+            inputs.append(Path(args.init_table))
+        try:
+            validate_fission_output(args, inputs)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        try:
+            fspecs = load_queries(str(fpath), expected_record_count=len(real_rows))
+        except ValueError as exc:
+            parser.error(str(exc))
+        if len(fspecs) != len(specs):
+            parser.error(f"模拟卷题数 {len(fspecs)} 与考卷 {len(specs)} 不一致")
+        for a, b in zip(fspecs, specs):
+            if a.query_id != b.query_id or a.conditions != b.conditions:
+                parser.error(f"模拟卷与考卷题目不对齐：{a.query_id} 对 {b.query_id}")
+        args.fission_targets = np.array([q.result for q in fspecs], dtype=np.float64)
+        print(f"分裂探针记账：模拟卷 {fpath.name} {len(fspecs)} 题，每 {args.fission_every} 轮与分档全过线轮记一次")
     init_rng = np.random.default_rng(args.init_seed)
     if args.init_table:
         it_schema, init_rows = load_table(args.init_table)
