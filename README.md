@@ -61,7 +61,7 @@ schema 格式为 `{"fields": [...], "domains": [[...], ...]}`，字段名和域�
 默认都为 0。种子流固定为初始化 `seed`、菜单 `100000+seed`、
 工作批选择 `200000+seed`、落表 `300000+seed`。
 
-输出是停止时的当前表，不是用真实答案选出的最优历史表。原始训练/测试表只应在生成
+默认输出是停止时的当前表；启用下述硬后处理时交付其固定预算终点表，都不是用真实答案选出的最优历史表。原始训练/测试表只应在生成
 完成之后用于独立离线评价，不能送回初始化、运行调度或停止选择。
 
 发生已识别的 `numerical_indeterminate` 时，程序仍异常退出且不发布正常终表，
@@ -82,6 +82,7 @@ schema 格式为 `{"fields": [...], "domains": [[...], ...]}`，字段名和域�
 不暗中抬高概率。批量入口恢复可检测的正参数，但不承诺任意微小概率严格可采样；
 没有告警也不是所有尾部均保真的证明。详见 [有限精度采样合同](docs/设计/有限精度采样合同.md)。
 
+
 ## 实验性只读风险监控
 
 `resevo.quadratic_monitor.IndependentGaussianQuadraticMonitor` 提供有条件的平方损失差
@@ -92,11 +93,77 @@ schema 格式为 `{"fields": [...], "domains": [[...], ...]}`，字段名和域�
 适用范围、数学合同与输入/输出说明见
 [条件平方损失差监控](docs/设计/条件平方损失差监控.md)。
 
+
+## 可选硬纤维后处理
+
+`--hard-fiber-steps K` 显式启用生成结束后的CPU后处理，默认0不执行、不增加随机调用，
+默认输出格式和原有四条随机流保持。它严格保住第一段合成表的**完整查询字段集合边缘**
+和全部一阶，不是只固定卷上出现的格子，也不是继续拟合带噪目标或伪目标。
+
+```bash
+python -m resevo \
+  --schema configs/resevo/smoke_schema.json \
+  --queries configs/resevo/smoke_queries.json \
+  --rows 64 --rounds 100 --seed 7 \
+  --hard-fiber-steps 20000 --hard-fiber-seed 7301 \
+  --output outputs/resevo/smoke-hard.csv
+```
+
+此两字段全边缘例只演示入口，联合直方图已经被固定，可以只发生行序变化；
+不能用它宣称解冻或质量提升。四环反例与目标分布说明见
+[有限表合同与连通性](docs/设计/纤维第二阶段有限表合同与连通性.md)。
+
+K是含显式自环的马尔可夫步数，不是接受次数、整表扫描次数或混合证书。
+N>=4时以1/2保持、1/4单次交换、1/4四行原子双交换；N=2/3只用保持和单次交换，
+N=1明确报告`no_row_pairs`且不消耗后处理随机流。查询约束不满足的提议也成为自环，
+没有按损失接受、最优回滚或接受率早停。
+
+仅支持等值查询；输入题号以`P2_`开头也不忽略。常量题可以与含字段的等值题混合，
+但现有第一阶段对只含常量的卷有独立缺陷（#93），启用此选项时会在生成前明确拒绝。
+库函数 `resevo.hard_fiber.hard_fiber_sample` 可对已有合成表只固定一阶，不依赖该入口限制。
+旧 `run_plants.py` 的软正则路线保持原样，没有将其重新命名为硬锁。
+
+后处理使用新的随机生成器，默认种子`400000+seed`，可用`--hard-fiber-seed`单独覆盖。
+GPU生成之后也在CPU执行此阶段；JSON新增的`hard_fiber`对象单独记录后端、种子、
+保持集合、实际步数、约束拒绝、恒等／仅换行序／直方图变化次数。
+原有`rounds`、`stop_reason`、`backend`和采样精度信息仍描述第一段。
+完整边缘复核失败会报错，不把第一段表作为成功结果代替输出。
+
+理想对称提议保持有序可行表的均匀测度，诱导直方图质量与逆阶乘成正比；
+不是均匀直方图、独立样本或逐步最大熵优化。
+不保证所有纤维连通、有限预算充分混合、未测真实关系改善或端到端DP。
+稀疏整数计数不分配值域乘积张量，但完整复核成本仍随行数和约束集合增长。
+
+## 噪声考卷的产物边界
+
+`scripts/make_noisy_exam.py` 只读取 `data/<data>/measured_*query.json`，使用其中声明的
+`record_count`，不再读取、复制或哈希同名原始 CSV。输出目录只新建查询 JSON 和说明；
+目录、文件或符号链接等已有输出路径一律拒绝，需更换 `--tag`，不会自动删除旧产物。
+此前生成的原表副本仍留在原处，本次不会替使用者清理。
+
+输入顶层必须是JSON对象，`record_count`必须为正的JSON整数（不接受布尔值、字符串、
+`8.0`或`8.5`），`result_unit`必须恰为`"records"`。
+不合规元数据在预算计算、随机生成和新建输出目录之前明确拒绝，不截断或自动猜测记录数。
+正常整数输入的噪声公式、随机流、查询JSON及生成说明内容保持不变。
+这只是记录数／计数单位与公开入口的格式衔接，不是原始记录数真实性、schema一致性或DP认证。
+
+消费新考卷时，将公开输入入口的 `--queries` 指向该 JSON，并显式提供匹配的公开
+`--schema` 和 `--rows`；带噪边缘不一致时可明确选择已有的 `--init uniform`。
+这改变了历史目录布局：`run_plants.py --data <噪声目录>` 依赖同名原表 CSV，不能
+直接消费新目录。不要为兼容旧入口再把原表复制回去；旧入口元数据和结构统计依赖另行处理。
+
+去掉原表副本不等于完成 DP：目录名、查询说明和 README 仍保留可复现噪声信息，
+上游查询选择、测量与预算等假设也未获得端到端认证。产物仍只用于内部基准对照，
+不是可直接公开的 DP 发布包；真实参考表只用于生成结束后的独立离线评价。
+
+
+
 ## 验证
 
 ```bash
 PYTHONPATH=src python scripts/run_anchor_audit.py
 PYTHONPATH=src python -m pytest tests/test_resevo_step_parameters.py tests/test_resevo_cli.py -q
+PYTHONPATH=src python -m pytest tests/test_hard_fiber.py tests/test_hard_fiber_cli.py -q
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src python -m pytest -q
 ```
 
